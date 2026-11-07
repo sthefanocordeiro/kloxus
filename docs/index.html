@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kloxus: the editorial back office for independent publishers</title>
+<meta name="description" content="Kloxus reads the sources you follow, filters the noise and drafts your next issue with a source behind every fact. You write the commentary. Nothing ships without your approval.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=Instrument+Sans:wght@400..700&family=Kalam:wght@400;700&display=swap">
+<style>
+  :root {
+    --paper: #F4F5F2;
+    --sheet: #FDFDFB;
+    --ink: #1A1E27;
+    --muted: #5C6270;
+    --rule: #D3D7DC;
+    --pencil: #2B55D6;
+    --pencil-soft: rgba(43, 85, 214, 0.10);
+    --marker: #F2DE4B;
+    --serif: "Newsreader", Georgia, serif;
+    --sans: "Instrument Sans", system-ui, sans-serif;
+    --hand: "Kalam", "Comic Sans MS", cursive;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 19px;
+    line-height: 1.6;
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--pencil); text-underline-offset: 3px; }
+  a:focus-visible, .nav a:focus-visible {
+    outline: 3px solid var(--pencil);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 28px; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  /* Header */
+  .top {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 24px; padding: 28px 0 0;
+  }
+  .wordmark {
+    font-size: 26px; font-weight: 650; letter-spacing: -0.01em;
+    color: var(--ink); text-decoration: none;
+  }
+  .nav { display: flex; gap: 26px; flex-wrap: wrap; font-family: var(--sans); font-size: 15px; }
+  .nav a { color: var(--muted); text-decoration: none; }
+  .nav a:hover { color: var(--ink); }
+
+  /* Hero */
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 64px;
+    align-items: start;
+    padding: 72px 0 96px;
+  }
+  .hero h1 {
+    font-size: clamp(44px, 5.4vw, 72px);
+    line-height: 1.02;
+    font-weight: 560;
+    letter-spacing: -0.025em;
+    margin: 0 0 28px;
+    text-wrap: balance;
+  }
+  .hero .lede { font-size: 22px; line-height: 1.5; color: var(--ink); margin: 0 0 22px; max-width: 34ch; }
+  .hero .note { color: var(--muted); font-size: 17px; margin: 0 0 32px; max-width: 40ch; }
+  .actions { display: flex; gap: 14px; flex-wrap: wrap; font-family: var(--sans); font-size: 16px; }
+  .btn {
+    display: inline-block; padding: 12px 20px; border-radius: 999px;
+    text-decoration: none; font-weight: 600;
+  }
+  .btn-primary { background: var(--ink); color: var(--paper); }
+  .btn-primary:hover { background: #2C3240; }
+  .btn-quiet { color: var(--ink); border: 1.5px solid var(--ink); }
+  .btn-quiet:hover { background: var(--ink); color: var(--paper); }
+  .event { margin-top: 36px; font-family: var(--sans); font-size: 14px; color: var(--muted); line-height: 1.5; }
+
+  /* The proof sheet */
+  .proof {
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    box-shadow: 0 1px 0 var(--rule), 0 18px 40px -28px rgba(26, 30, 39, 0.35);
+    padding: 26px 28px 20px;
+    margin: 0;
+    position: relative;
+  }
+  .proof-head {
+    display: flex; justify-content: space-between; gap: 16px;
+    font-family: var(--sans); font-size: 13px; color: var(--muted);
+    border-bottom: 1px solid var(--rule); padding-bottom: 12px; margin-bottom: 6px;
+  }
+  .proof ol { list-style: none; margin: 0; padding: 0; }
+  .proof li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 168px;
+    gap: 18px;
+    padding: 13px 0;
+    border-bottom: 1px dashed var(--rule);
+    align-items: start;
+  }
+  .proof li:last-child { border-bottom: 0; }
+  .headline { font-size: 18px; line-height: 1.38; font-weight: 500; }
+  .source { display: block; font-family: var(--sans); font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .margin {
+    font-family: var(--hand); color: var(--pencil); font-size: 17px; line-height: 1.25;
+    transform: rotate(-2deg); transform-origin: left top;
+  }
+  .score {
+    display: inline-block; font-weight: 700; border: 2px solid var(--pencil);
+    border-radius: 50%; padding: 0 7px; margin-right: 4px; font-size: 15px;
+  }
+  .proof-foot { font-family: var(--sans); font-size: 12.5px; color: var(--muted); margin: 12px 0 0; }
+
+  /* Marks: final state */
+  .cut .headline { color: var(--muted); }
+  .cut .headline span {
+    text-decoration-line: line-through;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--pencil);
+    color: var(--muted);
+  }
+  .keep .headline span {
+    background-image: linear-gradient(transparent 55%, var(--marker) 55%, var(--marker) 92%, transparent 92%);
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
+  /* Marks: the one page-load sequence */
+  @media (prefers-reduced-motion: no-preference) {
+    .js .proof .margin { opacity: 0; animation: appear 0.45s ease-out forwards; animation-delay: var(--d); }
+    .js .cut .headline span { animation: strike 0.5s ease-out both; animation-delay: var(--d); }
+    .js .keep .headline span { background-size: 0% 100%; animation: mark 0.7s ease-out forwards; animation-delay: var(--d); }
+  }
+  @keyframes appear { from { opacity: 0; transform: rotate(-2deg) translateY(4px); } to { opacity: 1; transform: rotate(-2deg); } }
+  @keyframes strike {
+    from { text-decoration-color: transparent; color: var(--ink); }
+    to { text-decoration-color: var(--pencil); color: var(--muted); }
+  }
+  @keyframes mark { to { background-size: 100% 100%; } }
+
+  /* Sections */
+  section.block { padding: 96px 0; border-top: 1px solid var(--rule); }
+  .block h2 {
+    font-size: clamp(34px, 3.8vw, 50px);
+    line-height: 1.08;
+    font-weight: 560;
+    letter-spacing: -0.02em;
+    margin: 0 0 18px;
+    max-width: 22ch;
+    text-wrap: balance;
+  }
+  .block .intro { font-size: 21px; color: var(--muted); max-width: 52ch; margin: 0 0 56px; }
+
+  /* Problem */
+  .steps-before {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0; margin: 0; padding: 0; list-style: none; counter-reset: s;
+    position: relative;
+  }
+  .steps-before li { padding: 22px 22px 0 0; border-top: 2px solid var(--ink); counter-increment: s; }
+  .steps-before li::before {
+    content: counter(s); display: block; font-family: var(--sans); font-size: 14px;
+    font-weight: 600; color: var(--muted); margin-bottom: 8px;
+  }
+  .steps-before strong { display: block; font-size: 21px; font-weight: 600; line-height: 1.25; margin-bottom: 6px; }
+  .steps-before span { color: var(--muted); font-size: 17px; line-height: 1.45; display: block; }
+  .steps-before li.write { border-top-color: var(--pencil); }
+  .bracket {
+    grid-column: 1 / span 4; margin-top: 28px; padding-top: 10px;
+    border-top: 2px solid var(--pencil);
+    font-family: var(--hand); color: var(--pencil); font-size: 21px; line-height: 1.3;
+  }
+  .bracket-wrap { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
+  /* Pipeline */
+  .pipeline { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 40px; }
+  .galley { list-style: none; margin: 0; padding: 0; counter-reset: p; }
+  .galley li {
+    display: grid; grid-template-columns: 44px 210px minmax(0, 1fr);
+    gap: 16px; align-items: baseline;
+    padding: 16px 0; border-bottom: 1px solid var(--rule); counter-increment: p;
+  }
+  .galley li::before { content: counter(p); font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--muted); }
+  .galley .name { font-weight: 620; font-size: 20px; }
+  .galley .what { color: var(--muted); font-size: 17px; line-height: 1.45; }
+  .galley .who { display: block; font-family: var(--sans); font-size: 13px; color: var(--muted); margin-top: 2px; font-weight: 400; }
+  .galley li.gate { background: var(--marker); border-bottom-color: var(--ink); padding-left: 14px; padding-right: 14px; margin: 0 -14px; }
+  .galley li.gate::before, .galley li.gate .what, .galley li.gate .who { color: var(--ink); }
+  .aside-notes { display: flex; flex-direction: column; gap: 40px; padding-top: 8px; }
+  .pencil-note { font-family: var(--hand); color: var(--pencil); font-size: 20px; line-height: 1.3; transform: rotate(-1.5deg); }
+  .pencil-note svg { display: block; margin-top: 8px; }
+
+  /* Desk mock */
+  .desk { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  .screen {
+    background: #FFFFFF; border: 1px solid #C9CED6; border-radius: 12px;
+    font-family: var(--sans); font-size: 15px; line-height: 1.45; overflow: hidden;
+  }
+  .screen-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 18px; border-bottom: 1px solid #E3E6EA; background: #F7F8FA;
+    font-size: 13px; color: var(--muted);
+  }
+  .screen-bar b { color: var(--ink); font-weight: 600; }
+  .item { padding: 16px 18px; border-bottom: 1px solid #EEF0F3; }
+  .item:last-child { border-bottom: 0; }
+  .item-top { display: flex; gap: 12px; align-items: flex-start; }
+  .pill {
+    flex: none; min-width: 42px; text-align: center; font-weight: 700; font-size: 14px;
+    padding: 2px 8px; border-radius: 6px; background: var(--pencil-soft); color: var(--pencil);
+  }
+  .pill.low { background: #EEF0F3; color: var(--muted); }
+  .item h4 { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.35; }
+  .why { margin: 6px 0 0 54px; color: #4A5060; font-size: 14px; }
+  .chips { display: flex; gap: 8px; margin: 10px 0 0 54px; flex-wrap: wrap; }
+  .chip { font-size: 13px; padding: 4px 11px; border-radius: 999px; border: 1px solid #C9CED6; color: var(--ink); }
+  .chip.ok { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .item.dim h4 { color: var(--muted); }
+  .dossier { padding: 18px 20px 22px; }
+  .dossier h4 { font-family: var(--serif); font-size: 21px; font-weight: 600; line-height: 1.25; margin: 0 0 12px; }
+  .dossier h5 { font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 16px 0 6px; letter-spacing: 0.01em; }
+  .dossier p, .dossier ul { margin: 0; font-size: 14.5px; }
+  .dossier ul { padding-left: 18px; }
+  .dossier sup { color: var(--pencil); font-weight: 700; }
+  .interp { border-left: 3px solid #C9CED6; padding-left: 10px; color: #4A5060; font-style: italic; }
+  .slot {
+    margin-top: 18px; border: 2px dashed var(--pencil); border-radius: 8px;
+    padding: 14px; color: var(--pencil); font-family: var(--hand); font-size: 18px;
+    background: var(--pencil-soft);
+  }
+  .disclaimer { margin: 18px 0 0; font-family: var(--sans); font-size: 13.5px; color: var(--muted); }
+
+  /* Principles */
+  .rules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 56px; margin: 0; }
+  .rule { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 14px; padding: 22px 0; border-bottom: 1px solid var(--rule); }
+  .rule dt { font-size: 22px; font-weight: 600; line-height: 1.25; margin: 0 0 6px; }
+  .rule dd { margin: 0; color: var(--muted); font-size: 17px; line-height: 1.5; }
+  .rule svg { margin-top: 4px; }
+
+  /* Money flow */
+  .flow { display: grid; grid-template-columns: 1fr 64px 1fr 64px 1fr; align-items: stretch; }
+  .flow .arrow { align-self: center; }
+  .node { border: 1.5px solid var(--ink); padding: 22px 20px; background: var(--sheet); }
+  .node b { display: block; font-size: 22px; font-weight: 620; line-height: 1.2; margin-bottom: 4px; }
+  .node span { color: var(--muted); font-size: 16px; line-height: 1.4; display: block; }
+  .node.you { background: var(--marker); }
+  .arrow { height: 2px; background: var(--ink); position: relative; margin: 0 10px; }
+  .arrow::after {
+    content: ""; position: absolute; right: -2px; top: -5px;
+    border-left: 10px solid var(--ink); border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+  }
+  .kloxus-line {
+    margin-top: 28px; display: grid; grid-template-columns: 1fr 64px 1fr 64px 1fr;
+  }
+  .kloxus-box {
+    grid-column: 1 / -1; border: 2px dashed var(--pencil); padding: 18px 22px;
+    margin: 0; font-size: 17px; line-height: 1.55; max-width: none;
+  }
+  .kloxus-box b { font-size: 21px; font-weight: 620; color: var(--pencil); }
+
+  /* Status */
+  .status-now {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; align-items: start;
+  }
+  .stamp {
+    display: inline-block; font-family: var(--sans); font-weight: 700; font-size: 15px;
+    color: var(--pencil); border: 2px solid var(--pencil); padding: 6px 12px; transform: rotate(-3deg);
+    margin-bottom: 18px;
+  }
+  .status-now p { margin: 0 0 16px; max-width: 46ch; }
+  .timeline { list-style: none; margin: 0; padding: 0; counter-reset: t; }
+  .timeline li { position: relative; padding: 0 0 26px 30px; border-left: 2px solid var(--rule); }
+  .timeline li:last-child { padding-bottom: 0; border-left-color: transparent; }
+  .timeline li::before {
+    content: ""; position: absolute; left: -8px; top: 6px; width: 14px; height: 14px;
+    border-radius: 50%; background: var(--paper); border: 2px solid var(--ink);
+  }
+  .timeline li.now::before { background: var(--pencil); border-color: var(--pencil); }
+  .timeline time { display: block; font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--muted); }
+  .timeline b { font-weight: 600; }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--rule); padding: 40px 0 56px; font-family: var(--sans); font-size: 14.5px; color: var(--muted); }
+  .foot { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  .foot p { margin: 0 0 6px; }
+
+  /* Responsive */
+  @media (max-width: 980px) {
+    .hero { grid-template-columns: 1fr; gap: 48px; padding-top: 48px; }
+    .pipeline { grid-template-columns: 1fr; }
+    .aside-notes { flex-direction: row; flex-wrap: wrap; }
+    .desk { grid-template-columns: 1fr; }
+    .status-now { grid-template-columns: 1fr; gap: 40px; }
+  }
+  @media (max-width: 760px) {
+    body { font-size: 18px; }
+    .nav { display: none; }
+    section.block { padding: 72px 0; }
+    .proof { padding: 20px 18px 16px; }
+    .proof li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .steps-before { grid-template-columns: 1fr; }
+    .steps-before li { padding: 16px 0 18px; }
+    .bracket-wrap { grid-template-columns: 1fr; }
+    .bracket { grid-column: 1; }
+    .galley li { grid-template-columns: 32px minmax(0, 1fr); }
+    .galley .what { grid-column: 2; }
+    .rules { grid-template-columns: 1fr; }
+    .flow { grid-template-columns: 1fr; gap: 0; }
+    .arrow { width: 2px; height: 36px; margin: 6px auto; }
+    .arrow::after { right: -5px; top: auto; bottom: -2px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 10px solid var(--ink); border-bottom: 0; }
+    .kloxus-line { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<script>document.documentElement.classList.add('js');</script>
+
+<div class="wrap">
+  <header class="top">
+    <a class="wordmark" href="#">Kloxus</a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#desk">What you get</a>
+      <a href="#rules">Principles</a>
+      <a href="#status">Status</a>
+      <a href="https://github.com/sthefanocordeiro/kloxus">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div>
+        <h1 id="hero-title">The editorial back office for people who publish alone.</h1>
+        <p class="lede">Kloxus reads the sources you follow, throws out the noise and drafts your next issue with a source behind every fact.</p>
+        <p class="note">You write the commentary. Nothing goes out without your approval.</p>
+        <div class="actions">
+          <a class="btn btn-primary" href="#how">See how an issue gets made</a>
+          <a class="btn btn-quiet" href="https://github.com/sthefanocordeiro/kloxus">Read the project on GitHub</a>
+        </div>
+        <p class="event">A project for HackBrazil 2026, Culture and Creative Economy track.<br>Currently a concept: no working code yet.</p>
+      </div>
+
+      <figure class="proof" aria-labelledby="proof-caption">
+        <div class="proof-head" aria-hidden="true">
+          <span>This week's feed, as Kloxus would mark it</span>
+          <span>7 of 212 items</span>
+        </div>
+        <ol>
+          <li class="keep">
+            <div class="headline"><span>Regulator opens public consultation on AI in hiring</span><small class="source">Radar Tech</small></div>
+            <div class="margin" style="--d: 0.4s"><span class="score">9.1</span> primary source, affects your readers <span class="sr-only">(kept)</span></div>
+          </li>
+          <li class="cut">
+            <div class="headline"><span>Regulator opens consultation on automated hiring rules</span><small class="source">Pulso Digital</small></div>
+            <div class="margin" style="--d: 0.9s">same story, merged into #1 <span class="sr-only">(removed as duplicate)</span></div>
+          </li>
+          <li class="cut">
+            <div class="headline"><span>AI hiring rules: what we know so far</span><small class="source">Correio do Código</small></div>
+            <div class="margin" style="--d: 1.2s">same story, merged <span class="sr-only">(removed as duplicate)</span></div>
+          </li>
+          <li class="cut">
+            <div class="headline"><span>Startup raises Series B to build an AI note-taker</span><small class="source">Pulso Digital</small></div>
+            <div class="margin" style="--d: 1.6s">funding round, no market change: your rule <span class="sr-only">(removed by your editorial line)</span></div>
+          </li>
+          <li class="keep">
+            <div class="headline"><span>Universities publish an open dataset of Portuguese text</span><small class="source">Radar Tech</small></div>
+            <div class="margin" style="--d: 2.0s"><span class="score">8.4</span> open data, useful for builders <span class="sr-only">(kept)</span></div>
+          </li>
+          <li class="cut">
+            <div class="headline"><span>Phone maker teases a new model for next month</span><small class="source">Correio do Código</small></div>
+            <div class="margin" style="--d: 2.4s">launch, not sold in Brazil <span class="sr-only">(removed by your editorial line)</span></div>
+          </li>
+          <li class="keep">
+            <div class="headline"><span>Survey maps how small businesses use AI chat tools</span><small class="source">Observatório Aberto</small></div>
+            <div class="margin" style="--d: 2.8s"><span class="score">7.6</span> check the method before citing <span class="sr-only">(kept)</span></div>
+          </li>
+        </ol>
+        <figcaption id="proof-caption" class="proof-foot">Illustration with fictional headlines and outlets. Highlighted items go to your story list, struck items are dropped, and every margin note explains why.</figcaption>
+      </figure>
+    </section>
+
+    <section class="block" aria-labelledby="problem-title">
+      <h2 id="problem-title">Writing is the last step, not the hard one.</h2>
+      <p class="intro">Before the first sentence of an issue, someone has to do an editor's job. When you publish alone, that someone is you, every week.</p>
+      <ol class="steps-before">
+        <li><strong>Watch the sources</strong><span>Dozens of sites, feeds and newsletters.</span></li>
+        <li><strong>Drop the repeats</strong><span>The same story, republished by many outlets.</span></li>
+        <li><strong>Choose the story list</strong><span>What goes in, in what order, and why.</span></li>
+        <li><strong>Collect and check</strong><span>Links, facts, what is still unknown.</span></li>
+        <li class="write"><strong>Write</strong><span>The part your readers subscribed for.</span></li>
+      </ol>
+      <div class="bracket-wrap">
+        <p class="bracket">Kloxus takes these four steps off your desk. This is where issues slip and publications stall.</p>
+      </div>
+    </section>
+
+    <section class="block" id="how" aria-labelledby="how-title">
+      <h2 id="how-title">How an issue gets made.</h2>
+      <p class="intro">Most of the work is ordinary automation. The language model is used only where an editor's judgment is needed, and one human step decides what ships.</p>
+      <div class="pipeline">
+        <ol class="galley">
+          <li><span class="name">Collect</span><span class="what">New items from your RSS feeds and open pages, on your schedule.<span class="who">Automation</span></span></li>
+          <li><span class="name">Merge repeats</span><span class="what">One entry per story, listing every outlet that covered it.<span class="who">Automation</span></span></li>
+          <li><span class="name">Score</span><span class="what">A 0 to 10 relevance score against your editorial line, with a one-line reason.<span class="who">AI model</span></span></li>
+          <li><span class="name">Story list</span><span class="what">Five to ten items grouped by theme, each with why it matters.<span class="who">AI model</span></span></li>
+          <li><span class="name">Dossier</span><span class="what">An original summary, facts with links, a short quote, and what nobody knows yet.<span class="who">AI model, with a short research step</span></span></li>
+          <li><span class="name">Draft</span><span class="what">Your sections, filled in, with empty slots for your commentary.<span class="who">AI model</span></span></li>
+          <li><span class="name">Source check</span><span class="what">Any factual sentence without a link is flagged and blocks sending.<span class="who">AI model and a hard rule</span></span></li>
+          <li class="gate"><span class="name">Your review</span><span class="what">Approve, reject with a reason, edit, or ask for an alternative. You write the commentary.<span class="who">You</span></span></li>
+          <li><span class="name">Send</span><span class="what">Email to your readers, or export to paste into Substack or beehiiv.<span class="who">Automation</span></span></li>
+        </ol>
+        <div class="aside-notes">
+          <p class="pencil-note">Every rejection, with its reason, becomes a line in your editorial guide. Next week starts closer to your taste.
+            <svg width="120" height="46" viewBox="0 0 120 46" aria-hidden="true"><path d="M4 40 C 40 44, 80 30, 108 8" fill="none" stroke="#2B55D6" stroke-width="2" stroke-linecap="round"/><path d="M96 6 L109 7 L106 20" fill="none" stroke="#2B55D6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </p>
+          <p class="pencil-note">You can read and edit the guide at any time. No hidden profile.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="desk" aria-labelledby="desk-title">
+      <h2 id="desk-title">What lands on your desk.</h2>
+      <p class="intro">A ranked story list you can accept or push back on, and a dossier for each item that keeps facts, interpretation and gaps apart.</p>
+      <div class="desk">
+        <div class="screen" role="img" aria-label="Mockup of the story list screen, with relevance scores, reasons and approve or reject options for each item.">
+          <div class="screen-bar"><span><b>Futuro Próximo</b>, issue 42</span><span>9 items to review</span></div>
+          <div class="item">
+            <div class="item-top"><span class="pill">9.1</span><h4>Regulator opens public consultation on AI in hiring</h4></div>
+            <p class="why">Affects your readers directly. Primary source. Comments open until Dec 15.</p>
+            <div class="chips"><span class="chip ok">Approved</span><span class="chip">Reject</span><span class="chip">Alternative</span></div>
+          </div>
+          <div class="item">
+            <div class="item-top"><span class="pill">8.4</span><h4>Universities publish an open dataset of Portuguese text</h4></div>
+            <p class="why">Open data your builder readers can use this week.</p>
+            <div class="chips"><span class="chip">Approve</span><span class="chip">Reject</span><span class="chip">Alternative</span></div>
+          </div>
+          <div class="item dim">
+            <div class="item-top"><span class="pill low">4.2</span><h4>Startup raises Series B to build an AI note-taker</h4></div>
+            <p class="why">Low: funding round without market impact, per your guide.</p>
+            <div class="chips"><span class="chip">Approve</span><span class="chip ok">Rejected: off my line</span></div>
+          </div>
+        </div>
+
+        <div class="screen" role="img" aria-label="Mockup of a dossier: a summary, facts with numbered sources, an interpretation marked as such, open questions and an empty space for the creator's commentary.">
+          <div class="screen-bar"><span><b>Dossier</b>, item 1 of 9</span><span>3 sources</span></div>
+          <div class="dossier">
+            <h4>Regulator opens public consultation on AI in hiring</h4>
+            <h5>Summary by Kloxus</h5>
+            <p>A draft rule would require companies to tell applicants when automated systems screen them.<sup>1</sup></p>
+            <h5>Facts</h5>
+            <ul>
+              <li>Comments are open until Dec 15.<sup>1</sup></li>
+              <li>The draft covers companies with more than 100 employees.<sup>1</sup></li>
+              <li>Two business groups asked for a longer transition.<sup>2</sup></li>
+            </ul>
+            <h5>Interpretation, marked as such</h5>
+            <p class="interp">Recruiting platforms would likely need new consent screens.</p>
+            <h5>Still unknown</h5>
+            <p>Penalties and the enforcement timeline.</p>
+            <div class="slot">Your commentary goes here. This section can't be sent without it.</div>
+          </div>
+        </div>
+      </div>
+      <p class="disclaimer">Mockups with fictional content, to show the intended experience. The product is not built yet.</p>
+    </section>
+
+    <section class="block" id="rules" aria-labelledby="rules-title">
+      <h2 id="rules-title">Rules the product does not bend.</h2>
+      <p class="intro">These are requirements, not taglines. They shape what the software is allowed to do.</p>
+      <dl class="rules">
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Your byline, your words</dt><dd>Kloxus prepares the material. The commentary is always written by the person who signs the issue.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Nothing ships without you</dt><dd>Every issue needs your explicit approval before it is sent.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Every fact has a source</dt><dd>Each factual sentence links to where it came from. Unlinked sentences block sending.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Facts apart from opinion</dt><dd>Interpretation is labelled as interpretation, so readers never mistake a model's guess for a fact.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Curation, not copying</dt><dd>Original summaries, short quotes with credit, and only sources open to reading: RSS, public APIs, pages that allow it. Nothing behind a paywall.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Your data stays yours</dt><dd>Creator and reader data is not used to train models.</dd></div>
+        </div>
+      </dl>
+    </section>
+
+    <section class="block" aria-labelledby="money-title">
+      <h2 id="money-title">Readers pay you. Not us.</h2>
+      <p class="intro">If you want to charge for an issue, readers subscribe through your own payment account. Kloxus only opens the door.</p>
+      <div class="flow">
+        <div class="node"><b>Your reader</b><span>Subscribes with PIX or card</span></div>
+        <div class="arrow" aria-hidden="true"></div>
+        <div class="node"><b>Your AbacatePay account</b><span>Opened and verified by you</span></div>
+        <div class="arrow" aria-hidden="true"></div>
+        <div class="node you"><b>You</b><span>Receive the full amount, minus the gateway's fee</span></div>
+      </div>
+      <div class="kloxus-line">
+        <p class="kloxus-box"><b>Kloxus</b> creates the subscription with a key you restrict, and unlocks the paid issue when the payment is confirmed. It never receives or holds the money and takes no commission.</p>
+      </div>
+    </section>
+
+    <section class="block" id="status" aria-labelledby="status-title">
+      <h2 id="status-title">Where the project stands.</h2>
+      <div class="status-now">
+        <div>
+          <span class="stamp">Concept and specification</span>
+          <p>There is no working code yet. What exists today is the problem framing, the product design and a validation plan.</p>
+          <p>Before building further, the plan is to talk to independent creators and test the riskiest assumptions: that preparing an issue is the real bottleneck, that the suggested story list is good enough to keep, and that creators would pay for it.</p>
+          <p><a href="https://github.com/sthefanocordeiro/kloxus">Read the full description on GitHub</a></p>
+        </div>
+        <ol class="timeline">
+          <li class="now"><time>November 2026</time><b>Now:</b> interviews with creators, source mapping, first prototype.</li>
+          <li><time>December 2026 to January 2027</time>A pilot with up to five real publications, measuring how much of the story list they keep and how much time they save.</li>
+          <li><time>February 2027</time>Decide, with the pilot's numbers, whether to keep going.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap foot">
+    <div>
+      <p>Kloxus, by Sthéfano Cordeiro. HackBrazil 2026, Culture and Creative Economy track.</p>
+      <p>Source available under the PolyForm Strict License 1.0.0, with an evaluation permission for the HackBrazil judges.</p>
+    </div>
+    <div><p><a href="https://github.com/sthefanocordeiro/kloxus">github.com/sthefanocordeiro/kloxus</a></p></div>
+  </div>
+</footer>
+</body>
+</html>
