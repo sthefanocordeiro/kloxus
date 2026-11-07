@@ -295,4 +295,16 @@ Please open an issue to share feedback.
 
 ## License
 
-To be defined.
+Kloxus is **source-available, not open source**. It is licensed under the
+[PolyForm Strict License 1.0.0](https://polyformproject.org/licenses/strict/1.0.0),
+which allows noncommercial use but does not allow distributing the software
+or making changes or new works based on it.
+
+**For HackBrazil 2026:** the organizers and judges may read, run, test and
+modify this software solely to evaluate it in the competition. See
+[LICENSE](LICENSE) for the full terms.
+
+For any other use, including commercial use, please open an issue to ask
+for permission.
+
+Copyright (c) 2026 Sthéfano Cordeiro.
