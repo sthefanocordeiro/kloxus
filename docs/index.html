@@ -326,24 +326,57 @@
     .arrow::after { right: -5px; top: auto; bottom: -2px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 10px solid var(--ink); border-bottom: 0; }
     .kloxus-line { grid-template-columns: 1fr; }
   }
+
+  /* Language */
+  html:not(.pt) .l-pt { display: none !important; }
+  html.pt .l-en { display: none !important; }
+  .top-right { display: flex; align-items: center; gap: 28px; }
+  .lang { display: inline-flex; border: 1.5px solid var(--ink); border-radius: 999px; overflow: hidden; font-family: var(--sans); }
+  .lang button {
+    appearance: none; border: 0; background: transparent; color: var(--ink);
+    font: 600 13px/1 var(--sans); padding: 8px 12px; cursor: pointer;
+  }
+  .lang button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  .lang button:focus-visible { outline: 3px solid var(--pencil); outline-offset: -3px; }
 </style>
+<script>
+(function () {
+  var d = document.documentElement, l = null;
+  try { l = new URLSearchParams(location.search).get('lang'); } catch (e) {}
+  if (!l) { try { l = localStorage.getItem('kloxus-lang'); } catch (e) {} }
+  if (!l) { l = (navigator.language || '').toLowerCase().indexOf('pt') === 0 ? 'pt' : 'en'; }
+  d.classList.add('js');
+  if (l === 'pt') { d.classList.add('pt'); d.lang = 'pt-BR'; }
+})();
+</script>
 </head>
 <body>
-<script>document.documentElement.classList.add('js');</script>
-
 <div class="wrap">
   <header class="top">
     <a class="wordmark" href="#">Kloxus</a>
-    <nav class="nav" aria-label="Sections">
-      <a href="#how">How it works</a>
-      <a href="#desk">What you get</a>
-      <a href="#rules">Principles</a>
-      <a href="#status">Status</a>
-      <a href="https://github.com/sthefanocordeiro/kloxus">GitHub</a>
-    </nav>
+    <div class="top-right">
+      <nav class="nav l-en" aria-label="Sections">
+        <a href="#how">How it works</a>
+        <a href="#desk">What you get</a>
+        <a href="#rules">Principles</a>
+        <a href="#status">Status</a>
+        <a href="https://github.com/sthefanocordeiro/kloxus">GitHub</a>
+      </nav>
+      <nav class="nav l-pt" aria-label="Seções">
+        <a href="#how-pt">Como funciona</a>
+        <a href="#desk-pt">O que você recebe</a>
+        <a href="#rules-pt">Princípios</a>
+        <a href="#status-pt">Status</a>
+        <a href="https://github.com/sthefanocordeiro/kloxus">GitHub</a>
+      </nav>
+      <div class="lang" role="group" aria-label="Language / Idioma">
+        <button type="button" data-set="en" lang="en">EN</button>
+        <button type="button" data-set="pt" lang="pt-BR">PT</button>
+      </div>
+    </div>
   </header>
 
-  <main>
+  <main class="l-en" lang="en">
     <section class="hero" aria-labelledby="hero-title">
       <div>
         <h1 id="hero-title">The editorial back office for people who publish alone.</h1>
@@ -543,16 +576,256 @@
       </div>
     </section>
   </main>
+
+  <main class="l-pt" lang="pt-BR">
+    <section class="hero" aria-labelledby="hero-title-pt">
+      <div>
+        <h1 id="hero-title-pt">O bastidor editorial de quem publica sozinho.</h1>
+        <p class="lede">A Kloxus lê as fontes que você acompanha, descarta o ruído e prepara a sua próxima edição com uma fonte por trás de cada fato.</p>
+        <p class="note">O comentário é seu. Nada sai sem a sua aprovação.</p>
+        <div class="actions">
+          <a class="btn btn-primary" href="#how-pt">Veja como uma edição é feita</a>
+          <a class="btn btn-quiet" href="https://github.com/sthefanocordeiro/kloxus">Conheça o projeto no GitHub</a>
+        </div>
+        <p class="event">Projeto do HackBrazil 2026, trilha Cultura e Economia Criativa.<br>Em fase de conceito: ainda não há código funcionando.</p>
+      </div>
+
+      <figure class="proof" aria-labelledby="proof-caption-pt">
+        <div class="proof-head" aria-hidden="true">
+          <span>O feed da semana, marcado pela Kloxus</span>
+          <span>7 de 212 itens</span>
+        </div>
+        <ol>
+          <li class="keep">
+            <div class="headline"><span>Órgão regulador abre consulta pública sobre IA em contratações</span><small class="source">Radar Tech</small></div>
+            <div class="margin" style="--d: 0.4s"><span class="score">9.1</span> fonte primária, afeta seus leitores <span class="sr-only">(mantido)</span></div>
+          </li>
+          <li class="cut">
+            <div class="headline"><span>Regulador abre consulta sobre regras para contratação automatizada</span><small class="source">Pulso Digital</small></div>
+            <div class="margin" style="--d: 0.9s">mesma notícia, juntada à nº 1 <span class="sr-only">(removido por repetição)</span></div>
+          </li>
+          <li class="cut">
+            <div class="headline"><span>Regras para IA em contratações: o que se sabe até agora</span><small class="source">Correio do Código</small></div>
+            <div class="margin" style="--d: 1.2s">mesma notícia, juntada <span class="sr-only">(removido por repetição)</span></div>
+          </li>
+          <li class="cut">
+            <div class="headline"><span>Startup capta Série B para criar assistente de anotações com IA</span><small class="source">Pulso Digital</small></div>
+            <div class="margin" style="--d: 1.6s">rodada de investimento sem mudar o mercado: regra sua <span class="sr-only">(removido pela sua linha editorial)</span></div>
+          </li>
+          <li class="keep">
+            <div class="headline"><span>Universidades publicam base aberta de textos em português</span><small class="source">Radar Tech</small></div>
+            <div class="margin" style="--d: 2.0s"><span class="score">8.4</span> dados abertos, úteis para quem desenvolve <span class="sr-only">(mantido)</span></div>
+          </li>
+          <li class="cut">
+            <div class="headline"><span>Fabricante de celular anuncia modelo para o mês que vem</span><small class="source">Correio do Código</small></div>
+            <div class="margin" style="--d: 2.4s">lançamento, não vendido no Brasil <span class="sr-only">(removido pela sua linha editorial)</span></div>
+          </li>
+          <li class="keep">
+            <div class="headline"><span>Pesquisa mapeia como pequenas empresas usam chatbots de IA</span><small class="source">Observatório Aberto</small></div>
+            <div class="margin" style="--d: 2.8s"><span class="score">7.6</span> conferir o método antes de citar <span class="sr-only">(mantido)</span></div>
+          </li>
+        </ol>
+        <figcaption id="proof-caption-pt" class="proof-foot">Ilustração com manchetes e veículos fictícios. O que tem marca-texto vai para a sua pauta, o que está riscado sai, e cada nota na margem explica o motivo.</figcaption>
+      </figure>
+    </section>
+
+    <section class="block" aria-labelledby="problem-title-pt">
+      <h2 id="problem-title-pt">Escrever é a última etapa, não a mais difícil.</h2>
+      <p class="intro">Antes da primeira frase de uma edição, alguém precisa fazer o trabalho de um editor. Quem publica sozinho é esse alguém, toda semana.</p>
+      <ol class="steps-before">
+        <li><strong>Acompanhar as fontes</strong><span>Dezenas de sites, feeds e newsletters.</span></li>
+        <li><strong>Descartar repetições</strong><span>A mesma notícia, republicada por vários veículos.</span></li>
+        <li><strong>Escolher a pauta</strong><span>O que entra, em que ordem e por quê.</span></li>
+        <li><strong>Reunir e checar</strong><span>Links, fatos e o que ainda não se sabe.</span></li>
+        <li class="write"><strong>Escrever</strong><span>A parte pela qual seus leitores assinaram.</span></li>
+      </ol>
+      <div class="bracket-wrap">
+        <p class="bracket">A Kloxus tira essas quatro etapas da sua mesa. É nelas que as edições atrasam e as publicações param.</p>
+      </div>
+    </section>
+
+    <section class="block" id="how-pt" aria-labelledby="how-title-pt">
+      <h2 id="how-title-pt">Como uma edição é feita.</h2>
+      <p class="intro">Quase tudo é automação comum. O modelo de IA entra só onde é preciso julgamento de editor, e uma etapa humana decide o que é publicado.</p>
+      <div class="pipeline">
+        <ol class="galley">
+          <li><span class="name">Coletar</span><span class="what">Itens novos dos seus feeds RSS e páginas abertas, no horário que você definir.<span class="who">Automação</span></span></li>
+          <li><span class="name">Juntar repetições</span><span class="what">Uma entrada por notícia, com todos os veículos que a publicaram.<span class="who">Automação</span></span></li>
+          <li><span class="name">Pontuar</span><span class="what">Nota de 0 a 10 de relevância para a sua linha editorial, com o motivo em uma linha.<span class="who">Modelo de IA</span></span></li>
+          <li><span class="name">Pauta</span><span class="what">De cinco a dez itens agrupados por tema, cada um com o porquê de importar.<span class="who">Modelo de IA</span></span></li>
+          <li><span class="name">Dossiê</span><span class="what">Resumo próprio, fatos com link, uma citação curta e o que ninguém sabe ainda.<span class="who">Modelo de IA, com uma breve etapa de pesquisa</span></span></li>
+          <li><span class="name">Rascunho</span><span class="what">Suas seções preenchidas, com espaços vazios para o seu comentário.<span class="who">Modelo de IA</span></span></li>
+          <li><span class="name">Checagem de fontes</span><span class="what">Toda frase factual sem link é sinalizada e bloqueia o envio.<span class="who">Modelo de IA e uma regra fixa</span></span></li>
+          <li class="gate"><span class="name">Sua revisão</span><span class="what">Aprove, rejeite com um motivo, edite ou peça uma alternativa. O comentário é você quem escreve.<span class="who">Você</span></span></li>
+          <li><span class="name">Enviar</span><span class="what">E-mail para os seus leitores, ou exportação para colar no Substack ou na beehiiv.<span class="who">Automação</span></span></li>
+        </ol>
+        <div class="aside-notes">
+          <p class="pencil-note">Cada rejeição, com o motivo, vira uma linha do seu guia editorial. A semana seguinte começa mais perto do seu gosto.
+            <svg width="120" height="46" viewBox="0 0 120 46" aria-hidden="true"><path d="M4 40 C 40 44, 80 30, 108 8" fill="none" stroke="#2B55D6" stroke-width="2" stroke-linecap="round"/><path d="M96 6 L109 7 L106 20" fill="none" stroke="#2B55D6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </p>
+          <p class="pencil-note">Você pode ler e editar o guia quando quiser. Nada de perfil escondido.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="desk-pt" aria-labelledby="desk-title-pt">
+      <h2 id="desk-title-pt">O que chega à sua mesa.</h2>
+      <p class="intro">Uma pauta em ordem de relevância, que você aceita ou contesta, e um dossiê por item que mantém fatos, interpretação e lacunas separados.</p>
+      <div class="desk">
+        <div class="screen" role="img" aria-label="Tela simulada da pauta, com notas de relevância, motivos e opções de aprovar ou rejeitar cada item.">
+          <div class="screen-bar"><span><b>Futuro Próximo</b>, edição 42</span><span>9 itens para revisar</span></div>
+          <div class="item">
+            <div class="item-top"><span class="pill">9.1</span><h4>Órgão regulador abre consulta pública sobre IA em contratações</h4></div>
+            <p class="why">Afeta seus leitores diretamente. Fonte primária. Consulta aberta até 15/dez.</p>
+            <div class="chips"><span class="chip ok">Aprovado</span><span class="chip">Rejeitar</span><span class="chip">Alternativa</span></div>
+          </div>
+          <div class="item">
+            <div class="item-top"><span class="pill">8.4</span><h4>Universidades publicam base aberta de textos em português</h4></div>
+            <p class="why">Dados abertos que seus leitores desenvolvedores podem usar nesta semana.</p>
+            <div class="chips"><span class="chip">Aprovar</span><span class="chip">Rejeitar</span><span class="chip">Alternativa</span></div>
+          </div>
+          <div class="item dim">
+            <div class="item-top"><span class="pill low">4.2</span><h4>Startup capta Série B para criar assistente de anotações com IA</h4></div>
+            <p class="why">Baixa: rodada de investimento sem impacto no mercado, segundo o seu guia.</p>
+            <div class="chips"><span class="chip">Aprovar</span><span class="chip ok">Rejeitado: fora da minha linha</span></div>
+          </div>
+        </div>
+
+        <div class="screen" role="img" aria-label="Tela simulada de um dossiê: resumo, fatos com fontes numeradas, uma interpretação marcada como tal, perguntas em aberto e um espaço vazio para o comentário do criador.">
+          <div class="screen-bar"><span><b>Dossiê</b>, item 1 de 9</span><span>3 fontes</span></div>
+          <div class="dossier">
+            <h4>Órgão regulador abre consulta pública sobre IA em contratações</h4>
+            <h5>Resumo da Kloxus</h5>
+            <p>Uma proposta de regra obrigaria empresas a avisar candidatos quando sistemas automatizados fazem a triagem.<sup>1</sup></p>
+            <h5>Fatos</h5>
+            <ul>
+              <li>A consulta fica aberta até 15/dez.<sup>1</sup></li>
+              <li>A proposta vale para empresas com mais de 100 funcionários.<sup>1</sup></li>
+              <li>Duas entidades empresariais pediram um prazo de transição maior.<sup>2</sup></li>
+            </ul>
+            <h5>Interpretação, marcada como tal</h5>
+            <p class="interp">Plataformas de recrutamento provavelmente vão precisar de novas telas de consentimento.</p>
+            <h5>Ainda não se sabe</h5>
+            <p>As penalidades e o prazo de fiscalização.</p>
+            <div class="slot">Seu comentário entra aqui. Esta seção não pode ser enviada sem ele.</div>
+          </div>
+        </div>
+      </div>
+      <p class="disclaimer">Telas simuladas com conteúdo fictício, para mostrar a experiência pretendida. O produto ainda não foi construído.</p>
+    </section>
+
+    <section class="block" id="rules-pt" aria-labelledby="rules-title-pt">
+      <h2 id="rules-title-pt">Regras das quais o produto não abre mão.</h2>
+      <p class="intro">São requisitos, não slogans. Elas definem o que o software pode fazer.</p>
+      <dl class="rules">
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Sua assinatura, suas palavras</dt><dd>A Kloxus prepara o material. O comentário é sempre escrito por quem assina a edição.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Nada sai sem você</dt><dd>Toda edição precisa da sua aprovação explícita antes do envio.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Todo fato tem fonte</dt><dd>Cada frase factual tem link para a origem. Frases sem link bloqueiam o envio.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Fato separado de opinião</dt><dd>Interpretação aparece marcada como interpretação, para o leitor nunca confundir um palpite do modelo com um fato.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Curadoria, não cópia</dt><dd>Resumos próprios, citações curtas com crédito e só fontes abertas à leitura: RSS, APIs públicas e páginas que permitem. Nada atrás de paywall.</dd></div>
+        </div>
+        <div class="rule">
+          <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 12 L9 19 L24 2" fill="none" stroke="#2B55D6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><dt>Seus dados são seus</dt><dd>Dados de criadores e leitores não são usados para treinar modelos.</dd></div>
+        </div>
+      </dl>
+    </section>
+
+    <section class="block" aria-labelledby="money-title-pt">
+      <h2 id="money-title-pt">O leitor paga a você. Não a nós.</h2>
+      <p class="intro">Se quiser cobrar por uma edição, os leitores assinam pela sua própria conta de pagamento. A Kloxus só abre a porta.</p>
+      <div class="flow">
+        <div class="node"><b>Seu leitor</b><span>Assina com PIX ou cartão</span></div>
+        <div class="arrow" aria-hidden="true"></div>
+        <div class="node"><b>Sua conta AbacatePay</b><span>Aberta e verificada por você</span></div>
+        <div class="arrow" aria-hidden="true"></div>
+        <div class="node you"><b>Você</b><span>Recebe o valor integral, menos a tarifa do gateway</span></div>
+      </div>
+      <div class="kloxus-line">
+        <p class="kloxus-box"><b>Kloxus</b> cria a assinatura com uma chave que você restringe e libera a edição paga quando o pagamento é confirmado. Ela nunca recebe nem guarda o dinheiro e não cobra comissão.</p>
+      </div>
+    </section>
+
+    <section class="block" id="status-pt" aria-labelledby="status-title-pt">
+      <h2 id="status-title-pt">Em que pé está o projeto.</h2>
+      <div class="status-now">
+        <div>
+          <span class="stamp">Conceito e especificação</span>
+          <p>Ainda não há código funcionando. O que existe hoje é a definição do problema, o desenho do produto e um plano de validação.</p>
+          <p>Antes de avançar na construção, o plano é conversar com criadores independentes e testar as hipóteses mais arriscadas: que preparar a edição é o verdadeiro gargalo, que a pauta sugerida é boa o bastante para ser mantida e que os criadores pagariam por isso.</p>
+          <p><a href="https://github.com/sthefanocordeiro/kloxus">Leia a descrição completa no GitHub (em inglês)</a></p>
+        </div>
+        <ol class="timeline">
+          <li class="now"><time>Novembro de 2026</time><b>Agora:</b> entrevistas com criadores, mapeamento de fontes, primeiro protótipo.</li>
+          <li><time>Dezembro de 2026 a janeiro de 2027</time>Piloto com até cinco publicações reais, medindo quanto da pauta elas mantêm e quanto tempo economizam.</li>
+          <li><time>Fevereiro de 2027</time>Decidir, com os números do piloto, se o projeto continua.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
 </div>
 
 <footer>
   <div class="wrap foot">
-    <div>
+    <div class="l-en" lang="en">
       <p>Kloxus, by Sthéfano Cordeiro. HackBrazil 2026, Culture and Creative Economy track.</p>
       <p>Source available under the PolyForm Strict License 1.0.0, with an evaluation permission for the HackBrazil judges.</p>
+    </div>
+    <div class="l-pt" lang="pt-BR">
+      <p>Kloxus, por Sthéfano Cordeiro. HackBrazil 2026, trilha Cultura e Economia Criativa.</p>
+      <p>Código disponível sob a PolyForm Strict License 1.0.0, com permissão de avaliação para a banca do HackBrazil.</p>
     </div>
     <div><p><a href="https://github.com/sthefanocordeiro/kloxus">github.com/sthefanocordeiro/kloxus</a></p></div>
   </div>
 </footer>
+
+<script>
+(function () {
+  var d = document.documentElement;
+  var meta = document.querySelector('meta[name="description"]');
+  var text = {
+    en: {
+      title: 'Kloxus: the editorial back office for independent publishers',
+      desc: 'Kloxus reads the sources you follow, filters the noise and drafts your next issue with a source behind every fact. You write the commentary. Nothing ships without your approval.'
+    },
+    pt: {
+      title: 'Kloxus: o bastidor editorial de quem publica de forma independente',
+      desc: 'A Kloxus lê as fontes que você acompanha, descarta o ruído e prepara a sua próxima edição com uma fonte por trás de cada fato. O comentário é seu. Nada sai sem a sua aprovação.'
+    }
+  };
+  var buttons = document.querySelectorAll('.lang button');
+  function apply(l) {
+    d.classList.toggle('pt', l === 'pt');
+    d.lang = l === 'pt' ? 'pt-BR' : 'en';
+    document.title = text[l].title;
+    if (meta) { meta.setAttribute('content', text[l].desc); }
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].setAttribute('aria-pressed', buttons[i].getAttribute('data-set') === l ? 'true' : 'false');
+    }
+  }
+  apply(d.classList.contains('pt') ? 'pt' : 'en');
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].addEventListener('click', function () {
+      var l = this.getAttribute('data-set');
+      apply(l);
+      try { localStorage.setItem('kloxus-lang', l); } catch (e) {}
+    });
+  }
+})();
+</script>
 </body>
 </html>
