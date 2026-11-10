@@ -143,11 +143,18 @@
 <button class="primary" type="submit">Send to readers</button>
 </form>
 {{else}}{{if ne .Issue.Status "sent"}}<p class="muted">Approve the issue first.</p>{{end}}{{end}}
-{{if eq .Issue.Status "sent"}}<p class="ok">Sent — check the outbox/ directory.</p>{{end}}
+{{if eq .Issue.Status "sent"}}<p class="ok">Sent — saved to the demo outbox (.eml file).</p>{{end}}
 {{end}}
 
 {{define "page-sent"}}
-<h1>Sent</h1><p class="ok">Issue written to {{.Path}}</p><p><a href="/">back to publications</a></p>
+<h1>Sent</h1>
+<p class="ok">Issue sent to the demo outbox: <strong>{{.Filename}}</strong></p>
+<p class="muted">Demo mode simulates delivery — the issue is saved as an .eml file instead of going to real inboxes.</p>
+<p>
+  <a href="/issue/{{.Issue.ID}}/export?fmt=html">Download HTML</a> ·
+  <a href="/issue/{{.Issue.ID}}/export?fmt=markdown">Download Markdown</a> ·
+  <a href="/">back to publications</a>
+</p>
 {{end}}
 
 {{define "page-guide"}}

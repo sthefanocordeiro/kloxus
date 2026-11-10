@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -511,7 +512,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.d.DB.SetIssueStatus(r.Context(), iss.ID, "sent")
-	s.render(w, "page-sent", map[string]any{"Path": path})
+	s.render(w, "page-sent", map[string]any{"Issue": iss, "Filename": filepath.Base(path)})
 }
 
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
