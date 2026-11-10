@@ -134,7 +134,7 @@ Kloxus would never touch the money and would take no commission. It would earn o
 
 ## Examples
 
-**Everything in this section is an illustrative design.** The stories and links are fictional placeholders. Nothing here was produced by running Kloxus.
+**The stories and links in this section are fictional placeholders** used to illustrate the product design. The demo itself produces real output — from fictional Brazilian sources, with recorded model responses — following exactly this shape.
 
 ### A publication definition
 

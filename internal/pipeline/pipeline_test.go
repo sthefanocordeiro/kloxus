@@ -68,7 +68,7 @@ func TestRunHeadless(t *testing.T) {
 	})
 
 	outDir := t.TempDir()
-	res, err := RunHeadless(ctx, db, pub, outDir, fetcher, provider, "haiku", "sonnet", 3)
+	res, err := RunHeadless(ctx, db, pub, outDir, fetcher, provider, "haiku", "sonnet", 3, false)
 	if err != nil {
 		t.Fatalf("RunHeadless: %v", err)
 	}
@@ -140,6 +140,7 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	fsys := fstest.MapFS{"feeds/a.xml": {Data: []byte(testFeed)}}
 	runner := &Runner{
 		DB: db, Fetcher: sources.FixtureFetcher{FS: fsys}, TriageModel: "haiku", DraftModel: "sonnet", MaxDeepDives: 3,
+		DemoMode: true,
 		LLM: llm.Func(func(_ context.Context, req llm.Request) (llm.Response, error) {
 			return llm.Response{Text: responses[req.Template], InputTokens: 1, OutputTokens: 1}, nil
 		}),

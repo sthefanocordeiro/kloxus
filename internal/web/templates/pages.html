@@ -55,6 +55,7 @@
 {{end}}
 </table>
 <h3>Add source</h3>
+{{if .Error}}<p class="alert">{{.Error}}</p>{{end}}
 <form method="post" action="/pub/{{.Pub.ID}}/sources/add" class="inline-form">
 <select name="type"><option value="rss">RSS feed</option><option value="page">Open page (no RSS)</option></select>
 <input name="url" placeholder="https://… or fixtures/…" size="50">

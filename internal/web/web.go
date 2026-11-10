@@ -42,11 +42,19 @@ type Deps struct {
 	Reseed  func(ctx context.Context) error // demo reset
 }
 
+// runState is the JSON payload polled by /run/status.
 type runState struct {
 	Step    string `json:"step"`
 	Done    bool   `json:"done"`
 	IssueID int64  `json:"issue_id"`
 	Err     string `json:"error"`
+}
+
+// runProgress wraps runState with a mutex: the pipeline goroutine writes
+// it while /run/status reads from other goroutines.
+type runProgress struct {
+	mu sync.Mutex
+	st runState
 }
 
 // Server is the UI handler.
@@ -181,6 +189,10 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
+	s.renderSources(w, r, pub, "")
+}
+
+func (s *Server) renderSources(w http.ResponseWriter, r *http.Request, pub *store.Publication, errMsg string) {
 	srcs, _ := s.d.DB.Sources(r.Context(), pub.ID)
 	var rows []sourceRow
 	for _, src := range srcs {
@@ -189,7 +201,7 @@ func (s *Server) sources(w http.ResponseWriter, r *http.Request) {
 		row.MonitorProvider, row.MonitorID, row.MonitorStatus = p, mid, st
 		rows = append(rows, row)
 	}
-	s.render(w, "page-sources", map[string]any{"Pub": pub, "Sources": rows})
+	s.render(w, "page-sources", map[string]any{"Pub": pub, "Sources": rows, "Error": errMsg})
 }
 
 func (s *Server) sourceAdd(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +215,12 @@ func (s *Server) sourceAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "type rss|page and url required", 400)
 		return
 	}
+	if s.d.Cfg.Mode == "demo" {
+		if _, err := s.d.Fetcher.Fetch(r.Context(), typ, url); err != nil {
+			s.renderSources(w, r, pub, fmt.Sprintf("can't fetch %q in demo mode — demo sources live under fixtures/... (real URLs need real mode)", url))
+			return
+		}
+	}
 	if _, err := s.d.DB.AddSource(r.Context(), pub.ID, typ, url); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -212,7 +230,12 @@ func (s *Server) sourceAdd(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sourceWatch(w http.ResponseWriter, r *http.Request) {
 	sid, _ := strconv.ParseInt(r.PathValue("sid"), 10, 64)
-	mid, err := s.d.Monitor.Watch(r.Context(), sourceURL(r, s.d.DB, sid))
+	url, err := s.sourceURL(r, sid)
+	if err != nil {
+		http.Error(w, "source not found", 404)
+		return
+	}
+	mid, err := s.d.Monitor.Watch(r.Context(), url)
 	if err != nil {
 		http.Error(w, "monitor: "+err.Error(), 502)
 		return
@@ -224,14 +247,25 @@ func (s *Server) sourceWatch(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, "/pub/"+r.PathValue("id")+"/sources")
 }
 
-func sourceURL(r *http.Request, db *store.DB, sid int64) string {
+// sourceURL returns the URL of a source owned by the publication in the
+// request path, guarding against cross-publication source ids.
+func (s *Server) sourceURL(r *http.Request, sid int64) (string, error) {
+	pub, err := s.pub(r)
+	if err != nil {
+		return "", err
+	}
 	var url string
-	db.QueryRowContext(r.Context(), `SELECT url FROM sources WHERE id = ?`, sid).Scan(&url)
-	return url
+	err = s.d.DB.QueryRowContext(r.Context(),
+		`SELECT url FROM sources WHERE id = ? AND publication_id = ?`, sid, pub.ID).Scan(&url)
+	return url, err
 }
 
 func (s *Server) sourceCheck(w http.ResponseWriter, r *http.Request) {
 	sid, _ := strconv.ParseInt(r.PathValue("sid"), 10, 64)
+	if _, err := s.sourceURL(r, sid); err != nil {
+		http.Error(w, "source not found", 404)
+		return
+	}
 	_, mid, _, _ := s.d.DB.SourceMonitor(r.Context(), sid)
 	res, err := s.d.Monitor.Check(r.Context(), mid)
 	if err != nil {
@@ -265,27 +299,34 @@ func (s *Server) runStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
-	if _, running := s.runs.LoadOrStore(pub.ID, &runState{Step: "starting"}); running {
+	if _, running := s.runs.LoadOrStore(pub.ID, &runProgress{st: runState{Step: "starting"}}); running {
 		s.redirect(w, r, "/pub/"+r.PathValue("id")+"/run")
 		return
 	}
-	st := &runState{Step: "starting"}
+	st := &runProgress{st: runState{Step: "starting"}}
 	s.runs.Store(pub.ID, st)
 	go func() {
 		runner := &pipeline.Runner{
 			DB: s.d.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			MaxDeepDives: s.d.Cfg.MaxDeepDives,
-			OnStep:       func(step string) { st.Step = step },
+			DemoMode:     s.d.Cfg.Mode == "demo",
+			OnStep: func(step string) {
+				st.mu.Lock()
+				st.st.Step = step
+				st.mu.Unlock()
+			},
 		}
 		res, err := runner.RunPhaseA(context.Background(), pub)
+		st.mu.Lock()
+		defer st.mu.Unlock()
 		if err != nil {
-			st.Err = err.Error()
-			st.Done = true
+			st.st.Err = err.Error()
+			st.st.Done = true
 			return
 		}
-		st.IssueID = res.IssueID
-		st.Done = true
+		st.st.IssueID = res.IssueID
+		st.st.Done = true
 	}()
 	s.redirect(w, r, "/pub/"+r.PathValue("id")+"/run")
 }
@@ -298,7 +339,11 @@ func (s *Server) runStatus(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(runState{Done: true})
 		return
 	}
-	json.NewEncoder(w).Encode(v.(*runState))
+	st := v.(*runProgress)
+	st.mu.Lock()
+	snap := st.st
+	st.mu.Unlock()
+	json.NewEncoder(w).Encode(snap)
 }
 
 // --- issue review ---
@@ -391,6 +436,7 @@ func (s *Server) draftRun(w http.ResponseWriter, r *http.Request) {
 		DB: s.d.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 		TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 		MaxDeepDives: s.d.Cfg.MaxDeepDives,
+		DemoMode:     s.d.Cfg.Mode == "demo",
 	}
 	if _, err := runner.RunPhaseB(r.Context(), pub, iss.ID); err != nil {
 		http.Error(w, "draft: "+err.Error(), 500)
@@ -695,6 +741,10 @@ type fcEvent struct {
 }
 
 func (s *Server) firecrawlWebhook(w http.ResponseWriter, r *http.Request) {
+	if s.d.Cfg.Mode == "real" && s.d.Cfg.WebhookSecret == "" {
+		http.Error(w, "webhook secret not configured", 503)
+		return
+	}
 	if s.d.Cfg.WebhookSecret != "" {
 		if r.Header.Get("Authorization") != "Bearer "+s.d.Cfg.WebhookSecret {
 			http.Error(w, "unauthorized", 401)
@@ -702,7 +752,7 @@ func (s *Server) firecrawlWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var ev fcEvent
-	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&ev); err != nil {
 		http.Error(w, "bad payload", 400)
 		return
 	}

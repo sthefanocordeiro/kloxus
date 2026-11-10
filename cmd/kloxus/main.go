@@ -155,7 +155,7 @@ func cmdDemo(args []string) error {
 			return err
 		})
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives)
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, true)
 	if err != nil {
 		return err
 	}
@@ -201,6 +201,9 @@ func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider
 }
 
 func openBrowser(url string) {
+	if os.Getenv("KLOXUS_NO_BROWSER") != "" {
+		return
+	}
 	time.Sleep(500 * time.Millisecond)
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -242,7 +245,7 @@ func cmdRun(args []string) error {
 		return err
 	}
 	fetcher, provider := demoRuntime(cfg)
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives)
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, true)
 	if err != nil {
 		return err
 	}
@@ -496,7 +499,7 @@ func cmdRecord(args []string) error {
 		Inner: llm.Anthropic{APIKey: cfg.AnthropicAPIKey},
 		Dir:   *dir,
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives)
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, false)
 	if err != nil {
 		return err
 	}

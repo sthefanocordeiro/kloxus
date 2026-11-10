@@ -61,14 +61,22 @@ func TestParsePublicationValidatesFields(t *testing.T) {
 	}
 }
 
-func TestGetduration(t *testing.T) {
-	t.Setenv("KLOXUS_TEST_DURATION", "150ms")
-	if got := getduration("KLOXUS_TEST_DURATION", time.Second); got != 150*time.Millisecond {
-		t.Errorf("getduration = %v", got)
+func TestLoadValidatesDemoResetInterval(t *testing.T) {
+	t.Setenv("KLOXUS_DEMO_RESET_INTERVAL", "not-a-duration")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid duration")
 	}
-	t.Setenv("KLOXUS_TEST_DURATION", "not-a-duration")
-	if got := getduration("KLOXUS_TEST_DURATION", time.Second); got != time.Second {
-		t.Errorf("getduration fallback = %v", got)
+	t.Setenv("KLOXUS_DEMO_RESET_INTERVAL", "-1h")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for negative duration")
+	}
+	t.Setenv("KLOXUS_DEMO_RESET_INTERVAL", "24h")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DemoResetInterval != 24*time.Hour {
+		t.Errorf("DemoResetInterval = %v, want 24h", cfg.DemoResetInterval)
 	}
 }
 

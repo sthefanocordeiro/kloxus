@@ -39,6 +39,10 @@ type Runner struct {
 	TriageModel  string
 	DraftModel   string
 	MaxDeepDives int
+	// DemoMode makes PhaseB send the canonical all-selected item set to
+	// draft/citecheck (stable fixture keys) while the stored body and
+	// flags are built from active items only.
+	DemoMode bool
 	// OnStep, if set, is called as each step starts (progress reporting).
 	OnStep func(step string)
 }
@@ -117,6 +121,10 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 		return resp, err
 	}
 	if err := decodeJSON(resp.Text, out); err != nil {
+		if r.DemoMode {
+			// A retry would change the request and miss the fixture.
+			return resp, fmt.Errorf("template %s: %w", name, err)
+		}
 		req.User = user + "\n\nYour previous reply was not valid JSON (" + err.Error() + "). Reply with ONLY the JSON."
 		resp2, err2 := r.LLM.Complete(ctx, req)
 		if err2 != nil {
@@ -171,14 +179,6 @@ func (r *Runner) stepStart(name string) {
 	if r.OnStep != nil {
 		r.OnStep(name)
 	}
-}
-
-func usesReplayFixtures(p llm.Provider) bool {
-	switch p.(type) {
-	case llm.Replay, *llm.Replay:
-		return true
-	}
-	return false
 }
 
 // RunPhaseA runs collect → dedupe → triage → storylist → dossier →
@@ -569,7 +569,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	}
 	res.Selected = len(entries)
 	modelEntries, modelDossiers := entries, dossierByRef
-	if usesReplayFixtures(r.LLM) {
+	if r.DemoMode {
 		modelEntries, modelDossiers, err = r.loadEntries(ctx, issueID, true)
 		if err != nil {
 			return nil, err
@@ -591,7 +591,10 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	}
 	drItems := make([]drItem, len(modelEntries))
 	for i, e := range modelEntries {
-		d := modelDossiers[e.ref]
+		d, ok := modelDossiers[e.ref]
+		if !ok {
+			return nil, fmt.Errorf("draft: no dossier for item ref %d", e.ref)
+		}
 		drItems[i] = drItem{
 			Ref: e.ref, Section: e.section, Score: e.score, Title: e.title,
 			Summary: d.Summary, Facts: d.Facts, DeepFacts: d.DeepFacts,
@@ -641,7 +644,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	checkBody := body
 	checkEntries := entries
 	checkDossiers := dossierByRef
-	if usesReplayFixtures(r.LLM) {
+	if r.DemoMode {
 		checkBody = assembleIssue(pub, number, modelEntries, draftByRef, modelDossiers, sectionOrder)
 		checkEntries = modelEntries
 		checkDossiers = modelDossiers
@@ -667,7 +670,10 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	cs := []cSent{}
 	ci := []cItem{}
 	for _, e := range checkEntries {
-		d := checkDossiers[e.ref]
+		d, ok := checkDossiers[e.ref]
+		if !ok {
+			return nil, fmt.Errorf("citecheck: no dossier for item ref %d", e.ref)
+		}
 		c := cItem{Ref: e.ref}
 		for _, s := range d.Sources {
 			c.Sources = append(c.Sources, struct {
@@ -700,6 +706,15 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	for _, s := range sents {
 		sentByID[s.id] = s
 	}
+	seen := map[string]bool{}
+	addFlag := func(item int64, sentence, note string) {
+		k := fmt.Sprintf("%d|%s", item, sentence)
+		if seen[k] {
+			return
+		}
+		seen[k] = true
+		res.Flagged = append(res.Flagged, Flagged{Item: item, Sentence: sentence, Note: note})
+	}
 	activeRef := map[int]bool{}
 	for _, e := range entries {
 		activeRef[e.ref] = true
@@ -712,31 +727,19 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		if !ok || !activeRef[s.itemRef] {
 			continue
 		}
-		res.Flagged = append(res.Flagged, Flagged{
-			Item:     int64(s.itemRef),
-			Sentence: s.text,
-			Note:     c.Note,
-		})
+		addFlag(int64(s.itemRef), s.text, c.Note)
 	}
 	// deterministic rules: a body sentence with no citation, or an entry
 	// with no citation at all, is flagged without needing the model.
 	for _, s := range extractSentences(body) {
 		if s.refs == "" {
-			res.Flagged = append(res.Flagged, Flagged{
-				Item:     int64(s.itemRef),
-				Sentence: s.text,
-				Note:     "sentence has no citation",
-			})
+			addFlag(int64(s.itemRef), s.text, "sentence has no citation")
 		}
 	}
 	for _, e := range entries {
 		de, ok := draftByRef[e.ref]
 		if ok && !refRe.MatchString(de.body) {
-			res.Flagged = append(res.Flagged, Flagged{
-				Item:     int64(e.ref),
-				Sentence: truncate(de.body, 120),
-				Note:     "entry has no citations",
-			})
+			addFlag(int64(e.ref), truncate(de.body, 120), "entry has no citations")
 		}
 	}
 	flagsJSON, _ := json.Marshal(res.Flagged)
@@ -937,7 +940,8 @@ func truncate(s string, n int) string {
 }
 
 // RunHeadless is the CLI entry: build a runner for the given mode and run it.
-func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int) (*Result, error) {
+// demo=true makes PhaseB use canonical replay input (see Runner.DemoMode).
+func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int, demo bool) (*Result, error) {
 	r := &Runner{
 		DB:           db,
 		LLM:          provider,
@@ -945,6 +949,7 @@ func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outD
 		TriageModel:  triageModel,
 		DraftModel:   draftModel,
 		MaxDeepDives: maxDeep,
+		DemoMode:     demo,
 	}
 	return r.Run(ctx, pub, outDir)
 }

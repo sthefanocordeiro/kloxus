@@ -15,7 +15,8 @@ COPY --from=build /out/kloxus /app/kloxus
 ENV KLOXUS_MODE=demo \
 	KLOXUS_PORT=8080 \
 	KLOXUS_DB_PATH=/data/kloxus.db \
-	KLOXUS_OUT_DIR=/data/out
+	KLOXUS_OUT_DIR=/data/out \
+	KLOXUS_NO_BROWSER=1
 EXPOSE 8080
 VOLUME ["/data"]
 ENTRYPOINT ["/app/kloxus", "demo"]
