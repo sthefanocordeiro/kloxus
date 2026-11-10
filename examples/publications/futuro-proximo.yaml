@@ -1,0 +1,35 @@
+slug: futuro-proximo
+name: Futuro Próximo
+language: pt-BR
+topic: Technology and trends that will affect Brazilian professionals
+audience: Mid-career professionals who are curious but not engineers
+editorial_line: |
+  Prioritize real-world adoption over announcements.
+  Skip product launches without availability in Brazil.
+  Skip funding rounds unless they change a market.
+  Prefer primary sources (company blogs, papers, regulators).
+tone: Plain, first person, no hype
+frequency: weekly
+sections:
+  - title: The big one
+    items: 1
+    commentary: required
+  - title: Worth knowing
+    items: 4
+    commentary: optional
+  - title: Quick links
+    items: 5
+    commentary: none
+sources:
+  - type: rss
+    url: fixtures/feeds/radar-tech.xml
+  - type: rss
+    url: fixtures/feeds/pulso-digital.xml
+  - type: rss
+    url: fixtures/feeds/correio-do-codigo.xml
+  - type: page
+    url: fixtures/pages/observatorio-aberto.html
+paywall:
+  enabled: true
+  paid_sections: [The big one]
+ai_disclosure: short
