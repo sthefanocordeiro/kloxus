@@ -10,6 +10,6 @@
 *.db-wal
 outbox/
 out/
-kloxus.exe
-kloxus
+/kloxus.exe
+/kloxus
 server.log

@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const validYAML = `
@@ -57,6 +58,17 @@ func TestParsePublicationValidatesFields(t *testing.T) {
 		if _, err := ParsePublication([]byte(c.yaml)); err == nil {
 			t.Errorf("%s: expected error, got nil", c.name)
 		}
+	}
+}
+
+func TestGetduration(t *testing.T) {
+	t.Setenv("KLOXUS_TEST_DURATION", "150ms")
+	if got := getduration("KLOXUS_TEST_DURATION", time.Second); got != 150*time.Millisecond {
+		t.Errorf("getduration = %v", got)
+	}
+	t.Setenv("KLOXUS_TEST_DURATION", "not-a-duration")
+	if got := getduration("KLOXUS_TEST_DURATION", time.Second); got != time.Second {
+		t.Errorf("getduration fallback = %v", got)
 	}
 }
 

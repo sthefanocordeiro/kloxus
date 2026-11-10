@@ -1,0 +1,13 @@
+.git
+.devin
+.github
+.env
+*.key
+*.db
+*.db-shm
+*.db-wal
+/out
+/outbox
+/kloxus
+/kloxus.exe
+/server.log

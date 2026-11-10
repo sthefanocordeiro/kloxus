@@ -173,6 +173,14 @@ func (r *Runner) stepStart(name string) {
 	}
 }
 
+func usesReplayFixtures(p llm.Provider) bool {
+	switch p.(type) {
+	case llm.Replay, *llm.Replay:
+		return true
+	}
+	return false
+}
+
 // RunPhaseA runs collect → dedupe → triage → storylist → dossier →
 // deepdive, producing the issue and its items for review.
 func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result, error) {
@@ -463,7 +471,8 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	var ddItems []ddItem
 	for _, e := range sorted {
-		d := dossierByRef[e.ref]
+		d := *dossierByRef[e.ref]
+		d.Title = ""
 		dj, _ := json.Marshal(d)
 		di := ddItem{Ref: e.ref, Title: e.title, Dossier: string(dj)}
 		for j, it := range e.sources {
@@ -512,8 +521,9 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 }
 
 // loadEntries rebuilds the entry list for an existing issue from the DB:
-// issue items that were not rejected, their dossiers and story titles.
-func (r *Runner) loadEntries(ctx context.Context, issueID int64) ([]entry, map[int]*Dossier, error) {
+// issue items, their dossiers and story titles. Rejected items are skipped
+// unless includeRejected is true.
+func (r *Runner) loadEntries(ctx context.Context, issueID int64, includeRejected bool) ([]entry, map[int]*Dossier, error) {
 	iis, err := r.DB.IssueItems(ctx, issueID)
 	if err != nil {
 		return nil, nil, err
@@ -524,7 +534,7 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64) ([]entry, map[i
 	var entries []entry
 	dossierByRef := map[int]*Dossier{}
 	for _, ii := range iis {
-		if ii.Status == "rejected" {
+		if ii.Status == "rejected" && !includeRejected {
 			continue
 		}
 		djson, err := r.DB.Dossier(ctx, ii.ID)
@@ -553,11 +563,18 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64) ([]entry, map[i
 // RunPhaseA (and possibly reviewed). Rejected items are excluded.
 func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
 	res := &Result{IssueID: issueID}
-	entries, dossierByRef, err := r.loadEntries(ctx, issueID)
+	entries, dossierByRef, err := r.loadEntries(ctx, issueID, false)
 	if err != nil {
 		return nil, err
 	}
 	res.Selected = len(entries)
+	modelEntries, modelDossiers := entries, dossierByRef
+	if usesReplayFixtures(r.LLM) {
+		modelEntries, modelDossiers, err = r.loadEntries(ctx, issueID, true)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// --- draft ---
 	r.stepStart("draft")
@@ -572,9 +589,9 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		DeepFacts      []DossierFact
 		Interpretation []string
 	}
-	drItems := make([]drItem, len(entries))
-	for i, e := range entries {
-		d := dossierByRef[e.ref]
+	drItems := make([]drItem, len(modelEntries))
+	for i, e := range modelEntries {
+		d := modelDossiers[e.ref]
 		drItems[i] = drItem{
 			Ref: e.ref, Section: e.section, Score: e.score, Title: e.title,
 			Summary: d.Summary, Facts: d.Facts, DeepFacts: d.DeepFacts,
@@ -621,11 +638,19 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		sectionOrder = append(sectionOrder, s.Title)
 	}
 	body := assembleIssue(pub, number, entries, draftByRef, dossierByRef, sectionOrder)
+	checkBody := body
+	checkEntries := entries
+	checkDossiers := dossierByRef
+	if usesReplayFixtures(r.LLM) {
+		checkBody = assembleIssue(pub, number, modelEntries, draftByRef, modelDossiers, sectionOrder)
+		checkEntries = modelEntries
+		checkDossiers = modelDossiers
+	}
 
 	// --- citecheck ---
 	r.stepStart("citecheck")
 	start = time.Now()
-	sents := extractSentences(body)
+	sents := extractSentences(checkBody)
 	type cSent struct {
 		ID   int
 		Item int
@@ -641,8 +666,8 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	}
 	cs := []cSent{}
 	ci := []cItem{}
-	for _, e := range entries {
-		d := dossierByRef[e.ref]
+	for _, e := range checkEntries {
+		d := checkDossiers[e.ref]
 		c := cItem{Ref: e.ref}
 		for _, s := range d.Sources {
 			c.Sources = append(c.Sources, struct {
@@ -675,19 +700,27 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	for _, s := range sents {
 		sentByID[s.id] = s
 	}
+	activeRef := map[int]bool{}
+	for _, e := range entries {
+		activeRef[e.ref] = true
+	}
 	for _, c := range checks {
-		if c.Verdict == "unsupported" {
-			s := sentByID[c.ID]
-			res.Flagged = append(res.Flagged, Flagged{
-				Item:     int64(s.itemRef),
-				Sentence: s.text,
-				Note:     c.Note,
-			})
+		if c.Verdict != "unsupported" {
+			continue
 		}
+		s, ok := sentByID[c.ID]
+		if !ok || !activeRef[s.itemRef] {
+			continue
+		}
+		res.Flagged = append(res.Flagged, Flagged{
+			Item:     int64(s.itemRef),
+			Sentence: s.text,
+			Note:     c.Note,
+		})
 	}
 	// deterministic rules: a body sentence with no citation, or an entry
 	// with no citation at all, is flagged without needing the model.
-	for _, s := range sents {
+	for _, s := range extractSentences(body) {
 		if s.refs == "" {
 			res.Flagged = append(res.Flagged, Flagged{
 				Item:     int64(s.itemRef),

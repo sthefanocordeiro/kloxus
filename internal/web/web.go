@@ -60,6 +60,10 @@ func New(d Deps) *Server {
 	s := &Server{d: d, mux: http.NewServeMux()}
 	m := s.mux
 	m.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(mustSub(webFS, "static"))))
+	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte("ok\n"))
+	})
 	m.HandleFunc("GET /", s.publications)
 	m.HandleFunc("GET /pub/{id}", s.pubOverview)
 	m.HandleFunc("GET /pub/{id}/settings", s.pubSettings)

@@ -4,8 +4,8 @@
 
 Kloxus is a proposed AI agent that reads the sources a creator follows, filters out the noise, and prepares the next issue of their publication: a ranked story list, a source-backed dossier for each item, and a structured draft with empty slots for the creator's own commentary. The creator reviews, writes what only they can write, and sends.
 
-> **Project status: concept and specification.**
-> There is no working code in this repository yet. This README explains the problem, the proposed solution and how the product is designed to work. Everything under [Examples](#examples) is an illustrative design, not output from a running system. The [Running the project](#running-the-project) section says exactly what can and cannot be run today.
+> **Project status: working HackBrazil demo.**
+> The MVP runs locally with only Go installed: fixture-backed sources, replayed model calls, SQLite persistence, review UI, editorial guide, export/send outbox, and a simulated paywall. The examples below are product copy; the demo itself is deterministic and offline.
 >
 > Submitted to **HackBrazil 2026**, track **Culture and Creative Economy**.
 
@@ -19,7 +19,7 @@ Kloxus is a proposed AI agent that reads the sources a creator follows, filters 
 - [How it is designed to work](#how-it-is-designed-to-work)
 - [Examples](#examples)
 - [Running the project](#running-the-project)
-- [Planned architecture](#planned-architecture)
+- [Implementation architecture](#implementation-architecture)
 - [Estimated costs](#estimated-costs)
 - [Open questions](#open-questions)
 - [Roadmap](#roadmap)
@@ -224,44 +224,68 @@ If the creator rejects an item with the reason "too US-centric", a line like thi
 
 ## Running the project
 
-**Today, there is nothing to run.** This repository contains documentation only.
+### Local demo — zero setup
 
-What exists now:
+Requirement: **Go 1.27 or newer**. No database, API key, account, or network access is needed for demo mode.
 
-- This README
-- Product and validation documents (to be added under `docs/`)
+```bash
+go run ./cmd/kloxus demo
+```
 
-What will be needed to run the first version, once it is built:
+The command seeds the fictional **Futuro Próximo** publication and opens `http://localhost:8080`. It stores demo data in `kloxus.db`, writes generated issues under `out/`, and writes demo email output under `out/outbox/`. The publication list includes a **Reset demo** button.
 
-| Requirement | Why |
+For a non-browser pipeline check:
+
+```bash
+go run ./cmd/kloxus demo --headless
+```
+
+Expected result: 35 collected items, 32 deduplicated stories, 8 selected entries, one deliberately unsupported citation flag, and `out/issue-1.md`.
+
+Useful checks:
+
+```bash
+go vet ./...
+go test ./...
+```
+
+### Hosted demo deployment
+
+The repository includes a `Dockerfile` and `fly.toml` for the same demo-mode binary. The app listens on port 8080, exposes `/healthz`, stores SQLite and generated output on a Fly volume, and can reset the demo every 24 hours via `KLOXUS_DEMO_RESET_INTERVAL=24h`.
+
+Typical Fly deployment:
+
+```bash
+fly launch --copy-config
+fly volumes create kloxus_data --region gru --size 1
+fly deploy
+```
+
+Change `app` in `fly.toml` first if `kloxus-demo` is unavailable. No secrets are required.
+
+### Real mode
+
+Real integrations are intentionally incomplete for the hackathon scope. The Anthropic-backed `record` command can regenerate replay fixtures when `ANTHROPIC_API_KEY` is configured; `serve`, Resend delivery, production Firecrawl monitoring, and AbacatePay remain post-demo work.
+
+## Implementation architecture
+
+| Component | Current choice |
 | --- | --- |
-| Go (recent version) | The planned backend language |
-| PostgreSQL | Storage for sources, items, issues, decisions and the editorial guide |
-| A language model API key | Triage, story list, dossier, draft and citation check |
-| An email service API key | Sending issues (optional; export works without it) |
-| A payment gateway account in test mode | Testing the paywall (optional) |
-
-A **demo mode** is planned so that anyone can try Kloxus with only Go installed: sample sources, sample items and recorded model responses, with no API keys and no accounts.
-
-When code is added, this section will be replaced with step-by-step instructions that have been tested from a clean machine.
-
-## Planned architecture
-
-| Component | Planned choice |
-| --- | --- |
-| Backend | Go, a single binary with the web app and background workers |
-| Database | PostgreSQL |
-| Jobs and scheduling | A Postgres-backed job queue |
-| Feeds and extraction | Go RSS parser and readability-style text extraction; Firecrawl only for open pages without RSS |
-| Models | Anthropic API: a small model (Claude Haiku) for triage and checks, a larger one (Claude Sonnet) for dossier and draft |
-| Email | Resend |
+| Backend | Go single binary with server-rendered web UI |
+| Database | SQLite via `modernc.org/sqlite`, embedded migrations |
+| Jobs and scheduling | In-process run state; demo reset interval |
+| Feeds and extraction | Embedded RSS/page fixtures in demo; fetcher interface for real sources |
+| Dedupe | Canonical URL + SimHash |
+| Models | Provider interface: Anthropic, replay fixtures, recorder |
+| Email | Local `.eml`/HTML outbox in demo; Resend planned for real mode |
 | AI Code Assistant | Devin |
-| Payments | AbacatePay, in the creator's own account |
-| UI | Server-rendered HTML with htmx |
+| Payments | Simulated reader subscription/paywall in demo; AbacatePay planned |
+| Monitoring | Firecrawl monitor interface with a simulated demo provider |
+| UI | Go `html/template`, embedded CSS/vanilla JS, no CDN |
 
 ## Estimated costs
 
-A desk estimate, not a measurement: one weekly issue (about 300 items triaged, 10 items in the dossier, 3 deep dives) should cost around **US$ 0.30 in model calls**, based on published API prices in November 2026. Real costs will be measured and published once a prototype runs.
+The recorded demo issue estimates **US$ 0.1814 in model calls**: 35 collected items, 32 deduplicated stories, 8 dossiers, 3 deep dives, draft, and citation check. This is still an estimate from token counts and configured model prices, but it is now measured from a real pipeline run.
 
 ## Open questions
 
@@ -279,7 +303,7 @@ Findings will be added to `docs/` as they come in.
 
 - [x] Product design and specification (Nov 2026)
 - [ ] Creator interviews and source mapping (Nov 2026)
-- [ ] Working prototype with demo mode (HackBrazil online round, Nov 2026)
+- [x] Working prototype with demo mode (HackBrazil online round, Nov 2026)
 - [ ] Pilot with up to 5 real publications (Dec 2026 to Jan 2027)
 - [ ] Decide whether to continue, based on the pilot
 

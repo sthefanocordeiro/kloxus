@@ -1,0 +1,60 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            asset: kloxus-linux-amd64
+          - goos: darwin
+            goarch: amd64
+            asset: kloxus-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            asset: kloxus-darwin-arm64
+          - goos: windows
+            goarch: amd64
+            asset: kloxus-windows-amd64.exe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags="-s -w" -o "dist/${{ matrix.asset }}" ./cmd/kloxus
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kloxus-*
+          path: dist
+          merge-multiple: true
+      - run: |
+          find dist -type f -maxdepth 1 -print
+          gh release create "${{ github.ref_name }}" dist/* \
+            --title "Kloxus ${{ github.ref_name }}" \
+            --notes "Cross-platform demo binaries. Demo mode requires no database or API keys."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

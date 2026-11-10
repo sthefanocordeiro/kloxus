@@ -29,6 +29,12 @@ Judges are not required to install or run anything. What they evaluate:
 - [x] Phase 0: `.gitignore`, `.env.example`, `docs/decisions.md`.
 - [x] M1 skeleton: CLI, config, SQLite + embedded migrations, fake
   headless demo, CI on 3 OSes. (commit `f1055db`)
+- [x] M2 real pipeline on fixtures. (commit `3e0c49e`)
+- [x] M3 web UI + M4a Firecrawl monitor backend. (WIP commit `1a6830c`)
+- [x] PhaseB replay determinism + judge-loop verification. (2026-11-10;
+  see `docs/devlog.md`)
+- [x] M6b prep: README run/deploy docs, `docs/submission.md`, tag-based
+  binary release workflow, Dockerfile/fly.toml for the hosted demo.
 
 ## M2 — Real pipeline on fixtures (Nov 10–19) → PR 2
 

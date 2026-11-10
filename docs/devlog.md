@@ -47,43 +47,62 @@ M3 web UI + M4a Firecrawl monitor backend:
   (`internal/store/web.go`) + `Reset`, `SetIssueStatus`, `StoryTitle`,
   `ResolveFlags`, reader/subscription helpers, FK-suspending `ClearStories`.
 
-## OPEN BUG — fixture key instability in PhaseB (UI draft)
+## FIXED — PhaseB replay-key instability (2026-11-10)
 
-`POST /issue/{id}/draft` fails: draft request key keeps changing per
-invocation (seen keys: `ab783555`[orig headless], `24fe9f2e`, `79754cea`,
-`20d8b549`). Root cause found via diffing dumps in `out/llm-dump/`:
-**the drItems list differs between calls** — one request had Item 2 =
-"Universidade libera modelo..." while another jumped to Item 4. So
-`loadEntries` (pipeline.go ~line 500) returns a different entry set
-sometimes. Suspects:
+Two separate issues made the UI draft request miss fixtures:
 
-1. A second `POST /pub/{id}/run` ran PhaseA again in the same db →
-   `ClearStories` wiped stories → story ids/refs changed → stored dossiers'
-   refs belong to a different generation. Check whether loadEntries is
-   mixing dossiers across issues/runs.
-2. Rejected-item filtering interacting with `d.Ref` numbering.
-3. `IssueItems` ORDER BY score then re-sorted by id — verify.
+1. `Dossier.Title` was added to persisted JSON so PhaseB could reload the
+   storylist-picked title, but PhaseA also serialized that field into the
+   deepdive prompt. That changed the deepdive request key from `465c2c…`
+   to `d0fec090…`. The prompt copy now clears `Title` before marshaling;
+   the stored dossier keeps it.
+2. PhaseB built draft/citecheck input from only non-rejected items, so
+   arbitrary review decisions produced arbitrary replay keys. In replay
+   mode only, PhaseB now sends the canonical all-selected entry set to
+   draft and citecheck, while the stored issue body and citation flags are
+   built/filtered from non-rejected items. Real mode still sends only the
+   active items. See decision D15.
 
-Steps to fix: reproduce with a fresh db → PhaseA → PhaseB twice, capture
-both requests, diff; then make PhaseB state fully deterministic (e.g.,
-persist entries/refs, or key fixtures on stable input). Then **re-author
-draft (+citecheck) fixtures to the final key** (same response text, new
-filename — or fix the input so the original `ab783555` key is restored).
-IMPORTANT: replay reads fixtures from the embedded FS — **rebuild the
-binary after adding fixture files** (burned ~15 min on this).
+The temporary `79754cea…` fixture (a response copied to a request produced
+by incomplete/mixed state) was removed; `ab783555…` is the intended draft
+fixture again.
+
+Verified with an ignored `.devin` HTTP harness through the real
+`web.Server`: PhaseA → reject items 2/3/6/8 (one with a guide reason) →
+alternative 7 → draft twice → active body contains refs 1/4/5/7 only →
+planted item-1 flag appears → commentary + dismiss flag clears blockers →
+approve → markdown/HTML export → paid/unpaid reader view → send to outbox.
+`go vet ./...`, `go test ./...`, and `demo --headless` all pass; headless
+result is still 35 items → 32 stories → 8 selected → 1 planted flag,
+~$0.1814.
+
+## Deployment/submission prep added (2026-11-10)
+
+- `/healthz` endpoint; optional `KLOXUS_DEMO_RESET_INTERVAL` (Go duration)
+  resets+reseeds demo data in-process. Fly config uses `24h`.
+- Demo outbox now lives under `KLOXUS_OUT_DIR/outbox`, so it persists on
+  the same volume as the DB/output.
+- `Dockerfile`, `.dockerignore`, `fly.toml`: Go 1.27 build → Debian slim
+  non-root runtime, `/data` volume, always-on `http_service`, health check.
+- `.github/workflows/release.yml`: tag `v*` → Linux/macOS Intel/macOS ARM/
+  Windows binaries → GitHub Release via `gh`. Cross-compile verified for
+  Linux and Windows locally.
+- `.gitignore` binary patterns are anchored to the repo root so
+  `cmd/kloxus` is no longer hidden from ignored-file-aware tools.
+- README now documents the working demo, deployment, current architecture;
+  `docs/submission.md` has EN/PT copy, deploy checklist, video shot list.
 
 ## Also verify next session
 
-- Full judge loop in browser (reject→guide update→approve→export).
-- `gateSections` correctness; `page-sent` nav; `page-reader`.
-- CI still runs headless demo on 3 OSes (should pass — headless Run()
-  unchanged externally).
+- Hosted browser pass after deployment (same judge loop + `/healthz`).
+- First tag release upload (workflow is written but not yet executed).
 - Kill stray `kloxus.exe`/`:8080` before re-running (`taskkill //IM kx.exe //F`).
-- Untracked leftovers to keep out of git: `server.log`, `out/`, `kloxus.db`.
+- Untracked leftovers to keep out of git: `server.log`, `out/`, `kloxus.db`,
+  `.devin/repro*`, `.devin/headless*`, `.devin/release-check/`.
 
 ## Timeline reminder
 
-Deadline Nov 30 23:59. Remaining: fix bug → verify judge loop → M6a
-hosted deploy (fly.io/VPS) → M6b release/docs/submission → video (owner,
-English, ≤3min) → submit ~Nov 28. Firecrawl /monitor = sponsor feature,
-already demo-visible on Sources page.
+Deadline Nov 30 23:59. Remaining owner actions: deploy to Fly/VPS (see
+`docs/submission.md`), verify hosted judge loop, record English ≤3min
+video, submit ~Nov 28. Firecrawl /monitor = sponsor feature, already
+demo-visible on Sources page.

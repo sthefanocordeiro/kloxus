@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -174,9 +175,24 @@ func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider
 	}
 	srv := web.New(web.Deps{
 		DB: db, Cfg: cfg, Fetcher: fetcher, LLM: provider,
-		Monitor: monitor, Mailer: delivery.Outbox{Dir: "outbox"},
+		Monitor: monitor, Mailer: delivery.Outbox{Dir: filepath.Join(cfg.OutDir, "outbox")},
 		Reseed: reseed,
 	})
+	if cfg.DemoResetInterval > 0 && reseed != nil {
+		go func() {
+			ticker := time.NewTicker(cfg.DemoResetInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := db.Reset(context.Background()); err != nil {
+					fmt.Fprintf(os.Stderr, "demo reset: %v\n", err)
+					continue
+				}
+				if err := reseed(context.Background()); err != nil {
+					fmt.Fprintf(os.Stderr, "demo reseed: %v\n", err)
+				}
+			}
+		}()
+	}
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)

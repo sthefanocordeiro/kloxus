@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -31,6 +32,8 @@ type Config struct {
 	AbacatePayKey   string
 	PublicURL       string
 	WebhookSecret   string
+
+	DemoResetInterval time.Duration
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
@@ -44,21 +47,22 @@ func Load() (*Config, error) {
 		f.Close()
 	}
 	cfg := &Config{
-		Mode:            getenv("KLOXUS_MODE", "demo"),
-		Port:            getint("KLOXUS_PORT", 8080),
-		DBPath:          getenv("KLOXUS_DB_PATH", "kloxus.db"),
-		OutDir:          getenv("KLOXUS_OUT_DIR", "out"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		ModelTriage:     getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),
-		ModelDraft:      getenv("KLOXUS_MODEL_DRAFT", "claude-sonnet-5-5"),
-		MaxDeepDives:    getint("KLOXUS_MAX_DEEP_DIVES", 3),
-		MasterKey:       os.Getenv("KLOXUS_MASTER_KEY"),
-		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
-		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
-		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
-		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
-		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
-		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
+		Mode:              getenv("KLOXUS_MODE", "demo"),
+		Port:              getint("KLOXUS_PORT", 8080),
+		DBPath:            getenv("KLOXUS_DB_PATH", "kloxus.db"),
+		OutDir:            getenv("KLOXUS_OUT_DIR", "out"),
+		AnthropicAPIKey:   os.Getenv("ANTHROPIC_API_KEY"),
+		ModelTriage:       getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),
+		ModelDraft:        getenv("KLOXUS_MODEL_DRAFT", "claude-sonnet-5-5"),
+		MaxDeepDives:      getint("KLOXUS_MAX_DEEP_DIVES", 3),
+		MasterKey:         os.Getenv("KLOXUS_MASTER_KEY"),
+		ResendAPIKey:      os.Getenv("RESEND_API_KEY"),
+		FromAddress:       os.Getenv("KLOXUS_FROM_ADDRESS"),
+		FirecrawlAPIKey:   os.Getenv("FIRECRAWL_API_KEY"),
+		AbacatePayKey:     os.Getenv("ABACATEPAY_API_KEY"),
+		PublicURL:         os.Getenv("KLOXUS_PUBLIC_URL"),
+		WebhookSecret:     os.Getenv("KLOXUS_WEBHOOK_SECRET"),
+		DemoResetInterval: getduration("KLOXUS_DEMO_RESET_INTERVAL", 0),
 	}
 	if cfg.Mode != "demo" && cfg.Mode != "real" {
 		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)
@@ -75,6 +79,13 @@ func getenv(key, fallback string) string {
 
 func getint(key string, fallback int) int {
 	if v, err := strconv.Atoi(os.Getenv(key)); err == nil {
+		return v
+	}
+	return fallback
+}
+
+func getduration(key string, fallback time.Duration) time.Duration {
+	if v, err := time.ParseDuration(os.Getenv(key)); err == nil {
 		return v
 	}
 	return fallback
