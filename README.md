@@ -2,7 +2,7 @@
 
 **The editorial back office for independent publishers.**
 
-Kloxus is a proposed AI agent that reads the sources a creator follows, filters out the noise, and prepares the next issue of their publication: a ranked story list, a source-backed dossier for each item, and a structured draft with empty slots for the creator's own commentary. The creator reviews, writes what only they can write, and sends.
+Kloxus is an AI agent that reads the sources a creator follows, filters out the noise, and prepares the next issue of their publication: a ranked story list, a source-backed dossier for each item, and a structured draft with empty slots for the creator's own commentary. The creator reviews, writes what only they can write, and sends.
 
 > **Project status: working HackBrazil demo.**
 > The MVP runs locally with only Go installed: fixture-backed sources, replayed model calls, SQLite persistence, review UI, editorial guide, export/send outbox, and a simulated paywall. The examples below are product copy; the demo itself is deterministic and offline.
@@ -16,7 +16,7 @@ Kloxus is a proposed AI agent that reads the sources a creator follows, filters 
 - [The problem](#the-problem)
 - [The solution](#the-solution)
 - [Editorial principles](#editorial-principles)
-- [How it is designed to work](#how-it-is-designed-to-work)
+- [How it works](#how-it-works)
 - [Examples](#examples)
 - [Running the project](#running-the-project)
 - [Implementation architecture](#implementation-architecture)
@@ -62,7 +62,7 @@ For each publication, the creator defines:
 - sources (RSS feeds, open web pages, OPML import)
 - frequency and issue sections
 
-Kloxus would then run on a schedule:
+Kloxus then runs this pipeline for each issue — on demand in the demo, on a schedule once the scheduler lands:
 
 | Step | What the creator gets |
 | --- | --- |
@@ -91,7 +91,7 @@ These are product requirements, not marketing copy:
 - **Readers' money goes to the creator.** Kloxus never receives or holds reader payments.
 - **Creator data is not used to train models.**
 
-## How it is designed to work
+## How it works
 
 ```
 Scheduler → Collect → Deduplicate → Triage → Story list → Dossier → Draft → Citation check
@@ -106,7 +106,7 @@ Scheduler → Collect → Deduplicate → Triage → Story list → Dossier → 
 
 Most of the pipeline is plain automation. Language models are only used where judgment is needed:
 
-| Step | Planned implementation | Why |
+| Step | Implementation | Why |
 | --- | --- | --- |
 | Collect, schedule, extract text | Conventional code | Fixed rules, no judgment |
 | Exact and near-duplicate detection | Canonical URL + SimHash | Cheap and deterministic |
@@ -138,7 +138,7 @@ Kloxus would never touch the money and would take no commission. It would earn o
 
 ### A publication definition
 
-How a creator would describe a publication, shown as a configuration file:
+How a creator describes a publication — the same YAML format the demo loads:
 
 ```yaml
 name: Futuro Próximo
@@ -216,7 +216,7 @@ companies to disclose when automated systems screen job applicants. [1]
 
 ### How the editorial guide changes
 
-If the creator rejects an item with the reason "too US-centric", a line like this would be added to the guide, visible and editable:
+If the creator rejects an item with the reason "too US-centric", a line like this is added to the guide, visible and editable:
 
 ```
 - Deprioritize stories about US-only regulation unless a Brazilian equivalent is under discussion.
@@ -265,7 +265,7 @@ Change `app` in `fly.toml` first if `kloxus-demo` is unavailable. No secrets are
 
 ### Real mode
 
-Real integrations are intentionally incomplete for the hackathon scope. The Anthropic-backed `record` command can regenerate replay fixtures when `ANTHROPIC_API_KEY` is configured; `serve`, Resend delivery, production Firecrawl monitoring, and AbacatePay remain post-demo work.
+Real integrations are intentionally incomplete for the hackathon scope. With `KLOXUS_MODE=real` and `ANTHROPIC_API_KEY` set, `kloxus run` fetches live RSS/HTTP sources and calls the Anthropic API, and the Anthropic-backed `record` command can regenerate replay fixtures; `serve`, Resend delivery, production Firecrawl monitoring, and AbacatePay remain post-demo work.
 
 ## Implementation architecture
 
@@ -274,7 +274,7 @@ Real integrations are intentionally incomplete for the hackathon scope. The Anth
 | Backend | Go single binary with server-rendered web UI |
 | Database | SQLite via `modernc.org/sqlite`, embedded migrations |
 | Jobs and scheduling | In-process run state; demo reset interval |
-| Feeds and extraction | Embedded RSS/page fixtures in demo; fetcher interface for real sources |
+| Feeds and extraction | Embedded RSS/page fixtures in demo; HTTP fetcher + Firecrawl monitor in real mode |
 | Dedupe | Canonical URL + SimHash |
 | Models | Provider interface: Anthropic, replay fixtures, recorder |
 | Email | Local `.eml`/HTML outbox in demo; Resend planned for real mode |

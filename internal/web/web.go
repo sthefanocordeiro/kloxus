@@ -5,6 +5,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -12,10 +13,12 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
@@ -62,11 +65,18 @@ type Server struct {
 	d    Deps
 	mux  *http.ServeMux
 	runs sync.Map // pubID(int64) -> *runState
+	// activity coordinates demo resets with pipeline runs: runs hold a
+	// read lock for their duration, resets take the write lock so data
+	// cannot be wiped mid-run.
+	activity sync.RWMutex
 }
 
 // New builds a Server.
 func New(d Deps) *Server {
 	s := &Server{d: d, mux: http.NewServeMux()}
+	if d.Cfg.DemoResetInterval > 0 && d.Reseed != nil {
+		go s.resetLoop(d.Cfg.DemoResetInterval)
+	}
 	m := s.mux
 	m.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(mustSub(webFS, "static"))))
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -210,18 +220,24 @@ func (s *Server) sourceAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
-	typ, url := r.FormValue("type"), strings.TrimSpace(r.FormValue("url"))
-	if url == "" || (typ != "rss" && typ != "page") {
+	typ, rawURL := r.FormValue("type"), strings.TrimSpace(r.FormValue("url"))
+	if rawURL == "" || (typ != "rss" && typ != "page") {
 		http.Error(w, "type rss|page and url required", 400)
 		return
 	}
 	if s.d.Cfg.Mode == "demo" {
-		if _, err := s.d.Fetcher.Fetch(r.Context(), typ, url); err != nil {
-			s.renderSources(w, r, pub, fmt.Sprintf("can't fetch %q in demo mode — demo sources live under fixtures/... (real URLs need real mode)", url))
+		if _, err := s.d.Fetcher.Fetch(r.Context(), typ, rawURL); err != nil {
+			s.renderSources(w, r, pub, fmt.Sprintf("can't fetch %q in demo mode — demo sources live under fixtures/... (real URLs need real mode)", rawURL))
+			return
+		}
+	} else {
+		u, err := url.Parse(rawURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			s.renderSources(w, r, pub, fmt.Sprintf("invalid source URL %q — real-mode sources must be absolute http(s) URLs", rawURL))
 			return
 		}
 	}
-	if _, err := s.d.DB.AddSource(r.Context(), pub.ID, typ, url); err != nil {
+	if _, err := s.d.DB.AddSource(r.Context(), pub.ID, typ, rawURL); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -299,13 +315,15 @@ func (s *Server) runStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
-	if _, running := s.runs.LoadOrStore(pub.ID, &runProgress{st: runState{Step: "starting"}}); running {
+	s.activity.RLock()
+	st := &runProgress{st: runState{Step: "starting"}}
+	if _, running := s.runs.LoadOrStore(pub.ID, st); running {
+		s.activity.RUnlock()
 		s.redirect(w, r, "/pub/"+r.PathValue("id")+"/run")
 		return
 	}
-	st := &runProgress{st: runState{Step: "starting"}}
-	s.runs.Store(pub.ID, st)
 	go func() {
+		defer s.activity.RUnlock()
 		runner := &pipeline.Runner{
 			DB: s.d.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
@@ -438,7 +456,10 @@ func (s *Server) draftRun(w http.ResponseWriter, r *http.Request) {
 		MaxDeepDives: s.d.Cfg.MaxDeepDives,
 		DemoMode:     s.d.Cfg.Mode == "demo",
 	}
-	if _, err := runner.RunPhaseB(r.Context(), pub, iss.ID); err != nil {
+	s.activity.RLock()
+	_, err = runner.RunPhaseB(r.Context(), pub, iss.ID)
+	s.activity.RUnlock()
+	if err != nil {
 		http.Error(w, "draft: "+err.Error(), 500)
 		return
 	}
@@ -557,7 +578,10 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	s.d.DB.SetIssueStatus(r.Context(), iss.ID, "sent")
+	if err := s.d.DB.SetIssueStatus(r.Context(), iss.ID, "sent"); err != nil {
+		http.Error(w, "issue sent but status update failed: "+err.Error(), 500)
+		return
+	}
 	s.render(w, "page-sent", map[string]any{"Issue": iss, "Filename": filepath.Base(path)})
 }
 
@@ -713,17 +737,40 @@ func gateSections(body string, paid []string) string {
 // --- demo reset / webhook ---
 
 func (s *Server) demoReset(w http.ResponseWriter, r *http.Request) {
-	if err := s.d.DB.Reset(r.Context()); err != nil {
+	if err := s.resetDemo(r.Context()); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	s.redirect(w, r, "/")
+}
+
+// resetDemo wipes and reseeds demo data, waiting for in-flight pipeline
+// runs to finish and clearing stale run status entries.
+func (s *Server) resetDemo(ctx context.Context) error {
+	s.activity.Lock()
+	defer s.activity.Unlock()
+	if err := s.d.DB.Reset(ctx); err != nil {
+		return err
+	}
+	s.runs.Range(func(k, _ any) bool {
+		s.runs.Delete(k)
+		return true
+	})
 	if s.d.Reseed != nil {
-		if err := s.d.Reseed(r.Context()); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
+		return s.d.Reseed(ctx)
+	}
+	return nil
+}
+
+// resetLoop resets the demo on the configured interval (hosted demo).
+func (s *Server) resetLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if err := s.resetDemo(context.Background()); err != nil {
+			slog.Error("demo reset", "err", err)
 		}
 	}
-	s.redirect(w, r, "/")
 }
 
 // firecrawlWebhook receives monitor.page events (real mode).
@@ -746,7 +793,9 @@ func (s *Server) firecrawlWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.d.Cfg.WebhookSecret != "" {
-		if r.Header.Get("Authorization") != "Bearer "+s.d.Cfg.WebhookSecret {
+		got := r.Header.Get("Authorization")
+		want := "Bearer " + s.d.Cfg.WebhookSecret
+		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 			http.Error(w, "unauthorized", 401)
 			return
 		}

@@ -102,7 +102,12 @@ func parseDotEnv(r io.Reader) map[string]string {
 		if !ok {
 			continue
 		}
-		out[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"'`)
+		v = strings.TrimSpace(v)
+		// Strip one pair of surrounding matching quotes, if present.
+		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+			v = v[1 : len(v)-1]
+		}
+		out[strings.TrimSpace(k)] = v
 	}
 	return out
 }

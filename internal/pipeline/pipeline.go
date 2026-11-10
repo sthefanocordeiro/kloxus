@@ -16,6 +16,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
@@ -819,6 +821,49 @@ type sentRec struct {
 var sentEndRe = regexp.MustCompile(`[.!?]\s+`)
 var refRe = regexp.MustCompile(`\[\d+\]`)
 
+// stopAbbrev lists tokens (lowercase, period stripped) that should not end
+// a sentence even when followed by a capital letter.
+var stopAbbrev = map[string]bool{
+	"dr": true, "mr": true, "mrs": true, "ms": true, "prof": true,
+	"sr": true, "sra": true, "etc": true, "vs": true, "no": true,
+	"e.g": true, "i.e": true, "p.ex": true, "fig": true,
+	"inc": true, "ltd": true, "dept": true, "approx": true,
+}
+
+// sentenceStart reports whether r can begin a new sentence: an uppercase
+// letter, a digit, or an opening quote/bracket.
+func sentenceStart(r rune) bool {
+	return unicode.IsUpper(r) || unicode.IsDigit(r) ||
+		strings.ContainsRune("([\"'“”‘’«»", r)
+}
+
+// lastToken returns the trailing whitespace-delimited word of s,
+// lowercased and stripped of edge punctuation.
+func lastToken(s string) string {
+	if i := strings.LastIndexAny(s, " \t"); i >= 0 {
+		s = s[i+1:]
+	}
+	return strings.Trim(strings.ToLower(s), `.,;:!?"'()[]`)
+}
+
+// splitSentences splits a paragraph into sentences. A boundary is only
+// accepted at terminal punctuation followed by whitespace when the next
+// rune can start a sentence and the previous token is not a common
+// abbreviation (avoids splitting on "Dr.", "e.g.", decimals, etc.).
+func splitSentences(line string) []string {
+	var out []string
+	start := 0
+	for _, m := range sentEndRe.FindAllStringIndex(line, -1) {
+		next, _ := utf8.DecodeRuneInString(line[m[1]:])
+		if !sentenceStart(next) || stopAbbrev[lastToken(line[:m[0]])] {
+			continue
+		}
+		out = append(out, line[start:m[0]])
+		start = m[1]
+	}
+	return append(out, line[start:])
+}
+
 // extractSentences splits draft body paragraphs into sentences, recording
 // which item and which [n] refs each carries. Sentences without refs are
 // included — the deterministic rule flags them as uncited.
@@ -840,7 +885,7 @@ func extractSentences(body string) []sentRec {
 			strings.HasPrefix(trimmed, "_") {
 			continue
 		}
-		for _, s := range sentEndRe.Split(trimmed, -1) {
+		for _, s := range splitSentences(trimmed) {
 			s = strings.TrimSpace(s)
 			if s == "" {
 				continue

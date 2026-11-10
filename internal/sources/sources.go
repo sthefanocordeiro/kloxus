@@ -1,12 +1,15 @@
 // Package sources collects raw items from a publication's sources.
-// Demo mode uses FixtureFetcher (embedded files); real mode adds RSS/HTTP
-// fetchers with robots.txt checks (milestone 4).
+// Demo mode uses FixtureFetcher (embedded files); real mode uses
+// LiveFetcher (HTTP). Page monitoring lands via the Firecrawl webhook.
 package sources
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
 	"strings"
 	"time"
 
@@ -51,9 +54,14 @@ func (f FixtureFetcher) fetchRSS(url string) ([]RawItem, error) {
 		return nil, fmt.Errorf("opening fixture %q: %w", url, err)
 	}
 	defer file.Close()
-	feed, err := gofeed.NewParser().Parse(file)
+	return parseFeed(file, url)
+}
+
+// parseFeed decodes an RSS/Atom feed from r into raw items.
+func parseFeed(r io.Reader, name string) ([]RawItem, error) {
+	feed, err := gofeed.NewParser().Parse(r)
 	if err != nil {
-		return nil, fmt.Errorf("parsing feed %q: %w", url, err)
+		return nil, fmt.Errorf("parsing feed %q: %w", name, err)
 	}
 	var out []RawItem
 	for _, it := range feed.Items {
@@ -99,9 +107,15 @@ func (f FixtureFetcher) fetchPage(url string) ([]RawItem, error) {
 		return nil, fmt.Errorf("opening fixture %q: %w", url, err)
 	}
 	defer file.Close()
-	doc, err := html.Parse(file)
+	return parseIndexPage(file, url)
+}
+
+// parseIndexPage extracts items from an HTML index page using the
+// article.entry markup described above.
+func parseIndexPage(r io.Reader, name string) ([]RawItem, error) {
+	doc, err := html.Parse(r)
 	if err != nil {
-		return nil, fmt.Errorf("parsing page %q: %w", url, err)
+		return nil, fmt.Errorf("parsing page %q: %w", name, err)
 	}
 	var out []RawItem
 	var walk func(n *html.Node)
@@ -118,9 +132,52 @@ func (f FixtureFetcher) fetchPage(url string) ([]RawItem, error) {
 	}
 	walk(doc)
 	if len(out) == 0 {
-		return nil, fmt.Errorf("page %q: no article entries found", url)
+		return nil, fmt.Errorf("page %q: no article entries found", name)
 	}
 	return out, nil
+}
+
+// LiveFetcher fetches real sources over HTTP (real mode). RSS feeds are
+// fetched and parsed; index pages are scanned for the same entry markup the
+// demo fixtures use. Arbitrary page monitoring goes through the Firecrawl
+// monitor and its webhook instead of this fetcher.
+type LiveFetcher struct {
+	HTTP *http.Client // defaults to a client with a 30s timeout
+}
+
+func (f LiveFetcher) client() *http.Client {
+	if f.HTTP != nil {
+		return f.HTTP
+	}
+	return &http.Client{Timeout: 30 * time.Second}
+}
+
+// Fetch implements Fetcher over HTTP.
+func (f LiveFetcher) Fetch(ctx context.Context, typ, url string) ([]RawItem, error) {
+	if typ != "rss" && typ != "page" {
+		return nil, fmt.Errorf("unknown source type %q", typ)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "kloxus/0.1 (+https://github.com/sthefanocordeiro/kloxus)")
+	resp, err := f.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching %q: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetching %q: status %d", url, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, fmt.Errorf("reading %q: %w", url, err)
+	}
+	if typ == "rss" {
+		return parseFeed(bytes.NewReader(body), url)
+	}
+	return parseIndexPage(bytes.NewReader(body), url)
 }
 
 func parseEntry(n *html.Node) (RawItem, bool) {

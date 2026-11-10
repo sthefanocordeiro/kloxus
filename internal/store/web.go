@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 )
 
 // Issue is a stored issue row.
@@ -204,6 +205,12 @@ func (db *DB) Reset(ctx context.Context) error {
 		if _, err := db.ExecContext(ctx, `DELETE FROM `+t); err != nil {
 			return err
 		}
+	}
+	// Reset AUTOINCREMENT counters so a reseeded publication keeps id 1 and
+	// deep links (e.g. /pub/1/...) stay valid across resets.
+	if _, err := db.ExecContext(ctx, `DELETE FROM sqlite_sequence`); err != nil &&
+		!strings.Contains(err.Error(), "no such table") {
+		return err
 	}
 	return nil
 }

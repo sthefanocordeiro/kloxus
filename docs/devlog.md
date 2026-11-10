@@ -102,6 +102,33 @@ result is still 35 items → 32 stories → 8 selected → 1 planted flag,
 - Deploy credentials: `flyctl auth login` state or `FLY_API_TOKEN` in
   `.env`; binary at `%LOCALAPPDATA%\Microsoft\WinGet\Links\flyctl.exe`.
 
+## Review-fix round (2026-11-10)
+
+Follow-ups from the post-deploy code review:
+
+- `kloxus run` / `guide rebuild` now pick the runtime by mode: fixtures +
+  replay in demo, `sources.LiveFetcher` (HTTP, 30s timeout, 8MiB body cap)
+  + `llm.Anthropic` in real mode. Fixture parsers were refactored into
+  shared `parseFeed`/`parseIndexPage` helpers.
+- `http.Server` with explicit read/write/idle timeouts replaces bare
+  `http.ListenAndServe`.
+- Webhook secret comparison uses `subtle.ConstantTimeCompare`.
+- Demo reset is coordinated with pipeline runs via `Server.activity`
+  (RWMutex): PhaseA/PhaseB hold the read lock, reset+reseed holds the
+  write lock. The reset ticker moved into `web.New`; stale `s.runs`
+  entries are cleared on reset. `DB.Reset` also clears `sqlite_sequence`
+  so the reseeded publication keeps id 1 and deep links survive.
+- `send` now fails loudly if `SetIssueStatus("sent")` errors.
+- Real-mode `sourceAdd` validates absolute http(s) URLs (demo keeps the
+  fixture-fetch check).
+- The ignored `.devin/repro` HTTP harness is now a committed test:
+  `internal/web/web_test.go` (full issue lifecycle + source-add
+  validation + webhook auth).
+- Dotenv values only strip one matching surrounding quote pair; sentence
+  splitting skips abbreviations and requires an uppercase/digit boundary
+  (output on the recorded corpus is byte-identical — fixture keys stable).
+- README: implemented features described in present tense.
+
 ## Also verify next session
 
 - First tag release upload (workflow is written but not yet executed).

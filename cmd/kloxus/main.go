@@ -120,6 +120,19 @@ func demoRuntime(cfg *config.Config) (sources.Fetcher, llm.Provider) {
 	return fetcher, provider
 }
 
+// modeRuntime picks the fetcher and model provider for the configured
+// mode: fixtures + replay in demo, live HTTP + Anthropic in real mode.
+func modeRuntime(cfg *config.Config) (sources.Fetcher, llm.Provider, error) {
+	if cfg.Mode == "demo" {
+		f, p := demoRuntime(cfg)
+		return f, p, nil
+	}
+	if cfg.AnthropicAPIKey == "" {
+		return nil, nil, errors.New("real mode needs ANTHROPIC_API_KEY in .env or the environment")
+	}
+	return sources.LiveFetcher{}, llm.Anthropic{APIKey: cfg.AnthropicAPIKey}, nil
+}
+
 func printResult(res *pipeline.Result) {
 	fmt.Printf("collected %d items → %d stories → %d selected\n", res.Items, res.Stories, res.Selected)
 	fmt.Printf("estimated model cost: $%.4f\n", res.CostUSD)
@@ -178,26 +191,18 @@ func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider
 		Monitor: monitor, Mailer: delivery.Outbox{Dir: filepath.Join(cfg.OutDir, "outbox")},
 		Reseed: reseed,
 	})
-	if cfg.DemoResetInterval > 0 && reseed != nil {
-		go func() {
-			ticker := time.NewTicker(cfg.DemoResetInterval)
-			defer ticker.Stop()
-			for range ticker.C {
-				if err := db.Reset(context.Background()); err != nil {
-					fmt.Fprintf(os.Stderr, "demo reset: %v\n", err)
-					continue
-				}
-				if err := reseed(context.Background()); err != nil {
-					fmt.Fprintf(os.Stderr, "demo reseed: %v\n", err)
-				}
-			}
-		}()
-	}
-	addr := fmt.Sprintf(":%d", cfg.Port)
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)
 	go openBrowser(url)
-	return http.ListenAndServe(addr, srv)
+	httpSrv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           srv,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return httpSrv.ListenAndServe()
 }
 
 func openBrowser(url string) {
@@ -244,8 +249,11 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	fetcher, provider := demoRuntime(cfg)
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, true)
+	fetcher, provider, err := modeRuntime(cfg)
+	if err != nil {
+		return err
+	}
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.Mode == "demo")
 	if err != nil {
 		return err
 	}
@@ -406,7 +414,10 @@ func cmdGuideRebuild(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, provider := demoRuntime(cfg)
+	_, provider, err := modeRuntime(cfg)
+	if err != nil {
+		return err
+	}
 	content, version, err := editorial.Rebuild(ctx, db, pub, provider, cfg.ModelTriage)
 	if err != nil {
 		return err
