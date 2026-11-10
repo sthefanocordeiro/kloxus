@@ -1,0 +1,189 @@
+{{define "page-publications"}}
+<h1>Publications</h1>
+{{range .Pubs}}
+<div class="card">
+  <h2><a href="/pub/{{.ID}}">{{.Name}}</a></h2>
+  <p class="muted">{{.Topic}}</p>
+  <p class="muted">{{.Frequency}} · {{.Audience}}</p>
+</div>
+{{else}}<p>No publications yet.</p>{{end}}
+{{if .Demo}}
+<form method="post" action="/demo/reset" onsubmit="return confirm('Reset all demo data?')">
+  <button class="warn" type="submit">Reset demo</button>
+</form>
+{{end}}
+{{end}}
+
+{{define "page-overview"}}
+<h1>{{.Pub.Name}}</h1>
+<p class="muted">{{.Pub.Topic}} — {{.Pub.Audience}}</p>
+{{if .Issue}}
+<div class="card">
+  <h2>Latest: issue {{.Issue.Number}} <span class="badge">{{.Issue.Status}}</span></h2>
+  <p><a href="/issue/{{.Issue.ID}}">Review story list</a> · <a href="/issue/{{.Issue.ID}}/draft">Draft</a> · <a href="/issue/{{.Issue.ID}}/send">Send/export</a></p>
+</div>
+{{else}}<p>No issue yet — <a href="/pub/{{.Pub.ID}}/run">prepare the first one</a>.</p>{{end}}
+{{end}}
+
+{{define "page-settings"}}
+<h1>Settings — {{.Pub.Name}}</h1>
+<div class="card"><p><strong>Topic:</strong> {{.Pub.Topic}}</p>
+<p><strong>Audience:</strong> {{.Pub.Audience}}</p>
+<p><strong>Tone:</strong> {{.Pub.Tone}}</p>
+<p><strong>Frequency:</strong> {{.Pub.Frequency}}</p>
+<p><strong>AI disclosure:</strong> {{.Pub.AIDisclosure}}</p>
+<p><strong>Editorial line:</strong></p><pre>{{.Pub.EditorialLine}}</pre>
+<h3>Sections</h3><ul>{{range .Pub.Sections}}<li>{{.Title}} — {{.Items}} items, commentary {{.Commentary}}</li>{{end}}</ul>
+<h3>Paywall</h3><p>{{if .Pub.Paywall.Enabled}}enabled — paid sections: {{range .Pub.Paywall.PaidSections}}{{.}} {{end}}{{else}}disabled{{end}}</p></div>
+<p class="muted">Publication definitions come from YAML (examples/publications/).</p>
+{{end}}
+
+{{define "page-sources"}}
+<h1>Sources — {{.Pub.Name}}</h1>
+<table>
+<tr><th>Type</th><th>URL</th><th>Last fetch</th><th>Monitor</th><th></th></tr>
+{{range .Sources}}
+<tr>
+<td>{{.Type}}</td><td class="url">{{.URL}}</td>
+<td class="muted">{{if .LastStatus.Valid}}{{.LastStatus.String}}{{else}}never{{end}}</td>
+<td>{{if .MonitorID}}<span class="badge ok">monitored via {{.MonitorProvider}}</span><br><span class="muted">{{.MonitorStatus}}</span>{{end}}</td>
+<td>{{if and (eq .Type "page") (not .MonitorID)}}
+  <form method="post" action="/pub/{{$.Pub.ID}}/sources/{{.ID}}/watch" style="display:inline"><button type="submit">Watch via Firecrawl</button></form>{{end}}
+  {{if .MonitorID}}<form method="post" action="/pub/{{$.Pub.ID}}/sources/{{.ID}}/check" style="display:inline"><button type="submit">Check now</button></form>{{end}}
+</td>
+</tr>
+{{end}}
+</table>
+<h3>Add source</h3>
+<form method="post" action="/pub/{{.Pub.ID}}/sources/add" class="inline-form">
+<select name="type"><option value="rss">RSS feed</option><option value="page">Open page (no RSS)</option></select>
+<input name="url" placeholder="https://… or fixtures/…" size="50">
+<button type="submit">Add</button>
+</form>
+<p class="muted">Page sources can be monitored by Firecrawl (simulated in demo mode).</p>
+{{end}}
+
+{{define "page-run"}}
+<h1>Prepare next issue — {{.Pub.Name}}</h1>
+<form method="post" action="/pub/{{.Pub.ID}}/run"><button class="primary" type="submit">Prepare next issue</button></form>
+<div id="progress" data-pub="{{.Pub.ID}}">
+<ul id="steps">{{range .Steps}}<li data-step="{{.}}">{{.}}</li>{{end}}</ul>
+<p id="runmsg" class="muted"></p>
+</div>
+{{end}}
+
+{{define "page-review"}}
+<h1>Story list — issue {{.Issue.Number}}</h1>
+{{if .Items}}
+{{range .Items}}
+<div class="card">
+  <div class="score">{{printf "%.1f" .Score}}</div>
+  <h3><a href="/item/{{.ID}}">{{.Title}}</a></h3>
+  <p class="muted">{{.Section}} · {{.Outlets}} outlet(s) · {{.Reason}}</p>
+  <p>status: <span class="badge">{{.Status}}</span></p>
+  <form method="post" action="/issue/{{$.Issue.ID}}/item/{{.ID}}/decision" class="inline-form">
+    <button name="kind" value="approve" type="submit">Approve</button>
+    <input name="reason" placeholder="rejection reason…">
+    <button name="kind" value="reject" type="submit">Reject</button>
+    <button name="kind" value="alternative" type="submit">Alternative</button>
+  </form>
+</div>
+{{end}}
+<form method="post" action="/issue/{{.Issue.ID}}/draft">
+  <button class="primary" type="submit">Draft the issue →</button>
+</form>
+{{else}}<p>No items.</p>{{end}}
+{{end}}
+
+{{define "page-dossier"}}
+<h1>{{.Title}}</h1>
+<p class="muted">score {{printf "%.1f" .Item.Score}} · {{.Item.Section}} · {{.Item.Reason}}</p>
+<div class="card">
+<h3>Summary (Kloxus)</h3><p>{{.Dossier.Summary}}</p>
+<h3>Facts</h3><ul>{{range .Dossier.Facts}}<li>{{.Text}} [{{.Ref}}]</li>{{end}}</ul>
+{{if .Dossier.DeepFacts}}<h3>Deep dive</h3><ul>{{range .Dossier.DeepFacts}}<li>{{.Text}} [{{.Ref}}]</li>{{end}}</ul>{{end}}
+{{if .Dossier.Quote.Text}}<h3>Quote</h3><p>“{{.Dossier.Quote.Text}}” — {{.Dossier.Quote.Attribution}}</p>{{end}}
+<h3>Interpretation (marked as such)</h3><ul>{{range .Dossier.Interpretation}}<li>{{.}}</li>{{end}}</ul>
+<h3>Still unknown</h3><ul>{{range .Dossier.Unknowns}}<li>{{.}}</li>{{end}}</ul>
+<h3>Sources</h3><ul>{{range .Dossier.Sources}}<li>[{{.Ref}}] <span class="url">{{.URL}}</span></li>{{end}}</ul>
+</div>
+<p><a href="/issue/{{.Item.IssueID}}">← back to story list</a></p>
+{{end}}
+
+{{define "page-draft"}}
+<h1>Draft — issue {{.Issue.Number}} <span class="badge">{{.Issue.Status}}</span></h1>
+{{if .Blockers}}<div class="alert"><strong>Sending blocked:</strong><ul>{{range .Blockers}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+{{if .Issue.Flags}}<div class="alert"><strong>Flagged sentences:</strong><ul>
+{{range $i, $f := .Issue.Flags}}<li>{{$f.Sentence}} — {{$f.Note}}
+<form method="post" action="/issue/{{$.Issue.ID}}/flag/{{$i}}/dismiss" style="display:inline"><button type="submit">dismiss</button></form></li>{{end}}
+</ul></div>{{end}}
+<div class="draft-body">{{.BodyHTML}}</div>
+<h3>Commentary</h3>
+{{range .Sections}}{{if ne .Commentary "none"}}
+<div class="card"><strong>{{.Title}}</strong> ({{.Commentary}})
+<form method="post" action="/issue/{{$.Issue.ID}}/commentary">
+<input type="hidden" name="section" value="{{.Title}}">
+<textarea name="text" rows="3" cols="80" placeholder="Write your commentary here — Kloxus never fills this in.">{{index $.Issue.Commentary .Title}}</textarea>
+<br><button type="submit">Save</button></form></div>
+{{end}}{{end}}
+{{if ne .Issue.Status "approved"}}
+<form method="post" action="/issue/{{.Issue.ID}}/approve"><button class="primary" type="submit">Approve issue</button></form>
+{{else}}<p><a href="/issue/{{.Issue.ID}}/send">→ Send / export</a></p>{{end}}
+{{end}}
+
+{{define "page-send"}}
+<h1>Send / export — issue {{.Issue.Number}}</h1>
+<p>status: <span class="badge">{{.Issue.Status}}</span></p>
+<p><a href="/issue/{{.Issue.ID}}/export?fmt=markdown">Download Markdown</a> ·
+   <a href="/issue/{{.Issue.ID}}/export?fmt=html">Download HTML</a></p>
+{{if eq .Issue.Status "approved"}}
+<form method="post" action="/issue/{{.Issue.ID}}/send" class="inline-form">
+<input name="to" placeholder="test@example.com">
+<button name="test" value="1" type="submit">Send test</button>
+<button class="primary" type="submit">Send to readers</button>
+</form>
+{{else}}{{if ne .Issue.Status "sent"}}<p class="muted">Approve the issue first.</p>{{end}}{{end}}
+{{if eq .Issue.Status "sent"}}<p class="ok">Sent — check the outbox/ directory.</p>{{end}}
+{{end}}
+
+{{define "page-sent"}}
+<h1>Sent</h1><p class="ok">Issue written to {{.Path}}</p><p><a href="/">back to publications</a></p>
+{{end}}
+
+{{define "page-guide"}}
+<h1>Editorial guide — {{.Pub.Name}}</h1>
+<p class="muted">Sent with every triage and draft call. Editable.</p>
+{{if .Content}}<p class="muted">version {{.Version}}</p>{{end}}
+<form method="post" action="/pub/{{.Pub.ID}}/guide">
+<textarea name="content" rows="12" cols="90">{{.Content}}</textarea>
+<br><button type="submit">Save as new version</button>
+</form>
+<form method="post" action="/pub/{{.Pub.ID}}/guide/rebuild"><button type="submit">Rebuild from decisions</button></form>
+{{end}}
+
+{{define "page-costs"}}
+<h1>Costs — {{.Pub.Name}}</h1>
+<table><tr><th>Issue</th><th>Step</th><th>Model</th><th>In</th><th>Out</th><th>Cost</th></tr>
+{{range .Rows}}<tr><td>{{.IssueNumber}}</td><td>{{.Step}}</td><td>{{.Model}}</td>
+<td>{{.InputTokens}}</td><td>{{.OutputTokens}}</td><td>${{printf "%.4f" .CostUSD}}</td></tr>{{end}}
+</table>
+{{end}}
+
+{{define "page-paywall"}}
+<h1>Paywall — {{.Pub.Name}}</h1>
+{{if .Pub.Paywall.Enabled}}
+<div class="card">
+<p><strong>Paid sections:</strong> {{range .Pub.Paywall.PaidSections}}{{.}} {{end}}</p>
+<p><strong>Reader:</strong> {{.Reader}} — {{if .Active}}<span class="badge ok">subscribed</span>{{else}}<span class="badge">not subscribed</span>{{end}}</p>
+{{if not .Active}}<form method="post" action="/pub/{{.Pub.ID}}/paywall/simulate"><button class="primary" type="submit">Simulate reader payment</button></form>
+{{else}}<p><a href="/pub/{{.Pub.ID}}/reader">View as paying reader</a></p>{{end}}
+</div>
+{{else}}<p>Paywall is disabled for this publication.</p>{{end}}
+{{end}}
+
+{{define "page-reader"}}
+<h1>{{.Pub.Name}} — reader view</h1>
+{{if .Active}}<p class="ok">Paid sections unlocked for {{.Reader}}{{if .Reader}}{{end}}</p>{{else}}<p class="muted">Not subscribed — paid sections are gated.</p>{{end}}
+<div class="draft-body">{{.BodyHTML}}</div>
+<p><a href="/pub/{{.Pub.ID}}/paywall">← back</a></p>
+{{end}}

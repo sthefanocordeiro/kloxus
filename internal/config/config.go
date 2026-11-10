@@ -29,6 +29,8 @@ type Config struct {
 	FromAddress     string
 	FirecrawlAPIKey string
 	AbacatePayKey   string
+	PublicURL       string
+	WebhookSecret   string
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
@@ -55,6 +57,8 @@ func Load() (*Config, error) {
 		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
 		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
+		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
+		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
 	}
 	if cfg.Mode != "demo" && cfg.Mode != "real" {
 		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)

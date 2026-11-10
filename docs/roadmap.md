@@ -94,6 +94,13 @@ see guide update, approve, export — in under 5 minutes.
 
 Submit early; the last version within the deadline counts.
 
+## M4a — Firecrawl monitor (Nov 24–26)
+
+- `MonitorProvider` interface; simulated "monitored via Firecrawl" badge
+  + Check-now in demo; real `/v2/monitor` client, `monitor.page` webhook
+  receiver with secret verification, and polling fallback for localhost.
+- Page sources only (no crawl/website monitors). Decision D14.
+
 ## M4 — Real mode / M5 — Paywall (post-deadline / if ahead)
 
 - M4: RSS/page fetching with `robots.txt` + `KloxusBot` UA + rate limits,

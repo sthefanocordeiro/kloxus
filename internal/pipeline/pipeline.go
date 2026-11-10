@@ -39,6 +39,8 @@ type Runner struct {
 	TriageModel  string
 	DraftModel   string
 	MaxDeepDives int
+	// OnStep, if set, is called as each step starts (progress reporting).
+	OnStep func(step string)
 }
 
 // Result summarizes a completed run.
@@ -150,10 +152,34 @@ func (r *Runner) guide(ctx context.Context, pubID int64) string {
 }
 
 // Run executes the full pipeline and writes the issue file under outDir.
+// Equivalent to RunPhaseA followed by RunPhaseB (headless mode).
 func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string) (*Result, error) {
+	res, err := r.RunPhaseA(ctx, pub)
+	if err != nil {
+		return nil, err
+	}
+	b, err := r.RunPhaseB(ctx, pub, res.IssueID)
+	if err != nil {
+		return nil, err
+	}
+	res.Flagged = b.Flagged
+	res.CostUSD += b.CostUSD
+	return r.finish(ctx, res, outDir)
+}
+
+func (r *Runner) stepStart(name string) {
+	if r.OnStep != nil {
+		r.OnStep(name)
+	}
+}
+
+// RunPhaseA runs collect → dedupe → triage → storylist → dossier →
+// deepdive, producing the issue and its items for review.
+func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result, error) {
 	res := &Result{}
 
 	// --- collect ---
+	r.stepStart("collect")
 	start := time.Now()
 	srcs, err := r.DB.Sources(ctx, pub.ID)
 	if err != nil {
@@ -175,6 +201,7 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	r.record(ctx, pub.ID, 0, "collect", "", start, llm.Response{})
 
 	// --- dedupe ---
+	r.stepStart("dedupe")
 	start = time.Now()
 	items, err := r.DB.ItemsForPublication(ctx, pub.ID)
 	if err != nil {
@@ -237,6 +264,7 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	res.IssueID = issueID
 
 	// --- triage ---
+	r.stepStart("triage")
 	start = time.Now()
 	type triStory struct {
 		Ref     int
@@ -282,6 +310,7 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	}
 
 	// --- storylist ---
+	r.stepStart("storylist")
 	start = time.Now()
 	type slStory struct {
 		Ref    int
@@ -365,6 +394,7 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	}
 
 	// --- dossier ---
+	r.stepStart("dossier")
 	start = time.Now()
 	type dSrc struct {
 		Ref  int
@@ -404,6 +434,7 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 		if !ok {
 			return nil, fmt.Errorf("dossier: missing item %d", e.ref)
 		}
+		d.Title = e.title
 		d.fillSources(e.sources)
 		data, _ := json.Marshal(d)
 		if err := r.DB.SaveDossier(ctx, e.iiID, string(data)); err != nil {
@@ -413,6 +444,7 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	}
 
 	// --- deepdive (top N by score) ---
+	r.stepStart("deepdive")
 	start = time.Now()
 	topN := r.MaxDeepDives
 	if topN <= 0 || topN > 3 {
@@ -473,9 +505,63 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 			return nil, err
 		}
 	}
+	if err := r.DB.SetIssueStatus(ctx, res.IssueID, "reviewing"); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// loadEntries rebuilds the entry list for an existing issue from the DB:
+// issue items that were not rejected, their dossiers and story titles.
+func (r *Runner) loadEntries(ctx context.Context, issueID int64) ([]entry, map[int]*Dossier, error) {
+	iis, err := r.DB.IssueItems(ctx, issueID)
+	if err != nil {
+		return nil, nil, err
+	}
+	// issue items were inserted in picked order; ref numbers were assigned
+	// positionally then, but dossiers store their own ref, so reload in id order
+	sort.Slice(iis, func(a, b int) bool { return iis[a].ID < iis[b].ID })
+	var entries []entry
+	dossierByRef := map[int]*Dossier{}
+	for _, ii := range iis {
+		if ii.Status == "rejected" {
+			continue
+		}
+		djson, err := r.DB.Dossier(ctx, ii.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("issue_item %d: no dossier", ii.ID)
+		}
+		var d Dossier
+		if err := json.Unmarshal([]byte(djson), &d); err != nil {
+			return nil, nil, fmt.Errorf("issue_item %d: %w", ii.ID, err)
+		}
+		title := d.Title
+		if title == "" {
+			title, _ = r.DB.StoryTitle(ctx, ii.StoryID)
+		}
+		entries = append(entries, entry{
+			iiID: ii.ID, storyID: ii.StoryID, ref: d.Ref,
+			title: title, section: ii.Section, why: ii.Reason, score: ii.Score,
+		})
+		dd := d
+		dossierByRef[d.Ref] = &dd
+	}
+	return entries, dossierByRef, nil
+}
+
+// RunPhaseB runs draft → assemble → citecheck on an issue produced by
+// RunPhaseA (and possibly reviewed). Rejected items are excluded.
+func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
+	res := &Result{IssueID: issueID}
+	entries, dossierByRef, err := r.loadEntries(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	res.Selected = len(entries)
 
 	// --- draft ---
-	start = time.Now()
+	r.stepStart("draft")
+	start := time.Now()
 	type drItem struct {
 		Ref            int
 		Section        string
@@ -502,7 +588,7 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 			BodyMD   string `json:"body_md"`
 		} `json:"entries"`
 	}
-	resp, err = r.call(ctx, r.DraftModel, "draft", map[string]any{
+	resp, err := r.call(ctx, r.DraftModel, "draft", map[string]any{
 		"Publication": pub.Name,
 		"Audience":    pub.Audience,
 		"Language":    pub.Language,
@@ -524,6 +610,12 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	}
 
 	// --- assemble issue markdown ---
+	number := res.Number
+	if number == 0 {
+		if iss, err := r.DB.GetIssue(ctx, issueID); err == nil {
+			number = iss.Number
+		}
+	}
 	sectionOrder := []string{}
 	for _, s := range pub.Sections {
 		sectionOrder = append(sectionOrder, s.Title)
@@ -531,6 +623,7 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	body := assembleIssue(pub, number, entries, draftByRef, dossierByRef, sectionOrder)
 
 	// --- citecheck ---
+	r.stepStart("citecheck")
 	start = time.Now()
 	sents := extractSentences(body)
 	type cSent struct {
@@ -617,16 +710,24 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	if res.Flagged == nil {
 		flagsJSON = []byte("[]")
 	}
-	status := "reviewing"
-	if err := r.DB.UpdateIssue(ctx, issueID, status, body, string(flagsJSON)); err != nil {
+	if err := r.DB.UpdateIssue(ctx, issueID, "drafted", body, string(flagsJSON)); err != nil {
 		return nil, err
 	}
+	res.Number = number
+	return res, nil
+}
 
+// finish writes the stored issue body to outDir and returns the result.
+func (r *Runner) finish(ctx context.Context, res *Result, outDir string) (*Result, error) {
+	iss, err := r.DB.GetIssue(ctx, res.IssueID)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return nil, err
 	}
-	res.Path = filepath.Join(outDir, fmt.Sprintf("issue-%d.md", number))
-	if err := os.WriteFile(res.Path, []byte(body), 0o644); err != nil {
+	res.Path = filepath.Join(outDir, fmt.Sprintf("issue-%d.md", iss.Number))
+	if err := os.WriteFile(res.Path, []byte(iss.BodyMD), 0o644); err != nil {
 		return nil, err
 	}
 	return res, nil
@@ -635,6 +736,7 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 // Dossier is the per-item research record stored as JSON.
 type Dossier struct {
 	Ref            int             `json:"ref"`
+	Title          string          `json:"title,omitempty"` // storylist-picked title, set at save time
 	Summary        string          `json:"summary"`
 	Facts          []DossierFact   `json:"facts"`
 	DeepFacts      []DossierFact   `json:"deep_facts,omitempty"`

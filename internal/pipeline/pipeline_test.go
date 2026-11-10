@@ -89,7 +89,7 @@ func TestRunHeadless(t *testing.T) {
 	}
 	var status string
 	db.QueryRow(`SELECT status FROM issues WHERE id = ?`, res.IssueID).Scan(&status)
-	if status != "reviewing" {
+	if status != "drafted" {
 		t.Errorf("issue status = %q", status)
 	}
 }

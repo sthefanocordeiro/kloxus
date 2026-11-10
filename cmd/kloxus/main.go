@@ -8,16 +8,23 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/web"
 )
 
 func main() {
@@ -140,16 +147,55 @@ func cmdDemo(args []string) error {
 	if err != nil {
 		return err
 	}
-	if !*headless {
-		return fmt.Errorf("web UI is not implemented yet (milestone 3); use --headless. Seeded publication %q", pub.Name)
-	}
 	fetcher, provider := demoRuntime(cfg)
+	if !*headless {
+		return serveUI(cfg, db, fetcher, provider, func(ctx context.Context) error {
+			_, err := seedExample(ctx, db)
+			return err
+		})
+	}
 	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives)
 	if err != nil {
 		return err
 	}
 	printResult(res)
 	return nil
+}
+
+// serveUI starts the local web UI and opens the browser.
+func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, reseed func(ctx context.Context) error) error {
+	var monitor sources.MonitorProvider = sources.FakeMonitor{}
+	if cfg.Mode == "real" && cfg.FirecrawlAPIKey != "" {
+		monitor = sources.FirecrawlMonitor{
+			APIKey:     cfg.FirecrawlAPIKey,
+			WebhookURL: strings.TrimRight(cfg.PublicURL, "/") + "/webhooks/firecrawl",
+			Secret:     cfg.WebhookSecret,
+		}
+	}
+	srv := web.New(web.Deps{
+		DB: db, Cfg: cfg, Fetcher: fetcher, LLM: provider,
+		Monitor: monitor, Mailer: delivery.Outbox{Dir: "outbox"},
+		Reseed: reseed,
+	})
+	addr := fmt.Sprintf(":%d", cfg.Port)
+	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
+	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)
+	go openBrowser(url)
+	return http.ListenAndServe(addr, srv)
+}
+
+func openBrowser(url string) {
+	time.Sleep(500 * time.Millisecond)
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	cmd.Start()
 }
 
 func cmdServe(args []string) error {
