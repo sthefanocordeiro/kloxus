@@ -5,7 +5,7 @@ Deadline: **Nov 30, 2026, 23:59**. Submit early (~Nov 28) and keep the demo onli
 ## Links
 
 - Repository: https://github.com/sthefanocordeiro/kloxus
-- Hosted demo: **TBD after `fly deploy`**
+- Hosted demo: https://kloxus-demo.fly.dev (deployed 2026-11-10, Fly.io gru, volume kloxus_data)
 - Video: **TBD — owner records in English, ≤3 minutes, unlisted YouTube**
 
 ## Paste-ready copy

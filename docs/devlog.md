@@ -92,9 +92,18 @@ result is still 35 items → 32 stories → 8 selected → 1 planted flag,
 - README now documents the working demo, deployment, current architecture;
   `docs/submission.md` has EN/PT copy, deploy checklist, video shot list.
 
+## Deployed (2026-11-10)
+
+- App: `kloxus-demo` on Fly.io, region `gru`, volume `kloxus_data` (1GB),
+  machine `7817969a6d9658` — **https://kloxus-demo.fly.dev**
+- Verified hosted: `/healthz` 200, PhaseA → issue 1, draft → 8 items +
+  blockers, reject item 8 → re-draft OK (7 items), guide updated,
+  `/demo/reset` reseeds cleanly. Health check 1/1 passing.
+- Deploy credentials: `flyctl auth login` state or `FLY_API_TOKEN` in
+  `.env`; binary at `%LOCALAPPDATA%\Microsoft\WinGet\Links\flyctl.exe`.
+
 ## Also verify next session
 
-- Hosted browser pass after deployment (same judge loop + `/healthz`).
 - First tag release upload (workflow is written but not yet executed).
 - Kill stray `kloxus.exe`/`:8080` before re-running (`taskkill //IM kx.exe //F`).
 - Untracked leftovers to keep out of git: `server.log`, `out/`, `kloxus.db`,
