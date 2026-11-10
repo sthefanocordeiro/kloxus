@@ -99,6 +99,8 @@ result is still 35 items → 32 stories → 8 selected → 1 planted flag,
 - Verified hosted: `/healthz` 200, PhaseA → issue 1, draft → 8 items +
   blockers, reject item 8 → re-draft OK (7 items), guide updated,
   `/demo/reset` reseeds cleanly. Health check 1/1 passing.
+- Redeployed `4ef8e8d` (review-fix round) on machine `7817969a6d9658`:
+  rolling update, smoke+health checks green, `/healthz` and `/` 200.
 - Deploy credentials: `flyctl auth login` state or `FLY_API_TOKEN` in
   `.env`; binary at `%LOCALAPPDATA%\Microsoft\WinGet\Links\flyctl.exe`.
 
