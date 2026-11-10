@@ -1,0 +1,12 @@
+.devin/
+
+# Local config and secrets
+.env
+*.key
+
+# Local database and generated output
+*.db
+*.db-shm
+*.db-wal
+outbox/
+out/

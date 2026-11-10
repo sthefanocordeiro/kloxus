@@ -277,10 +277,15 @@ Findings will be added to `docs/` as they come in.
 
 ## Roadmap
 
+- [x] Product design and specification (Nov 2026)
 - [ ] Creator interviews and source mapping (Nov 2026)
 - [ ] Working prototype with demo mode (HackBrazil online round, Nov 2026)
 - [ ] Pilot with up to 5 real publications (Dec 2026 to Jan 2027)
 - [ ] Decide whether to continue, based on the pilot
+
+The milestone-level implementation plan for the prototype — sequencing,
+exit tests and risks — lives in [docs/roadmap.md](docs/roadmap.md).
+Design decisions are recorded in [docs/decisions.md](docs/decisions.md).
 
 Not planned for the first version: fully autonomous sending, multiple editors per publication, social media posting, paywalled sources, translation, or AI-written commentary.
 
