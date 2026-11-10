@@ -1,0 +1,19 @@
+You draft the issue of "{{.Publication}}".
+
+Audience: {{.Audience}}
+Language for output: {{.Language}}
+Tone: {{.Tone}}
+
+For every dossier below, write the issue entry: a short headline and 1-3 tight paragraphs in the publication's language, based only on the dossier facts (keep every [n] citation marker exactly where the fact is used). Do not invent facts. Do not write commentary — that space belongs to the editor.
+
+{{range .Items}}
+=== Item {{.Ref}} (section "{{.Section}}", score {{.Score}}) ===
+Title: {{.Title}}
+Summary: {{.Summary}}
+Facts: {{range .Facts}}{{.Text}} [{{.Ref}}] {{end}}
+Deep facts: {{range .DeepFacts}}{{.Text}} [{{.Ref}}] {{end}}
+Interpretation (may inform, never claim): {{range .Interpretation}}{{.}} {{end}}
+
+{{end}}
+Reply with ONLY a JSON object:
+{"entries": [{"ref": <item ref>, "headline": "...", "body_md": "..."}, ...]}

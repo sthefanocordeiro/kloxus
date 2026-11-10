@@ -1,0 +1,23 @@
+You are building the story list for the next issue of "{{.Publication}}".
+
+Audience: {{.Audience}}
+Sections available (in order): {{range .Sections}}"{{.Title}}" ({{.Items}} items, commentary {{.Commentary}}) {{end}}
+
+Editorial line:
+{{.EditorialLine}}
+{{if .Guide}}
+Editorial guide:
+{{.Guide}}
+{{end}}
+Scored stories:
+{{range .Stories}}
+[{{.Ref}}] score {{.Score}} — {{.Title}} — {{.Reason}}
+{{end}}
+Tasks:
+1. Merge refs that cover the same event into a single entry (list all refs in "refs", first ref is the main story).
+2. Pick the 5 to 10 strongest entries for the issue. You may exclude low or borderline scores if they are thin or off the editorial line.
+3. Assign each picked entry to a section from the list above (respect the item counts as a guide, not a hard limit).
+4. Write "why" as one line explaining why it matters to this audience.
+
+Reply with ONLY a JSON object:
+{"items": [{"refs": [<ref>, ...], "title": "<short headline>", "theme": "<theme tag>", "why": "<one line>", "section": "<section title>"}, ...]}

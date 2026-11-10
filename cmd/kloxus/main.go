@@ -13,7 +13,10 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/editorial"
+	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -97,6 +100,30 @@ func seedExample(ctx context.Context, db *store.DB) (*store.Publication, error) 
 	return db.GetPublication(ctx, strconv.FormatInt(id, 10))
 }
 
+// demoRuntime builds the fixture-backed fetcher and replay provider used
+// by demo-mode runs.
+func demoRuntime(cfg *config.Config) (sources.Fetcher, llm.Provider) {
+	fetcher := sources.FixtureFetcher{FS: examples.FS}
+	provider := llm.Replay{
+		FS:      examples.FS,
+		Dir:     "fixtures/llm",
+		DumpDir: cfg.OutDir + "/llm-dump",
+	}
+	return fetcher, provider
+}
+
+func printResult(res *pipeline.Result) {
+	fmt.Printf("collected %d items → %d stories → %d selected\n", res.Items, res.Stories, res.Selected)
+	fmt.Printf("estimated model cost: $%.4f\n", res.CostUSD)
+	if len(res.Flagged) > 0 {
+		fmt.Printf("citation check flagged %d sentence(s):\n", len(res.Flagged))
+		for _, f := range res.Flagged {
+			fmt.Printf("  - item %d: %s (%s)\n", f.Item, f.Sentence, f.Note)
+		}
+	}
+	fmt.Println("wrote", res.Path)
+}
+
 func cmdDemo(args []string) error {
 	fs := flag.NewFlagSet("demo", flag.ContinueOnError)
 	headless := fs.Bool("headless", false, "run the pipeline once and write ./out (no UI)")
@@ -116,11 +143,12 @@ func cmdDemo(args []string) error {
 	if !*headless {
 		return fmt.Errorf("web UI is not implemented yet (milestone 3); use --headless. Seeded publication %q", pub.Name)
 	}
-	path, err := pipeline.RunHeadlessFake(ctx, db, pub, cfg.OutDir)
+	fetcher, provider := demoRuntime(cfg)
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives)
 	if err != nil {
 		return err
 	}
-	fmt.Println("wrote", path)
+	printResult(res)
 	return nil
 }
 
@@ -151,11 +179,12 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	path, err := pipeline.RunHeadlessFake(ctx, db, pub, cfg.OutDir)
+	fetcher, provider := demoRuntime(cfg)
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives)
 	if err != nil {
 		return err
 	}
-	fmt.Println("wrote", path)
+	printResult(res)
 	return nil
 }
 
@@ -257,8 +286,11 @@ func cmdSources(args []string) error {
 }
 
 func cmdGuide(args []string) error {
-	if len(args) == 0 || args[0] != "show" {
-		return errors.New("guide subcommand required: show")
+	if len(args) == 0 || (args[0] != "show" && args[0] != "rebuild") {
+		return errors.New("guide subcommand required: show | rebuild")
+	}
+	if args[0] == "rebuild" {
+		return cmdGuideRebuild(args[1:])
 	}
 	fs := flag.NewFlagSet("guide show", flag.ContinueOnError)
 	pubRef := fs.String("publication", "", "publication id or slug")
@@ -283,6 +315,34 @@ func cmdGuide(args []string) error {
 		fmt.Println("(empty — the guide is generated from decisions after the first reviewed issue)")
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	fmt.Printf("editorial guide v%d\n\n%s\n", version, content)
+	return nil
+}
+
+func cmdGuideRebuild(args []string) error {
+	fs := flag.NewFlagSet("guide rebuild", flag.ContinueOnError)
+	pubRef := fs.String("publication", "", "publication id or slug")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *pubRef == "" {
+		return errors.New("--publication is required")
+	}
+	cfg, db, err := openDemoDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx := context.Background()
+	pub, err := db.GetPublication(ctx, *pubRef)
+	if err != nil {
+		return err
+	}
+	_, provider := demoRuntime(cfg)
+	content, version, err := editorial.Rebuild(ctx, db, pub, provider, cfg.ModelTriage)
 	if err != nil {
 		return err
 	}
@@ -347,5 +407,38 @@ func cmdCosts(args []string) error {
 }
 
 func cmdRecord(args []string) error {
-	return errors.New("record lands with the Anthropic provider (milestone 4)")
+	fs := flag.NewFlagSet("record", flag.ContinueOnError)
+	pubRef := fs.String("publication", "", "publication id or slug")
+	dir := fs.String("dir", "examples/fixtures/llm", "where to write recorded fixtures")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *pubRef == "" {
+		return errors.New("--publication is required")
+	}
+	cfg, db, err := openDemoDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if cfg.AnthropicAPIKey == "" {
+		return errors.New("record needs ANTHROPIC_API_KEY in .env or the environment")
+	}
+	ctx := context.Background()
+	pub, err := db.GetPublication(ctx, *pubRef)
+	if err != nil {
+		return err
+	}
+	fetcher := sources.FixtureFetcher{FS: examples.FS}
+	provider := llm.Recorder{
+		Inner: llm.Anthropic{APIKey: cfg.AnthropicAPIKey},
+		Dir:   *dir,
+	}
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives)
+	if err != nil {
+		return err
+	}
+	printResult(res)
+	fmt.Println("recorded fixtures to", *dir)
+	return nil
 }

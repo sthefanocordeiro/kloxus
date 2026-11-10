@@ -1,9 +1,9 @@
 // Package examples embeds the demo-mode example data (publication
-// definitions and, from milestone 2 on, fixture feeds and recorded
-// LLM responses) so `kloxus demo` works from any directory.
+// definitions, fixture feeds and recorded LLM responses) so
+// `kloxus demo` works from any directory.
 package examples
 
 import "embed"
 
-//go:embed publications
+//go:embed publications fixtures
 var FS embed.FS

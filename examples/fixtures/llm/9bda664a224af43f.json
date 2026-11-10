@@ -1,0 +1,6 @@
+{
+  "model": "claude-haiku-5-5",
+  "input_tokens": 4120,
+  "output_tokens": 720,
+  "text": "[{\"id\":1,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":2,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":3,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":4,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":5,\"verdict\":\"unsupported\",\"note\":\"a fonte [1] não menciona valor de multa; o dossiê lista penalidades como desconhecidas\"},{\"id\":6,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":7,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":8,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":9,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":10,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":11,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":12,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":13,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":14,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":15,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":16,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":17,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":18,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":19,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":20,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":21,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":22,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":23,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":24,\"verdict\":\"ok\",\"note\":\"\"},{\"id\":25,\"verdict\":\"ok\",\"note\":\"\"}]"
+}

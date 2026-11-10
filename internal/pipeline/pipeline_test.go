@@ -6,12 +6,32 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
-func TestRunHeadlessFake(t *testing.T) {
+const testFeed = `<?xml version="1.0"?>
+<rss version="2.0"><channel><title>T</title>
+<item><title>Regulador abre consulta</title><link>https://a.example/1</link><guid>g1</guid>
+<description>O regulador abriu consulta pública sobre IA em contratações.</description></item>
+<item><title>Rumor de gadget</title><link>https://a.example/2</link><guid>g2</guid>
+<description>Um rumor sobre um gadget que não existe.</description></item>
+</channel></rss>`
+
+var canned = map[string]string{
+	"triage":    `[{"ref":1,"score":9.0,"reason":"afeta leitores"},{"ref":2,"score":1.5,"reason":"rumor sem fonte"}]`,
+	"storylist": `{"items":[{"refs":[1],"title":"Consulta do regulador","theme":"regulação","why":"afeta quem contrata","section":"Lead"}]}`,
+	"dossier":   `[{"ref":1,"summary":"Resumo original [1].","facts":[{"text":"Consulta aberta","ref":1}],"quote":{"text":"","attribution":""},"unknowns":["prazo"],"interpretation":["impacto"],"sources":[{"ref":1,"url":"https://a.example/1"}]}]`,
+	"deepdive":  `[{"ref":1,"deep_facts":[{"text":"fundo extra","ref":1}],"extra_unknowns":[]}]`,
+	"draft":     `{"entries":[{"ref":1,"headline":"Regulador quer ouvir o mercado","body_md":"O regulador abriu consulta sobre IA em contratações [1]."}]}`,
+	"citecheck": `[]`,
+}
+
+func TestRunHeadless(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -20,45 +40,56 @@ func TestRunHeadlessFake(t *testing.T) {
 	defer db.Close()
 
 	def := &config.Publication{
-		Slug: "p",
-		Name: "Pub",
-		Sections: []config.Section{
-			{Title: "Lead", Items: 2, Commentary: "required"},
-			{Title: "Links", Items: 3, Commentary: "none"},
-		},
+		Slug: "p", Name: "Pub", Language: "pt-BR",
+		Sections: []config.Section{{Title: "Lead", Items: 1, Commentary: "required"}},
+		Sources:  []config.SourceDef{{Type: "rss", URL: "feeds/a.xml"}},
 	}
-	id, err := db.SeedPublication(ctx, def)
-	if err != nil {
+	if _, err := db.SeedPublication(ctx, def); err != nil {
 		t.Fatalf("SeedPublication: %v", err)
 	}
 	pub, err := db.GetPublication(ctx, "p")
 	if err != nil {
 		t.Fatalf("GetPublication: %v", err)
 	}
-	if pub.ID != id {
-		t.Fatalf("pub.ID = %d, want %d", pub.ID, id)
-	}
+
+	fsys := fstest.MapFS{"feeds/a.xml": {Data: []byte(testFeed)}}
+	fetcher := sources.FixtureFetcher{FS: fsys}
+	provider := llm.Func(func(_ context.Context, req llm.Request) (llm.Response, error) {
+		text, ok := canned[req.Template]
+		if !ok {
+			return llm.Response{}, nil
+		}
+		return llm.Response{Text: text, InputTokens: 1000, OutputTokens: 200}, nil
+	})
 
 	outDir := t.TempDir()
-	path, err := RunHeadlessFake(ctx, db, pub, outDir)
+	res, err := RunHeadless(ctx, db, pub, outDir, fetcher, provider, "haiku", "sonnet", 3)
 	if err != nil {
-		t.Fatalf("RunHeadlessFake: %v", err)
+		t.Fatalf("RunHeadless: %v", err)
 	}
-	body, err := os.ReadFile(path)
+	if res.Items != 2 || res.Stories != 2 || res.Selected != 1 {
+		t.Fatalf("counts: %+v", res)
+	}
+	if res.CostUSD <= 0 {
+		t.Errorf("expected nonzero cost, got %f", res.CostUSD)
+	}
+	body, err := os.ReadFile(res.Path)
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
-	for _, want := range []string{"## Lead", "## Links", "commentary", "issue 1"} {
+	for _, want := range []string{"## Lead", "### Regulador quer ouvir o mercado", "[1]", "commentary", "Sources:"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("output missing %q", want)
 		}
 	}
-
-	var n int
-	if err := db.QueryRow(`SELECT count(*) FROM runs WHERE publication_id = ?`, pub.ID).Scan(&n); err != nil {
-		t.Fatal(err)
+	var runs int
+	db.QueryRow(`SELECT count(*) FROM runs WHERE publication_id = ?`, pub.ID).Scan(&runs)
+	if runs != len(Steps) {
+		t.Errorf("runs = %d, want %d", runs, len(Steps))
 	}
-	if n != len(Steps) {
-		t.Errorf("runs recorded = %d, want %d", n, len(Steps))
+	var status string
+	db.QueryRow(`SELECT status FROM issues WHERE id = ?`, res.IssueID).Scan(&status)
+	if status != "reviewing" {
+		t.Errorf("issue status = %q", status)
 	}
 }

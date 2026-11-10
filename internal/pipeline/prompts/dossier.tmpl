@@ -1,0 +1,22 @@
+You write dossiers for the publication "{{.Publication}}".
+
+Language for output: {{.Language}}
+
+For each selected story below, write a dossier with:
+- "summary": an original 2-3 sentence summary, never copying the article text. Mark facts with the source number like [1].
+- "facts": 2-4 concrete facts, each with the "ref" of the source that supports it.
+- "quote": one short attributed quote (max 25 words) or empty if none is usable.
+- "unknowns": what is still unknown or unconfirmed.
+- "interpretation": 1-2 lines of analysis, clearly separated from facts.
+- "sources": the list of sources actually cited, as {"ref": <n>, "url": "<url>"}.
+
+Stories and their numbered sources:
+{{range .Items}}
+=== Item {{.Ref}}: {{.Title}} ===
+{{range .Sources}}[{{.Ref}}] {{.URL}}
+{{.Text}}
+
+{{end}}
+{{end}}
+Reply with ONLY a JSON array, one dossier per item, in order:
+[{"ref": <item ref>, "summary": "...", "facts": [{"text": "...", "ref": 1}], "quote": {"text": "...", "attribution": "..."}, "unknowns": ["..."], "interpretation": ["..."], "sources": [{"ref": 1, "url": "..."}]}, ...]

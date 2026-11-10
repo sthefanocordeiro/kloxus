@@ -1,0 +1,13 @@
+You maintain the editorial guide of "{{.Publication}}".
+
+The editorial line:
+{{.EditorialLine}}
+
+The editor's decisions so far (kind — reason):
+{{range .Decisions}}- {{.Kind}} — {{.Reason}}
+{{end}}
+{{if .Current}}
+Current guide:
+{{.Current}}
+{{end}}
+Rewrite the guide as at most 12 bullet lines condensing these decisions into durable editorial rules. Merge duplicates, keep the editor's wording when possible, drop one-off remarks. Reply with ONLY the guide text, one rule per line starting with "- ".

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+<title>Correio do Código</title>
+<link>https://correiodocodigo.com.br/</link>
+<description>Notícias e análises do mundo dev.</description>
+<language>pt-br</language>
+
+<item>
+<title>IA em contratações: o que a minuta do regulador muda para empresas</title>
+<link>https://correiodocodigo.com.br/ia-contratacoes-minuta-analise</link>
+<guid>cc-2026-1109-01</guid>
+<pubDate>Mon, 09 Nov 2026 10:45:00 -0300</pubDate>
+<description><![CDATA[As regras para inteligência artificial em recrutamento entraram em discussão pública nesta semana. A consulta aberta pelo regulador do trabalho propõe que candidatos sejam informados quando algoritmos filtrarem currículos e obriga auditorias anuais em empresas com mais de 100 funcionários. Especialistas ouvidos pelo Correio dizem que plataformas de recrutamento terão de redesenhar telas de consentimento. Prazos e penalidades ainda não foram definidos; comentários vão até 15 de dezembro.]]></description>
+</item>
+
+<item>
+<title>BC quer reembolso mais rápido para vítimas de golpe no Pix</title>
+<link>https://correiodocodigo.com.br/pix-reembolso-golpes</link>
+<guid>cc-2026-1108-02</guid>
+<pubDate>Sun, 08 Nov 2026 13:18:00 -0300</pubDate>
+<description><![CDATA[Vítimas de golpes por engenharia social no Pix podem passar a receber reembolso obrigatório em até 10 dias úteis, segundo proposta em consulta do Banco Central. A regra valeria para transferências acima de R$ 500 e cria um fundo compartilhado entre as instituições. O debate público começa em janeiro e bancos já criticam o cronograma.]]></description>
+</item>
+
+<item>
+<title>Modelo de linguagem brasileiro é liberado com licença comercial</title>
+<link>https://correiodocodigo.com.br/modelo-brasileiro-licenca</link>
+<guid>cc-2026-1107-03</guid>
+<pubDate>Sat, 07 Nov 2026 17:30:00 -0300</pubDate>
+<description><![CDATA[Pesquisadores de uma universidade federal liberaram um modelo de linguagem de 8 bilhões de parâmetros com licença que permite uso comercial. Treinado majoritariamente em português, o modelo supera abertos equivalentes em compreensão de documentos jurídicos e administrativos, segundo os autores. O código e os pesos estão em repositório público e a equipe aceita contribuições externas.]]></description>
+</item>
+
+<item>
+<title>Emenda muda regras do trabalho remoto para contratos antigos</title>
+<link>https://correiodocodigo.com.br/emenda-trabalho-remoto-repub?utm_campaign=agregador</link>
+<guid>cc-2026-1106-04</guid>
+<pubDate>Fri, 06 Nov 2026 16:20:00 -0300</pubDate>
+<description><![CDATA[A emenda aprovada em comissão estende regras de trabalho remoto criadas na pandemia a contratos anteriores a 2020, incluindo auxílio para internet e ergonomia e direito a desconexão fora do expediente. Sindicatos comemoram; entidades patronais temem aumento de litígios. O texto ainda precisa passar pelo plenário e pelo Senado.]]></description>
+</item>
+
+<item>
+<title>Review: novo console portátil surpreende na bateria</title>
+<link>https://correiodocodigo.com.br/review-console-portatil</link>
+<guid>cc-2026-1108-05</guid>
+<pubDate>Sun, 08 Nov 2026 15:00:00 -0300</pubDate>
+<description><![CDATA[Testamos por duas semanas o novo console portátil lançado no exterior. A bateria chega a 9 horas de jogo e a tela OLED impressiona. O aparelho não é vendido oficialmente no Brasil e importação adiciona cerca de 60% ao preço.]]></description>
+</item>
+
+<item>
+<title>Corretora de cripto promete cashback em token próprio</title>
+<link>https://correiodocodigo.com.br/corretora-cashback-token</link>
+<guid>cc-2026-1106-06</guid>
+<pubDate>Fri, 06 Nov 2026 18:42:00 -0300</pubDate>
+<description><![CDATA[Uma corretora de criptomoedas lançou programa de cashback pago em token próprio para trades acima de R$ 1.000. Especialistas alertam para a liquidez limitada do token e lembram que promoções semelhantes já foram alvo de reclamações.]]></description>
+</item>
+
+<item>
+<title>A IA vai mudar tudo — de novo</title>
+<link>https://correiodocodigo.com.br/ia-vai-mudar-tudo-opiniao</link>
+<guid>cc-2026-1105-07</guid>
+<pubDate>Thu, 05 Nov 2026 09:10:00 -0300</pubDate>
+<description><![CDATA[Coluna de opinião argumenta que a inteligência artificial transformará todas as profissões na próxima década, sem apresentar dados novos ou fontes. O autor lista setores que "nunca mais serão os mesmos" e conclui pedindo que leitores "se preparem para o inevitável".]]></description>
+</item>
+
+<item>
+<title>Editor de código lança versão com depurador renovado</title>
+<link>https://correiodocodigo.com.br/editor-depurador-renovado</link>
+<guid>cc-2026-1104-08</guid>
+<pubDate>Wed, 04 Nov 2026 11:25:00 -0300</pubDate>
+<description><![CDATA[A nova versão do editor de código traz depurador com visualização de memória e suporte a mais linguagens. A atualização é gratuita e já está disponível para download no site oficial, com changelog completo.]]></description>
+</item>
+
+<item>
+<title>5 extensões de navegador que você precisa instalar hoje</title>
+<link>https://correiodocodigo.com.br/5-extensoes-navegador</link>
+<guid>cc-2026-1104-09</guid>
+<pubDate>Wed, 04 Nov 2026 08:33:00 -0300</pubDate>
+<description><![CDATA[Lista reúne cinco extensões gratuitas para navegador: bloqueador de anúncios, gerenciador de senhas, leitor depois, ferramenta de captura e organizador de abas. Todas estão disponíveis nas lojas oficiais dos principais navegadores.]]></description>
+</item>
+
+</channel>
+</rss>

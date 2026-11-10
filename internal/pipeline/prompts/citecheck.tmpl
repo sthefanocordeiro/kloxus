@@ -1,0 +1,13 @@
+You check citations in a draft of "{{.Publication}}".
+
+For each numbered sentence below, decide whether the [n] citation attached to it actually supports the claim, using the source list given. A sentence is "ok" only if it is factual AND its ref exists AND the source supports it. Opinion, interpretation and commentary-slot text are "n/a".
+
+Sentences:
+{{range .Sentences}}
+[{{.ID}}] (item {{.Item}}, refs: {{.Refs}}) {{.Text}}
+{{end}}
+Sources per item:
+{{range .Items}}item {{.Ref}}: {{range .Sources}}[{{.Ref}}] {{.URL}} {{end}}
+{{end}}
+Reply with ONLY a JSON array:
+[{"id": <sentence id>, "verdict": "ok" | "unsupported" | "n/a", "note": "<short reason if not ok>"}, ...]

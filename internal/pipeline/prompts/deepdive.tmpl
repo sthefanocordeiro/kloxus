@@ -1,0 +1,16 @@
+You are deepening the research for the top stories of "{{.Publication}}".
+
+Language for output: {{.Language}}
+
+For each item below you get the story dossier so far and the source texts. Add what a careful editor would still want: deeper context, numbers, background, or corrections — but only facts supported by the given sources. If nothing meaningful is missing, return an empty "deep_facts" list for that item.
+
+{{range .Items}}
+=== Item {{.Ref}}: {{.Title}} ===
+Dossier so far: {{.Dossier}}
+{{range .Sources}}[{{.Ref}}] {{.URL}}
+{{.Text}}
+
+{{end}}
+{{end}}
+Reply with ONLY a JSON array:
+[{"ref": <item ref>, "deep_facts": [{"text": "...", "ref": 1}], "extra_unknowns": ["..."]}, ...]

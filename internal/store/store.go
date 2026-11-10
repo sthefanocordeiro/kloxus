@@ -255,12 +255,17 @@ type Run struct {
 	DurationMS    int64
 }
 
-// RecordRun stores a pipeline step measurement.
+// RecordRun stores a pipeline step measurement. IssueID 0 means the step
+// ran before an issue existed and is stored as NULL.
 func (db *DB) RecordRun(ctx context.Context, r Run) error {
+	var issueID any
+	if r.IssueID != 0 {
+		issueID = r.IssueID
+	}
 	_, err := db.ExecContext(ctx, `INSERT INTO runs
 		(publication_id, issue_id, step, model, input_tokens, output_tokens, cost_usd, duration_ms)
 		VALUES (?,?,?,?,?,?,?,?)`,
-		r.PublicationID, r.IssueID, r.Step, r.Model, r.InputTokens, r.OutputTokens, r.CostUSD, r.DurationMS)
+		r.PublicationID, issueID, r.Step, r.Model, r.InputTokens, r.OutputTokens, r.CostUSD, r.DurationMS)
 	return err
 }
 
@@ -274,13 +279,15 @@ type CostRow struct {
 	CostUSD      float64
 }
 
-// CostReport returns run rows for the last n issues of a publication.
+// CostReport returns run rows for the last n issues of a publication,
+// plus unattributed (pre-issue) steps shown as issue 0.
 func (db *DB) CostReport(ctx context.Context, pubID int64, lastN int) ([]CostRow, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT i.number, r.step, r.model, r.input_tokens, r.output_tokens, r.cost_usd
-		FROM runs r JOIN issues i ON i.id = r.issue_id
+		SELECT COALESCE(i.number, 0), r.step, r.model, r.input_tokens, r.output_tokens, r.cost_usd
+		FROM runs r LEFT JOIN issues i ON i.id = r.issue_id
 		WHERE r.publication_id = ?
-		  AND i.number IN (SELECT number FROM issues WHERE publication_id = ? ORDER BY number DESC LIMIT ?)
+		  AND (i.number IN (SELECT number FROM issues WHERE publication_id = ? ORDER BY number DESC LIMIT ?)
+		       OR r.issue_id IS NULL)
 		ORDER BY i.number DESC, r.id`, pubID, pubID, lastN)
 	if err != nil {
 		return nil, err
