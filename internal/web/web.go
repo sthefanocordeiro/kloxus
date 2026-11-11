@@ -277,6 +277,10 @@ func (s *Server) issue(r *http.Request) (*store.Issue, error) {
 }
 
 func (s *Server) publications(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		s.notFound(w, r, r.URL.Path)
+		return
+	}
 	pubs, err := db(r).ListPublications(r.Context())
 	if err != nil {
 		s.errPage(w, r, 500, "internal error")
