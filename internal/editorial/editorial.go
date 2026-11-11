@@ -23,15 +23,21 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 	if err != nil {
 		return "", 0, err
 	}
-	if len(decisions) == 0 {
-		return "", 0, fmt.Errorf("no decisions recorded yet")
-	}
 	_, current, _ := db.LatestGuide(ctx, pub.ID)
 
+	// Only rejections feed the guide: approvals and alternatives carry no
+	// reusable editorial signal ("Issue approved" is not a rule).
 	type decision struct{ Kind, Reason string }
-	ds := make([]decision, len(decisions))
-	for i, d := range decisions {
-		ds[i] = decision{Kind: d.Kind, Reason: d.Reason}
+	var ds []decision
+	var lastReason string
+	for _, d := range decisions {
+		if d.Kind == "reject" && strings.TrimSpace(d.Reason) != "" {
+			ds = append(ds, decision{Kind: d.Kind, Reason: d.Reason})
+			lastReason = d.Reason
+		}
+	}
+	if len(ds) == 0 {
+		return current, 0, fmt.Errorf("no rejection reasons recorded yet")
 	}
 	user, err := pipeline.RenderPrompt("guide", map[string]any{
 		"Publication":   pub.Name,
@@ -51,7 +57,7 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 	case errors.Is(err, llm.ErrMissingFixture):
 		// deterministic fallback: condense the latest reason into a short
 		// general rule and deduplicate against the current guide.
-		content = condense(current, decisions[len(decisions)-1].Reason)
+		content = condense(current, lastReason)
 	case err != nil:
 		return "", 0, err
 	default:

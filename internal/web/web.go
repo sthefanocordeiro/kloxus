@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -496,7 +497,7 @@ func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "publication")
 		return
 	}
-	s.render(w, r, "page-run", map[string]any{"Pub": pub, "Steps": pipeline.StepsA})
+	s.render(w, r, "page-run", map[string]any{"Pub": pub, "Steps": pipeline.Steps})
 }
 
 func (s *Server) runStart(w http.ResponseWriter, r *http.Request) {
@@ -545,6 +546,7 @@ func (s *Server) runStart(w http.ResponseWriter, r *http.Request) {
 		}
 		st.st.NoNewItems = res.NoNewItems
 		st.st.IssueID = res.IssueID
+		st.st.Step = pipeline.Steps[len(pipeline.Steps)-1] // report the final step, not the last one ticked
 	}()
 	s.redirect(w, r, "/pub/"+r.PathValue("id")+"/run")
 }
@@ -574,6 +576,7 @@ type reviewCard struct {
 	Outlets    string
 	RejectWhy  string
 	AltMissing bool
+	Err        string
 }
 
 func (s *Server) cardFor(r *http.Request, ii store.IssueItem) reviewCard {
@@ -649,8 +652,28 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "item")
 		return
 	}
+	if iss.Status == "sent" {
+		s.errPage(w, r, http.StatusConflict, "this issue was already sent — sent issues are read-only")
+		return
+	}
 
 	switch kind {
+	case "undo":
+		// Undo is only offered on a rejected card; it returns the item to
+		// the pending queue for a fresh decision.
+		if ii.Status != "rejected" {
+			finish(s.cardFor(r, *ii))
+			return
+		}
+		if err := db(r).SetIssueItemStatus(r.Context(), iid, "pending"); err != nil {
+			s.errPage(w, r, 500, "internal error")
+			return
+		}
+		db(r).RecordDecision(r.Context(), iss.PublicationID, iid, "undo", "")
+		ii.Status = "pending"
+		card := s.cardFor(r, *ii)
+		finish(card)
+		return
 	case "approve":
 		if err := db(r).SetIssueItemStatus(r.Context(), iid, status); err != nil {
 			s.errPage(w, r, 500, "internal error")
@@ -660,7 +683,7 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 	case "reject":
 		if reason == "" {
 			card := s.cardFor(r, *ii)
-			card.RejectWhy = "required"
+			card.Err = "a rejection needs a reason — it feeds the editorial guide"
 			if inPlace {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				tmpl.ExecuteTemplate(w, "partial-card", card)
@@ -706,6 +729,9 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 	if iss.Status == "approved" {
 		db(r).SetIssueStatus(r.Context(), iss.ID, "drafted")
 	}
+	// The item row changed above; re-render the card with the new status
+	// and rejection reason, not the pre-decision copy.
+	ii.Status = status
 	card := s.cardFor(r, *ii)
 	finish(card)
 }
@@ -771,7 +797,8 @@ func (s *Server) draftRun(w http.ResponseWriter, r *http.Request) {
 	_, err = runner.RunPhaseB(r.Context(), pub, iss.ID)
 	wsp.Activity.RUnlock()
 	if err != nil {
-		s.errPage(w, r, 500, "draft failed — the run page has details; request "+reqIDOf(r))
+		slog.Error("draft failed", "err", err, "rid", reqIDOf(r))
+		s.errPage(w, r, 500, "draft failed: "+err.Error())
 		return
 	}
 	s.redirect(w, r, "/issue/"+r.PathValue("id")+"/draft")
@@ -828,6 +855,10 @@ func (s *Server) commentary(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "issue")
 		return
 	}
+	if iss.Status == "sent" {
+		s.errPage(w, r, http.StatusConflict, "this issue was already sent — sent issues are read-only")
+		return
+	}
 	c := iss.Commentary
 	if c == nil {
 		c = map[string]string{}
@@ -873,6 +904,10 @@ func (s *Server) flagRemove(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r, "flag")
 		return
 	}
+	if iss.Status == "sent" {
+		s.errPage(w, r, http.StatusConflict, "this issue was already sent — sent issues are read-only")
+		return
+	}
 	sent := iss.Flags[idx].Sentence
 	body := removeSentence(iss.BodyMD, sent)
 	if err := db(r).SetIssueBody(r.Context(), iss.ID, body); err != nil {
@@ -905,6 +940,10 @@ func (s *Server) flagEdit(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimSpace(r.FormValue("text"))
 	mode := r.FormValue("mode")
 	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	if iss.Status == "sent" {
+		s.errPage(w, r, http.StatusConflict, "this issue was already sent — sent issues are read-only")
+		return
+	}
 	if text == "" {
 		s.renderDraft(w, r, iss, pub, http.StatusBadRequest, "edited sentence cannot be empty")
 		return
@@ -932,6 +971,16 @@ func (s *Server) flagEdit(w http.ResponseWriter, r *http.Request) {
 				"edited sentence needs a citation [n] — or mark it as interpretation")
 			return
 		}
+		if text == strings.TrimSpace(flag.Sentence) {
+			s.renderDraft(w, r, iss, pub, http.StatusConflict,
+				"the sentence is unchanged — the flag stays until the claim is fixed, marked as interpretation, or removed")
+			return
+		}
+		if !s.editSupported(r, iss, flag, text) {
+			s.renderDraft(w, r, iss, pub, http.StatusConflict,
+				"the citation check still cannot verify this sentence against the cited source — the flag stays")
+			return
+		}
 		replacement = text
 	}
 	body := strings.Replace(iss.BodyMD, flag.Sentence, replacement, 1)
@@ -951,6 +1000,91 @@ func (s *Server) flagEdit(w http.ResponseWriter, r *http.Request) {
 }
 
 var refRe = regexp.MustCompile(`\[\d+\]`)
+
+// editSupported re-runs the citation check on an edited sentence: the
+// model verdict when available (real mode), otherwise a deterministic
+// overlap check against the dossier facts that carry the cited refs —
+// an edit is supported only when its content words are grounded in a
+// fact behind the same [n].
+func (s *Server) editSupported(r *http.Request, iss *store.Issue, flag store.Flag, text string) bool {
+	d := s.dossierForItem(r, iss, flag.Item)
+	if d == nil {
+		return false
+	}
+	refs := map[int]bool{}
+	for _, m := range refRe.FindAllString(text, -1) {
+		n, _ := strconv.Atoi(strings.Trim(m, "[]"))
+		refs[n] = true
+	}
+	// model check first (real mode); demo misses fall to the local check
+	var checks []struct {
+		ID      int    `json:"id"`
+		Verdict string `json:"verdict"`
+	}
+	srcs := []map[string]any{}
+	for _, src := range d.Sources {
+		srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
+	}
+	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
+		"Publication": "",
+		"Sentences":   []map[string]any{{"id": 1, "item": flag.Item, "refs": "", "text": text}},
+		"Items":       []map[string]any{{"ref": flag.Item, "sources": srcs}},
+	})
+	if err == nil {
+		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
+			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
+		}); err == nil {
+			if json.Unmarshal([]byte(resp.Text), &checks) == nil && len(checks) > 0 {
+				return checks[0].Verdict == "ok"
+			}
+		}
+	}
+	// deterministic fallback: ≥60% of content words must appear in a
+	// fact (or the summary) attributed to one of the cited refs.
+	var grounded []string
+	for _, f := range append(append([]pipeline.DossierFact{}, d.Facts...), d.DeepFacts...) {
+		if refs[f.Ref] {
+			grounded = append(grounded, f.Text)
+		}
+	}
+	grounded = append(grounded, d.Summary)
+	corpus := strings.ToLower(strings.Join(grounded, " "))
+	plain := refRe.ReplaceAllString(text, "")
+	words := strings.FieldsFunc(strings.ToLower(plain), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	var content, hit int
+	for _, w := range words {
+		if len(w) < 3 {
+			continue
+		}
+		content++
+		if strings.Contains(corpus, w) {
+			hit++
+		}
+	}
+	return content > 0 && float64(hit)/float64(content) >= 0.6
+}
+
+// dossierForItem returns the dossier of the issue item whose dossier ref
+// produced the flagged sentence.
+func (s *Server) dossierForItem(r *http.Request, iss *store.Issue, itemRef int64) *pipeline.Dossier {
+	items, err := db(r).IssueItems(r.Context(), iss.ID)
+	if err != nil {
+		return nil
+	}
+	for _, ii := range items {
+		dj, err := db(r).Dossier(r.Context(), ii.ID)
+		if err != nil {
+			continue
+		}
+		var d pipeline.Dossier
+		if json.Unmarshal([]byte(dj), &d) == nil && int64(d.Ref) == itemRef {
+			return &d
+		}
+	}
+	return nil
+}
 
 // maxSourceRef returns the number of sources on the dossier of the item
 // that produced the flagged sentence (0 when unknown → any ref allowed).
@@ -1032,9 +1166,22 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		to = []string{t}
 		kind = "test"
 	}
-	md := delivery.ReaderBody(iss, pub, requestBase(r))
+	// Reader emails honor the paywall: non-subscribers get the teaser,
+	// paying readers the full issue. Every issue email carries an
+	// unsubscribe link.
+	base := requestBase(r)
+	md := delivery.ReaderBody(iss, pub, base)
+	rid, _ := db(r).UpsertReader(r.Context(), pub.ID, demoReaderEmail, demoReaderName)
+	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
+	if !active {
+		md = gateSections(md, pub.Paywall.PaidSections)
+		md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s/pub/%d/paywall) · [cancelar assinatura](%s/pub/%d/paywall)*",
+			pub.Name, base, pub.ID, base, pub.ID)
+	} else {
+		md += fmt.Sprintf("\n\n---\n*[cancelar assinatura](%s/pub/%d/paywall)*", base, pub.ID)
+	}
 	mailer := delivery.Outbox{DB: db(r), Kind: kind, Ctx: r.Context()}
-	id, err := mailer.Send(iss.Subject, md, delivery.RenderHTML(iss.Subject, md, requestBase(r)), to)
+	id, err := mailer.Send(iss.Subject, md, delivery.RenderHTML(iss.Subject, md, base), to)
 	if err != nil {
 		s.errPage(w, r, 500, "internal error")
 		return
@@ -1127,7 +1274,7 @@ func (s *Server) guideRebuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, _, err := editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage); err != nil {
-		s.errPage(w, r, 500, "internal error")
+		s.errPage(w, r, http.StatusConflict, err.Error())
 		return
 	}
 	s.redirect(w, r, "/pub/"+r.PathValue("id")+"/guide")
@@ -1190,8 +1337,10 @@ func (s *Server) paywallSimulate(w http.ResponseWriter, r *http.Request) {
 		s.errPage(w, r, 500, "internal error")
 		return
 	}
-	// Demo mode delivers the magic link through the workspace outbox.
-	link := requestBase(r) + "/pub/" + r.PathValue("id") + "/reader?key=" + token
+	// Demo mode delivers the magic link through the workspace outbox. The
+	// link carries the workspace id so it opens the right issue in any
+	// browser, not just the one that simulated the payment.
+	link := requestBase(r) + "/pub/" + r.PathValue("id") + "/reader?key=" + token + "&ws=" + reqWS(r).ID
 	htmlBody := fmt.Sprintf(
 		`<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:38em;margin:2em auto">`+
 			`<h2>%s — acesso de assinante</h2>`+
@@ -1221,6 +1370,14 @@ func (s *Server) paywallCancel(w http.ResponseWriter, r *http.Request) {
 // readerPage shows the issue as a reader sees it: paid sections become a
 // teaser unless the demo reader is subscribed (or opens a magic link).
 func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
+	if wsid := r.URL.Query().Get("ws"); wsid != "" && wsid != reqWS(r).ID && s.d.WS.Hosted() {
+		// Magic link opened in a different browser: swap to the workspace
+		// it was minted in and drop the cookie for future requests.
+		if target, err := s.d.WS.Get(r.Context(), wsid); err == nil {
+			s.d.WS.SetCookie(w, r, wsid)
+			r = r.WithContext(context.WithValue(r.Context(), ctxWS, target))
+		}
+	}
 	pub, err := s.pub(r)
 	if err != nil {
 		s.dbErr(w, r, err, "publication")

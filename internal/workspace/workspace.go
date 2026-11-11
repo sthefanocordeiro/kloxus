@@ -390,6 +390,21 @@ func (m *Manager) CloseWorkspace(id string) {
 	}
 }
 
+// Close releases every open workspace handle (local mode: the single one).
+func (m *Manager) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.local != nil {
+		m.local.DB.Close()
+		return
+	}
+	for id, el := range m.entries {
+		el.Value.(*cacheEntry).ws.DB.Close()
+		delete(m.entries, id)
+		m.lru.Remove(el)
+	}
+}
+
 // cleanupLoop deletes abandoned workspaces and enforces the count cap.
 func (m *Manager) cleanupLoop() {
 	ticker := time.NewTicker(cleanupInterval)

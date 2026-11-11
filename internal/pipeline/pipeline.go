@@ -198,6 +198,11 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 }
 
 func (r *Runner) stepStart(name string) {
+	if r.DemoMode {
+		// Demo replays finish in milliseconds; a short pause per step
+		// makes the live progress display on the run page visible.
+		time.Sleep(500 * time.Millisecond)
+	}
 	if r.OnStep != nil {
 		r.OnStep(name)
 	}
@@ -1164,7 +1169,8 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	for i, it := range cand.Items {
 		sents := splitSentences(it.ContentText)
 		if len(sents) > 0 {
-			summary += strings.TrimSpace(sents[0]) + fmt.Sprintf(" [%d] ", i+1)
+			first := strings.TrimRight(strings.TrimSpace(sents[0]), ". ")
+			summary += first + fmt.Sprintf(" [%d]. ", i+1)
 		}
 		for _, s := range sents[1:] {
 			facts = append(facts, DossierFact{Text: strings.TrimSpace(s), Ref: i + 1})

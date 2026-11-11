@@ -185,11 +185,16 @@ func TestDemoIssueLifecycle(t *testing.T) {
 	if len(dbg.Flags) == 0 {
 		t.Fatal("expected at least one citation flag from the fixture citecheck")
 	}
-	if rr := call(t, srv, "POST", issueURL+"/flag/0/remove", nil); rr.Code != http.StatusSeeOther {
-		t.Fatalf("POST remove flag = %d", rr.Code)
+	for len(dbg.Flags) > 0 {
+		if rr := call(t, srv, "POST", issueURL+"/flag/0/remove", nil); rr.Code != http.StatusSeeOther {
+			t.Fatalf("POST remove flag = %d", rr.Code)
+		}
+		dbg, _ = db.GetIssue(ctx, st.IssueID)
 	}
-	if rr := call(t, srv, "GET", issueURL+"/draft", nil); strings.Contains(rr.Body.String(), "Sending blocked") {
-		t.Fatal("blockers should be cleared after commentary + flag removal")
+	rr2 := call(t, srv, "GET", issueURL+"/draft", nil)
+	if strings.Contains(rr2.Body.String(), "Sending blocked") {
+		i := strings.Index(rr2.Body.String(), "Sending blocked")
+		t.Fatalf("blockers should be cleared: %s", rr2.Body.String()[i:i+300])
 	}
 
 	// --- approve, export, send ---

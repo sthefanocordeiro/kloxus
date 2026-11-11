@@ -113,6 +113,20 @@
   <p>status: <span class="badge">{{.Status}}</span>{{if eq .Status "alternative"}} <span class="muted">(replaced)</span>{{end}}</p>
   {{if .RejectWhy}}<p class="muted">rejected: {{.RejectWhy}}</p>{{end}}
   {{if .AltMissing}}<p class="alert">No alternative candidate left for this section.</p>{{end}}
+  {{if .Err}}<p class="alert">{{.Err}}</p>{{end}}
+  {{if or (eq .Status "pending") (eq .Status "approved")}}
+  <form method="post" action="/issue/{{.IssueID}}/item/{{.ID}}/decision" class="inline-form decision-form" data-item="{{.ID}}">
+    <button name="kind" value="approve" type="submit">Approve</button>
+    <input name="reason" placeholder="rejection reason (required)"{{if .Err}} class="invalid"{{end}}>
+    <button name="kind" value="reject" type="submit">Reject</button>
+    <button name="kind" value="alternative" type="submit">Alternative</button>
+  </form>
+  {{end}}
+  {{if eq .Status "rejected"}}
+  <form method="post" action="/issue/{{.IssueID}}/item/{{.ID}}/decision" class="inline-form decision-form" data-item="{{.ID}}">
+    <button name="kind" value="undo" type="submit">Undo rejection</button>
+  </form>
+  {{end}}
 </div>
 {{end}}
 
@@ -120,22 +134,7 @@
 <h1>Story list — issue {{.Issue.Number}}</h1>
 {{if .Items}}
 {{range .Items}}
-<div class="card" data-item="{{.ID}}">
-  <div class="score">{{printf "%.1f" .Score}}</div>
-  <h3><a href="/item/{{.ID}}">{{.Title}}</a></h3>
-  <p class="muted">{{.Section}} · {{.Outlets}} · {{.Reason}}</p>
-  <p>status: <span class="badge">{{.Status}}</span>{{if eq .Status "alternative"}} <span class="muted">(replaced)</span>{{end}}</p>
-  {{if .RejectWhy}}<p class="muted">rejected: {{.RejectWhy}}</p>{{end}}
-  {{if .AltMissing}}<p class="alert">No alternative candidate left for this section.</p>{{end}}
-  {{if or (eq .Status "pending") (eq .Status "approved")}}
-  <form method="post" action="/issue/{{$.Issue.ID}}/item/{{.ID}}/decision" class="inline-form decision-form" data-item="{{.ID}}">
-    <button name="kind" value="approve" type="submit">Approve</button>
-    <input name="reason" placeholder="rejection reason (required)"{{if eq .RejectWhy "required"}} class="invalid"{{end}}>
-    <button name="kind" value="reject" type="submit">Reject</button>
-    <button name="kind" value="alternative" type="submit">Alternative</button>
-  </form>
-  {{end}}
-</div>
+{{template "partial-card" .}}
 {{end}}
 <div id="draft-action">
 {{if gt .Pending 0}}

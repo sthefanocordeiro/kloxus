@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"mime"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -44,10 +46,19 @@ func (o Outbox) Send(subject, bodyMD, bodyHTML string, to []string) (string, err
 	return fmt.Sprint(id), nil
 }
 
-// EML renders a stored outbox row as a downloadable .eml message.
+// EML renders a stored outbox row as a downloadable .eml message with
+// standard headers (RFC 5322 date, MIME-Version, encoded-word subject).
 func EML(e *store.OutboxEmail) string {
-	return fmt.Sprintf("Subject: %s\r\nTo: %s\r\nDate: %s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
-		e.Subject, e.To, e.CreatedAt, e.BodyHTML)
+	when := time.Now().UTC()
+	if t, err := time.Parse("2006-01-02 15:04:05", e.CreatedAt); err == nil {
+		when = t.UTC()
+	} else if t, err := time.Parse(time.RFC3339, e.CreatedAt); err == nil {
+		when = t.UTC()
+	}
+	subject := mime.QEncoding.Encode("utf-8", e.Subject)
+	return fmt.Sprintf(
+		"From: Kloxus Demo <demo@kloxus.example>\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
+		e.To, subject, when.Format("Mon, 02 Jan 2006 15:04:05 +0000"), e.BodyHTML)
 }
 
 // aiDisclosure returns the disclosure line for approved output, or "".
