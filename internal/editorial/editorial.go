@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -16,29 +17,41 @@ import (
 
 // Rebuild regenerates the guide from the publication's decisions.
 // Preferred path: the model condenses decisions into rules. Demo-mode
-// fallback (no fixture can cover arbitrary judge input): append the latest
-// rejection reason as a guide line. Returns content and new version.
+// fallback (no fixture can cover arbitrary judge input): normalize and
+// merge rejection reasons into short general rules. Only effective
+// rejections feed the guide — approvals, alternatives and undone
+// rejections carry no editorial signal. Identical output is not
+// re-versioned (SaveGuide dedupes). Returns content and version.
 func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider llm.Provider, model string) (string, int, error) {
 	decisions, err := db.Decisions(ctx, pub.ID)
 	if err != nil {
 		return "", 0, err
 	}
-	_, current, _ := db.LatestGuide(ctx, pub.ID)
+	version, current, _ := db.LatestGuide(ctx, pub.ID)
 
-	// Only rejections feed the guide: approvals and alternatives carry no
-	// reusable editorial signal ("Issue approved" is not a rule).
-	type decision struct{ Kind, Reason string }
-	var ds []decision
-	var lastReason string
-	for _, d := range decisions {
-		if d.Kind == "reject" && strings.TrimSpace(d.Reason) != "" {
-			ds = append(ds, decision{Kind: d.Kind, Reason: d.Reason})
-			lastReason = d.Reason
+	// Effective rejections: the latest decision per item. An undone (or
+	// later reverted) rejection drops out of the guide entirely.
+	lastIdx := map[int64]int{}
+	for i, d := range decisions {
+		lastIdx[d.ItemID] = i
+	}
+	var ds []store.Decision
+	var reasons []string
+	for i, d := range decisions {
+		if i == lastIdx[d.ItemID] && d.Kind == "reject" && strings.TrimSpace(d.Reason) != "" {
+			ds = append(ds, d)
+			reasons = append(reasons, strings.TrimSpace(d.Reason))
 		}
 	}
-	if len(ds) == 0 {
-		return current, 0, fmt.Errorf("no rejection reasons recorded yet")
+	if len(reasons) == 0 {
+		if strings.TrimSpace(current) != "" {
+			// every recorded rejection was undone — clear derived rules
+			v, err := db.SaveGuide(ctx, pub.ID, "")
+			return "", v, err
+		}
+		return current, version, fmt.Errorf("no rejection reasons recorded yet")
 	}
+
 	user, err := pipeline.RenderPrompt("guide", map[string]any{
 		"Publication":   pub.Name,
 		"EditorialLine": pub.EditorialLine,
@@ -55,48 +68,120 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 	var content string
 	switch {
 	case errors.Is(err, llm.ErrMissingFixture):
-		// deterministic fallback: condense the latest reason into a short
-		// general rule and deduplicate against the current guide.
-		content = condense(current, lastReason)
+		content = buildGuide(reasons)
 	case err != nil:
 		return "", 0, err
 	default:
 		content = strings.TrimSpace(resp.Text)
 	}
-	version, err := db.SaveGuide(ctx, pub.ID, content)
+	v, err := db.SaveGuide(ctx, pub.ID, content)
 	if err != nil {
 		return "", 0, err
 	}
-	return content, version, nil
+	return content, v, nil
 }
 
-// condense turns a rejection reason into a short, general editorial rule
-// and appends it to the guide, skipping duplicates. Judges' reasons are
-// free text, so the demo fallback normalizes instead of copying verbatim
-// fragments (trailing punctuation, hedges, repetition).
-func condense(current, reason string) string {
-	current = strings.TrimSpace(current)
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		return current
+// guideSubject strips leading item references ("esta matéria", "this
+// item") so reasons read as general rules rather than per-item notes.
+var guideSubject = regexp.MustCompile(`(?i)^(?:esta|esse|essa|este|a|o|this|the)\s+(?:matéria|materia|história|historia|notícia|noticia|item|story|texto|artigo)\s*[,:—-]?\s*`)
+
+var punctRe = regexp.MustCompile(`[.,;:!?()\[\]"'“”‘’]+`)
+
+// buildGuide condenses rejection reasons into short general rules and
+// merges near-duplicates (same objection, different wording → one rule).
+func buildGuide(reasons []string) string {
+	var rules []string
+	var toks []map[string]bool
+	for _, reason := range reasons {
+		rule := ruleFor(reason)
+		if rule == "" {
+			continue
+		}
+		t := tokens(rule)
+		dup := -1
+		for i, rt := range toks {
+			// near-duplicate: high token overlap, or one rule is a
+			// stricter superset of the other (same objection, extra
+			// detail — the shorter, more general phrasing wins).
+			if jaccard(t, rt) >= 0.6 || subset(t, rt) || subset(rt, t) {
+				dup = i
+				break
+			}
+		}
+		if dup >= 0 {
+			// keep the shorter (more general) phrasing
+			if len(rule) < len(rules[dup]) {
+				rules[dup], toks[dup] = rule, t
+			}
+			continue
+		}
+		rules = append(rules, rule)
+		toks = append(toks, t)
 	}
-	rule := reason
+	var b strings.Builder
+	for _, r := range rules {
+		fmt.Fprintf(&b, "- %s\n", r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// ruleFor normalizes a free-text reason into one short rule.
+func ruleFor(reason string) string {
+	rule := strings.TrimSpace(reason)
+	rule = guideSubject.ReplaceAllString(rule, "")
+	rule = strings.TrimSpace(rule)
 	rule = strings.TrimRight(rule, ".! \t")
-	if len(rule) > 160 {
-		rule = rule[:160] + "…"
+	if len(rule) > 120 {
+		rule = rule[:120] + "…"
 	}
 	if r := []rune(rule); len(r) > 0 && unicode.IsLower(r[0]) {
 		rule = string(unicode.ToUpper(r[0])) + string(r[1:])
 	}
-	line := "- " + rule
-	for _, l := range strings.Split(current, "\n") {
-		if strings.EqualFold(strings.TrimSpace(l), line) ||
-			strings.EqualFold(strings.TrimSpace(l), "- "+reason) {
-			return current
+	return rule
+}
+
+// tokens normalizes a rule to a word set for similarity checks.
+func tokens(rule string) map[string]bool {
+	set := map[string]bool{}
+	for _, w := range strings.Fields(strings.ToLower(punctRe.ReplaceAllString(rule, " "))) {
+		if !stopword[w] {
+			set[w] = true
 		}
 	}
-	if current != "" {
-		return current + "\n" + line
+	return set
+}
+
+var stopword = map[string]bool{
+	"a": true, "o": true, "e": true, "de": true, "da": true, "do": true,
+	"em": true, "no": true, "na": true, "um": true, "uma": true, "para": true,
+	"que": true, "com": true, "por": true, "os": true, "as": true, "das": true,
+	"dos": true, "the": true, "of": true, "in": true, "and": true, "is": true,
+	"to": true, "for": true, "on": true, "at": true, "an": true, "it": true,
+}
+
+// subset reports whether every token of a is also in b.
+func subset(a, b map[string]bool) bool {
+	if len(a) == 0 {
+		return false
 	}
-	return line
+	for t := range a {
+		if !b[t] {
+			return false
+		}
+	}
+	return true
+}
+
+// jaccard returns |A∩B| / |A∪B| over token sets.
+func jaccard(a, b map[string]bool) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	inter := 0
+	for t := range a {
+		if b[t] {
+			inter++
+		}
+	}
+	return float64(inter) / float64(len(a)+len(b)-inter)
 }

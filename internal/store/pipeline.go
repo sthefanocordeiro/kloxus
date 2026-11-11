@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 )
@@ -390,6 +391,7 @@ func (db *DB) LatestDecision(ctx context.Context, issueItemID int64) (kind, reas
 
 // Decision is a stored review decision.
 type Decision struct {
+	ItemID    int64
 	Kind      string
 	Reason    string
 	CreatedAt string
@@ -398,7 +400,7 @@ type Decision struct {
 // Decisions lists a publication's decisions, oldest first.
 func (db *DB) Decisions(ctx context.Context, pubID int64) ([]Decision, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT kind, reason, created_at FROM decisions WHERE publication_id = ? ORDER BY id`, pubID)
+		`SELECT COALESCE(issue_item_id, 0), kind, reason, created_at FROM decisions WHERE publication_id = ? ORDER BY id`, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -406,7 +408,7 @@ func (db *DB) Decisions(ctx context.Context, pubID int64) ([]Decision, error) {
 	var out []Decision
 	for rows.Next() {
 		var d Decision
-		if err := rows.Scan(&d.Kind, &d.Reason, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ItemID, &d.Kind, &d.Reason, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -414,10 +416,18 @@ func (db *DB) Decisions(ctx context.Context, pubID int64) ([]Decision, error) {
 	return out, rows.Err()
 }
 
-// SaveGuide stores a new versioned editorial guide.
+// SaveGuide stores a new versioned editorial guide. When content matches
+// the latest version nothing is written — the current version comes back.
 func (db *DB) SaveGuide(ctx context.Context, pubID int64, content string) (int, error) {
-	var version int
+	var curV int
+	var curC string
 	err := db.QueryRowContext(ctx,
+		`SELECT version, content FROM editorial_guides WHERE publication_id = ? ORDER BY version DESC LIMIT 1`, pubID).Scan(&curV, &curC)
+	if err == nil && strings.TrimSpace(curC) == strings.TrimSpace(content) {
+		return curV, nil
+	}
+	var version int
+	err = db.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(version), 0) + 1 FROM editorial_guides WHERE publication_id = ?`, pubID).Scan(&version)
 	if err != nil {
 		return 0, err

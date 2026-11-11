@@ -298,6 +298,24 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 	if !strings.Contains(full.BodyMD, "cancelar assinatura") {
 		t.Error("issue email lacks an unsubscribe link")
 	}
+	// the unsubscribe link leads to a reader-facing, signed opt-out page
+	m := regexp.MustCompile(`/pub/\d+/unsubscribe\?[^\s)]+`).FindString(full.BodyMD)
+	if m == "" {
+		t.Fatal("issue email has no unsubscribe URL")
+	}
+	rid, _ := db.UpsertReader(ctx, pub.ID, "demo@reader.test", "Demo Reader")
+	// a forged token is refused
+	bad := regexp.MustCompile(`t=[^\s)]+`).ReplaceAllString(m, "t=forged")
+	if rr := call(t, srv, "GET", bad, nil); rr.Code != http.StatusForbidden {
+		t.Errorf("forged unsubscribe token = %d, want 403", rr.Code)
+	}
+	rr = call(t, srv, "GET", m, nil)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "desinscrito") {
+		t.Fatalf("unsubscribe = %d / %q", rr.Code, rr.Body.String()[:120])
+	}
+	if !db.ReaderUnsubscribed(ctx, rid) {
+		t.Error("unsubscribe not recorded on the reader")
+	}
 	// sent issue is read-only
 	if rr := post(issueURL+"/commentary", url.Values{"section": {"The big one"}, "text": {"v3"}}); rr.Code == 200 {
 		if !strings.Contains(rr.Body.String(), "read-only") {
@@ -410,6 +428,35 @@ func TestGuideFromRejectionsOnly(t *testing.T) {
 	if strings.Count(again, "linha editorial") > 1 {
 		t.Errorf("rebuild duplicated the rule:\n%s", again)
 	}
+
+	// three wordings of the same objection merge into a single rule
+	decide(iis[2].ID, url.Values{"kind": {"reject"}, "reason": {"ainda em comissão"}})
+	decide(iis[3].ID, url.Values{"kind": {"reject"}, "reason": {"matéria ainda em comissão"}})
+	decide(iis[4].ID, url.Values{"kind": {"reject"}, "reason": {"ainda em comissão, aguardando plenário"}})
+	call(t, srv, "POST", pubURL+"/guide/rebuild", nil)
+	_, content, _ = db.LatestGuide(ctx, pub.ID)
+	if n := strings.Count(content, "comissão"); n != 1 {
+		t.Errorf("near-duplicate reasons not merged — %d comissão lines:\n%s", n, content)
+	}
+
+	// undoing the "linha editorial" rejection removes its rule
+	decide(iis[1].ID, url.Values{"kind": {"undo"}})
+	call(t, srv, "POST", pubURL+"/guide/rebuild", nil)
+	_, content, _ = db.LatestGuide(ctx, pub.ID)
+	if strings.Contains(content, "linha editorial") {
+		t.Errorf("undone rejection still in guide:\n%s", content)
+	}
+	if !strings.Contains(content, "comissão") {
+		t.Errorf("unrelated rule lost on undo:\n%s", content)
+	}
+
+	// rebuilding with no changes must not mint a new version
+	ver, _, _ := db.LatestGuide(ctx, pub.ID)
+	call(t, srv, "POST", pubURL+"/guide/rebuild", nil)
+	ver2, _, _ := db.LatestGuide(ctx, pub.ID)
+	if ver2 != ver {
+		t.Errorf("no-change rebuild minted version %d (was %d)", ver2, ver)
+	}
 }
 
 // TestMagicLinkCarriesWorkspace: the magic link embeds the workspace id so
@@ -502,5 +549,27 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	rr = serve("GET", strings.SplitN(link, "&ws=", 2)[0], "", nil)
 	if !strings.Contains(rr.Body.String(), "no published issue") {
 		t.Error("link without ws should land in an empty workspace")
+	}
+	// ws alone (no valid key) must not open the other workspace either
+	rr = serve("GET", pubURL+"/reader?key=deadbeef&ws="+wsA.ID, "", nil)
+	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
+		t.Error("ws param with a bad key opened the other workspace")
+	}
+
+	// SECURITY: the reader link must never hijack the visitor's editor
+	// session — opening it from another browser leaves that browser's
+	// workspace cookie (and every editor route) untouched.
+	cookieB := strings.SplitN(serve("GET", "/", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
+	rr = serve("GET", link, cookieB, nil)
+	if !strings.Contains(rr.Body.String(), "Conteúdo completo") {
+		t.Fatalf("magic link with own session: got %d", rr.Code)
+	}
+	if sc := rr.Header().Get("Set-Cookie"); strings.Contains(sc, wsA.ID) {
+		t.Fatalf("reader link set the editor workspace cookie: %q", sc)
+	}
+	// editor routes still resolve to visitor B's own (empty) workspace
+	rr = serve("GET", "/issue/1", cookieB, nil)
+	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
+		t.Error("editor route leaked the linked workspace's issue")
 	}
 }

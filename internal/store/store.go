@@ -161,15 +161,32 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 // Idempotent on slug; returns the publication id.
 func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64, error) {
 	var id int64
+	sections, _ := json.Marshal(p.Sections)
+	paywall, _ := json.Marshal(p.Paywall)
 	err := db.QueryRowContext(ctx, `SELECT id FROM publications WHERE slug = ?`, p.Slug).Scan(&id)
 	if err == nil {
+		// Existing workspace: refresh publication config from the current
+		// template (paywall price, sections, etc.) while keeping the
+		// visitor's issues, decisions, sources and readers.
+		if _, err := db.ExecContext(ctx, `UPDATE publications SET
+			name=?, language=?, topic=?, audience=?, editorial_line=?, tone=?,
+			frequency=?, sections_json=?, paywall_json=?, ai_disclosure=? WHERE id=?`,
+			p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine, p.Tone,
+			p.Frequency, string(sections), string(paywall), p.AIDisclosure, id); err != nil {
+			return 0, err
+		}
+		for _, s := range p.Sources {
+			if _, err := db.ExecContext(ctx,
+				`INSERT OR IGNORE INTO sources (publication_id, type, url) VALUES (?,?,?)`,
+				id, s.Type, s.URL); err != nil {
+				return 0, err
+			}
+		}
 		return id, nil
 	}
 	if err != sql.ErrNoRows {
 		return 0, err
 	}
-	sections, _ := json.Marshal(p.Sections)
-	paywall, _ := json.Marshal(p.Paywall)
 	res, err := db.ExecContext(ctx, `INSERT INTO publications
 		(slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,

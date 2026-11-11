@@ -970,10 +970,30 @@ func lastToken(s string) string {
 // accepted at terminal punctuation followed by whitespace when the next
 // rune can start a sentence and the previous token is not a common
 // abbreviation (avoids splitting on "Dr.", "e.g.", decimals, etc.).
+// citeLeadRe matches a citation marker at the start of a text run — a
+// "[n]" left dangling after a sentence-final period belongs to the
+// sentence that precedes it, not to whatever comes next.
+var citeLeadRe = regexp.MustCompile(`^\[\d+\]`)
+
 func splitSentences(line string) []string {
 	var out []string
 	start := 0
 	for _, m := range sentEndRe.FindAllStringIndex(line, -1) {
+		if m[0] <= start {
+			// Boundary already inside the emitted span (e.g. the ". "
+			// right after an attached citation): drop it.
+			if m[1] > start {
+				start = m[1]
+			}
+			continue
+		}
+		if cm := citeLeadRe.FindString(line[m[1]:]); cm != "" {
+			// "urbana. [1] next." — the citation terminates the first
+			// sentence; split after the marker so it stays attached.
+			out = append(out, line[start:m[1]+len(cm)])
+			start = m[1] + len(cm)
+			continue
+		}
 		next, _ := utf8.DecodeRuneInString(line[m[1]:])
 		if !sentenceStart(next) || stopAbbrev[lastToken(line[:m[0]])] {
 			continue
@@ -1007,7 +1027,9 @@ func extractSentences(body string) []sentRec {
 		}
 		for _, s := range splitSentences(trimmed) {
 			s = strings.TrimSpace(s)
-			if s == "" {
+			// skip empty or punctuation-only remnants ("." left over
+			// after an attached citation marker)
+			if !strings.ContainsFunc(s, unicode.IsLetter) {
 				continue
 			}
 			id++

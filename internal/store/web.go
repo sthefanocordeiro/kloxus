@@ -219,6 +219,24 @@ func (db *DB) CancelSubscription(ctx context.Context, readerID int64) error {
 	return err
 }
 
+// UnsubscribeReader records an email unsubscribe: the subscription is
+// canceled and the reader row is stamped so sends can honor the opt-out.
+func (db *DB) UnsubscribeReader(ctx context.Context, readerID int64) error {
+	if _, err := db.ExecContext(ctx,
+		`UPDATE readers SET unsubscribed_at = datetime('now') WHERE id = ?`, readerID); err != nil {
+		return err
+	}
+	return db.CancelSubscription(ctx, readerID)
+}
+
+// ReaderUnsubscribed reports whether the reader opted out of emails.
+func (db *DB) ReaderUnsubscribed(ctx context.Context, readerID int64) bool {
+	var ts string
+	err := db.QueryRowContext(ctx,
+		`SELECT unsubscribed_at FROM readers WHERE id = ?`, readerID).Scan(&ts)
+	return err == nil && ts != ""
+}
+
 // HasActiveSubscription reports whether the reader has an active sub.
 func (db *DB) HasActiveSubscription(ctx context.Context, readerID int64) (bool, error) {
 	var n int

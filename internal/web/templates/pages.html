@@ -274,7 +274,16 @@
 {{if .Active}}<p class="ok">Paid sections unlocked for {{.Reader}}</p>
 {{else}}<p class="muted">Not subscribed — paid sections show a teaser.</p>{{end}}
 <div class="draft-body">{{.BodyHTML}}</div>
-<p><a href="/pub/{{.Pub.ID}}/paywall">← back</a>{{if .Subscribed}} · <a href="/pub/{{.Pub.ID}}/reader?view=free">preview as non-subscriber</a>{{end}}</p>
+<p><a href="/pub/{{.Pub.ID}}/paywall">← back</a>{{if .Subscribed}} · <a href="/pub/{{.Pub.ID}}/reader?{{if .LinkQ}}{{.LinkQ}}&{{end}}view=free">preview as non-subscriber</a>{{end}}</p>
+{{end}}
+
+{{define "page-unsubscribed"}}
+<h1>Inscrição cancelada</h1>
+<div class="card">
+<p>{{.Reader}} foi desinscrito de <strong>{{.Pub.Name}}</strong> — você não receberá mais e-mails desta publicação.</p>
+<p class="muted">Simulado no modo demo — nenhuma mensagem real foi enviada.</p>
+<p><a href="/">Voltar ao início</a></p>
+</div>
 {{end}}
 
 {{define "page-outbox"}}

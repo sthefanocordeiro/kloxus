@@ -12,6 +12,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -190,6 +191,18 @@ func (m *Manager) Healthy() bool {
 }
 
 // sign returns the cookie signature for a workspace id.
+// MAC returns a scoped HMAC token for value (unsubscribe links, etc.).
+func (m *Manager) MAC(scope, value string) string {
+	h := hmac.New(sha256.New, m.secret)
+	h.Write([]byte(scope + ":" + value))
+	return hex.EncodeToString(h.Sum(nil))[:24]
+}
+
+// ValidMAC reports whether tok is the MAC for (scope, value).
+func (m *Manager) ValidMAC(scope, value, tok string) bool {
+	return subtle.ConstantTimeCompare([]byte(m.MAC(scope, value)), []byte(tok)) == 1
+}
+
 func (m *Manager) sign(id string) string {
 	h := hmac.New(sha256.New, m.secret)
 	h.Write([]byte(id))
@@ -321,6 +334,15 @@ func (m *Manager) Get(ctx context.Context, id string) (*Workspace, error) {
 	db, err := store.Open(path) // applies any pending migrations
 	if err != nil {
 		return nil, err
+	}
+	// Refresh publication config from the current template so sessions
+	// created before a deploy pick up fixture/config changes (price,
+	// sections…). Visitor data (issues, decisions, sources, readers) is
+	// preserved — SeedPublication only updates config columns.
+	if m.seed != nil {
+		if err := m.seed(ctx, db); err != nil {
+			slog.Warn("workspace reseed failed", "ws", id, "err", err)
+		}
 	}
 	ws := &Workspace{ID: id, Label: labelOf(id), Dir: m.dir, DB: db}
 

@@ -269,3 +269,22 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 		t.Fatalf("flags = %+v, want only active item flag", iss.Flags)
 	}
 }
+
+// TestCitationAfterPeriodStaysAttached: a "[n]" dangling after a
+// sentence-final period belongs to that sentence — it must not split off
+// into an uncited fragment (which would flag a false "no citation").
+func TestCitationAfterPeriodStaysAttached(t *testing.T) {
+	recs := extractSentences("### H <!-- item 3 -->\n\nO custo segue três vezes o da banda larga urbana. [1] Outra afirmação sem fonte.")
+	if len(recs) != 2 {
+		t.Fatalf("extractSentences = %d sentences, want 2: %#v", len(recs), recs)
+	}
+	if recs[0].refs != "[1]" {
+		t.Fatalf("sentence 0 refs = %q, want [1] (sentence: %q)", recs[0].refs, recs[0].text)
+	}
+	if recs[1].refs != "" {
+		t.Fatalf("sentence 1 refs = %q, want uncited", recs[1].refs)
+	}
+	if recs[1].text != "Outra afirmação sem fonte." {
+		t.Fatalf("sentence 1 = %q", recs[1].text)
+	}
+}

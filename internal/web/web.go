@@ -122,6 +122,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("POST /pub/{id}/paywall/simulate", s.paywallSimulate)
 	m.HandleFunc("POST /pub/{id}/paywall/cancel", s.paywallCancel)
 	m.HandleFunc("GET /pub/{id}/reader", s.readerPage)
+	m.HandleFunc("GET /pub/{id}/unsubscribe", s.unsubscribe)
 	m.HandleFunc("GET /pub/{id}/outbox", s.outboxPage)
 	m.HandleFunc("GET /outbox/{id}", s.outboxView)
 	m.HandleFunc("GET /outbox/{id}/raw", s.outboxRaw)
@@ -670,6 +671,10 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db(r).RecordDecision(r.Context(), iss.PublicationID, iid, "undo", "")
+		// an undone rejection must leave the editorial guide too
+		if pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)); err == nil && pub != nil {
+			editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
+		}
 		ii.Status = "pending"
 		card := s.cardFor(r, *ii)
 		finish(card)
@@ -1107,10 +1112,16 @@ func (s *Server) maxSourceRef(r *http.Request, iss *store.Issue, itemRef int64) 
 	return 0
 }
 
-// removeSentence deletes a sentence from the body and tidies up the
-// whitespace it leaves behind.
+// removeSentence deletes a sentence from the body, taking along any
+// citation marker that trails it, and tidies the whitespace left behind.
 func removeSentence(body, sent string) string {
-	out := strings.Replace(body, sent, "", 1)
+	re := regexp.MustCompile(regexp.QuoteMeta(sent) + `(?:\s*\[\d+\])*`)
+	var out string
+	if loc := re.FindStringIndex(body); loc != nil {
+		out = body[:loc[0]] + body[loc[1]:]
+	} else {
+		out = strings.Replace(body, sent, "", 1)
+	}
 	out = strings.ReplaceAll(out, "  ", " ")
 	for strings.Contains(out, "\n\n\n") {
 		out = strings.ReplaceAll(out, "\n\n\n", "\n\n")
@@ -1173,12 +1184,14 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	md := delivery.ReaderBody(iss, pub, base)
 	rid, _ := db(r).UpsertReader(r.Context(), pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
+	unsub := fmt.Sprintf("%s/pub/%d/unsubscribe?ws=%s&r=%d&t=%s",
+		base, pub.ID, reqWS(r).ID, rid, s.d.WS.MAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid)))
 	if !active {
 		md = gateSections(md, pub.Paywall.PaidSections)
-		md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s/pub/%d/paywall) · [cancelar assinatura](%s/pub/%d/paywall)*",
-			pub.Name, base, pub.ID, base, pub.ID)
+		md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s/pub/%d/paywall) · [cancelar assinatura](%s)*",
+			pub.Name, base, pub.ID, unsub)
 	} else {
-		md += fmt.Sprintf("\n\n---\n*[cancelar assinatura](%s/pub/%d/paywall)*", base, pub.ID)
+		md += fmt.Sprintf("\n\n---\n*[cancelar assinatura](%s)*", unsub)
 	}
 	mailer := delivery.Outbox{DB: db(r), Kind: kind, Ctx: r.Context()}
 	id, err := mailer.Send(iss.Subject, md, delivery.RenderHTML(iss.Subject, md, base), to)
@@ -1367,15 +1380,50 @@ func (s *Server) paywallCancel(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, "/pub/"+r.PathValue("id")+"/paywall")
 }
 
+// unsubscribe is the reader-facing one-click opt-out linked from every
+// issue email. The link carries the workspace id and a signed reader
+// token; the workspace is resolved for this request only — the visitor's
+// own session cookie is never changed.
+func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
+	if wsid := r.URL.Query().Get("ws"); wsid != "" && wsid != reqWS(r).ID && s.d.WS.Hosted() {
+		if target, err := s.d.WS.Get(r.Context(), wsid); err == nil {
+			r = r.WithContext(context.WithValue(r.Context(), ctxWS, target))
+		}
+	}
+	pub, err := s.pub(r)
+	if err != nil {
+		s.dbErr(w, r, err, "publication")
+		return
+	}
+	rid, _ := strconv.ParseInt(r.URL.Query().Get("r"), 10, 64)
+	tok := r.URL.Query().Get("t")
+	if rid == 0 || !s.d.WS.ValidMAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid), tok) {
+		s.errPage(w, r, http.StatusForbidden, "invalid unsubscribe link")
+		return
+	}
+	if err := db(r).UnsubscribeReader(r.Context(), rid); err != nil {
+		s.errPage(w, r, 500, "internal error")
+		return
+	}
+	s.render(w, r, "page-unsubscribed", map[string]any{"Pub": pub, "Reader": demoReaderName})
+}
+
 // readerPage shows the issue as a reader sees it: paid sections become a
 // teaser unless the demo reader is subscribed (or opens a magic link).
 func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
-	if wsid := r.URL.Query().Get("ws"); wsid != "" && wsid != reqWS(r).ID && s.d.WS.Hosted() {
-		// Magic link opened in a different browser: swap to the workspace
-		// it was minted in and drop the cookie for future requests.
+	q := r.URL.Query()
+	if wsid, key := q.Get("ws"), q.Get("key"); wsid != "" && key != "" &&
+		wsid != reqWS(r).ID && s.d.WS.Hosted() {
+		// Magic link opened in a different browser: resolve the link's
+		// workspace for this reader request only. The visitor's own
+		// workspace cookie is never touched — editor routes keep
+		// resolving to their own session.
 		if target, err := s.d.WS.Get(r.Context(), wsid); err == nil {
-			s.d.WS.SetCookie(w, r, wsid)
-			r = r.WithContext(context.WithValue(r.Context(), ctxWS, target))
+			if pub, err := target.DB.GetPublication(r.Context(), r.PathValue("id")); err == nil {
+				if _, err := target.DB.ReaderByMagicToken(r.Context(), pub.ID, key); err == nil {
+					r = r.WithContext(context.WithValue(r.Context(), ctxWS, target))
+				}
+			}
 		}
 	}
 	pub, err := s.pub(r)
@@ -1390,12 +1438,13 @@ func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 	}
 	rid, _ := db(r).UpsertReader(r.Context(), pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
-	if key := r.URL.Query().Get("key"); key != "" {
+	key := q.Get("key")
+	if key != "" {
 		if mrid, err := db(r).ReaderByMagicToken(r.Context(), pub.ID, key); err == nil && mrid == rid {
 			active = true
 		}
 	}
-	forceFree := r.URL.Query().Get("view") == "free"
+	forceFree := q.Get("view") == "free"
 	unlocked := active && !forceFree
 	if forceFree {
 		db(r).SetProgress(r.Context(), "reader_free")
@@ -1406,8 +1455,16 @@ func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 	if !unlocked {
 		md = gateSections(md, pub.Paywall.PaidSections)
 	}
+	linkQ := ""
+	if key != "" {
+		linkQ = "key=" + url.QueryEscape(key)
+		if wsid := q.Get("ws"); wsid != "" {
+			linkQ += "&ws=" + url.QueryEscape(wsid)
+		}
+	}
 	s.render(w, r, "page-reader", map[string]any{
 		"Pub": pub, "Issue": iss, "Active": unlocked, "Subscribed": active, "Reader": demoReaderName,
+		"LinkQ":    linkQ,
 		"BodyHTML": template.HTML(delivery.RenderHTML(iss.Subject, md, requestBase(r))),
 	})
 }
