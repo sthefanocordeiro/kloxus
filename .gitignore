@@ -20,3 +20,7 @@ frontend/node_modules/
 *.tsbuildinfo
 frontend/.e2e-data
 frontend/test-results/
+
+.rec-data/
+frontend/recordings/
+.omc/

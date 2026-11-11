@@ -728,9 +728,9 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 			cv.Origin = c.Item.Origin
 			cv.Position = c.Item.Position
 			cv.InIssue = c.Item.Status == "pending" || c.Item.Status == "approved"
-			if c.Item.Origin == "phaseA" {
-				cv.SuggestedSection = c.Item.Section
-			}
+			// any prior placement is a valid suggestion: a rejected or
+			// alternative story re-adds where it once sat
+			cv.SuggestedSection = c.Item.Section
 		}
 		if demo && cv.Origin != "phaseA" && c.Rank > demoCandidateCap {
 			cv.Available = false

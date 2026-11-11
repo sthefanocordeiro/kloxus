@@ -39,8 +39,16 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 	var reasons []string
 	for i, d := range decisions {
 		if i == lastIdx[d.ItemID] && d.Kind == "reject" && strings.TrimSpace(d.Reason) != "" {
+			// a bare chip label ("too early") is a useless rule — compose
+			// it with the story it applies to so the learned rule reads
+			// "Too early — Universidade federal lança modelo…"
+			if ii, err := db.GetIssueItem(ctx, d.ItemID); err == nil {
+				if title, err := db.StoryTitle(ctx, ii.StoryID); err == nil && title != "" {
+					d.Reason = strings.TrimSpace(d.Reason) + " — " + title
+				}
+			}
 			ds = append(ds, d)
-			reasons = append(reasons, strings.TrimSpace(d.Reason))
+			reasons = append(reasons, d.Reason)
 		}
 	}
 	if len(reasons) == 0 {

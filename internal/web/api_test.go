@@ -785,3 +785,40 @@ outer:
 		t.Error("no interpretation sentence in the reparsed document")
 	}
 }
+
+// a learned rule carries the story it applies to — a bare chip label
+// like "too early" must never reach the guide on its own.
+func TestAPILearnedRuleContext(t *testing.T) {
+	srv, db, pub, _ := demoServer(t)
+	ctx := context.Background()
+	issueID := runPhaseA(t, srv, db, pub.ID)
+	issueURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10)
+	iis, _ := db.IssueItems(ctx, issueID)
+	var itemID int64
+	var title string
+	for _, ii := range iis {
+		if ii.Status == "pending" || ii.Status == "approved" {
+			itemID = ii.ID
+			title, _ = db.StoryTitle(ctx, ii.StoryID)
+			break
+		}
+	}
+	if itemID == 0 || title == "" {
+		t.Skip("no pending item")
+	}
+	rr := apiCall(t, srv, "POST", issueURL+"/items/"+strconv.FormatInt(itemID, 10)+"/decisions",
+		map[string]string{"kind": "reject", "reason": "too early"})
+	if rr.Code != 200 {
+		t.Fatalf("reject = %d: %s", rr.Code, rr.Body.String())
+	}
+	g := apiGet(t, srv, "/api/v1/publications/"+strconv.FormatInt(pub.ID, 10)+"/guide")
+	content := g["guide"].(map[string]any)["content"].(string)
+	if !strings.Contains(content, title) {
+		t.Fatalf("rule lacks the story context: %q", content)
+	}
+	for line := range strings.Lines(content) {
+		if strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-")) == "Too early" {
+			t.Fatalf("bare chip label stored as a rule: %q", content)
+		}
+	}
+}

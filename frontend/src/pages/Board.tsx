@@ -10,22 +10,24 @@ import { Badge, Button, Card, KDialog, KPopover } from "../ui";
 
 // --- SSE step rail: real counts per finished step, never percentages ---
 
-export function StepRail({ runID, steps, onDone }: { runID: string; steps: string[]; onDone: (run: { status: string; no_new_items?: boolean; error?: string }) => void }) {
+export function StepRail({ runID, steps, onDone }: { runID: string; steps: string[]; onDone: (run: { status: string; no_new_items?: boolean; error?: string }, events: RunEvent[]) => void }) {
   const { t } = useT();
   const [events, setEvents] = useState<RunEvent[]>([]);
+  const eventsRef = useRef<RunEvent[]>([]);
   const doneRef = useRef(false);
   useEffect(() => {
     const es = new EventSource(`/api/v1/runs/${runID}/events`);
     es.addEventListener("step", (e) => {
       const ev = JSON.parse((e as MessageEvent).data) as RunEvent;
       setEvents((prev) => (prev.some((p) => p.seq === ev.seq) ? prev : [...prev, ev]));
+      if (!eventsRef.current.some((p) => p.seq === ev.seq)) eventsRef.current = [...eventsRef.current, ev];
     });
     es.addEventListener("done", (e) => {
       es.close();
       if (doneRef.current) return;
       doneRef.current = true;
       const run = JSON.parse((e as MessageEvent).data);
-      onDone(run);
+      onDone(run, eventsRef.current);
     });
     es.onerror = () => es.close();
     return () => es.close();
@@ -34,13 +36,16 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
   const doneSteps = new Set(events.map((e) => e.step));
   const running = steps.find((s) => !doneSteps.has(s)); // first unfinished step ticks
   const stepLabels = t.run.step as Record<string, string>;
-  const countLabels = t.run.counts as Record<string, string>;
+  const countLabels = t.run.counts as Record<string, string | ((n: number) => string)>;
   return (
     <ol className="space-y-1.5">
       {steps.map((s) => {
         const ev = events.find((e) => e.step === s);
         const done = doneSteps.has(s);
-        const bits = Object.entries(ev?.counts ?? {}).map(([k, v]) => `${v} ${countLabels[k] ?? k}`);
+        const bits = Object.entries(ev?.counts ?? {}).map(([k, v]) => {
+          const lbl = countLabels[k] ?? k;
+          return typeof lbl === "function" ? `${v} ${lbl(v)}` : `${v} ${lbl}`;
+        });
         return (
           <li key={s} className="flex items-center gap-2 text-sm">
             <span
@@ -117,7 +122,11 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const qc = useQueryClient();
   const candsQ = useQuery({ queryKey: ["candidates", issue.id], queryFn: () => api.candidates(issue.id) });
   const [board, setBoard] = useState<Board | null>(null);
-  const [toast, setToast] = useState<{ text: string; undo?: Board } | null>(null);
+  const [toast, setToast] = useState<{
+    text: string;
+    undo?: { kind: "board"; board: Board } | { kind: "reject"; itemID: number };
+    guide?: { text: string; url: string };
+  } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [search, setSearch] = useState("");
   const [sectionFilter, setSectionFilter] = useState("");
@@ -131,11 +140,18 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     if (candsQ.data) setBoard(boardFrom(candsQ.data));
   }, [candsQ.data]);
 
-  const showToast = useCallback((text: string, undo?: Board) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ text, undo });
-    toastTimer.current = setTimeout(() => setToast(null), 4000);
-  }, []);
+  const showToast = useCallback(
+    (
+      text: string,
+      undo?: { kind: "board"; board: Board } | { kind: "reject"; itemID: number },
+      guide?: { text: string; url: string },
+    ) => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      setToast({ text, undo, guide });
+      toastTimer.current = setTimeout(() => setToast(null), 5000);
+    },
+    [],
+  );
 
   const putLineup = useMutation({
     mutationFn: (v: { entries: LineupEntry[]; prev?: Board }) => api.lineup(issue.id, v.entries),
@@ -143,8 +159,6 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
       qc.setQueryData(["candidates", issue.id], (old: CandidatesResponse | undefined) =>
         old ? { ...old, candidates: r.candidates } : old,
       );
-      const added = r.guide?.added ?? [];
-      if (added.length) showToast(t.board.ruleLearned(added[0].replace(/^-\s*/, "")));
     },
     onError: (e, v) => {
       if (v.prev) setBoard(v.prev);
@@ -158,11 +172,6 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
 
   const decide = useMutation({
     mutationFn: ({ itemID, reason }: { itemID: number; reason: string }) => api.decide(issue.id, itemID, "reject", reason),
-    onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ["candidates", issue.id] });
-      const added = r.guide?.added ?? [];
-      if (added.length) showToast(t.board.ruleLearned(added[0].replace(/^-\s*/, "")));
-    },
     onError: (e) => showToast(errText(t, e)),
   });
 
@@ -171,7 +180,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
       const snapshot = board!;
       setBoard(next);
       putLineup.mutate({ entries: lineupOf(next), prev: snapshot });
-      showToast(toastText, snapshot);
+      showToast(toastText, { kind: "board", board: snapshot });
     },
     [board, putLineup, showToast],
   );
@@ -267,18 +276,37 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         const { b } = removeFrom(board, cand.story_id);
         setBoard(toBench(b, cand));
       }
-      decide.mutate({ itemID: cand.item_id, reason });
+      decide.mutate(
+        { itemID: cand.item_id, reason },
+        {
+          onSuccess: (r) => {
+            const added = r.guide?.added ?? [];
+            const rule = added[0]?.replace(/^-\s*/, "");
+            showToast(
+              rule ? t.board.ruleLearned(rule) : t.board.removed(short(cand.title)),
+              { kind: "reject", itemID: cand.item_id! },
+              rule ? { text: t.board.viewGuide, url: `/pub/${issue.publication_id}/guide` } : undefined,
+            );
+            qc.invalidateQueries({ queryKey: ["candidates", issue.id] });
+          },
+        },
+      );
     } else {
       removeToBench(cand.story_id);
     }
   };
 
   const undo = () => {
-    const prev = toast?.undo;
-    if (!prev) return;
-    setBoard(prev);
-    putLineup.mutate({ entries: lineupOf(prev) });
+    const u = toast?.undo;
+    if (!u) return;
+    if (u.kind === "board") {
+      setBoard(u.board);
+      putLineup.mutate({ entries: lineupOf(u.board) });
+    } else {
+      api.decide(issue.id, u.itemID, "undo").then(() => qc.invalidateQueries({ queryKey: ["candidates", issue.id] }));
+    }
     setToast(null);
+    showToast(t.board.undone);
   };
 
   // --- drag and drop (desktop shortcut; buttons/keyboard do the same) ---
@@ -358,11 +386,18 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     onError: (e) => showToast(errText(t, e)),
   });
 
-  if (draftRun) {
-    return (
-      <div className="flex min-h-0 flex-1 items-start justify-center p-8">
-        <Card className="w-full max-w-md p-6">
-          <h2 className="mb-4 text-lg font-semibold">{t.board.drafting}</h2>
+  if (!board || !candsQ.data) return <BoardSkeleton />;
+  const sections = candsQ.data.sections;
+  const total = sections.reduce((n, s) => n + board.sections[s.title].length, 0);
+  const draftReady = sections.every((s) => board.sections[s.title].length > 0);
+  const bench = benchFiltered(board.bench, search, sectionFilter);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* draft run: rail on top, the lineup stays visible underneath */}
+      {draftRun && (
+        <div className="border-b border-line bg-paper px-4 py-3">
+          <p className="mb-2 text-sm font-semibold">{t.board.drafting}</p>
           <StepRail
             runID={draftRun}
             steps={["dossier", "draft", "citecheck"]}
@@ -372,19 +407,9 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
               onDrafted?.();
             }}
           />
-        </Card>
-      </div>
-    );
-  }
+        </div>
+      )}
 
-  if (!board || !candsQ.data) return <BoardSkeleton />;
-  const sections = candsQ.data.sections;
-  const total = sections.reduce((n, s) => n + board.sections[s.title].length, 0);
-  const draftReady = sections.every((s) => board.sections[s.title].length > 0);
-  const bench = benchFiltered(board.bench, search, sectionFilter);
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
       {/* mobile column tabs */}
       <div className="flex gap-1 border-b border-line px-3 py-2 md:hidden">
         {(["bench", "issue"] as const).map((tab) => (
@@ -402,7 +427,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         ))}
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-2">
+      <div className={cn("grid min-h-0 flex-1 grid-cols-1 md:grid-cols-2", draftRun && "pointer-events-none opacity-60")}>
         {/* left: ranked bench */}
         <section
           className={cn("min-h-0 flex-col overflow-y-auto border-line p-4 md:flex md:border-r", boardTab === "bench" ? "flex" : "hidden md:flex")}
@@ -437,12 +462,13 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           </div>
           <div className={cn("space-y-2", dropZone === "bench" && "rounded-lg outline-dashed outline-2 outline-teal")}>
             {bench.length === 0 && <p className="py-6 text-center text-xs text-muted">{t.board.emptyBench}</p>}
-            {bench.map((c) => (
+            {bench.map((c, bi) => (
               <StoryCard
                 key={c.story_id}
                 c={c}
                 board={t.board}
                 side="bench"
+                delay={Math.min(bi * 40, 480)}
                 focused={focusKey === `b${c.story_id}`}
                 onFocus={() => setFocusKey(`b${c.story_id}`)}
                 onDragStart={onDragStart(c.story_id)}
@@ -465,10 +491,10 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           className={cn("min-h-0 flex-col overflow-y-auto p-4 md:flex", boardTab === "issue" ? "flex" : "hidden md:flex")}
           aria-label={t.board.issue}
         >
-          <div className="mb-3 flex items-center gap-2">
+          <div className="sticky -top-4 z-10 -mx-4 -mt-4 mb-3 flex items-center gap-2 border-b border-line bg-paper px-4 pb-3 pt-4">
             <h2 className="text-sm font-semibold">{t.board.issue}</h2>
             <span className="flex-1" />
-            <Button variant="teal" size="sm" disabled={!draftReady || draftMut.isPending} onClick={() => draftMut.mutate()}>
+            <Button variant="teal" size="sm" disabled={!draftReady || draftMut.isPending || !!draftRun} onClick={() => draftMut.mutate()}>
               {t.board.draftAction(total)}
             </Button>
           </div>
@@ -494,28 +520,45 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 </div>
                 <div className="space-y-2">
                   {items.map((c, i) => (
-                    <div key={c.story_id} onDragOver={allow(`sec:${s.title}:${i}`)} onDrop={onDrop(s.title, i)}>
-                      <StoryCard
-                        c={c}
-                        board={t.board}
-                        side="issue"
-                        focused={focusKey === `s${c.story_id}`}
-                        onFocus={() => setFocusKey(`s${c.story_id}`)}
-                        onDragStart={onDragStart(c.story_id)}
-                        onOpen={() => setSheet(c)}
-                        onRemove={() => removeToBench(c.story_id)}
-                        onReject={(reason) => rejectWith(c, reason)}
-                        onMoveTo={(sec) => moveTo(c.story_id, sec)}
-                        sections={sections}
-                        sectionFull={sectionFull}
-                      />
+                    <div
+                      key={c.story_id}
+                      className="flex items-start gap-2"
+                      onDragOver={allow(`sec:${s.title}:${i}`)}
+                      onDrop={onDrop(s.title, i)}
+                    >
+                      <span className="w-5 shrink-0 pt-3 text-right text-xs text-muted">{i + 1}.</span>
+                      <div className="min-w-0 flex-1">
+                        <StoryCard
+                          c={c}
+                          board={t.board}
+                          side="issue"
+                          lead={si === 0 && i === 0}
+                          focused={focusKey === `s${c.story_id}`}
+                          onFocus={() => setFocusKey(`s${c.story_id}`)}
+                          onDragStart={onDragStart(c.story_id)}
+                          onOpen={() => setSheet(c)}
+                          onRemove={() => removeToBench(c.story_id)}
+                          onReject={(reason) => rejectWith(c, reason)}
+                          onMoveTo={(sec) => moveTo(c.story_id, sec)}
+                          sections={sections}
+                          sectionFull={sectionFull}
+                        />
+                      </div>
                     </div>
                   ))}
-                  {items.length === 0 && (
-                    <div className="rounded-[var(--radius-card)] border border-dashed border-line px-4 py-6 text-center text-xs text-muted">
-                      {s.title}
+                  {Array.from({ length: s.capacity - items.length }, (_, k) => (
+                    <div
+                      key={`empty-${k}`}
+                      className="flex items-start gap-2"
+                      onDragOver={allow(`sec:${s.title}:${items.length + k}`)}
+                      onDrop={onDrop(s.title, items.length + k)}
+                    >
+                      <span className="w-5 shrink-0 pt-3 text-right text-xs text-muted/50">{items.length + k + 1}.</span>
+                      <div className="flex-1 rounded-[var(--radius-card)] border border-dashed border-line px-4 py-3 text-center text-xs text-muted">
+                        {t.board.emptySlot(s.capacity - items.length)}
+                      </div>
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
             );
@@ -567,7 +610,12 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
       {/* toast */}
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full border border-line bg-ink px-4 py-2 text-sm text-paper shadow-lg">
-          <span className="max-w-[60vw] truncate">{toast.text}</span>
+          <span className="max-w-[60vw] truncate" title={toast.text}>{toast.text}</span>
+          {toast.guide && (
+            <a className="font-medium text-teal-soft underline" href={toast.guide.url}>
+              {toast.guide.text}
+            </a>
+          )}
           {toast.undo && (
             <button className="font-medium text-teal-soft underline" onClick={undo}>
               {t.board.undo}
@@ -671,6 +719,8 @@ function StoryCard({
   board,
   side,
   focused,
+  delay,
+  lead,
   onFocus,
   onDragStart,
   onOpen,
@@ -685,6 +735,8 @@ function StoryCard({
   board: BoardStrings;
   side: "bench" | "issue";
   focused: boolean;
+  delay?: number;
+  lead?: boolean;
   onFocus: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onOpen: () => void;
@@ -701,9 +753,11 @@ function StoryCard({
     <Card
       className={cn(
         "card-in group p-3",
+        lead && "border-ink/30 p-4",
         focused && "ring-2 ring-teal",
         !c.available && "opacity-60",
       )}
+      style={delay ? { animationDelay: `${delay}ms` } : undefined}
       onFocus={onFocus}
       tabIndex={0}
       role="button"
@@ -722,7 +776,7 @@ function StoryCard({
           <GripVertical size={14} />
         </span>
         <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
-          <p className="font-doc text-sm font-semibold leading-5">{c.title}</p>
+          <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
           <p className="mt-0.5 text-xs text-muted">
             {c.outlets.join(", ")}
             {c.duplicates > 0 ? ` · +${c.duplicates}` : ""} · {c.score.toFixed(1)}/10
@@ -734,12 +788,9 @@ function StoryCard({
         </button>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {side === "bench" && c.available && (
-            <>
-              <Button size="sm" variant="outline" className="h-7 px-2" onClick={onAdd} aria-label={board.add}>
-                <Plus size={13} />
-              </Button>
-              <MoveMenu board={board} sections={sections} sectionFull={sectionFull} onMoveTo={onMoveTo} />
-            </>
+            <Button size="sm" variant="outline" className="h-7 px-2" onClick={onAdd} aria-label={board.add}>
+              <Plus size={13} />
+            </Button>
           )}
           {side === "issue" && (
             <>

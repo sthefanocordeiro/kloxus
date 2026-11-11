@@ -37,6 +37,7 @@ export function IssuePage() {
   const [params, setParams] = useSearchParams();
   const runID = params.get("run");
   const [runDone, setRunDone] = useState(!runID);
+  const [runSummary, setRunSummary] = useState<string | null>(null);
   const issueQ = useQuery({ queryKey: ["issue", issueID], queryFn: () => api.issue(issueID) });
   const itemsQ = useQuery({ queryKey: ["items", issueID], queryFn: () => api.issueItems(issueID) });
   const docQ = useQuery({ queryKey: ["document", issueID], queryFn: () => api.document(issueID) });
@@ -289,9 +290,27 @@ export function IssuePage() {
             #{issue.number} · {issue.subject}
           </p>
         </div>
-        <Badge tone={issue.status === "approved" ? "teal" : issue.status === "sent" ? "ink" : "warn"}>
-          {(t.status as Record<string, string>)[issue.status]}
-        </Badge>
+        <ol className="flex items-center gap-1 text-[11px]" aria-label={(t.status as Record<string, string>)[issue.status]}>
+          {t.board.steps.map((label, i) => {
+            const step = issue.status === "drafted" ? 2 : issue.status === "approved" || issue.status === "sent" ? 3 : 1;
+            return (
+              <li key={label} className="flex items-center gap-1">
+                {i > 0 && <span className="mx-0.5 text-muted/40">·</span>}
+                <span
+                  className={cn(
+                    "inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px]",
+                    i + 1 < step ? "bg-teal-soft text-teal" : i + 1 === step ? "bg-ink text-paper" : "bg-line text-muted",
+                  )}
+                >
+                  {i + 1}
+                </span>
+                <span className={i + 1 === step ? "font-semibold text-ink" : i + 1 < step ? "text-teal" : "text-muted"}>
+                  {label}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
         {saved && (
           <span className="text-[11px] text-muted">
             {saved === "saving" ? t.commentary.saving : t.commentary.saved}
@@ -321,7 +340,17 @@ export function IssuePage() {
               <StepRail
                 runID={runID}
                 steps={["collect", "dedupe", "triage", "storylist", "dossier", "deepdive"]}
-                onDone={(run) => {
+                onDone={(run, events) => {
+                  const bits: string[] = [];
+                  const labels = t.run.counts as Record<string, string | ((n: number) => string)>;
+                  for (const key of ["items_read", "duplicates_merged", "ranked", "selected"]) {
+                    const ev = [...events].reverse().find((e) => e.counts && key in e.counts);
+                    if (ev?.counts) {
+                      const lbl = labels[key] ?? key;
+                      bits.push(`${ev.counts[key]} ${typeof lbl === "function" ? lbl(ev.counts[key]) : lbl}`);
+                    }
+                  }
+                  if (bits.length) setRunSummary(bits.join(" · "));
                   setRunDone(true);
                   setParams((p) => { p.delete("run"); return p; }, { replace: true });
                   qc.invalidateQueries({ queryKey: ["candidates", issueID] });
@@ -334,7 +363,10 @@ export function IssuePage() {
             <BoardSkeleton />
           </div>
         ) : (
-          <BuildBoard issue={issue} onDrafted={() => invalidate()} />
+          <div className="flex min-h-0 flex-1 flex-col">
+            {runSummary && <p className="border-b border-line px-4 py-1.5 text-xs text-muted">{runSummary}</p>}
+            <BuildBoard issue={issue} onDrafted={() => invalidate()} />
+          </div>
         )
       ) : (
         doc && (
