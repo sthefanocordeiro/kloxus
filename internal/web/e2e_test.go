@@ -316,6 +316,12 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 	if !db.ReaderUnsubscribed(ctx, rid) {
 		t.Error("unsubscribe not recorded on the reader")
 	}
+	// reader-facing page: no editor navigation
+	for _, nav := range []string{">Sources<", ">Run<", ">Guide<", ">Costs<", ">Outbox<", ">Settings<"} {
+		if strings.Contains(rr.Body.String(), nav) {
+			t.Errorf("unsubscribe page shows editor nav %q", nav)
+		}
+	}
 	// sent issue is read-only
 	if rr := post(issueURL+"/commentary", url.Values{"section": {"The big one"}, "text": {"v3"}}); rr.Code == 200 {
 		if !strings.Contains(rr.Body.String(), "read-only") {
@@ -433,10 +439,18 @@ func TestGuideFromRejectionsOnly(t *testing.T) {
 	decide(iis[2].ID, url.Values{"kind": {"reject"}, "reason": {"ainda em comissão"}})
 	decide(iis[3].ID, url.Values{"kind": {"reject"}, "reason": {"matéria ainda em comissão"}})
 	decide(iis[4].ID, url.Values{"kind": {"reject"}, "reason": {"ainda em comissão, aguardando plenário"}})
+	// loosely-worded variants of the same theme merge too
+	decide(iis[5].ID, url.Values{"kind": {"reject"}, "reason": {"Projeto ainda em comissão, sem efeito prático para o leitor agora"}})
+	decide(iis[6].ID, url.Values{"kind": {"reject"}, "reason": {"Ainda em comissão; nada muda para o leitor por enquanto"}})
 	call(t, srv, "POST", pubURL+"/guide/rebuild", nil)
 	_, content, _ = db.LatestGuide(ctx, pub.ID)
 	if n := strings.Count(content, "comissão"); n != 1 {
 		t.Errorf("near-duplicate reasons not merged — %d comissão lines:\n%s", n, content)
+	}
+	for _, verbatim := range []string{"efeito prático", "por enquanto", "aguardando plenário"} {
+		if strings.Contains(content, verbatim) {
+			t.Errorf("verbatim reason fragment kept instead of the general rule:\n%s", content)
+		}
 	}
 
 	// undoing the "linha editorial" rejection removes its rule
@@ -516,7 +530,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 
 	pubs, _ := wsA.DB.ListPublications(ctx)
 	pub := pubs[0]
-	body := "# Edição 1\n\n## The big one\n\nConteúdo completo para assinantes."
+	body := "# Edição 1\n\n## The big one\n\n### Manchete\n\nFrase de abertura curta. Conteúdo completo para assinantes [1]."
 	iid, _ := wsA.DB.CreateIssue(ctx, pub.ID, 1, "Edição 1", body)
 	if err := wsA.DB.UpdateIssue(ctx, iid, "sent", body, "[]"); err != nil {
 		t.Fatalf("UpdateIssue: %v", err)
@@ -571,5 +585,33 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	rr = serve("GET", "/issue/1", cookieB, nil)
 	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
 		t.Error("editor route leaked the linked workspace's issue")
+	}
+	// reader-facing pages carry no editor navigation
+	rrReader := serve("GET", link, cookieB, nil)
+	for _, nav := range []string{">Sources<", ">Run<", ">Guide<", ">Costs<", ">Outbox<", ">Settings<"} {
+		if strings.Contains(rrReader.Body.String(), nav) {
+			t.Errorf("reader page shows editor nav link %q", nav)
+		}
+	}
+
+	// after the reader unsubscribes the same magic link still opens —
+	// in the non-subscriber (teaser) state, not a 404
+	key := regexp.MustCompile(`key=([^&]+)`).FindStringSubmatch(link)[1]
+	rid, err := wsA.DB.ReaderByToken(ctx, pub.ID, key)
+	if err != nil {
+		t.Fatalf("ReaderByToken: %v", err)
+	}
+	if err := wsA.DB.UnsubscribeReader(ctx, rid); err != nil {
+		t.Fatalf("UnsubscribeReader: %v", err)
+	}
+	rr = serve("GET", link, "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("magic link after unsubscribe = %d, want 200", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
+		t.Error("unsubscribed reader still sees paid content")
+	}
+	if !strings.Contains(rr.Body.String(), "Subscribers only") {
+		t.Error("unsubscribed reader should see the teaser")
 	}
 }

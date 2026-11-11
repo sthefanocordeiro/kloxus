@@ -118,11 +118,18 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string) string {
 			}
 		}
 	}
+	// normalise citation placement: "urbana. [1]" → "urbana [1]."
+	body = citePlaceRe.ReplaceAllString(body, " $1.")
 	if base != "" {
 		body = relLinkRe.ReplaceAllString(body, "]("+base+"$1)")
 	}
 	return body
 }
+
+// citePlaceRe finds a citation marker left dangling after a period so it
+// can be moved inside the sentence it cites (a "." after the marker is
+// absorbed, avoiding "x [1]..").
+var citePlaceRe = regexp.MustCompile(`\.\s*(\[\d+\])\.?`)
 
 var (
 	reH3     = regexp.MustCompile(`^### (.+?)\s*$`)

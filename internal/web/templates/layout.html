@@ -10,7 +10,7 @@
 <header class="top">
   <a class="brand" href="/">Kloxus</a>
   <span class="tag">the editorial back office</span>
-  {{if .Data.Pub}}<nav>
+  {{if and .Data.Pub (not .Data.Bare)}}<nav>
     <a href="/pub/{{.Data.Pub.ID}}">{{.Data.Pub.Name}}</a>
     <a href="/pub/{{.Data.Pub.ID}}/sources">Sources</a>
     <a href="/pub/{{.Data.Pub.ID}}/run">Run</a>

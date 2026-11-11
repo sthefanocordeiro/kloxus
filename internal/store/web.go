@@ -257,6 +257,19 @@ func (db *DB) ReaderByMagicToken(ctx context.Context, pubID int64, token string)
 	return id, err
 }
 
+// ReaderByToken resolves a magic-link token regardless of subscription
+// status — used to locate the workspace a reader link belongs to, even
+// after the reader unsubscribed (sql.ErrNoRows when invalid).
+func (db *DB) ReaderByToken(ctx context.Context, pubID int64, token string) (int64, error) {
+	var id int64
+	err := db.QueryRowContext(ctx, `
+		SELECT r.id FROM readers r
+		JOIN subscriptions s ON s.reader_id = r.id
+		WHERE r.publication_id = ? AND s.magic_token = ? AND s.magic_token != ''`,
+		pubID, token).Scan(&id)
+	return id, err
+}
+
 // OutboxEmail is one simulated outgoing message stored per workspace.
 type OutboxEmail struct {
 	ID        int64

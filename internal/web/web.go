@@ -1115,7 +1115,7 @@ func (s *Server) maxSourceRef(r *http.Request, iss *store.Issue, itemRef int64) 
 // removeSentence deletes a sentence from the body, taking along any
 // citation marker that trails it, and tidies the whitespace left behind.
 func removeSentence(body, sent string) string {
-	re := regexp.MustCompile(regexp.QuoteMeta(sent) + `(?:\s*\[\d+\])*`)
+	re := regexp.MustCompile(regexp.QuoteMeta(sent) + `(?:\s*\[\d+\])*\s*[.!?]*`)
 	var out string
 	if loc := re.FindStringIndex(body); loc != nil {
 		out = body[:loc[0]] + body[loc[1]:]
@@ -1126,7 +1126,10 @@ func removeSentence(body, sent string) string {
 	for strings.Contains(out, "\n\n\n") {
 		out = strings.ReplaceAll(out, "\n\n\n", "\n\n")
 	}
-	return out
+	// a sentence's terminal punctuation can survive as ". ." — collapse
+	out = strings.ReplaceAll(out, ". .", ".")
+	out = strings.ReplaceAll(out, " . ", " ")
+	return strings.TrimSpace(out)
 }
 
 // --- approve / send / export ---
@@ -1405,7 +1408,7 @@ func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
 		s.errPage(w, r, 500, "internal error")
 		return
 	}
-	s.render(w, r, "page-unsubscribed", map[string]any{"Pub": pub, "Reader": demoReaderName})
+	s.render(w, r, "page-unsubscribed", map[string]any{"Pub": pub, "Reader": demoReaderName, "Bare": true})
 }
 
 // readerPage shows the issue as a reader sees it: paid sections become a
@@ -1420,7 +1423,9 @@ func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 		// resolving to their own session.
 		if target, err := s.d.WS.Get(r.Context(), wsid); err == nil {
 			if pub, err := target.DB.GetPublication(r.Context(), r.PathValue("id")); err == nil {
-				if _, err := target.DB.ReaderByMagicToken(r.Context(), pub.ID, key); err == nil {
+				// The token resolves the workspace even after the reader
+				// unsubscribed — it must not require an active sub.
+				if _, err := target.DB.ReaderByToken(r.Context(), pub.ID, key); err == nil {
 					r = r.WithContext(context.WithValue(r.Context(), ctxWS, target))
 				}
 			}
@@ -1465,6 +1470,7 @@ func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "page-reader", map[string]any{
 		"Pub": pub, "Issue": iss, "Active": unlocked, "Subscribed": active, "Reader": demoReaderName,
 		"LinkQ":    linkQ,
+		"Bare":     true, // reader-facing: no editor navigation
 		"BodyHTML": template.HTML(delivery.RenderHTML(iss.Subject, md, requestBase(r))),
 	})
 }

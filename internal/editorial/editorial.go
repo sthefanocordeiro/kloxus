@@ -92,18 +92,22 @@ var punctRe = regexp.MustCompile(`[.,;:!?()\[\]"'“”‘’]+`)
 func buildGuide(reasons []string) string {
 	var rules []string
 	var toks []map[string]bool
+	var bigramList []map[string]bool
 	for _, reason := range reasons {
 		rule := ruleFor(reason)
 		if rule == "" {
 			continue
 		}
 		t := tokens(rule)
+		bg := bigrams(rule)
 		dup := -1
 		for i, rt := range toks {
-			// near-duplicate: high token overlap, or one rule is a
-			// stricter superset of the other (same objection, extra
-			// detail — the shorter, more general phrasing wins).
-			if jaccard(t, rt) >= 0.6 || subset(t, rt) || subset(rt, t) {
+			// near-duplicate: high token overlap, one rule is a stricter
+			// superset of the other, or two+ shared content bigrams —
+			// the same objection in different words (the shorter, more
+			// general phrasing wins).
+			if jaccard(t, rt) >= 0.6 || subset(t, rt) || subset(rt, t) ||
+				sharedBigrams(bg, bigramList[i]) >= 2 {
 				dup = i
 				break
 			}
@@ -111,12 +115,13 @@ func buildGuide(reasons []string) string {
 		if dup >= 0 {
 			// keep the shorter (more general) phrasing
 			if len(rule) < len(rules[dup]) {
-				rules[dup], toks[dup] = rule, t
+				rules[dup], toks[dup], bigramList[dup] = rule, t, bg
 			}
 			continue
 		}
 		rules = append(rules, rule)
 		toks = append(toks, t)
+		bigramList = append(bigramList, bg)
 	}
 	var b strings.Builder
 	for _, r := range rules {
@@ -157,6 +162,30 @@ var stopword = map[string]bool{
 	"que": true, "com": true, "por": true, "os": true, "as": true, "das": true,
 	"dos": true, "the": true, "of": true, "in": true, "and": true, "is": true,
 	"to": true, "for": true, "on": true, "at": true, "an": true, "it": true,
+}
+
+// bigrams returns the adjacent word pairs of a normalized rule that
+// contain at least one content word ("em comissão", "o leitor").
+func bigrams(rule string) map[string]bool {
+	w := strings.Fields(strings.ToLower(punctRe.ReplaceAllString(rule, " ")))
+	set := map[string]bool{}
+	for i := 0; i+1 < len(w); i++ {
+		if !stopword[w[i]] || !stopword[w[i+1]] {
+			set[w[i]+" "+w[i+1]] = true
+		}
+	}
+	return set
+}
+
+// sharedBigrams counts bigrams present in both sets.
+func sharedBigrams(a, b map[string]bool) int {
+	n := 0
+	for bg := range a {
+		if b[bg] {
+			n++
+		}
+	}
+	return n
 }
 
 // subset reports whether every token of a is also in b.

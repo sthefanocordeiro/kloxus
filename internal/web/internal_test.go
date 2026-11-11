@@ -22,4 +22,11 @@ func TestRemoveSentenceDropsCitationMarker(t *testing.T) {
 	if strings.Contains(out, "[1]") {
 		t.Fatalf("orphaned citation left behind: %q", out)
 	}
+
+	// the sentence's terminal punctuation goes with it — no ". ." stray
+	out = removeSentence("Duas pediram prazo maior [1]. Especialistas divergem.",
+		"Duas pediram prazo maior [1]")
+	if strings.Contains(out, ". .") || !strings.HasPrefix(out, "Especialistas divergem.") {
+		t.Fatalf("stray punctuation left behind: %q", out)
+	}
 }
