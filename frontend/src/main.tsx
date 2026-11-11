@@ -8,6 +8,7 @@ import { ErrorPage } from "./pages/ErrorPage";
 import { Publications } from "./pages/Publications";
 import { PublicationPage } from "./pages/PublicationPage";
 import { IssuePage } from "./pages/IssuePage";
+import { RunLanding } from "./pages/Board";
 import "./styles.css";
 
 const qc = new QueryClient({
@@ -23,6 +24,7 @@ const router = createBrowserRouter(
         { path: "/", element: <Publications /> },
         { path: "/pub/:id", element: <PublicationPage /> },
         { path: "/issues/:id", element: <IssuePage /> },
+        { path: "/runs/:runID", element: <RunLanding /> },
       ],
     },
   ],

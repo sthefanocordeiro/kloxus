@@ -75,6 +75,61 @@ export interface RunEvent {
   counts?: Record<string, number>;
 }
 
+export interface Candidate {
+  story_id: number;
+  item_id?: number;
+  title: string;
+  outlets: string[];
+  sources: number;
+  duplicates: number;
+  score: number;
+  reason: string;
+  rank: number;
+  in_issue: boolean;
+  section?: string;
+  suggested_section?: string;
+  status?: string;
+  origin?: string;
+  position: number;
+  dossier: boolean;
+  available: boolean;
+}
+
+export interface BoardSection {
+  title: string;
+  capacity: number;
+  commentary: string;
+}
+
+export interface CandidatesResponse {
+  candidates: Candidate[];
+  sections: BoardSection[];
+  demo: boolean;
+}
+
+export interface StoryItem {
+  id: number;
+  title: string;
+  url: string;
+  outlet: string;
+  published_at: string;
+  snippet: string;
+}
+
+export interface StoryDetail {
+  id: number;
+  title: string;
+  score: number;
+  reason: string;
+  outlets: string[];
+  items: StoryItem[];
+}
+
+export interface LineupEntry {
+  story_id: number;
+  section: string;
+}
+
 export interface Run {
   id: string;
   kind: "prepare" | "draft";
@@ -197,6 +252,13 @@ export const api = {
     request<{ item: IssueItem; pending: number; guide?: { version: number; added?: string[] } }>(
       "POST", `/api/v1/issues/${issueID}/items/${itemID}/decisions`, { kind, reason },
     ),
+  candidates: (issueID: number) =>
+    request<CandidatesResponse>("GET", `/api/v1/issues/${issueID}/candidates`),
+  lineup: (issueID: number, entries: LineupEntry[]) =>
+    request<{ candidates: Candidate[]; guide?: { version: number; added?: string[] } }>(
+      "PUT", `/api/v1/issues/${issueID}/lineup`, { entries },
+    ),
+  story: (sid: number) => request<{ story: StoryDetail }>("GET", `/api/v1/stories/${sid}`).then((r) => r.story),
   editSentence: (issueID: number, sid: string, text: string, citations: number[], version: string) =>
     request<{ sentence?: DocSentence; coverage: Coverage; flags: number; version: string }>(
       "PATCH", `/api/v1/issues/${issueID}/sentences/${sid}`, { text, citations, version },

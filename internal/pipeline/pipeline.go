@@ -53,6 +53,9 @@ type Runner struct {
 	// OnEvent, if set, is called as each step finishes with the step's
 	// real counts (the /api/v1 run-events stream).
 	OnEvent func(StepEvent)
+	// OnIssue, if set, is called the moment Phase A creates the issue
+	// row — lets run tracking expose issue_id before the run finishes.
+	OnIssue func(issueID int64)
 }
 
 // StepEvent reports a finished pipeline step with its real counts — never
@@ -92,14 +95,15 @@ type Flagged struct {
 
 // entry bundles an issue item with its merged member items.
 type entry struct {
-	iiID    int64
-	storyID int64
-	ref     int
-	title   string
-	section string
-	why     string
-	score   float64
-	sources []store.Item
+	iiID     int64
+	storyID  int64
+	ref      int
+	title    string
+	section  string
+	why      string
+	score    float64
+	position int
+	sources  []store.Item
 }
 
 // RenderPrompt renders an embedded prompt template by name.
@@ -338,6 +342,9 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	res.IssueID = issueID
 	r.DB.AttachRuns(ctx, pub.ID, issueID)
+	if r.OnIssue != nil {
+		r.OnIssue(issueID)
+	}
 
 	// --- triage ---
 	r.stepStart("triage")
@@ -615,9 +622,10 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool)
 	dossierByRef := map[int]*Dossier{}
 	for _, ii := range iis {
 		if canonical {
-			// Alternative replacements are never part of the recorded
-			// canonical input.
-			if ii.Origin == "alternative" {
+			// Only the AI-picked items belong to the recorded
+			// canonical input — alternatives and manual adds would
+			// change the replay keys.
+			if ii.Origin != "phaseA" {
 				continue
 			}
 		} else if ii.Status != "approved" {
@@ -635,9 +643,17 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool)
 		if title == "" {
 			title, _ = r.DB.StoryTitle(ctx, ii.StoryID)
 		}
+		section := ii.Section
+		if canonical && ii.OrigSection != "" {
+			// replay input must look exactly like the recorded Phase A
+			// output — board moves mutate Section, OrigSection holds the
+			// pick
+			section = ii.OrigSection
+		}
 		entries = append(entries, entry{
 			iiID: ii.ID, storyID: ii.StoryID, ref: d.Ref,
-			title: title, section: ii.Section, why: ii.Reason, score: ii.Score,
+			title: title, section: section, why: ii.Reason, score: ii.Score,
+			position: ii.Position,
 		})
 		dd := d
 		dossierByRef[d.Ref] = &dd
@@ -645,10 +661,55 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool)
 	return entries, dossierByRef, nil
 }
 
+// ensureDossiers generates dossiers for lineup items that lack one —
+// stories the creator added on the board get theirs at draft time,
+// so the draft run can pick up any board composition.
+func (r *Runner) ensureDossiers(ctx context.Context, pub *store.Publication, issueID int64) error {
+	iis, err := r.DB.IssueItems(ctx, issueID)
+	if err != nil {
+		return err
+	}
+	maxRef := 0
+	var missing []store.IssueItem
+	for _, ii := range iis {
+		if dj, err := r.DB.Dossier(ctx, ii.ID); err == nil {
+			var d Dossier
+			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
+				maxRef = d.Ref
+			}
+			continue
+		}
+		if ii.Status == "approved" || ii.Status == "pending" {
+			missing = append(missing, ii)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	r.stepStart("dossier")
+	for _, ii := range missing {
+		cand, err := r.DB.StoryWithItems(ctx, ii.StoryID)
+		if err != nil {
+			return err
+		}
+		maxRef++
+		d := r.alternativeDossier(ctx, pub, cand, maxRef)
+		data, _ := json.Marshal(d)
+		if err := r.DB.SaveDossier(ctx, ii.ID, string(data)); err != nil {
+			return err
+		}
+	}
+	r.emit("dossier", map[string]int{"dossiers": len(missing)})
+	return nil
+}
+
 // RunPhaseB runs draft → assemble → citecheck on an issue produced by
 // RunPhaseA (and reviewed): the stored body carries approved items only.
 func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
 	res := &Result{IssueID: issueID}
+	if err := r.ensureDossiers(ctx, pub, issueID); err != nil {
+		return nil, err
+	}
 	entries, dossierByRef, err := r.loadEntries(ctx, issueID, false)
 	if err != nil {
 		return nil, err
@@ -737,6 +798,8 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	}
 
 	// --- assemble issue markdown ---
+	// honor the board's slot order inside each section
+	sort.SliceStable(entries, func(a, b int) bool { return entries[a].position < entries[b].position })
 	number := res.Number
 	if number == 0 {
 		if iss, err := r.DB.GetIssue(ctx, issueID); err == nil {

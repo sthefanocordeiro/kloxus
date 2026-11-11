@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { ArrowLeft, BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
-import { api, ApiRequestError, type Check, type IssueDocument, type IssueItem, type IssueSummary, type RemovedSentence, type RunEvent } from "../api";
+import { api, ApiRequestError, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
 import { docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
 import { Commentary, DocActionsCtx, ItemHeading, Sentence, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
 import { fmtDate } from "../lib/fmt";
-import { Badge, Button, Card, KDialog, KPopover } from "../ui";
+import { Badge, Button, KDialog, KPopover } from "../ui";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
+import { BoardSkeleton, BuildBoard, StepRail } from "./Board";
 
 // scroll the editor pane to a sentence/item element and flash it —
 // constrained to the pane so other panes don't move
@@ -25,11 +26,17 @@ function flashEl(docEl: HTMLElement | null, sel: string) {
   el.classList.add("flash");
 }
 
+// statuses before the draft exists — the build board owns them
+const BOARD_STATUSES = new Set(["draft", "reviewing", ""]);
+
 export function IssuePage() {
   const { id } = useParams();
   const issueID = Number(id);
   const { t } = useT();
   const qc = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const runID = params.get("run");
+  const [runDone, setRunDone] = useState(!runID);
   const issueQ = useQuery({ queryKey: ["issue", issueID], queryFn: () => api.issue(issueID) });
   const itemsQ = useQuery({ queryKey: ["items", issueID], queryFn: () => api.issueItems(issueID) });
   const docQ = useQuery({ queryKey: ["document", issueID], queryFn: () => api.document(issueID) });
@@ -291,8 +298,10 @@ export function IssuePage() {
           </span>
         )}
         <span className="flex-1" />
-        {doc && <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />}
-        {readinessQ.data && issue.status !== "sent" && (
+        {!BOARD_STATUSES.has(issue.status) && doc && (
+          <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />
+        )}
+        {readinessQ.data && !BOARD_STATUSES.has(issue.status) && issue.status !== "sent" && (
           <ApproveBar
             issue={issue}
             checks={readinessQ.data.checks}
@@ -304,16 +313,29 @@ export function IssuePage() {
         {issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
       </header>
 
-      {issue.status === "reviewing" || issue.status === "" ? (
-        <DecisionsView
-          issue={issue}
-          items={itemsQ.data?.items ?? []}
-          pending={itemsQ.data?.pending ?? 0}
-          onChanged={() => {
-            invalidate();
-            qc.invalidateQueries({ queryKey: ["items", issueID] });
-          }}
-        />
+      {BOARD_STATUSES.has(issue.status) ? (
+        runID && !runDone ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="mx-auto w-full max-w-md p-6">
+              <h2 className="mb-4 text-lg font-semibold">{t.board.preparing}</h2>
+              <StepRail
+                runID={runID}
+                steps={["collect", "dedupe", "triage", "storylist", "dossier", "deepdive"]}
+                onDone={(run) => {
+                  setRunDone(true);
+                  setParams((p) => { p.delete("run"); return p; }, { replace: true });
+                  qc.invalidateQueries({ queryKey: ["candidates", issueID] });
+                  qc.invalidateQueries({ queryKey: ["issue", issueID] });
+                  if (run.no_new_items) showToast(t.run.noNewItems);
+                  if (run.error) showToast(run.error);
+                }}
+              />
+            </div>
+            <BoardSkeleton />
+          </div>
+        ) : (
+          <BuildBoard issue={issue} onDrafted={() => invalidate()} />
+        )
       ) : (
         doc && (
           <>
@@ -538,188 +560,5 @@ function ReceiptCard({ issue }: { issue: IssueSummary }) {
       {t.receipt.title}: {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)} ·{" "}
       {t.receipt.version} {r.document_version.slice(0, 8)}
     </div>
-  );
-}
-
-// --- reviewing: pautas decisions (triaged cards) ---
-
-function DecisionsView({
-  issue,
-  items,
-  pending,
-  onChanged,
-}: {
-  issue: IssueSummary;
-  items: IssueItem[];
-  pending: number;
-  onChanged: () => void;
-}) {
-  const { t } = useT();
-  const qc = useQueryClient();
-  const [rejectReason, setRejectReason] = useState<Record<number, string>>({});
-  const [draftRun, setDraftRun] = useState<string | null>(null);
-  const [draftErr, setDraftErr] = useState<string[]>([]);
-  const checkLabels = t.readiness.check as Record<string, { ok: string; fail: string }>;
-  const itemStatus = (s: string) => (t.itemStatus as Record<string, string>)[s || "pending"] ?? s;
-
-  const decide = useMutation({
-    mutationFn: ({ itemID, kind, reason }: { itemID: number; kind: string; reason?: string }) =>
-      api.decide(issue.id, itemID, kind, reason),
-    onSuccess: () => {
-      onChanged();
-    },
-  });
-
-  const draft = useMutation({
-    mutationFn: () => api.draft(issue.id),
-    onSuccess: (run) => {
-      setDraftErr([]);
-      setDraftRun(run.id);
-    },
-    onError: (e) => {
-      // blocked drafts carry per-reason details — translate each
-      if (e instanceof ApiRequestError && e.body.reasons?.length) {
-        setDraftErr(e.body.reasons.map((r) => checkLabels[r.code]?.fail ?? r.message));
-      } else {
-        setDraftErr([errText(t, e)]);
-      }
-    },
-  });
-
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mx-auto max-w-2xl">
-        <div className="mb-4 flex items-center gap-3">
-          <h2 className="text-lg font-semibold">{t.pautas}</h2>
-          <Badge tone={pending > 0 ? "warn" : "teal"}>
-            {pending} {t.decisions.pending}
-          </Badge>
-          <span className="flex-1" />
-          <Button
-            variant="teal"
-            size="sm"
-            disabled={draft.isPending || !!draftRun}
-            onClick={() => draft.mutate()}
-          >
-            {draft.isPending || draftRun ? t.draft.running : t.draft.action}
-          </Button>
-        </div>
-
-        {draftErr.length > 0 && (
-          <Card className="mb-4 border-danger/40 bg-danger-soft p-3 text-sm text-danger">
-            {draftErr.map((m, i) => (
-              <p key={i}>{m}</p>
-            ))}
-          </Card>
-        )}
-
-        {draftRun && <DraftProgress runID={draftRun} issueID={issue.id} onDone={() => qc.invalidateQueries()} />}
-
-        <div className="space-y-3">
-          {items.map((it) => (
-            <Card key={it.id} className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-doc font-semibold leading-6">{it.title}</p>
-                  <p className="mt-0.5 text-xs text-muted">
-                    {it.outlets.join(", ")} · {it.score.toFixed(1)}/10
-                    {it.reason ? ` — ${it.reason}` : ""}
-                  </p>
-                  <p className="text-[11px] uppercase tracking-wide text-muted">{it.section}</p>
-                </div>
-                <Badge
-                  tone={
-                    it.status === "approved" ? "teal" : it.status === "rejected" ? "danger" : it.status === "alternative" ? "ink" : "warn"
-                  }
-                >
-                  {itemStatus(it.status)}
-                </Badge>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                {it.status === "rejected" ? (
-                  <Button size="sm" variant="outline" onClick={() => decide.mutate({ itemID: it.id, kind: "undo" })}>
-                    {t.decisions.undo}
-                  </Button>
-                ) : it.status !== "approved" && it.status !== "alternative" ? (
-                  <>
-                    <Button size="sm" variant="teal" onClick={() => decide.mutate({ itemID: it.id, kind: "approve" })}>
-                      {t.decisions.approve}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => decide.mutate({ itemID: it.id, kind: "alternative" })}>
-                      {t.decisions.alternative}
-                    </Button>
-                  </>
-                ) : null}
-                {it.status !== "rejected" && (
-                  <span className="flex items-center gap-1">
-                    <input
-                      value={rejectReason[it.id] ?? ""}
-                      onChange={(e) => setRejectReason((m) => ({ ...m, [it.id]: e.target.value }))}
-                      placeholder={t.reasonRequired}
-                      className="h-8 w-56 rounded-[var(--radius-input)] border border-line bg-paper px-2 text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      disabled={!rejectReason[it.id]?.trim()}
-                      onClick={() => decide.mutate({ itemID: it.id, kind: "reject", reason: rejectReason[it.id] })}
-                    >
-                      {t.decisions.reject}
-                    </Button>
-                  </span>
-                )}
-              </div>
-              {decide.error instanceof ApiRequestError && (
-                <p className="mt-1 text-xs text-danger">{decide.error.body.message}</p>
-              )}
-            </Card>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// SSE-driven draft progress — reuses the run-events stream (named
-// "step" events + a final "done", same as prepare).
-function DraftProgress({ runID, issueID, onDone }: { runID: string; issueID: number; onDone: () => void }) {
-  const { t } = useT();
-  const qc = useQueryClient();
-  const [events, setEvents] = useState<RunEvent[]>([]);
-  const doneRef = useRef(false);
-  useEffect(() => {
-    const es = new EventSource(`/api/v1/runs/${runID}/events`);
-    es.addEventListener("step", (e) => {
-      const ev = JSON.parse((e as MessageEvent).data) as RunEvent;
-      setEvents((prev) => (prev.some((p) => p.seq === ev.seq) ? prev : [...prev, ev]));
-    });
-    es.addEventListener("done", () => {
-      es.close();
-      if (doneRef.current) return;
-      doneRef.current = true;
-      onDone();
-      qc.invalidateQueries({ queryKey: ["document", issueID] });
-      qc.invalidateQueries({ queryKey: ["issue", issueID] });
-      qc.invalidateQueries({ queryKey: ["readiness", issueID] });
-    });
-    es.onerror = () => es.close();
-    return () => es.close();
-  }, [runID, issueID, onDone, qc]);
-
-  return (
-    <Card className="mb-4 p-3 text-sm">
-      {events.map((e) => {
-        const steps = t.run.step as Record<string, string>;
-        const counts = t.run.counts as Record<string, string>;
-        const label = steps[e.step] ?? e.step;
-        const bits = Object.entries(e.counts ?? {}).map(([k, v]) => `${v} ${counts[k] ?? k}`);
-        return (
-          <p key={e.seq} className="text-muted">
-            {label} {bits.length ? `— ${bits.join(", ")}` : ""}
-          </p>
-        );
-      })}
-      <p className="text-xs text-muted">{t.draft.running}</p>
-    </Card>
   );
 }

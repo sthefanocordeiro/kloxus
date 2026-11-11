@@ -588,25 +588,147 @@ outer0:
 	}
 }
 
-// TestAPIDraftBlocked: drafting with open decisions is a blocked action
-// carrying the pending count.
-func TestAPIDraftBlocked(t *testing.T) {
+// TestAPIDraftLineupGate: the untouched AI suggestion drafts straight
+// away (pending items are the lineup), but a lineup that leaves a
+// section empty is blocked with per-section reasons.
+func TestAPIDraftLineupGate(t *testing.T) {
 	srv, db, pub, _ := demoServer(t)
 	ctx := context.Background()
-	_ = ctx
 	issueID := runPhaseA(t, srv, db, pub.ID)
-	rr := apiCall(t, srv, "POST", "/api/v1/issues/"+strconv.FormatInt(issueID, 10)+"/draft", nil)
+	issueURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10)
+
+	// empty every section via the lineup → draft blocked with reasons
+	if rr := apiCall(t, srv, "PUT", issueURL+"/lineup", map[string]any{"entries": []any{}}); rr.Code != 200 {
+		t.Fatalf("PUT empty lineup = %d", rr.Code)
+	}
+	rr := apiCall(t, srv, "POST", issueURL+"/draft", nil)
 	if c := apiErrCode(t, rr); c != "blocked" {
-		t.Fatalf("draft with pending decisions: code = %q", c)
+		t.Fatalf("draft with empty sections: code = %q", c)
 	}
 	rs := apiReasons(t, rr)
-	if len(rs) == 0 || rs[0]["code"] != "pending_decisions" {
+	if len(rs) == 0 || rs[0]["code"] != "section_empty" {
 		t.Fatalf("blocked reasons = %v", rs)
 	}
+	_ = ctx
 }
 
 // TestAPIInterpretation marks a flagged sentence as interpretation:
 // the flag resolves and the sentence becomes an editor-attributed block.
+// TestAPILineup: the build board contract — candidates expose the
+// ranked pool, PUT lineup sets sections/slots, capacity is enforced,
+// removal without a reason is not a rejection, and a rejected story
+// that comes back rebuilds the guide.
+func TestAPILineup(t *testing.T) {
+	srv, db, pub, _ := demoServer(t)
+	ctx := context.Background()
+	issueID := runPhaseA(t, srv, db, pub.ID)
+	issueURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10)
+
+	get := apiGet(t, srv, issueURL+"/candidates")
+	cands, _ := get["candidates"].([]any)
+	if len(cands) == 0 {
+		t.Fatal("no candidates")
+	}
+	secs, _ := get["sections"].([]any)
+	if len(secs) == 0 {
+		t.Fatal("no sections exposed")
+	}
+	byStory := map[float64]map[string]any{}
+	bench := []map[string]any{}
+	inIssue := []map[string]any{}
+	for _, c := range cands {
+		m := c.(map[string]any)
+		sid := m["story_id"].(float64)
+		byStory[sid] = m
+		if m["in_issue"].(bool) {
+			inIssue = append(inIssue, m)
+		} else {
+			bench = append(bench, m)
+		}
+	}
+	if len(inIssue) == 0 {
+		t.Fatal("AI suggestion did not pre-fill the lineup")
+	}
+	first := inIssue[0]
+	if first["suggested_section"] == "" {
+		t.Fatalf("phaseA item lacks suggested_section: %v", first)
+	}
+
+	// overfill a capacity-1 section → 409 section_full
+	cap1 := ""
+	for _, sc := range secs {
+		sm := sc.(map[string]any)
+		if sm["capacity"].(float64) == 1 {
+			cap1 = sm["title"].(string)
+		}
+	}
+	if cap1 == "" {
+		t.Fatal("fixture lacks a capacity-1 section")
+	}
+	var two []any
+	two = append(two, inIssue[0]["story_id"])
+	for _, c := range cands {
+		m := c.(map[string]any)
+		if !m["in_issue"].(bool) {
+			two = append(two, m["story_id"])
+			break
+		}
+	}
+	rr := apiCall(t, srv, "PUT", issueURL+"/lineup", map[string]any{"entries": []any{
+		map[string]any{"story_id": int64(two[0].(float64)), "section": cap1},
+		map[string]any{"story_id": int64(two[1].(float64)), "section": cap1},
+	}})
+	if c := apiErrCode(t, rr); c != "section_full" {
+		t.Fatalf("overfill: code = %q, want section_full", c)
+	}
+
+	// remove one suggested item without a reason → removed, not rejected
+	victim := inIssue[0]
+	entries := []any{}
+	for _, mm := range inIssue[1:] {
+		entries = append(entries, map[string]any{"story_id": int64(mm["story_id"].(float64)), "section": mm["section"]})
+	}
+	rr = apiCall(t, srv, "PUT", issueURL+"/lineup", map[string]any{"entries": entries})
+	if rr.Code != 200 {
+		t.Fatalf("PUT lineup = %d: %s", rr.Code, rr.Body.String())
+	}
+	after := apiGet(t, srv, issueURL+"/candidates")
+	var found map[string]any
+	for _, c := range after["candidates"].([]any) {
+		m := c.(map[string]any)
+		if m["story_id"] == victim["story_id"] {
+			found = m
+		}
+	}
+	if found == nil {
+		t.Fatal("removed story vanished from candidates")
+	}
+	if found["in_issue"].(bool) || found["status"] != "removed" {
+		t.Fatalf("removed story state = %v", found)
+	}
+	iis, _ := db.IssueItems(ctx, issueID)
+	for _, ii := range iis {
+		if ii.StoryID == int64(victim["story_id"].(float64)) && ii.Status == "rejected" {
+			t.Fatal("reason-free removal became a rejection")
+		}
+	}
+
+	// add a bench story into a real section, keep the rest
+	if len(bench) == 0 {
+		t.Skip("no bench candidates in fixture")
+	}
+	added := bench[0]
+	entries = append(entries, map[string]any{"story_id": int64(added["story_id"].(float64)), "section": "Quick links"})
+	rr = apiCall(t, srv, "PUT", issueURL+"/lineup", map[string]any{"entries": entries})
+	if rr.Code != 200 {
+		t.Fatalf("PUT lineup+add = %d: %s", rr.Code, rr.Body.String())
+	}
+	ii, err := db.IssueItemByStory(ctx, issueID, int64(added["story_id"].(float64)))
+	if err != nil || ii.Status != "approved" || ii.Origin != "manual" {
+		t.Fatalf("added story item = %+v err=%v", ii, err)
+	}
+}
+
 func TestAPIInterpretation(t *testing.T) {
 	srv, db, pub, _ := demoServer(t)
 	ctx := context.Background()

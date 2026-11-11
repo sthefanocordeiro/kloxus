@@ -155,8 +155,8 @@ func (db *DB) ResolveFlags(ctx context.Context, issueID int64, flags []Flag) err
 func (db *DB) GetIssueItem(ctx context.Context, id int64) (*IssueItem, error) {
 	var ii IssueItem
 	err := db.QueryRowContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status, origin FROM issue_items WHERE id = ?`, id).
-		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin)
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section FROM issue_items WHERE id = ?`, id).
+		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection)
 	if err != nil {
 		return nil, err
 	}
@@ -182,9 +182,9 @@ func (db *DB) SetIssueBody(ctx context.Context, id int64, bodyMD string) error {
 func (db *DB) IssueItemByStory(ctx context.Context, issueID, storyID int64) (*IssueItem, error) {
 	var ii IssueItem
 	err := db.QueryRowContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status, origin FROM issue_items
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section FROM issue_items
 		 WHERE issue_id = ? AND story_id = ?`, issueID, storyID).
-		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin)
+		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection)
 	if err != nil {
 		return nil, err
 	}

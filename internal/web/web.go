@@ -162,6 +162,9 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/issues/{id}", s.apiIssue)
 	m.HandleFunc("GET /api/v1/issues/{id}/readiness", s.apiReadiness)
 	m.HandleFunc("GET /api/v1/issues/{id}/items", s.apiIssueItems)
+	m.HandleFunc("GET /api/v1/issues/{id}/candidates", s.apiCandidates)
+	m.HandleFunc("PUT /api/v1/issues/{id}/lineup", s.apiLineup)
+	m.HandleFunc("GET /api/v1/stories/{sid}", s.apiStory)
 	m.HandleFunc("POST /api/v1/issues/{id}/items/{iid}/decisions", s.apiDecision)
 	m.HandleFunc("GET /api/v1/items/{iid}/dossier", s.apiDossier)
 	m.HandleFunc("POST /api/v1/issues/{id}/draft", s.apiDraft)
@@ -603,6 +606,11 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 			OnEvent: func(ev pipeline.StepEvent) {
 				st.mu.Lock()
 				st.events = append(st.events, ev)
+				st.mu.Unlock()
+			},
+			OnIssue: func(issueID int64) {
+				st.mu.Lock()
+				st.st.IssueID = issueID
 				st.mu.Unlock()
 			},
 		}
