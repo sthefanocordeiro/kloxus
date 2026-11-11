@@ -47,6 +47,30 @@ func (db *DB) GetIssue(ctx context.Context, id int64) (*Issue, error) {
 		 FROM issues WHERE id = ?`, id))
 }
 
+// ListIssues returns a publication's issues, newest first.
+func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		 FROM issues WHERE publication_id = ? ORDER BY number DESC`, pubID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Issue
+	for rows.Next() {
+		var i Issue
+		var flags, commentary string
+		if err := rows.Scan(&i.ID, &i.PublicationID, &i.Number, &i.Status,
+			&i.Subject, &i.BodyMD, &flags, &commentary, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(flags), &i.Flags)
+		json.Unmarshal([]byte(commentary), &i.Commentary)
+		out = append(out, &i)
+	}
+	return out, rows.Err()
+}
+
 // LatestIssue returns a publication's newest issue (sql.ErrNoRows if none).
 func (db *DB) LatestIssue(ctx context.Context, pubID int64) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,
@@ -64,6 +88,50 @@ func (db *DB) SetIssueItemStatus(ctx context.Context, id int64, status string) e
 func (db *DB) SetIssueStatus(ctx context.Context, id int64, status string) error {
 	_, err := db.ExecContext(ctx, `UPDATE issues SET status = ? WHERE id = ?`, status, id)
 	return err
+}
+
+// RevertIssueToDraft returns an approved issue to drafted and drops its
+// approval receipt — post-approval edits invalidate the approval.
+func (db *DB) RevertIssueToDraft(ctx context.Context, id int64) error {
+	if err := db.SetIssueStatus(ctx, id, "drafted"); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `DELETE FROM approval_receipts WHERE issue_id = ?`, id)
+	return err
+}
+
+// ApprovalReceipt is the stored record of an issue approval.
+type ApprovalReceipt struct {
+	IssueID         int64
+	Number          int
+	DocumentVersion string
+	Approver        string
+	ChecksJSON      string
+	ApprovedAt      string
+}
+
+// SaveApprovalReceipt records the approval of an issue. The first
+// receipt wins: a repeated approve keeps the original (INSERT OR
+// IGNORE), so the returned row carries one stable timestamp.
+func (db *DB) SaveApprovalReceipt(ctx context.Context, rec *ApprovalReceipt) error {
+	_, err := db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO approval_receipts (issue_id, number, document_version, approver, checks_json)
+		 VALUES (?,?,?,?,?)`,
+		rec.IssueID, rec.Number, rec.DocumentVersion, rec.Approver, rec.ChecksJSON)
+	return err
+}
+
+// ApprovalReceipt returns the stored receipt (sql.ErrNoRows if none).
+func (db *DB) ApprovalReceipt(ctx context.Context, issueID int64) (*ApprovalReceipt, error) {
+	var r ApprovalReceipt
+	err := db.QueryRowContext(ctx,
+		`SELECT issue_id, number, document_version, approver, checks_json, approved_at
+		 FROM approval_receipts WHERE issue_id = ?`, issueID).
+		Scan(&r.IssueID, &r.Number, &r.DocumentVersion, &r.Approver, &r.ChecksJSON, &r.ApprovedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // StoryTitle returns a story's title (empty if the story is gone).

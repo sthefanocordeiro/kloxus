@@ -224,10 +224,22 @@ func TestDemoIssueLifecycle(t *testing.T) {
 		t.Fatal("reader view should be unlocked after simulated payment")
 	}
 
-	if rr := call(t, srv, "POST", issueURL+"/send", url.Values{"to": {"test@example.com"}}); !strings.Contains(rr.Body.String(), "Issue sent to the demo outbox") {
-		t.Fatalf("POST send = %d %s", rr.Code, rr.Body.String())
+	// a test send records the outbox email but leaves the issue approved
+	if rr := call(t, srv, "POST", issueURL+"/send", url.Values{"to": {"test@example.com"}}); !strings.Contains(rr.Body.String(), "sent to the demo outbox") {
+		t.Fatalf("POST test send = %d %s", rr.Code, rr.Body.String())
 	}
 	iss, err := db.GetIssue(ctx, st.IssueID)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if iss.Status != "approved" {
+		t.Fatalf("test send marked issue %q — it must stay approved", iss.Status)
+	}
+	// the readers send then marks it sent
+	if rr := call(t, srv, "POST", issueURL+"/send", nil); !strings.Contains(rr.Body.String(), "Issue sent to the demo outbox") {
+		t.Fatalf("POST send = %d %s", rr.Code, rr.Body.String())
+	}
+	iss, err = db.GetIssue(ctx, st.IssueID)
 	if err != nil {
 		t.Fatalf("GetIssue: %v", err)
 	}
