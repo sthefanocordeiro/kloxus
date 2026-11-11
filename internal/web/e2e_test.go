@@ -593,6 +593,9 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 			t.Errorf("reader page shows editor nav link %q", nav)
 		}
 	}
+	if strings.Contains(rrReader.Body.String(), "/paywall") {
+		t.Error("keyed reader page links back to the editor paywall")
+	}
 
 	// after the reader unsubscribes the same magic link still opens —
 	// in the non-subscriber (teaser) state, not a 404

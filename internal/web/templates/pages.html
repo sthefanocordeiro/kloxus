@@ -274,7 +274,7 @@
 {{if .Active}}<p class="ok">Paid sections unlocked for {{.Reader}}</p>
 {{else}}<p class="muted">Not subscribed — paid sections show a teaser.</p>{{end}}
 <div class="draft-body">{{.BodyHTML}}</div>
-<p><a href="/pub/{{.Pub.ID}}/paywall">← back</a>{{if .Subscribed}} · <a href="/pub/{{.Pub.ID}}/reader?{{if .LinkQ}}{{.LinkQ}}&{{end}}view=free">preview as non-subscriber</a>{{end}}</p>
+{{if not .LinkQ}}<p><a href="/pub/{{.Pub.ID}}/paywall">← back</a>{{if .Subscribed}} · <a href="/pub/{{.Pub.ID}}/reader?view=free">preview as non-subscriber</a>{{end}}</p>{{end}}
 {{end}}
 
 {{define "page-unsubscribed"}}
