@@ -1656,7 +1656,7 @@ func (s *Server) apiPreview(w http.ResponseWriter, r *http.Request) {
 	md := delivery.ReaderBody(iss, pub, requestBase(r))
 	gated := false
 	if reader == "non-subscriber" {
-		md = gateSections(md, pub.Paywall.PaidSections)
+		md = gateSections(md, pub.Paywall.PaidSections, paywallNote(pub.Language))
 		gated = true
 	}
 	apiJSON(w, 200, map[string]any{

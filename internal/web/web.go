@@ -1313,7 +1313,7 @@ func (s *Server) sendIssueMail(r *http.Request, iss *store.Issue, pub *store.Pub
 	unsub := fmt.Sprintf("%s/pub/%d/unsubscribe?ws=%s&r=%d&t=%s",
 		base, pub.ID, reqWS(r).ID, rid, s.d.WS.MAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid)))
 	if !active {
-		md = gateSections(md, pub.Paywall.PaidSections)
+		md = gateSections(md, pub.Paywall.PaidSections, paywallNote(pub.Language))
 		md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s/pub/%d/paywall) · [cancelar assinatura](%s)*",
 			pub.Name, base, pub.ID, unsub)
 	} else {
@@ -1572,7 +1572,7 @@ func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 	}
 	md := delivery.ReaderBody(iss, pub, requestBase(r))
 	if !unlocked {
-		md = gateSections(md, pub.Paywall.PaidSections)
+		md = gateSections(md, pub.Paywall.PaidSections, paywallNote(pub.Language))
 	}
 	linkQ := ""
 	if key != "" {
@@ -1589,9 +1589,21 @@ func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// paywallNote is the subscribers-only marker inserted after each paid
+// item teaser, in the publication's own language.
+func paywallNote(lang string) string {
+	if strings.HasPrefix(strings.ToLower(lang), "pt") {
+		return "Exclusivo para assinantes — assine para continuar a leitura."
+	}
+	return "Subscribers only — subscribe to keep reading."
+}
+
 // gateSections reduces paid sections of the issue to a teaser: the
 // headline and first sentence of each item plus a subscribers-only note.
-func gateSections(body string, paid []string) string {
+func gateSections(body string, paid []string, note string) string {
+	if note == "" {
+		note = "Subscribers only — subscribe to keep reading."
+	}
 	paidSet := map[string]bool{}
 	for _, p := range paid {
 		paidSet[p] = true
@@ -1622,7 +1634,7 @@ func gateSections(body string, paid []string) string {
 		// first content line of an item inside a paid section: teaser
 		first := firstSentence(t)
 		out = append(out, first)
-		out = append(out, "", "> **Subscribers only — subscribe to keep reading.**", "")
+		out = append(out, "", "> **"+note+"**", "")
 		skipRest = true
 	}
 	return strings.Join(out, "\n")

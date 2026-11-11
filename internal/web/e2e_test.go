@@ -292,7 +292,7 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOutboxEmail: %v", err)
 	}
-	if !strings.Contains(full.BodyMD, "Subscribers only") {
+	if !strings.Contains(full.BodyMD, "Exclusivo para assinantes") {
 		t.Error("issue email leaked the paid section to non-subscribers")
 	}
 	if !strings.Contains(full.BodyMD, "cancelar assinatura") {
@@ -614,7 +614,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
 		t.Error("unsubscribed reader still sees paid content")
 	}
-	if !strings.Contains(rr.Body.String(), "Subscribers only") {
+	if !strings.Contains(rr.Body.String(), "Exclusivo para assinantes") {
 		t.Error("unsubscribed reader should see the teaser")
 	}
 }

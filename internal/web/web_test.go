@@ -214,13 +214,13 @@ func TestDemoIssueLifecycle(t *testing.T) {
 
 	// --- reader gating ---
 	pubURL := "/pub/" + strconv.FormatInt(pub.ID, 10)
-	if rr := call(t, srv, "GET", pubURL+"/reader", nil); !strings.Contains(rr.Body.String(), "Subscribers only") {
+	if rr := call(t, srv, "GET", pubURL+"/reader", nil); !strings.Contains(rr.Body.String(), "Exclusivo para assinantes") {
 		t.Fatal("reader view should gate paid sections for non-subscribers")
 	}
 	if rr := call(t, srv, "POST", pubURL+"/paywall/simulate", nil); rr.Code != http.StatusSeeOther {
 		t.Fatalf("POST paywall simulate = %d", rr.Code)
 	}
-	if rr := call(t, srv, "GET", pubURL+"/reader", nil); strings.Contains(rr.Body.String(), "Subscribers only") {
+	if rr := call(t, srv, "GET", pubURL+"/reader", nil); strings.Contains(rr.Body.String(), "Exclusivo para assinantes") {
 		t.Fatal("reader view should be unlocked after simulated payment")
 	}
 

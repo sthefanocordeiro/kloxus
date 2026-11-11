@@ -470,11 +470,11 @@ outer0:
 
 	// --- preview switches ---
 	pv := apiGet(t, srv, issueURL+"/preview?reader=non-subscriber&surface=email")
-	if !pv["gated"].(bool) || !strings.Contains(pv["body_md"].(string), "Subscribers only") {
+	if !pv["gated"].(bool) || !strings.Contains(pv["body_md"].(string), "Exclusivo para assinantes") {
 		t.Error("non-subscriber preview is not gated")
 	}
 	pv = apiGet(t, srv, issueURL+"/preview?reader=subscriber")
-	if strings.Contains(pv["body_md"].(string), "Subscribers only") {
+	if strings.Contains(pv["body_md"].(string), "Subscribers only") || strings.Contains(pv["body_md"].(string), "Exclusivo para assinantes") {
 		t.Error("subscriber preview is gated")
 	}
 	rr = apiCall(t, srv, "GET", issueURL+"/preview?reader=bogus", nil)
