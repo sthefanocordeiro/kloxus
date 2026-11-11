@@ -50,6 +50,23 @@ type Runner struct {
 	DemoMode bool
 	// OnStep, if set, is called as each step starts (progress reporting).
 	OnStep func(step string)
+	// OnEvent, if set, is called as each step finishes with the step's
+	// real counts (the /api/v1 run-events stream).
+	OnEvent func(StepEvent)
+}
+
+// StepEvent reports a finished pipeline step with its real counts — never
+// percentages.
+type StepEvent struct {
+	Step   string         `json:"step"`
+	Counts map[string]int `json:"counts,omitempty"`
+}
+
+// emit reports a step's completion to OnEvent (when set).
+func (r *Runner) emit(step string, counts map[string]int) {
+	if r.OnEvent != nil {
+		r.OnEvent(StepEvent{Step: step, Counts: counts})
+	}
 }
 
 // Result summarizes a completed run.
@@ -246,6 +263,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	if res.New == 0 {
 		if _, err := r.DB.LatestIssue(ctx, pub.ID); err == nil {
+			r.emit("collect", map[string]int{"items_read": res.Items, "new_items": res.New})
 			res.NoNewItems = true
 			return res, nil
 		}
@@ -253,6 +271,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			return nil, fmt.Errorf("no items collected — check the publication's sources")
 		}
 	}
+	r.emit("collect", map[string]int{"items_read": res.Items, "new_items": res.New})
 	r.record(ctx, pub.ID, 0, "collect", "", start, llm.Response{})
 
 	// --- dedupe ---
@@ -303,6 +322,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return nil, err
 	}
 	res.Stories = len(stories)
+	r.emit("dedupe", map[string]int{"stories": res.Stories, "duplicates_merged": len(items) - res.Stories})
 	r.record(ctx, pub.ID, 0, "dedupe", "", start, llm.Response{})
 
 	// create the issue now so all model steps attach to it
@@ -353,6 +373,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return nil, fmt.Errorf("triage: %w", err)
 	}
 	res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
+	r.emit("triage", map[string]int{"ranked": len(triage)})
 	r.record(ctx, pub.ID, issueID, "triage", r.TriageModel, start, resp)
 	scoreByRef := map[int]struct {
 		score  float64
@@ -405,6 +426,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
 	res.Selected = len(picked.Items)
+	r.emit("storylist", map[string]int{"selected": res.Selected})
 	r.record(ctx, pub.ID, issueID, "storylist", r.TriageModel, start, resp)
 
 	// --- create issue items, merging same-event stories ---
@@ -484,6 +506,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return nil, fmt.Errorf("dossier: %w", err)
 	}
 	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
+	r.emit("dossier", map[string]int{"dossiers": len(dossiers)})
 	r.record(ctx, pub.ID, issueID, "dossier", r.DraftModel, start, resp)
 	dossierByRef := map[int]*Dossier{}
 	for i := range dossiers {
@@ -549,6 +572,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return nil, fmt.Errorf("deepdive: %w", err)
 	}
 	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
+	r.emit("deepdive", map[string]int{"items": len(ddItems)})
 	r.record(ctx, pub.ID, issueID, "deepdive", r.DraftModel, start, resp)
 	for _, dd := range deep {
 		d, ok := dossierByRef[dd.Ref]
@@ -684,6 +708,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		return nil, fmt.Errorf("draft: %w", err)
 	}
 	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
+	r.emit("draft", map[string]int{"entries": len(drafted.Entries)})
 	r.record(ctx, pub.ID, issueID, "draft", r.DraftModel, start, resp)
 	draftByRef := map[int]struct {
 		headline, body string
@@ -831,6 +856,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	if err := r.DB.UpdateIssue(ctx, issueID, "drafted", body, string(flagsJSON)); err != nil {
 		return nil, err
 	}
+	r.emit("citecheck", map[string]int{"checked": len(sents), "flagged": len(res.Flagged)})
 	res.Number = number
 	return res, nil
 }
@@ -966,7 +992,7 @@ func lastToken(s string) string {
 	return strings.Trim(strings.ToLower(s), `.,;:!?"'()[]`)
 }
 
-// splitSentences splits a paragraph into sentences. A boundary is only
+// SplitSentences splits a paragraph into sentences. A boundary is only
 // accepted at terminal punctuation followed by whitespace when the next
 // rune can start a sentence and the previous token is not a common
 // abbreviation (avoids splitting on "Dr.", "e.g.", decimals, etc.).
@@ -975,7 +1001,7 @@ func lastToken(s string) string {
 // sentence that precedes it, not to whatever comes next.
 var citeLeadRe = regexp.MustCompile(`^\[\d+\]`)
 
-func splitSentences(line string) []string {
+func SplitSentences(line string) []string {
 	var out []string
 	start := 0
 	for _, m := range sentEndRe.FindAllStringIndex(line, -1) {
@@ -1025,7 +1051,7 @@ func extractSentences(body string) []sentRec {
 			strings.HasPrefix(trimmed, "_") {
 			continue
 		}
-		for _, s := range splitSentences(trimmed) {
+		for _, s := range SplitSentences(trimmed) {
 			s = strings.TrimSpace(s)
 			// skip empty or punctuation-only remnants ("." left over
 			// after an attached citation marker)
@@ -1189,7 +1215,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	var facts []DossierFact
 	var summary string
 	for i, it := range cand.Items {
-		sents := splitSentences(it.ContentText)
+		sents := SplitSentences(it.ContentText)
 		if len(sents) > 0 {
 			first := strings.TrimRight(strings.TrimSpace(sents[0]), ". ")
 			summary += first + fmt.Sprintf(" [%d]. ", i+1)

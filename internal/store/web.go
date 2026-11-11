@@ -47,6 +47,30 @@ func (db *DB) GetIssue(ctx context.Context, id int64) (*Issue, error) {
 		 FROM issues WHERE id = ?`, id))
 }
 
+// ListIssues returns a publication's issues, newest first.
+func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		 FROM issues WHERE publication_id = ? ORDER BY number DESC`, pubID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Issue
+	for rows.Next() {
+		var i Issue
+		var flags, commentary string
+		if err := rows.Scan(&i.ID, &i.PublicationID, &i.Number, &i.Status,
+			&i.Subject, &i.BodyMD, &flags, &commentary, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(flags), &i.Flags)
+		json.Unmarshal([]byte(commentary), &i.Commentary)
+		out = append(out, &i)
+	}
+	return out, rows.Err()
+}
+
 // LatestIssue returns a publication's newest issue (sql.ErrNoRows if none).
 func (db *DB) LatestIssue(ctx context.Context, pubID int64) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,

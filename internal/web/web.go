@@ -56,6 +56,7 @@ type Deps struct {
 // runState is the JSON payload polled by /run/status.
 type runState struct {
 	RunID      string `json:"run_id"`
+	Kind       string `json:"kind"` // prepare | draft
 	Step       string `json:"step"`
 	Done       bool   `json:"done"`
 	IssueID    int64  `json:"issue_id"`
@@ -64,10 +65,12 @@ type runState struct {
 }
 
 // runProgress wraps runState with a mutex: the pipeline goroutine writes
-// it while /run/status reads from other goroutines.
+// it while /run/status reads from other goroutines. events is the
+// per-step event log streamed by /api/v1/runs/{id}/events.
 type runProgress struct {
-	mu sync.Mutex
-	st runState
+	mu     sync.Mutex
+	st     runState
+	events []pipeline.StepEvent
 }
 
 // Server is the UI handler.
@@ -129,6 +132,51 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /outbox/{id}/eml", s.outboxEML)
 	m.HandleFunc("GET /a/{id}", s.articlePage)
 	m.HandleFunc("POST /webhooks/firecrawl", s.firecrawlWebhook)
+
+	// JSON API (v2 contract — see docs/api.md). Same workspace cookie,
+	// rate limits and isolation as the HTML routes.
+	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
+	m.HandleFunc("GET /api/v1/publications", s.apiPublications)
+	m.HandleFunc("GET /api/v1/publications/{id}", s.apiPublication)
+	m.HandleFunc("GET /api/v1/publications/{id}/sources", s.apiSources)
+	m.HandleFunc("POST /api/v1/publications/{id}/sources", s.apiSourceAdd)
+	m.HandleFunc("POST /api/v1/publications/{id}/sources/{sid}/watch", s.apiSourceWatch)
+	m.HandleFunc("POST /api/v1/publications/{id}/sources/{sid}/check", s.apiSourceCheck)
+	m.HandleFunc("POST /api/v1/publications/{id}/runs", s.apiRunStart)
+	m.HandleFunc("GET /api/v1/publications/{id}/runs/latest", s.apiRunLatest)
+	m.HandleFunc("GET /api/v1/publications/{id}/issues", s.apiIssues)
+	m.HandleFunc("GET /api/v1/publications/{id}/outbox", s.apiOutbox)
+	m.HandleFunc("GET /api/v1/publications/{id}/reader", s.apiReader)
+	m.HandleFunc("POST /api/v1/publications/{id}/paywall/simulate", s.apiPaywallSimulate)
+	m.HandleFunc("POST /api/v1/publications/{id}/paywall/cancel", s.apiPaywallCancel)
+	m.HandleFunc("GET /api/v1/publications/{id}/guide", s.apiGuide)
+	m.HandleFunc("PUT /api/v1/publications/{id}/guide", s.apiGuideSave)
+	m.HandleFunc("GET /api/v1/publications/{id}/guide/versions", s.apiGuideVersions)
+	m.HandleFunc("POST /api/v1/publications/{id}/guide/rebuild", s.apiGuideRebuild)
+	m.HandleFunc("GET /api/v1/publications/{id}/costs", s.apiCosts)
+	m.HandleFunc("GET /api/v1/runs/{id}", s.apiRun)
+	m.HandleFunc("GET /api/v1/runs/{id}/events", s.apiRunEvents)
+	m.HandleFunc("GET /api/v1/issues/{id}", s.apiIssue)
+	m.HandleFunc("GET /api/v1/issues/{id}/readiness", s.apiReadiness)
+	m.HandleFunc("GET /api/v1/issues/{id}/items", s.apiIssueItems)
+	m.HandleFunc("POST /api/v1/issues/{id}/items/{iid}/decisions", s.apiDecision)
+	m.HandleFunc("GET /api/v1/items/{iid}/dossier", s.apiDossier)
+	m.HandleFunc("POST /api/v1/issues/{id}/draft", s.apiDraft)
+	m.HandleFunc("GET /api/v1/issues/{id}/document", s.apiDocument)
+	m.HandleFunc("PATCH /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceEdit)
+	m.HandleFunc("DELETE /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceRemove)
+	m.HandleFunc("POST /api/v1/issues/{id}/sentences/{sid}/interpretation", s.apiSentenceInterpretation)
+	m.HandleFunc("PUT /api/v1/issues/{id}/commentary", s.apiCommentary)
+	m.HandleFunc("POST /api/v1/issues/{id}/approve", s.apiApprove)
+	m.HandleFunc("POST /api/v1/issues/{id}/send", s.apiSend)
+	m.HandleFunc("GET /api/v1/issues/{id}/export", s.apiExport)
+	m.HandleFunc("GET /api/v1/issues/{id}/preview", s.apiPreview)
+	m.HandleFunc("GET /api/v1/outbox/{id}", s.apiOutboxEmail)
+	m.HandleFunc("POST /api/v1/demo/reset", s.apiDemoReset)
+	m.HandleFunc("POST /api/v1/demo/new", s.apiDemoNew)
+	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+		m.HandleFunc(method+" /api/v1/", s.apiNotFound)
+	}
 	return s
 }
 
@@ -157,7 +205,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), ctxWS, ws))
-	if r.Method == http.MethodPost {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 	}
 	s.mux.ServeHTTP(w, r)
@@ -507,8 +555,14 @@ func (s *Server) runStart(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "publication")
 		return
 	}
-	wsp := reqWS(r)
-	st := &runProgress{st: runState{RunID: newReqID(), Step: "starting"}}
+	s.startRun(reqWS(r), pub)
+	s.redirect(w, r, "/pub/"+r.PathValue("id")+"/run")
+}
+
+// startRun launches a Phase A run for the publication, reusing an
+// in-flight run when one exists. Shared by the HTML route and the API.
+func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *runProgress {
+	st := &runProgress{st: runState{RunID: newReqID(), Kind: "prepare", Step: "starting"}}
 	if prev, running := wsp.Runs.LoadOrStore(pub.ID, st); running {
 		// One pipeline run at a time per workspace: an in-flight run wins;
 		// a finished run is replaced by this new one.
@@ -517,8 +571,7 @@ func (s *Server) runStart(w http.ResponseWriter, r *http.Request) {
 		done := pst.st.Done
 		pst.mu.Unlock()
 		if !done {
-			s.redirect(w, r, "/pub/"+r.PathValue("id")+"/run")
-			return
+			return pst
 		}
 		wsp.Runs.Store(pub.ID, st)
 	}
@@ -535,6 +588,11 @@ func (s *Server) runStart(w http.ResponseWriter, r *http.Request) {
 				st.st.Step = step
 				st.mu.Unlock()
 			},
+			OnEvent: func(ev pipeline.StepEvent) {
+				st.mu.Lock()
+				st.events = append(st.events, ev)
+				st.mu.Unlock()
+			},
 		}
 		res, err := runner.RunPhaseA(context.Background(), pub)
 		st.mu.Lock()
@@ -549,7 +607,27 @@ func (s *Server) runStart(w http.ResponseWriter, r *http.Request) {
 		st.st.IssueID = res.IssueID
 		st.st.Step = pipeline.Steps[len(pipeline.Steps)-1] // report the final step, not the last one ticked
 	}()
-	s.redirect(w, r, "/pub/"+r.PathValue("id")+"/run")
+	return st
+}
+
+// findRun locates a run (prepare or draft) by its run id.
+func findRun(wsp *workspace.Workspace, id string) (*runProgress, bool) {
+	var out *runProgress
+	wsp.Runs.Range(func(_, v any) bool {
+		st, ok := v.(*runProgress)
+		if !ok {
+			return true
+		}
+		st.mu.Lock()
+		match := st.st.RunID == id
+		st.mu.Unlock()
+		if match {
+			out = st
+			return false
+		}
+		return true
+	})
+	return out, out != nil
 }
 
 func (s *Server) runStatus(w http.ResponseWriter, r *http.Request) {
@@ -1016,6 +1094,13 @@ func (s *Server) editSupported(r *http.Request, iss *store.Issue, flag store.Fla
 	if d == nil {
 		return false
 	}
+	return s.dossierSupports(r, d, flag.Item, text)
+}
+
+// dossierSupports is the citation check for one edited sentence: the
+// model verdict when available (real mode), otherwise the deterministic
+// overlap check against the dossier facts that carry the cited refs.
+func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef int64, text string) bool {
 	refs := map[int]bool{}
 	for _, m := range refRe.FindAllString(text, -1) {
 		n, _ := strconv.Atoi(strings.Trim(m, "[]"))
@@ -1032,8 +1117,8 @@ func (s *Server) editSupported(r *http.Request, iss *store.Issue, flag store.Fla
 	}
 	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
 		"Publication": "",
-		"Sentences":   []map[string]any{{"id": 1, "item": flag.Item, "refs": "", "text": text}},
-		"Items":       []map[string]any{{"ref": flag.Item, "sources": srcs}},
+		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
+		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
 	})
 	if err == nil {
 		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
@@ -1180,9 +1265,23 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		to = []string{t}
 		kind = "test"
 	}
-	// Reader emails honor the paywall: non-subscribers get the teaser,
-	// paying readers the full issue. Every issue email carries an
-	// unsubscribe link.
+	id, err := s.sendIssueMail(r, iss, pub, to, kind)
+	if err != nil {
+		s.errPage(w, r, 500, "internal error")
+		return
+	}
+	if err := db(r).SetIssueStatus(r.Context(), iss.ID, "sent"); err != nil {
+		s.errPage(w, r, 500, "issue sent but status update failed")
+		return
+	}
+	s.render(w, r, "page-sent", map[string]any{"Pub": pub, "Issue": iss, "EmailID": id})
+}
+
+// sendIssueMail builds the reader-facing issue email honoring the
+// paywall (non-subscribers get the teaser, paying readers the full
+// issue; every message carries an unsubscribe link) and records it in
+// the workspace outbox. Shared by the HTML route and the API.
+func (s *Server) sendIssueMail(r *http.Request, iss *store.Issue, pub *store.Publication, to []string, kind string) (string, error) {
 	base := requestBase(r)
 	md := delivery.ReaderBody(iss, pub, base)
 	rid, _ := db(r).UpsertReader(r.Context(), pub.ID, demoReaderEmail, demoReaderName)
@@ -1197,16 +1296,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		md += fmt.Sprintf("\n\n---\n*[cancelar assinatura](%s)*", unsub)
 	}
 	mailer := delivery.Outbox{DB: db(r), Kind: kind, Ctx: r.Context()}
-	id, err := mailer.Send(iss.Subject, md, delivery.RenderHTML(iss.Subject, md, base), to)
-	if err != nil {
-		s.errPage(w, r, 500, "internal error")
-		return
-	}
-	if err := db(r).SetIssueStatus(r.Context(), iss.ID, "sent"); err != nil {
-		s.errPage(w, r, 500, "issue sent but status update failed")
-		return
-	}
-	s.render(w, r, "page-sent", map[string]any{"Pub": pub, "Issue": iss, "EmailID": id})
+	return mailer.Send(iss.Subject, md, delivery.RenderHTML(iss.Subject, md, base), to)
 }
 
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
