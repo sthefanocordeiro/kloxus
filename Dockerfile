@@ -1,8 +1,18 @@
+# frontend: Vite builds the React app into internal/web/appdist, which
+# the Go build below embeds into the binary.
+FROM node:24-bookworm-slim AS frontend
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM golang:1.27-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=frontend /src/internal/web/appdist ./internal/web/appdist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kloxus ./cmd/kloxus
 
 FROM debian:bookworm-slim

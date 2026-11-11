@@ -1,0 +1,251 @@
+import { useEffect, useRef, useState } from "react";
+import { mergeAttributes, Node } from "@tiptap/core";
+import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
+import { createContext, useContext } from "react";
+import { AlertTriangle, PenLine, Quote, Trash2 } from "lucide-react";
+import { useT } from "../i18n";
+import { cn } from "../lib/cn";
+import { Button } from "../ui";
+// What the sentence/commentary node views can ask the issue page to do.
+export interface DocActions {
+  editSentence: (sid: string, text: string, citations: number[]) => Promise<boolean>;
+  interpret: (sid: string, text?: string) => Promise<boolean>;
+  removeSentence: (sid: string) => Promise<boolean>;
+  // open the evidence pane on item ref, optionally highlighting a
+  // citation's passage and flashing the sentence
+  showEvidence: (itemRef: number, opts?: { citeRef?: number; sid?: string; issueItemId?: number }) => void;
+  readOnly: boolean;
+}
+
+export const DocActionsCtx = createContext<DocActions>({
+  editSentence: async () => false,
+  interpret: async () => false,
+  removeSentence: async () => false,
+  showEvidence: () => {},
+  readOnly: true,
+});
+
+interface Src {
+  ref: number;
+  name: string;
+  url: string;
+  item_id: number;
+  excerpt: string;
+  date: string;
+}
+
+// SentenceView renders one stored sentence: the words, one chip per
+// citation (click → evidence pane with that ref's passage), the flag
+// treatment with its three actions — Edit / Mark as interpretation /
+// Remove, no "dismiss".
+function SentenceView({ node }: NodeViewProps) {
+  const { t } = useT();
+  const actions = useContext(DocActionsCtx);
+  const a = node.attrs as {
+    sid: string;
+    kind: string;
+    citations: number[];
+    flag: string | null;
+    sources: Src[];
+    evidence: { ref: number; excerpt: string }[];
+  };
+  const text = node.textContent;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+  const [busy, setBusy] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // register the element so "Fix now" / checklists can scroll + flash
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.dataset.sid = a.sid;
+    }
+  }, [a.sid]);
+
+  const interpretation = a.kind === "interpretation";
+  const itemRef = Number(a.sid.split(".")[0]);
+
+  const run = async (fn: () => Promise<boolean>) => {
+    setBusy(true);
+    await fn();
+    setBusy(false);
+    setEditing(false);
+  };
+
+  return (
+    <NodeViewWrapper
+      ref={ref}
+      className={cn(
+        "group my-1 rounded-md px-2 py-1 transition-colors",
+        a.flag && "bg-warn-soft/70",
+        interpretation && "border-l-2 border-line pl-3 italic text-ink-soft",
+      )}
+    >
+      <div className="flex items-start gap-2">
+        <p className={cn("flex-1 font-doc leading-7", a.flag && "underline decoration-danger decoration-2 underline-offset-4")}>
+          {text}
+          {a.citations.map((n) => (
+            <button
+              key={n}
+              contentEditable={false}
+              onClick={() => actions.showEvidence(itemRef, { citeRef: n, sid: a.sid })}
+              className="mx-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded bg-teal-soft px-1 align-super text-[11px] font-semibold text-teal hover:bg-teal hover:text-paper"
+              aria-label={`source ${n}`}
+            >
+              {n}
+            </button>
+          ))}
+        </p>
+        {interpretation && (
+          <span className="mt-1 shrink-0 text-[10px] uppercase tracking-wide text-muted" contentEditable={false}>
+            {t.doc.interpretationLabel}
+          </span>
+        )}
+      </div>
+
+      {a.flag && !actions.readOnly && (
+        <div className="mt-1 flex flex-wrap items-center gap-2" contentEditable={false}>
+          <span className="inline-flex items-center gap-1 text-xs text-warn">
+            <AlertTriangle size={13} />
+            {a.flag}
+          </span>
+          <span className="flex-1" />
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => { setDraft(text); setEditing(true); }}>
+            <PenLine size={12} /> {t.doc.edit}
+          </Button>
+          <Button size="sm" variant="outline" disabled={busy}
+            onClick={() => run(() => actions.interpret(a.sid, a.kind === "interpretation" ? undefined : text))}>
+            <Quote size={12} /> {t.doc.interpretation}
+          </Button>
+          <Button size="sm" variant="danger" disabled={busy} onClick={() => run(() => actions.removeSentence(a.sid))}>
+            <Trash2 size={12} /> {t.doc.remove}
+          </Button>
+        </div>
+      )}
+
+      {editing && (
+        <div className="mt-2 rounded-md border border-line bg-paper-raised p-2" contentEditable={false}>
+          <textarea
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={2}
+            className="w-full resize-y rounded-[var(--radius-input)] border border-line bg-paper p-2 font-doc text-sm leading-6"
+          />
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" disabled={busy} onClick={() => run(() => actions.editSentence(a.sid, draft, a.citations))}>
+              {t.doc.save}
+            </Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>
+              {t.doc.cancel}
+            </Button>
+          </div>
+        </div>
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+// CommentaryView is the one editable region: labelled so nobody confuses
+// it with AI output, gently prompting while a required block is empty.
+function CommentaryView({ node }: NodeViewProps) {
+  const { t } = useT();
+  const a = node.attrs as { section: string; mode: string };
+  const empty = node.textContent.trim() === "";
+  return (
+    <NodeViewWrapper className="my-3 rounded-[var(--radius-card)] border border-dashed border-teal/50 bg-teal-soft/40 p-3">
+      <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-teal" contentEditable={false}>
+        {t.commentary.label}
+        {a.mode === "required" && <span className="rounded bg-teal px-1.5 py-0.5 text-[9px] text-paper">required</span>}
+      </div>
+      {empty && a.mode === "required" && (
+        <p className="text-xs text-warn" contentEditable={false}>
+          {t.commentary.required}
+        </p>
+      )}
+      <NodeViewContent className="font-doc text-[15px] leading-7 min-h-7" />
+    </NodeViewWrapper>
+  );
+}
+
+// ItemHeadingView — the story's headline; click selects it in the
+// evidence pane.
+function ItemHeadingView({ node }: NodeViewProps) {
+  const actions = useContext(DocActionsCtx);
+  const a = node.attrs as { ref: number; issueItemId: number };
+  return (
+    <NodeViewWrapper
+      className="mt-6 cursor-pointer font-doc text-lg font-semibold hover:text-teal"
+      onClick={() => actions.showEvidence(a.ref, { issueItemId: a.issueItemId })}
+      data-item-ref={a.ref}
+    >
+      {node.textContent}
+    </NodeViewWrapper>
+  );
+}
+
+// --- node definitions ---
+
+export const Sentence = Node.create({
+  name: "sentence",
+  group: "block",
+  atom: true,
+  addAttributes() {
+    return {
+      sid: { default: "" },
+      kind: { default: "fact" },
+      citations: { default: [] },
+      flag: { default: null },
+      sources: { default: [] },
+      evidence: { default: [] },
+    };
+  },
+  parseHTML() {
+    return [{ tag: "p[data-sid]" }];
+  },
+  renderHTML({ node, HTMLAttributes }) {
+    return ["p", mergeAttributes(HTMLAttributes, { "data-sid": node.attrs.sid }), node.textContent];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(SentenceView);
+  },
+});
+
+export const Commentary = Node.create({
+  name: "commentary",
+  group: "block",
+  content: "paragraph+",
+  addAttributes() {
+    return {
+      section: { default: "" },
+      mode: { default: "none" },
+    };
+  },
+  parseHTML() {
+    return [{ tag: "div[data-commentary]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["div", mergeAttributes(HTMLAttributes, { "data-commentary": "1" }), 0];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(CommentaryView);
+  },
+});
+
+export const ItemHeading = Node.create({
+  name: "itemHeading",
+  group: "block",
+  content: "inline*",
+  addAttributes() {
+    return { ref: { default: 0 }, issueItemId: { default: 0 } };
+  },
+  parseHTML() {
+    return [{ tag: "h3[data-item-ref]" }];
+  },
+  renderHTML({ node, HTMLAttributes }) {
+    return ["h3", mergeAttributes(HTMLAttributes, { "data-item-ref": node.attrs.ref }), 0];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(ItemHeadingView);
+  },
+});

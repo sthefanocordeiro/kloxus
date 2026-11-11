@@ -135,6 +135,9 @@ func New(d Deps) *Server {
 
 	// JSON API (v2 contract — see docs/api.md). Same workspace cookie,
 	// rate limits and isolation as the HTML routes.
+	m.HandleFunc("GET /app", s.appRedirect)
+	m.HandleFunc("GET /app/", s.appPage)
+
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
 	m.HandleFunc("GET /api/v1/publications", s.apiPublications)
 	m.HandleFunc("GET /api/v1/publications/{id}", s.apiPublication)
