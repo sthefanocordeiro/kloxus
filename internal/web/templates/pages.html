@@ -8,15 +8,45 @@
 </div>
 {{else}}<p>No publications yet.</p>{{end}}
 {{if .Demo}}
-<form method="post" action="/demo/reset" onsubmit="return confirm('Reset all demo data?')">
-  <button class="warn" type="submit">Reset demo</button>
+<p><a href="/demo/reset">Reset demo</a> resets only your own demo session.</p>
+<form method="post" action="/demo/new" style="display:inline">
+  <button class="warn" type="submit">Start a fresh demo</button>
 </form>
 {{end}}
+{{end}}
+
+{{define "page-reset"}}
+<h1>Reset demo</h1>
+<div class="card">
+<p>This wipes the data of <strong>your demo session only</strong> and restores the seeded example. Other visitors are not affected.</p>
+<form method="post" action="/demo/reset">
+  <button class="warn" type="submit">Reset my demo session</button>
+  <a href="/">cancel</a>
+</form>
+</div>
+{{end}}
+
+{{define "page-error"}}
+<div class="card error-card">
+<h1>{{.Code}}</h1>
+<p>{{.Message}}</p>
+{{if .ReqID}}<p class="muted">request {{.ReqID}}</p>{{end}}
+<p><a href="/">← back to publications</a></p>
+</div>
 {{end}}
 
 {{define "page-overview"}}
 <h1>{{.Pub.Name}}</h1>
 <p class="muted">{{.Pub.Topic}} — {{.Pub.Audience}}</p>
+<p class="muted">The editor UI is in English; the publication content is written in {{.Pub.Language}}.</p>
+{{if .Checklist}}
+<div class="card checklist">
+<h3>Try the demo — a quick tour</h3>
+<ol>
+{{range .Checklist}}<li class="{{if .Done}}done{{end}}">{{.Text}}{{if .Done}} ✓{{end}}</li>{{end}}
+</ol>
+</div>
+{{end}}
 {{if .Issue}}
 <div class="card">
   <h2>Latest: issue {{.Issue.Number}} <span class="badge">{{.Issue.Status}}</span></h2>
@@ -34,17 +64,18 @@
 <p><strong>AI disclosure:</strong> {{.Pub.AIDisclosure}}</p>
 <p><strong>Editorial line:</strong></p><pre>{{.Pub.EditorialLine}}</pre>
 <h3>Sections</h3><ul>{{range .Pub.Sections}}<li>{{.Title}} — {{.Items}} items, commentary {{.Commentary}}</li>{{end}}</ul>
-<h3>Paywall</h3><p>{{if .Pub.Paywall.Enabled}}enabled — paid sections: {{range .Pub.Paywall.PaidSections}}{{.}} {{end}}{{else}}disabled{{end}}</p></div>
+<h3>Paywall</h3><p>{{if .Pub.Paywall.Enabled}}enabled — {{.Pub.Paywall.Price}} — paid sections: {{range .Pub.Paywall.PaidSections}}{{.}} {{end}}{{else}}disabled{{end}}</p></div>
 <p class="muted">Publication definitions come from YAML (examples/publications/).</p>
 {{end}}
 
 {{define "page-sources"}}
 <h1>Sources — {{.Pub.Name}}</h1>
 <table>
-<tr><th>Type</th><th>URL</th><th>Last fetch</th><th>Monitor</th><th></th></tr>
+<tr><th>Outlet</th><th>Type</th><th>URL</th><th>Last fetch</th><th>Monitor</th><th></th></tr>
 {{range .Sources}}
 <tr>
-<td>{{.Type}}</td><td class="url">{{.URL}}</td>
+<td>{{if .Name}}{{.Name}}{{else}}<span class="muted">—</span>{{end}}</td>
+<td>{{.Type}}</td><td class="url">{{.Canonical}}</td>
 <td class="muted">{{if .LastStatus.Valid}}{{.LastStatus.String}}{{else}}never{{end}}</td>
 <td>{{if .MonitorID}}<span class="badge ok">monitored via {{.MonitorProvider}}</span><br><span class="muted">{{.MonitorStatus}}</span>{{end}}</td>
 <td>{{if and (eq .Type "page") (not .MonitorID)}}
@@ -56,12 +87,13 @@
 </table>
 <h3>Add source</h3>
 {{if .Error}}<p class="alert">{{.Error}}</p>{{end}}
+{{if .Note}}<p class="ok">{{.Note}}</p>{{end}}
 <form method="post" action="/pub/{{.Pub.ID}}/sources/add" class="inline-form">
 <select name="type"><option value="rss">RSS feed</option><option value="page">Open page (no RSS)</option></select>
 <input name="url" placeholder="https://… or fixtures/…" size="50">
 <button type="submit">Add</button>
 </form>
-<p class="muted">Page sources can be monitored by Firecrawl (simulated in demo mode).</p>
+{{if .Demo}}<p class="muted">Sources added here are stored but <strong>not fetched</strong> on the hosted demo (simulated). Page sources can be monitored by Firecrawl (simulated in demo mode).</p>{{end}}
 {{end}}
 
 {{define "page-run"}}
@@ -73,26 +105,48 @@
 </div>
 {{end}}
 
+{{define "partial-card"}}
+<div class="card" data-item="{{.ID}}">
+  <div class="score">{{printf "%.1f" .Score}}</div>
+  <h3><a href="/item/{{.ID}}">{{.Title}}</a></h3>
+  <p class="muted">{{.Section}} · {{.Outlets}} · {{.Reason}}</p>
+  <p>status: <span class="badge">{{.Status}}</span>{{if eq .Status "alternative"}} <span class="muted">(replaced)</span>{{end}}</p>
+  {{if .RejectWhy}}<p class="muted">rejected: {{.RejectWhy}}</p>{{end}}
+  {{if .AltMissing}}<p class="alert">No alternative candidate left for this section.</p>{{end}}
+</div>
+{{end}}
+
 {{define "page-review"}}
 <h1>Story list — issue {{.Issue.Number}}</h1>
 {{if .Items}}
 {{range .Items}}
-<div class="card">
+<div class="card" data-item="{{.ID}}">
   <div class="score">{{printf "%.1f" .Score}}</div>
   <h3><a href="/item/{{.ID}}">{{.Title}}</a></h3>
-  <p class="muted">{{.Section}} · {{.Outlets}} outlet(s) · {{.Reason}}</p>
-  <p>status: <span class="badge">{{.Status}}</span></p>
-  <form method="post" action="/issue/{{$.Issue.ID}}/item/{{.ID}}/decision" class="inline-form">
+  <p class="muted">{{.Section}} · {{.Outlets}} · {{.Reason}}</p>
+  <p>status: <span class="badge">{{.Status}}</span>{{if eq .Status "alternative"}} <span class="muted">(replaced)</span>{{end}}</p>
+  {{if .RejectWhy}}<p class="muted">rejected: {{.RejectWhy}}</p>{{end}}
+  {{if .AltMissing}}<p class="alert">No alternative candidate left for this section.</p>{{end}}
+  {{if or (eq .Status "pending") (eq .Status "approved")}}
+  <form method="post" action="/issue/{{$.Issue.ID}}/item/{{.ID}}/decision" class="inline-form decision-form" data-item="{{.ID}}">
     <button name="kind" value="approve" type="submit">Approve</button>
-    <input name="reason" placeholder="rejection reason…">
+    <input name="reason" placeholder="rejection reason (required)"{{if eq .RejectWhy "required"}} class="invalid"{{end}}>
     <button name="kind" value="reject" type="submit">Reject</button>
     <button name="kind" value="alternative" type="submit">Alternative</button>
   </form>
+  {{end}}
 </div>
 {{end}}
+<div id="draft-action">
+{{if gt .Pending 0}}
+<p class="alert">{{.Pending}} item(s) still pending — approve, reject or ask for an alternative for each before drafting.</p>
+<button class="primary" type="button" disabled>Draft the issue →</button>
+{{else}}
 <form method="post" action="/issue/{{.Issue.ID}}/draft">
   <button class="primary" type="submit">Draft the issue →</button>
 </form>
+{{end}}
+</div>
 {{else}}<p>No items.</p>{{end}}
 {{end}}
 
@@ -106,51 +160,66 @@
 {{if .Dossier.Quote.Text}}<h3>Quote</h3><p>“{{.Dossier.Quote.Text}}” — {{.Dossier.Quote.Attribution}}</p>{{end}}
 <h3>Interpretation (marked as such)</h3><ul>{{range .Dossier.Interpretation}}<li>{{.}}</li>{{end}}</ul>
 <h3>Still unknown</h3><ul>{{range .Dossier.Unknowns}}<li>{{.}}</li>{{end}}</ul>
-<h3>Sources</h3><ul>{{range .Dossier.Sources}}<li>[{{.Ref}}] <span class="url">{{.URL}}</span></li>{{end}}</ul>
+<h3>Sources</h3><ul>{{range .Dossier.Sources}}<li>[{{.Ref}}] {{if .Name}}{{.Name}} — {{end}}<a href="/a/{{.ItemID}}"><span class="url">{{.URL}}</span></a></li>{{end}}</ul>
 </div>
-<p><a href="/issue/{{.Item.IssueID}}">← back to story list</a></p>
+<p><a href="/issue/{{.Item.IssueID}}">← back to story list</a>{{if .Issue}} · <a href="/issue/{{.Item.IssueID}}/draft#commentary-{{.Item.Section}}">commentary for {{.Item.Section}}</a>{{end}}</p>
 {{end}}
 
 {{define "page-draft"}}
 <h1>Draft — issue {{.Issue.Number}} <span class="badge">{{.Issue.Status}}</span></h1>
+{{if .Note}}<div class="alert">{{.Note}}</div>{{end}}
 {{if .Blockers}}<div class="alert"><strong>Sending blocked:</strong><ul>{{range .Blockers}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
-{{if .Issue.Flags}}<div class="alert"><strong>Flagged sentences:</strong><ul>
-{{range $i, $f := .Issue.Flags}}<li>{{$f.Sentence}} — {{$f.Note}}
-<form method="post" action="/issue/{{$.Issue.ID}}/flag/{{$i}}/dismiss" style="display:inline"><button type="submit">dismiss</button></form></li>{{end}}
+{{if .Issue.Flags}}<div class="alert"><strong>Flagged sentences — resolve each:</strong><ul>
+{{range $i, $f := .Issue.Flags}}<li>
+<div>{{$f.Sentence}} <span class="muted">— {{$f.Note}}</span></div>
+<form method="post" action="/issue/{{$.Issue.ID}}/flag/{{$i}}/remove" style="display:inline"><button type="submit">Remove sentence</button></form>
+<form method="post" action="/issue/{{$.Issue.ID}}/flag/{{$i}}/edit" class="inline-form">
+  <input name="text" value="{{$f.Sentence}}" size="60">
+  <label class="muted"><input type="checkbox" name="mode" value="interpretation"> interpretation</label>
+  <button type="submit">Edit sentence</button>
+</form></li>{{end}}
 </ul></div>{{end}}
 <div class="draft-body">{{.BodyHTML}}</div>
 <h3>Commentary</h3>
 {{range .Sections}}{{if ne .Commentary "none"}}
-<div class="card"><strong>{{.Title}}</strong> ({{.Commentary}})
+<div class="card" id="commentary-{{.Title}}"><strong>{{.Title}}</strong> ({{.Commentary}})
 <form method="post" action="/issue/{{$.Issue.ID}}/commentary">
 <input type="hidden" name="section" value="{{.Title}}">
 <textarea name="text" rows="3" cols="80" placeholder="Write your commentary here — Kloxus never fills this in.">{{index $.Issue.Commentary .Title}}</textarea>
 <br><button type="submit">Save</button></form></div>
 {{end}}{{end}}
 {{if ne .Issue.Status "approved"}}
+{{if .Blockers}}
+<p><button class="primary" type="button" disabled>Approve issue</button>
+<span class="muted"> blocked: {{range .Blockers}}{{.}}; {{end}}</span></p>
+{{else}}
 <form method="post" action="/issue/{{.Issue.ID}}/approve"><button class="primary" type="submit">Approve issue</button></form>
+{{end}}
 {{else}}<p><a href="/issue/{{.Issue.ID}}/send">→ Send / export</a></p>{{end}}
 {{end}}
 
 {{define "page-send"}}
 <h1>Send / export — issue {{.Issue.Number}}</h1>
 <p>status: <span class="badge">{{.Issue.Status}}</span></p>
+{{if or (eq .Issue.Status "approved") (eq .Issue.Status "sent")}}
 <p><a href="/issue/{{.Issue.ID}}/export?fmt=markdown">Download Markdown</a> ·
    <a href="/issue/{{.Issue.ID}}/export?fmt=html">Download HTML</a></p>
+{{end}}
 {{if eq .Issue.Status "approved"}}
 <form method="post" action="/issue/{{.Issue.ID}}/send" class="inline-form">
 <input name="to" placeholder="test@example.com">
 <button name="test" value="1" type="submit">Send test</button>
 <button class="primary" type="submit">Send to readers</button>
 </form>
-{{else}}{{if ne .Issue.Status "sent"}}<p class="muted">Approve the issue first.</p>{{end}}{{end}}
-{{if eq .Issue.Status "sent"}}<p class="ok">Sent — saved to the demo outbox (.eml file).</p>{{end}}
+{{else}}{{if ne .Issue.Status "sent"}}<p class="muted">Approve the issue first — exports and sending unlock after approval.</p>{{end}}{{end}}
+{{if eq .Issue.Status "sent"}}<p class="ok">Sent — see the <a href="/pub/{{.Pub.ID}}/outbox">outbox</a>.</p>{{end}}
 {{end}}
 
 {{define "page-sent"}}
 <h1>Sent</h1>
-<p class="ok">Issue sent to the demo outbox: <strong>{{.Filename}}</strong></p>
-<p class="muted">Demo mode simulates delivery — the issue is saved as an .eml file instead of going to real inboxes.</p>
+<p class="ok">Issue sent to the demo outbox.</p>
+<p><a href="/outbox/{{.EmailID}}">View the email</a> · <a href="/pub/{{.Pub.ID}}/outbox">Outbox</a></p>
+<p class="muted">Demo mode simulates delivery — messages are stored in your session's outbox, not sent to real inboxes.</p>
 <p>
   <a href="/issue/{{.Issue.ID}}/export?fmt=html">Download HTML</a> ·
   <a href="/issue/{{.Issue.ID}}/export?fmt=markdown">Download Markdown</a> ·
@@ -161,7 +230,7 @@
 {{define "page-guide"}}
 <h1>Editorial guide — {{.Pub.Name}}</h1>
 <p class="muted">Sent with every triage and draft call. Editable.</p>
-{{if .Content}}<p class="muted">version {{.Version}}</p>{{end}}
+{{if .Content}}<p class="muted">version {{.Version}}{{if .Added}} — added in this rebuild: {{range .Added}}<br>&nbsp;&nbsp;{{.}}{{end}}{{end}}</p>{{end}}
 <form method="post" action="/pub/{{.Pub.ID}}/guide">
 <textarea name="content" rows="12" cols="90">{{.Content}}</textarea>
 <br><button type="submit">Save as new version</button>
@@ -171,27 +240,72 @@
 
 {{define "page-costs"}}
 <h1>Costs — {{.Pub.Name}}</h1>
-<table><tr><th>Issue</th><th>Step</th><th>Model</th><th>In</th><th>Out</th><th>Cost</th></tr>
-{{range .Rows}}<tr><td>{{.IssueNumber}}</td><td>{{.Step}}</td><td>{{.Model}}</td>
+{{range .Groups}}
+<h3>Issue {{.Issue}} — total ${{printf "%.4f" .Total}}</h3>
+<table><tr><th>Step</th><th>Model</th><th>In</th><th>Out</th><th>Cost</th></tr>
+{{range .Rows}}<tr><td>{{.Step}}</td><td>{{.Model}}</td>
 <td>{{.InputTokens}}</td><td>{{.OutputTokens}}</td><td>${{printf "%.4f" .CostUSD}}</td></tr>{{end}}
 </table>
+{{else}}<p>No runs recorded yet.</p>{{end}}
 {{end}}
 
 {{define "page-paywall"}}
 <h1>Paywall — {{.Pub.Name}}</h1>
 {{if .Pub.Paywall.Enabled}}
 <div class="card">
+<p><strong>Price:</strong> {{.Pub.Paywall.Price}}</p>
 <p><strong>Paid sections:</strong> {{range .Pub.Paywall.PaidSections}}{{.}} {{end}}</p>
 <p><strong>Reader:</strong> {{.Reader}} — {{if .Active}}<span class="badge ok">subscribed</span>{{else}}<span class="badge">not subscribed</span>{{end}}</p>
-{{if not .Active}}<form method="post" action="/pub/{{.Pub.ID}}/paywall/simulate"><button class="primary" type="submit">Simulate reader payment</button></form>
-{{else}}<p><a href="/pub/{{.Pub.ID}}/reader">View as paying reader</a></p>{{end}}
+<p>
+  <a href="/pub/{{.Pub.ID}}/reader?view=free">View as non-subscriber</a>
+  {{if .Active}} · <a href="/pub/{{.Pub.ID}}/reader">View as paying reader</a>{{end}}
+</p>
+{{if not .Active}}
+<form method="post" action="/pub/{{.Pub.ID}}/paywall/simulate"><button class="primary" type="submit">Simulate reader payment</button></form>
+<p class="muted">Simulating a payment drops a magic-link email in the <a href="/pub/{{.Pub.ID}}/outbox">outbox</a>.</p>
+{{else}}
+<form method="post" action="/pub/{{.Pub.ID}}/paywall/cancel"><button class="warn" type="submit">Simulate cancellation</button></form>
+{{end}}
 </div>
 {{else}}<p>Paywall is disabled for this publication.</p>{{end}}
 {{end}}
 
 {{define "page-reader"}}
 <h1>{{.Pub.Name}} — reader view</h1>
-{{if .Active}}<p class="ok">Paid sections unlocked for {{.Reader}}{{if .Reader}}{{end}}</p>{{else}}<p class="muted">Not subscribed — paid sections are gated.</p>{{end}}
+{{if .Active}}<p class="ok">Paid sections unlocked for {{.Reader}}</p>
+{{else}}<p class="muted">Not subscribed — paid sections show a teaser.</p>{{end}}
 <div class="draft-body">{{.BodyHTML}}</div>
-<p><a href="/pub/{{.Pub.ID}}/paywall">← back</a></p>
+<p><a href="/pub/{{.Pub.ID}}/paywall">← back</a>{{if .Subscribed}} · <a href="/pub/{{.Pub.ID}}/reader?view=free">preview as non-subscriber</a>{{end}}</p>
+{{end}}
+
+{{define "page-outbox"}}
+<h1>Outbox — {{.Pub.Name}}</h1>
+<p class="muted">Simulated email for this demo session — nothing is sent to real inboxes.</p>
+<table>
+<tr><th>When</th><th>Kind</th><th>To</th><th>Subject</th><th></th></tr>
+{{range .Emails}}<tr>
+<td class="muted">{{.CreatedAt}}</td><td>{{.Kind}}</td><td>{{.To}}</td>
+<td><a href="/outbox/{{.ID}}">{{.Subject}}</a></td>
+<td><a href="/outbox/{{.ID}}/eml">.eml</a></td>
+</tr>{{else}}<tr><td colspan="5" class="muted">No emails yet — send an issue or simulate a payment.</td></tr>{{end}}
+</table>
+{{end}}
+
+{{define "page-outbox-view"}}
+<h1>{{.Email.Subject}}</h1>
+<p class="muted">{{.Email.Kind}} · to {{.Email.To}} · {{.Email.CreatedAt}} · <a href="/outbox/{{.Email.ID}}/eml">download .eml</a></p>
+<iframe class="mail-preview" src="/outbox/{{.Email.ID}}/raw" sandbox title="email preview"></iframe>
+<p><a href="{{if .Pub}}/pub/{{.Pub.ID}}/outbox{{else}}/{{end}}">← back to outbox</a></p>
+{{end}}
+
+{{define "page-article"}}
+<div class="article-fixture">
+<p class="muted">Simulated article — fictional outlet{{if .Outlet}} <strong>{{.Outlet}}</strong>{{end}}.
+Original URL (fictional): <span class="url">{{.Canonical}}</span></p>
+<div class="card">
+<h1>{{.Item.Title}}</h1>
+<p class="muted">{{.Item.PublishedAt}}{{if .Item.Author}} · {{.Item.Author}}{{end}}</p>
+<p>{{.Item.ContentText}}</p>
+</div>
+</div>
 {{end}}

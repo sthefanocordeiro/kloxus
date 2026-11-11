@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
@@ -48,15 +49,9 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 	var content string
 	switch {
 	case errors.Is(err, llm.ErrMissingFixture):
-		// deterministic fallback: the latest reason becomes a rule
-		content = strings.TrimSpace(current)
-		last := decisions[len(decisions)-1]
-		if last.Reason != "" {
-			if content != "" {
-				content += "\n"
-			}
-			content += "- " + last.Reason
-		}
+		// deterministic fallback: condense the latest reason into a short
+		// general rule and deduplicate against the current guide.
+		content = condense(current, decisions[len(decisions)-1].Reason)
 	case err != nil:
 		return "", 0, err
 	default:
@@ -67,4 +62,35 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 		return "", 0, err
 	}
 	return content, version, nil
+}
+
+// condense turns a rejection reason into a short, general editorial rule
+// and appends it to the guide, skipping duplicates. Judges' reasons are
+// free text, so the demo fallback normalizes instead of copying verbatim
+// fragments (trailing punctuation, hedges, repetition).
+func condense(current, reason string) string {
+	current = strings.TrimSpace(current)
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return current
+	}
+	rule := reason
+	rule = strings.TrimRight(rule, ".! \t")
+	if len(rule) > 160 {
+		rule = rule[:160] + "…"
+	}
+	if r := []rune(rule); len(r) > 0 && unicode.IsLower(r[0]) {
+		rule = string(unicode.ToUpper(r[0])) + string(r[1:])
+	}
+	line := "- " + rule
+	for _, l := range strings.Split(current, "\n") {
+		if strings.EqualFold(strings.TrimSpace(l), line) ||
+			strings.EqualFold(strings.TrimSpace(l), "- "+reason) {
+			return current
+		}
+	}
+	if current != "" {
+		return current + "\n" + line
+	}
+	return line
 }

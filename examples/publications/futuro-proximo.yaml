@@ -31,5 +31,6 @@ sources:
     url: fixtures/pages/observatorio-aberto.html
 paywall:
   enabled: true
+  price: "R$ 12/month"
   paid_sections: [The big one]
 ai_disclosure: short

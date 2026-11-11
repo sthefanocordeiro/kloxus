@@ -14,7 +14,7 @@ WORKDIR /app
 COPY --from=build /out/kloxus /app/kloxus
 ENV KLOXUS_MODE=demo \
 	KLOXUS_PORT=8080 \
-	KLOXUS_DB_PATH=/data/kloxus.db \
+	KLOXUS_DATA_DIR=/data \
 	KLOXUS_OUT_DIR=/data/out \
 	KLOXUS_NO_BROWSER=1
 EXPOSE 8080

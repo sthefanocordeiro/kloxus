@@ -57,7 +57,7 @@ func TestRebuildFallbackOnMissingFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rebuild: %v", err)
 	}
-	if version != 1 || content != "- fora da minha linha editorial" {
+	if version != 1 || content != "- Fora da minha linha editorial" {
 		t.Fatalf("fallback content=%q version=%d", content, version)
 	}
 }

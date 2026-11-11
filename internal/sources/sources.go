@@ -25,6 +25,7 @@ type RawItem struct {
 	Author      string
 	PublishedAt string
 	ContentText string
+	Outlet      string // feed channel title / page name, when known
 }
 
 // Fetcher collects raw items from one source definition.
@@ -86,6 +87,7 @@ func parseFeed(r io.Reader, name string) ([]RawItem, error) {
 			Author:      authorName(it),
 			PublishedAt: published,
 			ContentText: strings.TrimSpace(content),
+			Outlet:      strings.TrimSpace(feed.Title),
 		})
 	}
 	return out, nil
@@ -111,17 +113,20 @@ func (f FixtureFetcher) fetchPage(url string) ([]RawItem, error) {
 }
 
 // parseIndexPage extracts items from an HTML index page using the
-// article.entry markup described above.
+// article.entry markup described above. The page's <title> becomes the
+// outlet name.
 func parseIndexPage(r io.Reader, name string) ([]RawItem, error) {
 	doc, err := html.Parse(r)
 	if err != nil {
 		return nil, fmt.Errorf("parsing page %q: %w", name, err)
 	}
+	outlet := pageTitle(doc)
 	var out []RawItem
 	var walk func(n *html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "article" && hasClass(n, "entry") {
 			if item, ok := parseEntry(n); ok {
+				item.Outlet = outlet
 				out = append(out, item)
 			}
 			return
@@ -135,6 +140,25 @@ func parseIndexPage(r io.Reader, name string) ([]RawItem, error) {
 		return nil, fmt.Errorf("page %q: no article entries found", name)
 	}
 	return out, nil
+}
+
+func pageTitle(doc *html.Node) string {
+	var title string
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		if title != "" {
+			return
+		}
+		if n.Type == html.ElementNode && n.Data == "title" {
+			title = strings.TrimSpace(textOf(n))
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return title
 }
 
 // LiveFetcher fetches real sources over HTTP (real mode). RSS feeds are

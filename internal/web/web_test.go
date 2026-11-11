@@ -15,11 +15,11 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
-	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
+	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
 
 // demoServer seeds the example publication and returns the server plus its
@@ -39,29 +39,33 @@ func demoServer(t *testing.T) (*web.Server, *store.DB, *store.Publication, *conf
 	}
 	t.Cleanup(func() { db.Close() })
 
-	data, err := examples.FS.ReadFile("publications/futuro-proximo.yaml")
-	if err != nil {
-		t.Fatalf("reading example: %v", err)
+	seed := func(ctx context.Context, sdb *store.DB) error {
+		data, err := examples.FS.ReadFile("publications/futuro-proximo.yaml")
+		if err != nil {
+			return err
+		}
+		def, err := config.ParsePublication(data)
+		if err != nil {
+			return err
+		}
+		_, err = sdb.SeedPublication(ctx, def)
+		return err
 	}
-	def, err := config.ParsePublication(data)
-	if err != nil {
-		t.Fatalf("ParsePublication: %v", err)
+	if err := seed(ctx, db); err != nil {
+		t.Fatalf("seed: %v", err)
 	}
-	pubID, err := db.SeedPublication(ctx, def)
-	if err != nil {
-		t.Fatalf("SeedPublication: %v", err)
+	pubs, err := db.ListPublications(ctx)
+	if err != nil || len(pubs) == 0 {
+		t.Fatalf("ListPublications: %v", err)
 	}
-	pub, err := db.GetPublication(ctx, strconv.FormatInt(pubID, 10))
-	if err != nil {
-		t.Fatalf("GetPublication: %v", err)
-	}
+	pub := pubs[0]
 
 	srv := web.New(web.Deps{
-		DB: db, Cfg: cfg,
+		WS: workspace.OpenLocal(db, seed), Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
 		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: filepath.Join(cfg.OutDir, "llm-dump")},
 		Monitor: sources.FakeMonitor{},
-		Mailer:  delivery.Outbox{Dir: filepath.Join(base, "outbox")},
+		Seed:    seed,
 	})
 	return srv, db, pub, cfg
 }
@@ -138,11 +142,27 @@ func TestDemoIssueLifecycle(t *testing.T) {
 			t.Fatalf("decision %s on item %d = %d %s", kind, iid, rr.Code, rr.Body.String())
 		}
 	}
-	decide(iis[1].ID, "reject", "")
-	decide(iis[2].ID, "reject", "")
-	decide(iis[5].ID, "reject", "")
+	decide(iis[1].ID, "reject", "off the publication's angle")
+	decide(iis[2].ID, "reject", "too thin for this issue")
+	decide(iis[5].ID, "reject", "duplicates a stronger item")
 	decide(iis[7].ID, "reject", "prioritize policy with direct Brazil impact")
 	decide(iis[6].ID, "alternative", "")
+
+	// approve the kept items, including the alternative's replacement
+	iis2, err := db.IssueItems(ctx, st.IssueID)
+	if err != nil {
+		t.Fatalf("IssueItems after alternative: %v", err)
+	}
+	pending := 0
+	for _, ii := range iis2 {
+		if ii.Status == "pending" {
+			pending++
+			decide(ii.ID, "approve", "")
+		}
+	}
+	if pending != 4 {
+		t.Fatalf("pending items after decisions = %d, want 4", pending)
+	}
 
 	// --- draft (twice: replay is idempotent) ---
 	for i := 0; i < 2; i++ {
@@ -161,11 +181,15 @@ func TestDemoIssueLifecycle(t *testing.T) {
 	}); rr.Code != http.StatusSeeOther {
 		t.Fatalf("POST commentary = %d", rr.Code)
 	}
-	if rr := call(t, srv, "POST", issueURL+"/flag/0/dismiss", nil); rr.Code != http.StatusSeeOther {
-		t.Fatalf("POST dismiss flag = %d", rr.Code)
+	dbg, _ := db.GetIssue(ctx, st.IssueID)
+	if len(dbg.Flags) == 0 {
+		t.Fatal("expected at least one citation flag from the fixture citecheck")
+	}
+	if rr := call(t, srv, "POST", issueURL+"/flag/0/remove", nil); rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST remove flag = %d", rr.Code)
 	}
 	if rr := call(t, srv, "GET", issueURL+"/draft", nil); strings.Contains(rr.Body.String(), "Sending blocked") {
-		t.Fatal("blockers should be cleared after commentary + flag dismissal")
+		t.Fatal("blockers should be cleared after commentary + flag removal")
 	}
 
 	// --- approve, export, send ---
@@ -179,19 +203,19 @@ func TestDemoIssueLifecycle(t *testing.T) {
 	if rr := call(t, srv, "GET", issueURL+"/export?fmt=html", nil); rr.Code != 200 || !strings.Contains(rr.Body.String(), "<") {
 		t.Fatal("html export failed")
 	}
-	if rr := call(t, srv, "GET", "/pub/"+strconv.FormatInt(pub.ID, 10)+"/guide", nil); !strings.Contains(rr.Body.String(), "prioritize policy with direct Brazil impact") {
+	if rr := call(t, srv, "GET", "/pub/"+strconv.FormatInt(pub.ID, 10)+"/guide", nil); !strings.Contains(rr.Body.String(), "rioritize policy with direct Brazil impact") {
 		t.Fatal("guide missing recorded rejection reason")
 	}
 
 	// --- reader gating ---
 	pubURL := "/pub/" + strconv.FormatInt(pub.ID, 10)
-	if rr := call(t, srv, "GET", pubURL+"/reader", nil); !strings.Contains(rr.Body.String(), "This section is for paid readers") {
+	if rr := call(t, srv, "GET", pubURL+"/reader", nil); !strings.Contains(rr.Body.String(), "Subscribers only") {
 		t.Fatal("reader view should gate paid sections for non-subscribers")
 	}
 	if rr := call(t, srv, "POST", pubURL+"/paywall/simulate", nil); rr.Code != http.StatusSeeOther {
 		t.Fatalf("POST paywall simulate = %d", rr.Code)
 	}
-	if rr := call(t, srv, "GET", pubURL+"/reader", nil); strings.Contains(rr.Body.String(), "This section is for paid readers") {
+	if rr := call(t, srv, "GET", pubURL+"/reader", nil); strings.Contains(rr.Body.String(), "Subscribers only") {
 		t.Fatal("reader view should be unlocked after simulated payment")
 	}
 
@@ -207,16 +231,19 @@ func TestDemoIssueLifecycle(t *testing.T) {
 	}
 }
 
-// TestSourceAddValidation covers the demo-mode fetch check and the
-// real-mode URL validation added for source registration.
+// TestSourceAddValidation covers the demo-mode simulation (visitor URLs
+// are stored but never fetched) and the real-mode URL validation.
 func TestSourceAddValidation(t *testing.T) {
 	srv, _, pub, _ := demoServer(t)
 	add := func(typ, u string) *httptest.ResponseRecorder {
 		return call(t, srv, "POST", "/pub/"+strconv.FormatInt(pub.ID, 10)+"/sources/add",
 			url.Values{"type": {typ}, "url": {u}})
 	}
-	if rr := add("rss", "https://example.com/feed.xml"); !strings.Contains(rr.Body.String(), "real URLs need real mode") {
-		t.Fatalf("demo mode should reject non-fixture source URLs (code %d)", rr.Code)
+	if rr := add("rss", "https://example.com/feed.xml"); !strings.Contains(rr.Body.String(), "not fetched") {
+		t.Fatalf("demo mode should accept but simulate non-fixture sources (code %d)", rr.Code)
+	}
+	if rr := add("rss", "notaurl"); !strings.Contains(rr.Body.String(), "invalid source URL") {
+		t.Fatal("demo mode should reject malformed URLs")
 	}
 	if rr := add("rss", "fixtures/feeds/radar-tech.xml"); rr.Code != http.StatusSeeOther {
 		t.Fatalf("fixture source add = %d", rr.Code)

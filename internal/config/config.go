@@ -9,7 +9,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -20,6 +19,11 @@ type Config struct {
 	Port   int
 	DBPath string
 	OutDir string
+	// DataDir, when set, enables the hosted multi-workspace demo: one
+	// SQLite file per visitor under <DataDir>/workspaces plus a seeded
+	// template rebuilt at boot.
+	DataDir      string
+	CookieSecret string
 
 	AnthropicAPIKey string
 	ModelTriage     string
@@ -32,8 +36,6 @@ type Config struct {
 	AbacatePayKey   string
 	PublicURL       string
 	WebhookSecret   string
-
-	DemoResetInterval time.Duration
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
@@ -62,13 +64,8 @@ func Load() (*Config, error) {
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
-	}
-	if raw := os.Getenv("KLOXUS_DEMO_RESET_INTERVAL"); raw != "" {
-		d, err := time.ParseDuration(raw)
-		if err != nil || d < 0 {
-			return nil, fmt.Errorf("invalid KLOXUS_DEMO_RESET_INTERVAL %q (want a Go duration like 24h)", raw)
-		}
-		cfg.DemoResetInterval = d
+		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),
+		CookieSecret:    os.Getenv("KLOXUS_COOKIE_SECRET"),
 	}
 	if cfg.Mode != "demo" && cfg.Mode != "real" {
 		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)
@@ -129,6 +126,7 @@ type SourceDef struct {
 type Paywall struct {
 	Enabled      bool     `yaml:"enabled"`
 	PaidSections []string `yaml:"paid_sections"`
+	Price        string   `yaml:"price"`
 }
 
 // Publication is a creator's publication definition.

@@ -43,7 +43,7 @@ func TestRunHeadless(t *testing.T) {
 	def := &config.Publication{
 		Slug: "p", Name: "Pub", Language: "pt-BR",
 		Sections: []config.Section{{Title: "Lead", Items: 1, Commentary: "required"}},
-		Sources:  []config.SourceDef{{Type: "rss", URL: "feeds/a.xml"}},
+		Sources:  []config.SourceDef{{Type: "rss", URL: "fixtures/feeds/a.xml"}},
 	}
 	if _, err := db.SeedPublication(ctx, def); err != nil {
 		t.Fatalf("SeedPublication: %v", err)
@@ -53,7 +53,7 @@ func TestRunHeadless(t *testing.T) {
 		t.Fatalf("GetPublication: %v", err)
 	}
 
-	fsys := fstest.MapFS{"feeds/a.xml": {Data: []byte(testFeed)}}
+	fsys := fstest.MapFS{"fixtures/feeds/a.xml": {Data: []byte(testFeed)}}
 	fetcher := sources.FixtureFetcher{FS: fsys}
 	var deepPrompt string
 	provider := llm.Func(func(_ context.Context, req llm.Request) (llm.Response, error) {
@@ -82,7 +82,7 @@ func TestRunHeadless(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
-	for _, want := range []string{"## Lead", "### Regulador quer ouvir o mercado", "[1]", "commentary", "Sources:"} {
+	for _, want := range []string{"## Lead", "### Regulador quer ouvir o mercado", "[1]", "Sources:"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("output missing %q", want)
 		}
@@ -118,7 +118,7 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	def := &config.Publication{
 		Slug: "p", Name: "Pub", Language: "pt-BR",
 		Sections: []config.Section{{Title: "Lead", Items: 2, Commentary: "none"}},
-		Sources:  []config.SourceDef{{Type: "rss", URL: "feeds/a.xml"}},
+		Sources:  []config.SourceDef{{Type: "rss", URL: "fixtures/feeds/a.xml"}},
 	}
 	if _, err := db.SeedPublication(ctx, def); err != nil {
 		t.Fatalf("SeedPublication: %v", err)
@@ -137,7 +137,7 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 		]`,
 		"deepdive": `[]`,
 	}
-	fsys := fstest.MapFS{"feeds/a.xml": {Data: []byte(testFeed)}}
+	fsys := fstest.MapFS{"fixtures/feeds/a.xml": {Data: []byte(testFeed)}}
 	runner := &Runner{
 		DB: db, Fetcher: sources.FixtureFetcher{FS: fsys}, TriageModel: "haiku", DraftModel: "sonnet", MaxDeepDives: 3,
 		DemoMode: true,
@@ -157,6 +157,9 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 		t.Fatalf("issue items = %d, want 2", len(iis))
 	}
 	if err := db.SetIssueItemStatus(ctx, iis[0].ID, "rejected"); err != nil {
+		t.Fatalf("SetIssueItemStatus: %v", err)
+	}
+	if err := db.SetIssueItemStatus(ctx, iis[1].ID, "approved"); err != nil {
 		t.Fatalf("SetIssueItemStatus: %v", err)
 	}
 

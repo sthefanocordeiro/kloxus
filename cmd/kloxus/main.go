@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
+
 	"runtime"
 	"strconv"
 	"strings"
@@ -19,13 +19,13 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
-	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
+	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
 
 func main() {
@@ -162,11 +162,12 @@ func cmdDemo(args []string) error {
 		return err
 	}
 	fetcher, provider := demoRuntime(cfg)
+	seed := func(ctx context.Context, sdb *store.DB) error {
+		_, err := seedExample(ctx, sdb)
+		return err
+	}
 	if !*headless {
-		return serveUI(cfg, db, fetcher, provider, func(ctx context.Context) error {
-			_, err := seedExample(ctx, db)
-			return err
-		})
+		return serveUI(cfg, db, fetcher, provider, seed)
 	}
 	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, true)
 	if err != nil {
@@ -176,8 +177,9 @@ func cmdDemo(args []string) error {
 	return nil
 }
 
-// serveUI starts the local web UI and opens the browser.
-func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, reseed func(ctx context.Context) error) error {
+// serveUI starts the web UI: hosted multi-workspace mode when
+// KLOXUS_DATA_DIR is set (Fly.io), a single local workspace otherwise.
+func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, seed func(context.Context, *store.DB) error) error {
 	var monitor sources.MonitorProvider = sources.FakeMonitor{}
 	if cfg.Mode == "real" && cfg.FirecrawlAPIKey != "" {
 		monitor = sources.FirecrawlMonitor{
@@ -186,10 +188,19 @@ func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider
 			Secret:     cfg.WebhookSecret,
 		}
 	}
+	var wsm *workspace.Manager
+	var err error
+	if cfg.DataDir != "" {
+		wsm, err = workspace.OpenHosted(context.Background(), cfg.DataDir, []byte(cfg.CookieSecret), seed)
+		if err != nil {
+			return err
+		}
+	} else {
+		wsm = workspace.OpenLocal(db, seed)
+	}
 	srv := web.New(web.Deps{
-		DB: db, Cfg: cfg, Fetcher: fetcher, LLM: provider,
-		Monitor: monitor, Mailer: delivery.Outbox{Dir: filepath.Join(cfg.OutDir, "outbox")},
-		Reseed: reseed,
+		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider,
+		Monitor: monitor, Seed: seed,
 	})
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)

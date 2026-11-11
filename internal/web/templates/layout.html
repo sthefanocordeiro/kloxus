@@ -17,13 +17,14 @@
     <a href="/pub/{{.Data.Pub.ID}}/guide">Guide</a>
     <a href="/pub/{{.Data.Pub.ID}}/costs">Costs</a>
     <a href="/pub/{{.Data.Pub.ID}}/paywall">Paywall</a>
+    <a href="/pub/{{.Data.Pub.ID}}/outbox">Outbox</a>
     <a href="/pub/{{.Data.Pub.ID}}/settings">Settings</a>
   </nav>{{end}}
 </header>
 <main>
 {{.Body}}
 </main>
-<footer>Kloxus · demo mode · every fact needs a source</footer>
+<footer>Kloxus · demo mode · every fact needs a source{{if .Workspace}} · {{.Workspace}}{{end}}</footer>
 <script src="/static/app.js"></script>
 </body>
 </html>{{end}}

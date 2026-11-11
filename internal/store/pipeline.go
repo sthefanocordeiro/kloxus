@@ -11,6 +11,7 @@ import (
 type Item struct {
 	ID           int64
 	SourceID     int64
+	SourceName   string
 	SourceURL    string
 	SourceType   string
 	ExternalID   string
@@ -44,7 +45,7 @@ func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawIt
 // ItemsForPublication returns all items across a publication's sources.
 func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT i.id, i.source_id, s.url, s.type, i.external_id, i.url,
+		SELECT i.id, i.source_id, s.name, s.url, s.type, i.external_id, i.url,
 		       i.canonical_url, i.title, i.author, i.published_at, i.content_text
 		FROM items i JOIN sources s ON s.id = i.source_id
 		WHERE s.publication_id = ? ORDER BY i.id`, pubID)
@@ -55,23 +56,49 @@ func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, err
 	var out []Item
 	for rows.Next() {
 		var it Item
-		var canon sql.NullString
-		if err := rows.Scan(&it.ID, &it.SourceID, &it.SourceURL, &it.SourceType,
+		var canon, sourceName sql.NullString
+		if err := rows.Scan(&it.ID, &it.SourceID, &sourceName, &it.SourceURL, &it.SourceType,
 			&it.ExternalID, &it.URL, &canon, &it.Title, &it.Author, &it.PublishedAt, &it.ContentText); err != nil {
 			return nil, err
 		}
 		it.CanonicalURL = canon.String
+		it.SourceName = sourceName.String
 		out = append(out, it)
 	}
 	return out, rows.Err()
 }
 
-// MarkSourceFetched records a fetch outcome on a source.
-func (db *DB) MarkSourceFetched(ctx context.Context, sourceID int64, status string) error {
+// MarkSourceFetched records a fetch outcome on a source, along with the
+// outlet name when the fetch yielded one (feed channel title, page h1).
+func (db *DB) MarkSourceFetched(ctx context.Context, sourceID int64, name, status string) error {
+	if name != "" {
+		_, err := db.ExecContext(ctx,
+			`UPDATE sources SET last_fetch_at = datetime('now'), last_status = ?, name = ? WHERE id = ?`,
+			status, name, sourceID)
+		return err
+	}
 	_, err := db.ExecContext(ctx,
 		`UPDATE sources SET last_fetch_at = datetime('now'), last_status = ? WHERE id = ?`,
 		status, sourceID)
 	return err
+}
+
+// GetItem loads one item with its source's outlet name.
+func (db *DB) GetItem(ctx context.Context, id int64) (*Item, error) {
+	var it Item
+	var canon, sourceName sql.NullString
+	err := db.QueryRowContext(ctx, `
+		SELECT i.id, i.source_id, s.url, s.type, i.external_id, i.url,
+		       i.canonical_url, i.title, i.author, i.published_at, i.content_text, s.name
+		FROM items i JOIN sources s ON s.id = i.source_id WHERE i.id = ?`, id).
+		Scan(&it.ID, &it.SourceID, &it.SourceURL, &it.SourceType,
+			&it.ExternalID, &it.URL, &canon, &it.Title, &it.Author, &it.PublishedAt, &it.ContentText, &sourceName)
+	if err != nil {
+		return nil, err
+	}
+	it.CanonicalURL = canon.String
+	it.SourceName = sourceName.String
+	return &it, nil
 }
 
 // Story is a deduplicated group of items covering the same story.
@@ -79,6 +106,8 @@ type Story struct {
 	ID            int64
 	PublicationID int64
 	Title         string
+	TriageScore   float64
+	TriageReason  string
 	Items         []Item
 }
 
@@ -129,6 +158,76 @@ func (db *DB) AddStoryItem(ctx context.Context, storyID, itemID int64) error {
 	return err
 }
 
+// SetStoryTriage stores the triage verdict on a story so alternative
+// candidates can be ranked after the run.
+func (db *DB) SetStoryTriage(ctx context.Context, storyID int64, score float64, reason string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE stories SET triage_score = ?, triage_reason = ? WHERE id = ?`,
+		score, reason, storyID)
+	return err
+}
+
+// StoryWithItems loads one story and its member items.
+func (db *DB) StoryWithItems(ctx context.Context, storyID int64) (*Story, error) {
+	var s Story
+	err := db.QueryRowContext(ctx,
+		`SELECT id, publication_id, title, COALESCE(triage_score,0), triage_reason FROM stories WHERE id = ?`,
+		storyID).Scan(&s.ID, &s.PublicationID, &s.Title, &s.TriageScore, &s.TriageReason)
+	if err != nil {
+		return nil, err
+	}
+	items, err := db.storyItems(ctx, storyID)
+	if err != nil {
+		return nil, err
+	}
+	s.Items = items
+	return &s, nil
+}
+
+// BestAlternative returns the highest-triaged story of the publication
+// that is not already linked to the issue (in any status). Returns
+// sql.ErrNoRows when no candidate exists.
+func (db *DB) BestAlternative(ctx context.Context, pubID, issueID int64) (*Story, error) {
+	var id int64
+	err := db.QueryRowContext(ctx, `
+		SELECT s.id FROM stories s
+		WHERE s.publication_id = ?
+		  AND s.id NOT IN (SELECT story_id FROM issue_items WHERE issue_id = ?)
+		ORDER BY COALESCE(s.triage_score,0) DESC, s.id
+		LIMIT 1`, pubID, issueID).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return db.StoryWithItems(ctx, id)
+}
+
+func (db *DB) storyItems(ctx context.Context, storyID int64) ([]Item, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT i.id, i.source_id, s.name, s.url, s.type, i.external_id, i.url,
+		       i.canonical_url, i.title, i.author, i.published_at, i.content_text
+		FROM story_items si
+		JOIN items i ON i.id = si.item_id
+		JOIN sources s ON s.id = i.source_id
+		WHERE si.story_id = ? ORDER BY i.id`, storyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Item
+	for rows.Next() {
+		var it Item
+		var canon, sourceName sql.NullString
+		if err := rows.Scan(&it.ID, &it.SourceID, &sourceName, &it.SourceURL, &it.SourceType,
+			&it.ExternalID, &it.URL, &canon, &it.Title, &it.Author, &it.PublishedAt, &it.ContentText); err != nil {
+			return nil, err
+		}
+		it.CanonicalURL = canon.String
+		it.SourceName = sourceName.String
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
 // StoriesWithItems loads all stories and their member items.
 func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error) {
 	rows, err := db.QueryContext(ctx,
@@ -152,12 +251,13 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 		return nil, err
 	}
 	itemRows, err := db.QueryContext(ctx, `
-		SELECT si.story_id, i.id, i.source_id, s.url, s.type, i.external_id, i.url,
+		SELECT si.story_id, i.id, i.source_id, s.name, s.url, s.type, i.external_id, i.url,
 		       i.canonical_url, i.title, i.author, i.published_at, i.content_text
 		FROM story_items si
 		JOIN items i ON i.id = si.item_id
 		JOIN sources s ON s.id = i.source_id
-		ORDER BY si.story_id, i.id`)
+		WHERE si.story_id IN (SELECT id FROM stories WHERE publication_id = ?)
+		ORDER BY si.story_id, i.id`, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -165,12 +265,13 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 	for itemRows.Next() {
 		var storyID int64
 		var it Item
-		var canon sql.NullString
-		if err := itemRows.Scan(&storyID, &it.ID, &it.SourceID, &it.SourceURL, &it.SourceType,
+		var canon, sourceName sql.NullString
+		if err := itemRows.Scan(&storyID, &it.ID, &it.SourceID, &sourceName, &it.SourceURL, &it.SourceType,
 			&it.ExternalID, &it.URL, &canon, &it.Title, &it.Author, &it.PublishedAt, &it.ContentText); err != nil {
 			return nil, err
 		}
 		it.CanonicalURL = canon.String
+		it.SourceName = sourceName.String
 		if pos, ok := idx[storyID]; ok {
 			out[pos].Items = append(out[pos].Items, it)
 		}
@@ -205,13 +306,17 @@ type IssueItem struct {
 	Score   float64
 	Reason  string
 	Status  string
+	Origin  string // phaseA | alternative
 }
 
 // CreateIssueItem inserts an issue_item row.
 func (db *DB) CreateIssueItem(ctx context.Context, ii IssueItem) (int64, error) {
+	if ii.Origin == "" {
+		ii.Origin = "phaseA"
+	}
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO issue_items (issue_id, story_id, section, score, reason, status) VALUES (?,?,?,?,?,?)`,
-		ii.IssueID, ii.StoryID, ii.Section, ii.Score, ii.Reason, ii.Status)
+		`INSERT INTO issue_items (issue_id, story_id, section, score, reason, status, origin) VALUES (?,?,?,?,?,?,?)`,
+		ii.IssueID, ii.StoryID, ii.Section, ii.Score, ii.Reason, ii.Status, ii.Origin)
 	if err != nil {
 		return 0, err
 	}
@@ -221,7 +326,7 @@ func (db *DB) CreateIssueItem(ctx context.Context, ii IssueItem) (int64, error) 
 // IssueItems lists an issue's items ordered by score descending.
 func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status FROM issue_items WHERE issue_id = ? ORDER BY score DESC`, issueID)
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin FROM issue_items WHERE issue_id = ? ORDER BY score DESC`, issueID)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +334,7 @@ func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error
 	var out []IssueItem
 	for rows.Next() {
 		var ii IssueItem
-		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status); err != nil {
+		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin); err != nil {
 			return nil, err
 		}
 		out = append(out, ii)
@@ -272,6 +377,15 @@ func (db *DB) RecordDecision(ctx context.Context, pubID int64, issueItemID int64
 		`INSERT INTO decisions (publication_id, issue_item_id, kind, reason) VALUES (?,?,?,?)`,
 		pubID, ii, kind, reason)
 	return err
+}
+
+// LatestDecision returns the most recent decision on an issue item
+// (sql.ErrNoRows when none).
+func (db *DB) LatestDecision(ctx context.Context, issueItemID int64) (kind, reason string, err error) {
+	err = db.QueryRowContext(ctx,
+		`SELECT kind, reason FROM decisions WHERE issue_item_id = ? ORDER BY id DESC LIMIT 1`,
+		issueItemID).Scan(&kind, &reason)
+	return kind, reason, err
 }
 
 // Decision is a stored review decision.

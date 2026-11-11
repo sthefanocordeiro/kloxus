@@ -21,13 +21,16 @@ import (
 type DB struct{ *sql.DB }
 
 // Open opens (creating if needed) the database at path and applies migrations.
+// WAL mode plus a busy timeout keep reads responsive while the pipeline
+// writes in the background (the run page is polled during a run).
 func Open(path string) (*DB, error) {
 	sdb, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
+	sdb.SetMaxOpenConns(1)
 	db := &DB{sdb}
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;`); err != nil {
+	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 10000; PRAGMA foreign_keys = ON;`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("setting pragmas: %w", err)
 	}
@@ -191,16 +194,19 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 // Source is a stored source row.
 type Source struct {
 	ID          int64
+	Name        string
 	Type        string
 	URL         string
 	LastFetchAt sql.NullString
 	LastStatus  sql.NullString
 }
 
+const sourceCols = `id, name, type, url, last_fetch_at, last_status`
+
 // Sources lists a publication's sources.
 func (db *DB) Sources(ctx context.Context, pubID int64) ([]Source, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, type, url, last_fetch_at, last_status FROM sources WHERE publication_id = ? ORDER BY id`, pubID)
+		`SELECT `+sourceCols+` FROM sources WHERE publication_id = ? ORDER BY id`, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -208,12 +214,36 @@ func (db *DB) Sources(ctx context.Context, pubID int64) ([]Source, error) {
 	var out []Source
 	for rows.Next() {
 		var s Source
-		if err := rows.Scan(&s.ID, &s.Type, &s.URL, &s.LastFetchAt, &s.LastStatus); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &s.URL, &s.LastFetchAt, &s.LastStatus); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// SourceNames maps source id to outlet name for a publication.
+func (db *DB) SourceNames(ctx context.Context, pubID int64) (map[int64]string, error) {
+	srcs, err := db.Sources(ctx, pubID)
+	if err != nil {
+		return nil, err
+	}
+	names := map[int64]string{}
+	for _, s := range srcs {
+		if s.Name != "" {
+			names[s.ID] = s.Name
+		}
+	}
+	return names, nil
+}
+
+// AttachRuns links unattributed pipeline step rows (recorded before the
+// issue row existed) to the issue that followed them.
+func (db *DB) AttachRuns(ctx context.Context, pubID, issueID int64) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE runs SET issue_id = ? WHERE publication_id = ? AND issue_id IS NULL`,
+		issueID, pubID)
+	return err
 }
 
 // NextIssueNumber returns the next sequential issue number for a publication.
@@ -311,4 +341,33 @@ func (db *DB) LatestGuide(ctx context.Context, pubID int64) (version int, conten
 		`SELECT version, content FROM editorial_guides WHERE publication_id = ? ORDER BY version DESC LIMIT 1`,
 		pubID).Scan(&version, &content)
 	return version, content, err
+}
+
+// LatestGuides returns up to n newest guide versions, newest first.
+func (db *DB) LatestGuides(ctx context.Context, pubID int64, n int) ([]struct {
+	Version int
+	Content string
+}, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT version, content FROM editorial_guides WHERE publication_id = ? ORDER BY version DESC LIMIT ?`,
+		pubID, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []struct {
+		Version int
+		Content string
+	}
+	for rows.Next() {
+		var g struct {
+			Version int
+			Content string
+		}
+		if err := rows.Scan(&g.Version, &g.Content); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
 }

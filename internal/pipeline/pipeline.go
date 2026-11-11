@@ -33,6 +33,9 @@ var Steps = []string{
 	"collect", "dedupe", "triage", "storylist", "dossier", "deepdive", "draft", "citecheck",
 }
 
+// StepsA is the Phase A (prepare) subset shown on the run page.
+var StepsA = Steps[:6]
+
 // Runner executes one pipeline run for a publication.
 type Runner struct {
 	DB           *store.DB
@@ -51,14 +54,16 @@ type Runner struct {
 
 // Result summarizes a completed run.
 type Result struct {
-	IssueID  int64
-	Number   int
-	Path     string
-	Items    int
-	Stories  int
-	Selected int
-	Flagged  []Flagged
-	CostUSD  float64
+	IssueID    int64
+	Number     int
+	Path       string
+	Items      int
+	New        int
+	Stories    int
+	Selected   int
+	Flagged    []Flagged
+	CostUSD    float64
+	NoNewItems bool // nothing new since the last issue
 }
 
 // Flagged is a sentence the citation check could not verify.
@@ -168,6 +173,21 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	if err != nil {
 		return nil, err
 	}
+	if res.NoNewItems {
+		return res, nil
+	}
+	// Headless run: no review step, so every selected item is approved.
+	items, err := r.DB.IssueItems(ctx, res.IssueID)
+	if err != nil {
+		return nil, err
+	}
+	for _, ii := range items {
+		if ii.Status == "pending" {
+			if err := r.DB.SetIssueItemStatus(ctx, ii.ID, "approved"); err != nil {
+				return nil, err
+			}
+		}
+	}
 	b, err := r.RunPhaseB(ctx, pub, res.IssueID)
 	if err != nil {
 		return nil, err
@@ -196,17 +216,37 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return nil, err
 	}
 	for _, s := range srcs {
+		if r.DemoMode && !strings.HasPrefix(s.URL, "fixtures/") {
+			// Visitor-added sources are never fetched on the hosted demo
+			// (SSRF surface); they are stored but skipped at collect time.
+			r.DB.MarkSourceFetched(ctx, s.ID, "", "simulated in demo mode: sources are not fetched")
+			continue
+		}
 		raw, err := r.Fetcher.Fetch(ctx, s.Type, s.URL)
 		if err != nil {
-			r.DB.MarkSourceFetched(ctx, s.ID, "error: "+truncate(err.Error(), 120))
-			return nil, fmt.Errorf("source %s: %w", s.URL, err)
+			r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+truncate(err.Error(), 120))
+			continue // one bad source must not abort the run
 		}
 		n, err := r.DB.SaveItems(ctx, s.ID, raw, dedupe.Canonical)
 		if err != nil {
 			return nil, err
 		}
-		r.DB.MarkSourceFetched(ctx, s.ID, fmt.Sprintf("ok: %d items, %d new", len(raw), n))
+		outlet := ""
+		if len(raw) > 0 {
+			outlet = raw[0].Outlet
+		}
+		r.DB.MarkSourceFetched(ctx, s.ID, outlet, fmt.Sprintf("ok: %d items, %d new", len(raw), n))
 		res.Items += len(raw)
+		res.New += n
+	}
+	if res.New == 0 {
+		if _, err := r.DB.LatestIssue(ctx, pub.ID); err == nil {
+			res.NoNewItems = true
+			return res, nil
+		}
+		if res.Items == 0 {
+			return nil, fmt.Errorf("no items collected — check the publication's sources")
+		}
 	}
 	r.record(ctx, pub.ID, 0, "collect", "", start, llm.Response{})
 
@@ -272,6 +312,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return nil, err
 	}
 	res.IssueID = issueID
+	r.DB.AttachRuns(ctx, pub.ID, issueID)
 
 	// --- triage ---
 	r.stepStart("triage")
@@ -312,11 +353,15 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		score  float64
 		reason string
 	}{}
-	for _, t := range triage {
+	for i, t := range triage {
 		scoreByRef[t.Ref] = struct {
 			score  float64
 			reason string
 		}{t.Score, t.Reason}
+		if t.Ref-1 >= 0 && t.Ref-1 < len(stories) {
+			r.DB.SetStoryTriage(ctx, stories[t.Ref-1].ID, t.Score, t.Reason)
+		}
+		_ = i
 	}
 
 	// --- storylist ---
@@ -523,9 +568,13 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 }
 
 // loadEntries rebuilds the entry list for an existing issue from the DB:
-// issue items, their dossiers and story titles. Rejected items are skipped
-// unless includeRejected is true.
-func (r *Runner) loadEntries(ctx context.Context, issueID int64, includeRejected bool) ([]entry, map[int]*Dossier, error) {
+// issue items, their dossiers and story titles.
+//
+// canonical=true returns every Phase A item regardless of review status —
+// the stable input that keeps demo-mode draft/citecheck replay keys
+// fixed. canonical=false returns only approved items (plus pending? no —
+// the draft contains approved items only), which is what actually ships.
+func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool) ([]entry, map[int]*Dossier, error) {
 	iis, err := r.DB.IssueItems(ctx, issueID)
 	if err != nil {
 		return nil, nil, err
@@ -536,7 +585,13 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64, includeRejected
 	var entries []entry
 	dossierByRef := map[int]*Dossier{}
 	for _, ii := range iis {
-		if ii.Status == "rejected" && !includeRejected {
+		if canonical {
+			// Alternative replacements are never part of the recorded
+			// canonical input.
+			if ii.Origin == "alternative" {
+				continue
+			}
+		} else if ii.Status != "approved" {
 			continue
 		}
 		djson, err := r.DB.Dossier(ctx, ii.ID)
@@ -562,12 +617,15 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64, includeRejected
 }
 
 // RunPhaseB runs draft → assemble → citecheck on an issue produced by
-// RunPhaseA (and possibly reviewed). Rejected items are excluded.
+// RunPhaseA (and reviewed): the stored body carries approved items only.
 func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
 	res := &Result{IssueID: issueID}
 	entries, dossierByRef, err := r.loadEntries(ctx, issueID, false)
 	if err != nil {
 		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no approved items — approve at least one story before drafting")
 	}
 	res.Selected = len(entries)
 	modelEntries, modelDossiers := entries, dossierByRef
@@ -629,6 +687,23 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		draftByRef[de.Ref] = struct {
 			headline, body string
 		}{de.Headline, de.BodyMD}
+	}
+	// Alternative items are never part of the canonical draft input, so
+	// they have no model-drafted body: synthesize one from the dossier
+	// (summary carries [n] citations, so it passes the citation rules).
+	for _, e := range entries {
+		if _, ok := draftByRef[e.ref]; !ok {
+			d := dossierByRef[e.ref]
+			body := strings.TrimSpace(d.Summary)
+			for _, f := range d.Facts {
+				if s := strings.TrimSpace(f.Text); s != "" && !strings.Contains(body, s) {
+					body += " " + ensureRefSuffix(s, f.Ref)
+				}
+			}
+			draftByRef[e.ref] = struct {
+				headline, body string
+			}{e.title, body}
+		}
 	}
 
 	// --- assemble issue markdown ---
@@ -796,19 +871,59 @@ type DossierQuote struct {
 	Attribution string `json:"attribution"`
 }
 
-// DossierSource maps a [n] ref to a URL.
+// DossierSource maps a [n] ref to a source.
 type DossierSource struct {
-	Ref int    `json:"ref"`
-	URL string `json:"url"`
+	Ref    int    `json:"ref"`
+	URL    string `json:"url"` // canonical (fictional) article URL
+	ItemID int64  `json:"item_id,omitempty"`
+	Name   string `json:"name,omitempty"` // outlet name
 }
 
 // fillSources rebuilds the source list from member items so [n] refs in
-// facts and the stored list stay consistent.
+// facts and the stored list stay consistent. URLs are canonicalized
+// (tracking params stripped) and the outlet name comes from the item's
+// source.
 func (d *Dossier) fillSources(items []store.Item) {
 	d.Sources = d.Sources[:0]
 	for i, it := range items {
-		d.Sources = append(d.Sources, DossierSource{Ref: i + 1, URL: it.URL})
+		url := it.CanonicalURL
+		if url == "" {
+			url = dedupe.Canonical(it.URL)
+		}
+		name := it.SourceName
+		if name == "" {
+			name = outletLabel(it.URL)
+		}
+		d.Sources = append(d.Sources, DossierSource{Ref: i + 1, URL: url, ItemID: it.ID, Name: name})
 	}
+}
+
+// outletLabel derives a display name from a URL host when the source has
+// no recorded outlet name.
+func outletLabel(rawURL string) string {
+	u := rawURL
+	if i := strings.Index(u, "://"); i >= 0 {
+		u = u[i+3:]
+	}
+	if i := strings.IndexAny(u, "/?#"); i >= 0 {
+		u = u[:i]
+	}
+	u = strings.TrimPrefix(u, "www.")
+	if u == "" {
+		return "source"
+	}
+	return u
+}
+
+// ensureRefSuffix appends "[n]" when a synthesized fact lacks a citation.
+func ensureRefSuffix(s string, ref int) string {
+	if refRe.MatchString(s) {
+		return s
+	}
+	if !strings.HasSuffix(s, ".") && !strings.HasSuffix(s, "!") && !strings.HasSuffix(s, "?") {
+		s += "."
+	}
+	return fmt.Sprintf("%s [%d]", s, ref)
 }
 
 type sentRec struct {
@@ -902,25 +1017,21 @@ func extractSentences(body string) []sentRec {
 	return out
 }
 
+// assembleIssue builds the stored issue markdown. The stored body is the
+// canonical reader draft: headlines, cited bodies and linked sources,
+// with <!-- item N --> markers kept so the citation check can attribute
+// flagged sentences. Scores, triage reasons, unknowns, placeholders and
+// the disclosure line never enter the stored body — delivery.ReaderBody
+// renders the reader-facing version (commentary, disclosure, absolute
+// links) from it.
 func assembleIssue(pub *store.Publication, number int, entries []entry, drafts map[int]struct {
 	headline, body string
 }, dossiers map[int]*Dossier, sectionOrder []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s — issue %d\n\n", pub.Name, number)
-	if pub.AIDisclosure == "short" {
-		b.WriteString("_Prepared with AI assistance and reviewed by the editor._\n\n")
-	} else if pub.AIDisclosure == "detailed" {
-		b.WriteString("_This issue was prepared by an AI editorial assistant from the sources listed below; every fact links to its source. All commentary and final review are the editor's._\n\n")
-	}
-	commentaryOf := map[string]string{}
-	for _, s := range pub.Sections {
-		commentaryOf[s.Title] = s.Commentary
-	}
 	bySection := map[string][]entry{}
-	seen := map[string]bool{}
 	for _, e := range entries {
 		bySection[e.section] = append(bySection[e.section], e)
-		seen[e.section] = true
 	}
 	writeItem := func(e entry) {
 		de := drafts[e.ref]
@@ -930,24 +1041,18 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 			headline = e.title
 		}
 		fmt.Fprintf(&b, "### %s <!-- item %d -->\n\n", headline, e.ref)
-		fmt.Fprintf(&b, "_%.1f · %s_\n\n", e.score, e.why)
 		b.WriteString(de.body + "\n\n")
-		if len(d.Unknowns) > 0 {
-			b.WriteString("**Still unknown:** " + strings.Join(d.Unknowns, "; ") + "\n\n")
-		}
 		if len(d.Sources) > 0 {
 			b.WriteString("**Sources:** ")
 			parts := []string{}
 			for _, s := range d.Sources {
-				parts = append(parts, fmt.Sprintf("[%d] %s", s.Ref, s.URL))
+				name := s.Name
+				if name == "" {
+					name = "source"
+				}
+				parts = append(parts, fmt.Sprintf("[%d] [%s](/a/%d)", s.Ref, name, s.ItemID))
 			}
 			b.WriteString(strings.Join(parts, " · ") + "\n\n")
-		}
-		switch commentaryOf[e.section] {
-		case "required":
-			b.WriteString("> Your commentary goes here (required — sending is blocked while this slot is empty)\n\n")
-		case "optional":
-			b.WriteString("> Optional commentary slot\n\n")
 		}
 	}
 	for _, sec := range sectionOrder {
@@ -975,6 +1080,107 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 		}
 	}
 	return b.String()
+}
+
+// SubstituteAlternative replaces an issue item with the best-scored story
+// not already in the issue (triage ranking), generating a dossier for it.
+// The new item starts as pending; the old one is marked 'alternative'.
+func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publication, iss *store.Issue, old *store.IssueItem) (*store.IssueItem, error) {
+	cand, err := r.DB.BestAlternative(ctx, pub.ID, iss.ID)
+	if err != nil {
+		return nil, err // sql.ErrNoRows → no candidate
+	}
+	iis, err := r.DB.IssueItems(ctx, iss.ID)
+	if err != nil {
+		return nil, err
+	}
+	maxRef := 0
+	for _, ii := range iis {
+		if dj, err := r.DB.Dossier(ctx, ii.ID); err == nil {
+			var d Dossier
+			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
+				maxRef = d.Ref
+			}
+		}
+	}
+	newRef := maxRef + 1
+	newID, err := r.DB.CreateIssueItem(ctx, store.IssueItem{
+		IssueID: iss.ID,
+		StoryID: cand.ID,
+		Section: old.Section,
+		Score:   cand.TriageScore,
+		Reason:  cand.TriageReason,
+		Status:  "pending",
+		Origin:  "alternative",
+	})
+	if err != nil {
+		return nil, err
+	}
+	d := r.alternativeDossier(ctx, pub, cand, newRef)
+	data, _ := json.Marshal(d)
+	if err := r.DB.SaveDossier(ctx, newID, string(data)); err != nil {
+		return nil, err
+	}
+	if err := r.DB.SetIssueItemStatus(ctx, old.ID, "alternative"); err != nil {
+		return nil, err
+	}
+	return r.DB.GetIssueItem(ctx, newID)
+}
+
+// alternativeDossier builds the dossier for an alternative story. Real
+// mode asks the model; demo mode falls back to a deterministic dossier
+// synthesized from the story's items when no replay fixture exists.
+func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication, cand *store.Story, ref int) *Dossier {
+	type dSrc struct {
+		Ref  int
+		URL  string
+		Text string
+	}
+	var srcs []dSrc
+	for j, it := range cand.Items {
+		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+	}
+	var dossiers []Dossier
+	resp, err := r.call(ctx, r.DraftModel, "dossier", map[string]any{
+		"Publication": pub.Name,
+		"Language":    pub.Language,
+		"Items":       []map[string]any{{"Ref": ref, "Title": cand.Title, "Sources": srcs}},
+	}, &dossiers)
+	if err == nil {
+		for i := range dossiers {
+			if dossiers[i].Ref == ref {
+				d := &dossiers[i]
+				d.Title = cand.Title
+				d.fillSources(cand.Items)
+				return d
+			}
+		}
+	}
+	_ = resp
+	// Synthetic dossier: every claim comes from a member item, so citations
+	// stay valid without a model call.
+	var facts []DossierFact
+	var summary string
+	for i, it := range cand.Items {
+		sents := splitSentences(it.ContentText)
+		if len(sents) > 0 {
+			summary += strings.TrimSpace(sents[0]) + fmt.Sprintf(" [%d] ", i+1)
+		}
+		for _, s := range sents[1:] {
+			facts = append(facts, DossierFact{Text: strings.TrimSpace(s), Ref: i + 1})
+			if len(facts) >= 4 {
+				break
+			}
+		}
+	}
+	d := &Dossier{
+		Ref: ref, Title: cand.Title,
+		Summary:        strings.TrimSpace(summary),
+		Facts:          facts,
+		Interpretation: []string{"Picked by the editor as an alternative to the previous item."},
+	}
+	d.fillSources(cand.Items)
+	return d
 }
 
 func truncate(s string, n int) string {

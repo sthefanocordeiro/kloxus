@@ -3,7 +3,6 @@ package config
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 const validYAML = `
@@ -58,25 +57,6 @@ func TestParsePublicationValidatesFields(t *testing.T) {
 		if _, err := ParsePublication([]byte(c.yaml)); err == nil {
 			t.Errorf("%s: expected error, got nil", c.name)
 		}
-	}
-}
-
-func TestLoadValidatesDemoResetInterval(t *testing.T) {
-	t.Setenv("KLOXUS_DEMO_RESET_INTERVAL", "not-a-duration")
-	if _, err := Load(); err == nil {
-		t.Fatal("expected error for invalid duration")
-	}
-	t.Setenv("KLOXUS_DEMO_RESET_INTERVAL", "-1h")
-	if _, err := Load(); err == nil {
-		t.Fatal("expected error for negative duration")
-	}
-	t.Setenv("KLOXUS_DEMO_RESET_INTERVAL", "24h")
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.DemoResetInterval != 24*time.Hour {
-		t.Errorf("DemoResetInterval = %v, want 24h", cfg.DemoResetInterval)
 	}
 }
 

@@ -87,8 +87,36 @@ func (db *DB) ResolveFlags(ctx context.Context, issueID int64, flags []Flag) err
 func (db *DB) GetIssueItem(ctx context.Context, id int64) (*IssueItem, error) {
 	var ii IssueItem
 	err := db.QueryRowContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status FROM issue_items WHERE id = ?`, id).
-		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status)
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin FROM issue_items WHERE id = ?`, id).
+		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin)
+	if err != nil {
+		return nil, err
+	}
+	return &ii, nil
+}
+
+// LatestFinishedIssue returns the newest approved or sent issue — what a
+// reader is allowed to see (sql.ErrNoRows when none).
+func (db *DB) LatestFinishedIssue(ctx context.Context, pubID int64) (*Issue, error) {
+	return db.scanIssue(db.QueryRowContext(ctx,
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		 FROM issues WHERE publication_id = ? AND status IN ('approved','sent')
+		 ORDER BY number DESC LIMIT 1`, pubID))
+}
+
+// SetIssueBody replaces an issue's stored markdown body (sentence edits).
+func (db *DB) SetIssueBody(ctx context.Context, id int64, bodyMD string) error {
+	_, err := db.ExecContext(ctx, `UPDATE issues SET body_md = ? WHERE id = ?`, bodyMD, id)
+	return err
+}
+
+// IssueItemByStory returns the issue item for (issue, story) if any.
+func (db *DB) IssueItemByStory(ctx context.Context, issueID, storyID int64) (*IssueItem, error) {
+	var ii IssueItem
+	err := db.QueryRowContext(ctx,
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin FROM issue_items
+		 WHERE issue_id = ? AND story_id = ?`, issueID, storyID).
+		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin)
 	if err != nil {
 		return nil, err
 	}
@@ -143,8 +171,9 @@ func (db *DB) FindSourceByMonitor(ctx context.Context, monitorID string) (*Sourc
 	return &s, nil
 }
 
-// UpsertReader returns the id of a reader for (publication, email).
-func (db *DB) UpsertReader(ctx context.Context, pubID int64, email string) (int64, error) {
+// UpsertReader returns the id of a reader for (publication, email),
+// storing a display name on first insert.
+func (db *DB) UpsertReader(ctx context.Context, pubID int64, email, name string) (int64, error) {
 	var id int64
 	err := db.QueryRowContext(ctx,
 		`SELECT id FROM readers WHERE publication_id = ? AND email = ?`, pubID, email).Scan(&id)
@@ -155,30 +184,38 @@ func (db *DB) UpsertReader(ctx context.Context, pubID int64, email string) (int6
 		return 0, err
 	}
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO readers (publication_id, email) VALUES (?,?)`, pubID, email)
+		`INSERT INTO readers (publication_id, email, name) VALUES (?,?,?)`, pubID, email, name)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-// ActivateSubscription marks the reader's subscription active.
-func (db *DB) ActivateSubscription(ctx context.Context, readerID int64, provider, ref string) error {
+// ActivateSubscription marks the reader's subscription active and stores
+// the magic-link token that unlocks the reader view.
+func (db *DB) ActivateSubscription(ctx context.Context, readerID int64, provider, ref, magicToken string) error {
 	var id int64
 	err := db.QueryRowContext(ctx,
 		`SELECT id FROM subscriptions WHERE reader_id = ?`, readerID).Scan(&id)
 	if err == sql.ErrNoRows {
 		_, err = db.ExecContext(ctx,
-			`INSERT INTO subscriptions (reader_id, status, provider, provider_ref) VALUES (?,?,?,?)`,
-			readerID, "active", provider, ref)
+			`INSERT INTO subscriptions (reader_id, status, provider, provider_ref, magic_token) VALUES (?,?,?,?,?)`,
+			readerID, "active", provider, ref, magicToken)
 		return err
 	}
 	if err != nil {
 		return err
 	}
 	_, err = db.ExecContext(ctx,
-		`UPDATE subscriptions SET status = 'active', provider = ?, provider_ref = ? WHERE reader_id = ?`,
-		provider, ref, readerID)
+		`UPDATE subscriptions SET status = 'active', provider = ?, provider_ref = ?, magic_token = ? WHERE reader_id = ?`,
+		provider, ref, magicToken, readerID)
+	return err
+}
+
+// CancelSubscription marks the reader's subscription canceled.
+func (db *DB) CancelSubscription(ctx context.Context, readerID int64) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE subscriptions SET status = 'canceled' WHERE reader_id = ? AND status = 'active'`, readerID)
 	return err
 }
 
@@ -188,6 +225,89 @@ func (db *DB) HasActiveSubscription(ctx context.Context, readerID int64) (bool, 
 	err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM subscriptions WHERE reader_id = ? AND status = 'active'`, readerID).Scan(&n)
 	return n > 0, err
+}
+
+// ReaderByMagicToken resolves a magic-link token to a reader id within a
+// publication (sql.ErrNoRows when invalid).
+func (db *DB) ReaderByMagicToken(ctx context.Context, pubID int64, token string) (int64, error) {
+	var id int64
+	err := db.QueryRowContext(ctx, `
+		SELECT r.id FROM readers r
+		JOIN subscriptions s ON s.reader_id = r.id
+		WHERE r.publication_id = ? AND s.magic_token = ? AND s.magic_token != '' AND s.status = 'active'`,
+		pubID, token).Scan(&id)
+	return id, err
+}
+
+// OutboxEmail is one simulated outgoing message stored per workspace.
+type OutboxEmail struct {
+	ID        int64
+	Kind      string
+	To        string
+	Subject   string
+	BodyMD    string
+	BodyHTML  string
+	CreatedAt string
+}
+
+// SaveOutboxEmail records a simulated email in the workspace outbox.
+func (db *DB) SaveOutboxEmail(ctx context.Context, kind, to, subject, bodyMD, bodyHTML string) (int64, error) {
+	res, err := db.ExecContext(ctx,
+		`INSERT INTO outbox_emails (kind, to_addr, subject, body_md, body_html) VALUES (?,?,?,?,?)`,
+		kind, to, subject, bodyMD, bodyHTML)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// OutboxEmails lists recorded emails, newest first.
+func (db *DB) OutboxEmails(ctx context.Context) ([]OutboxEmail, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, kind, to_addr, subject, created_at FROM outbox_emails ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OutboxEmail
+	for rows.Next() {
+		var e OutboxEmail
+		if err := rows.Scan(&e.ID, &e.Kind, &e.To, &e.Subject, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// GetOutboxEmail loads one email including bodies.
+func (db *DB) GetOutboxEmail(ctx context.Context, id int64) (*OutboxEmail, error) {
+	var e OutboxEmail
+	err := db.QueryRowContext(ctx,
+		`SELECT id, kind, to_addr, subject, body_md, body_html, created_at FROM outbox_emails WHERE id = ?`, id).
+		Scan(&e.ID, &e.Kind, &e.To, &e.Subject, &e.BodyMD, &e.BodyHTML, &e.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// Progress returns a demo-progress flag ("" when unset).
+func (db *DB) Progress(ctx context.Context, key string) string {
+	var v string
+	if err := db.QueryRowContext(ctx,
+		`SELECT value FROM demo_progress WHERE key = ?`, key).Scan(&v); err != nil {
+		return ""
+	}
+	return v
+}
+
+// SetProgress marks a demo-progress flag.
+func (db *DB) SetProgress(ctx context.Context, key string) error {
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO demo_progress (key, value) VALUES (?, '1')
+		 ON CONFLICT(key) DO NOTHING`, key)
+	return err
 }
 
 // Reset wipes all demo data (used by "Reset demo").
@@ -200,6 +320,7 @@ func (db *DB) Reset(ctx context.Context) error {
 		"story_items", "issue_items", "dossiers", "decisions", "runs", "jobs",
 		"subscriptions", "readers", "payment_accounts", "editorial_guides",
 		"items", "stories", "issues", "sources", "publications",
+		"outbox_emails", "demo_progress",
 	}
 	for _, t := range tables {
 		if _, err := db.ExecContext(ctx, `DELETE FROM `+t); err != nil {
