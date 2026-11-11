@@ -7,7 +7,9 @@ interface shows state; the server decides it.
 
 - **Auth/isolation:** the same workspace cookie, rate limits and
   per-visitor isolation as the HTML routes. No other auth in demo mode.
-- **Bodies:** JSON in, JSON out. `Content-Type: application/json`.
+- **Bodies:** JSON in, JSON out. Mutating routes require
+  `Content-Type: application/json` — anything else is `415
+  unsupported_media_type`.
 - **Errors:** every error is an envelope with a stable `code`, a human
   `message` and, for blocked actions, `reasons` — each with a code, a
   message and a `target` pointing at what must be fixed
@@ -22,7 +24,7 @@ HTTP/1.1 409 Conflict
     "reasons": [
       {"code": "flags_unresolved",
        "message": "1 flagged sentence(s) unresolved — edit, mark as interpretation or remove each",
-       "target": {"kind": "sentence", "ref": "3.2"}},
+       "target": {"kind": "sentence", "ref": "3.9f1c04ab"}},
       {"code": "commentary_required",
        "message": "commentary required in \"The big one\"",
        "target": {"kind": "section", "ref": "The big one"}}
@@ -35,10 +37,19 @@ Stable codes: `not_found`, `validation`, `bad_json`, `conflict`,
 `blocked`, `read_only` (sent issues), `reason_required`,
 `invalid_source`, `invalid_citation`, `citation_required`, `unchanged`,
 `unsupported_claim`, `sentence_gone`, `no_alternative`, `not_rejected`,
-`not_approved`, `no_runs`, `monitor`, `rate_limited`, `internal`.
+`not_approved`, `no_runs`, `monitor`, `rate_limited`,
+`unsupported_media_type`, `internal`.
 
-Sentence ids are `"{itemRef}.{seq}"` (e.g. `3.2`) — stable for the life
-of the document but reassigned when sentences above them are removed.
+**Sentence ids** are `"{itemRef}.{hash}"` (e.g. `3.9f1c04ab`) — the hash
+is taken over the stored text, so an id always resolves to the same
+words and a stale id fails loudly instead of hitting the sentence that
+moved into its place. Identical sentences inside one item get a `.{occ}`
+suffix from the second occurrence on.
+
+**Document `version`** is the optimistic-concurrency token: every
+document mutation (sentence edit/remove/interpretation, commentary) must
+send back the `version` it read. A stale or missing version answers `409
+conflict` and the response carries the fresh `document`.
 
 ---
 
@@ -166,12 +177,14 @@ data: {"id": "a1b2c3d4", "kind": "prepare", "status": "done", "issue_id": 1, "�
 ```json
 {"items": [{
   "id": 9, "issue_id": 1, "story_id": 4, "section": "The big one",
-  "score": 0.91, "reason": "why this belongs in the issue",
+  "score": 8.7, "reason": "why this belongs in the issue",
   "status": "pending", "origin": "phaseA",
   "title": "Regulator opens consultation on AI labelling",
   "outlets": ["Radar Tech", "Pulso Digital"],
   "reject_reason": "…"
 }], "pending": 5}
+```
+`score` is the triage score on a 0–10 scale.
 ```
 
 ### `POST /api/v1/issues/{id}/items/{iid}/decisions`
@@ -209,13 +222,15 @@ Starts Phase B as a `kind: "draft"` run (events via
 ### `GET /api/v1/issues/{id}/document`
 Structured, never HTML: sections → items → sentences, each sentence with
 `id`, `text` (citations stripped for display), `kind` (`fact` |
-`interpretation`), `citations` (source refs) and `flag` when the
-citation check could not verify it; plus one `commentary` per section
-and the sources of each item. Flags that match no single sentence stay
-on the item.
+`interpretation`), `citations` (source refs), one `evidence` entry per
+citation (the supporting passage for the evidence pane) and `flag` when
+the citation check could not verify it; plus one `commentary` per
+section and the sources of each item. Flags that match no single
+sentence stay on the item.
 ```json
 {"document": {
   "issue_id": 1, "number": 1, "status": "drafted",
+  "version": "9f1c04ab22dd77ee",
   "subject": "Futuro Próximo — issue 1",
   "sections": [{
     "title": "The big one",
@@ -224,12 +239,13 @@ on the item.
       "ref": 1, "issue_item_id": 9,
       "headline": "Regulator opens consultation on AI labelling",
       "sentences": [
-        {"id": "1.1", "text": "The regulator opened a consultation.",
-         "kind": "fact", "citations": [1]},
-        {"id": "1.2", "text": "Comments close December 15.",
+        {"id": "1.9f1c04ab", "text": "The regulator opened a consultation.",
+         "kind": "fact", "citations": [1],
+         "evidence": [{"ref": 1, "excerpt": "…the dossier passage supporting it…"}]},
+        {"id": "1.22dd77ee", "text": "Comments close December 15.",
          "kind": "fact", "citations": [],
          "flag": {"note": "sentence has no citation"}},
-        {"id": "1.3", "text": "This changes the game.",
+        {"id": "1.33aa55bb", "text": "This changes the game.",
          "kind": "interpretation", "citations": []}
       ],
       "sources": [{"ref": 1, "name": "Radar Tech",
@@ -238,53 +254,71 @@ on the item.
       "flags": [{"sentence": "…", "note": "entry has no citations"}]
     }]
   }],
-  "coverage": {"cited": 11, "total": 12, "flagged": 1}
+  "coverage": {"ok": 10, "cited": 11, "total": 12, "flagged": 1}
 }}
 ```
+- `evidence[].excerpt` is the dossier fact behind that citation when one
+  is known, else the article's opening — one entry per sentence
+  citation.
+- `coverage.ok` counts fact sentences that are cited **and** unflagged —
+  the counter shows `ok/total`. `cited` counts every cited sentence
+  (flagged ones included).
 
 ### `PATCH /api/v1/issues/{id}/sentences/{sid}` — edit a sentence
-`{"text": "…new text…"}` → `{"sentence": {…}, "coverage": {…}, "flags": 0}`
-- Fact sentences: the new text must cite an existing source of that item
-  (`invalid_citation`, `citation_required`), must differ (`unchanged`)
-  and must pass the re-check (`unsupported_claim` — the flag stays).
+`{"text": "…new text…", "citations": [1], "version": "9f1c04ab22dd77ee"}`
+→ `{"sentence": {…}, "coverage": {…}, "flags": 0, "version": "…"}`
+- `text` is the display form — free of `[n]` markers; the server
+  composes the stored form from `citations`.
+- Fact sentences: `citations` must reference sources of that item
+  (`invalid_citation`, `citation_required`), the edit must differ
+  (`unchanged`) and must pass the re-check (`unsupported_claim` — the
+  flag stays).
 - Interpretation sentences: the text is stored as an editor-attributed
   block; no citation required.
 - A successful edit on a flagged sentence resolves the flag. Any edit on
-  an approved issue reverts it to `drafted`.
+  an approved issue reverts it to `drafted` and voids its receipt.
 
 ### `DELETE /api/v1/issues/{id}/sentences/{sid}` — remove a sentence
-Resolves its flag when present → `{"coverage": {…}, "flags": 0}`.
+`{"version": "9f1c04ab22dd77ee"}` — resolves its flag when present →
+`{"coverage": {…}, "flags": 0, "version": "…"}`.
 
 ### `POST /api/v1/issues/{id}/sentences/{sid}/interpretation`
-`{"text": "…"}` (optional — defaults to the sentence's text without
-citations). Marks the sentence as interpretation and resolves its flag.
+`{"text": "…", "version": "9f1c04ab22dd77ee"}` (`text` optional —
+defaults to the sentence's text without citations). Marks the sentence
+as interpretation and resolves its flag.
 
 ### `PUT /api/v1/issues/{id}/commentary`
-`{"section": "The big one", "text": "…"}` — the only write path for
-commentary; the AI never writes here. Reverts an approved issue to
-`drafted`.
+`{"section": "The big one", "text": "…", "version": "9f1c04ab22dd77ee"}`
+— the only write path for commentary; the AI never writes here. Reverts
+an approved issue to `drafted` and voids its receipt.
 
 ## Readiness / approve / send
 
 ### `GET /api/v1/issues/{id}/readiness`
 ```json
-{"ready": false, "coverage": {"cited": 11, "total": 12, "flagged": 1},
+{"ready": false, "coverage": {"ok": 10, "cited": 11, "total": 12, "flagged": 1},
  "checks": [
   {"code": "pending_decisions", "ok": true},
   {"code": "uncited_sentences", "ok": false,
    "message": "1 sentence(s) without a citation",
-   "target": {"kind": "sentence", "ref": "1.2"}},
+   "target": {"kind": "sentence", "ref": "1.22dd77ee"}},
   {"code": "flags_unresolved", "ok": true},
   {"code": "commentary_required", "ok": true}
  ]}
 ```
 
 ### `POST /api/v1/issues/{id}/approve`
-Failed checks → `409 blocked` with the reasons. Otherwise:
+Failed checks → `409 blocked` with the reasons. Otherwise the stored
+receipt is returned — the same receipt on every repeated approve, and
+from `GET /api/v1/issues/{id}` while the approval stands. An edit that
+reverts the issue to `drafted` voids it; the next approve records a
+fresh one.
 ```json
-{"issue": {"id": 1, "status": "approved", "…": "…"},
+{"issue": {"id": 1, "status": "approved", "receipt": {…}, "…": "…"},
  "receipt": {"issue_id": 1, "number": 1,
-             "approved_at": "2026-11-11T12:00:00Z", "checks": […]}}
+             "document_version": "9f1c04ab22dd77ee",
+             "approver": "local demo",
+             "approved_at": "2026-11-11 12:00:00", "checks": […]}}
 ```
 
 ### `POST /api/v1/issues/{id}/send`
@@ -292,8 +326,12 @@ Failed checks → `409 blocked` with the reasons. Otherwise:
 Safe audience by default: `audience` is required — sending needs an
 explicit choice. Requires `approved` (`blocked`/`not_approved`
 otherwise). In demo mode every send lands in the outbox.
+- `"test"` only records the outbox email — the issue stays `approved`
+  and can still go to readers.
+- `"readers"` marks the issue `sent`; sent issues are read-only.
 ```json
-{"issue": {"id": 1, "status": "sent", "…": "…"}, "outbox_email_id": 7}
+{"issue": {"id": 1, "status": "sent", "…": "…"},
+ "outbox_email_id": 7, "audience": "readers"}
 ```
 
 ### `GET /api/v1/issues/{id}/export?fmt=markdown|html`

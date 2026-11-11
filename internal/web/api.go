@@ -181,12 +181,29 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 			}
 		}
 	}
-	return map[string]any{
+	m := map[string]any{
 		"id": iss.ID, "publication_id": iss.PublicationID, "number": iss.Number,
 		"status": iss.Status, "subject": iss.Subject, "created_at": iss.CreatedAt,
 		"items":                       counts,
 		"flags":                       len(iss.Flags),
 		"missing_required_commentary": missing,
+	}
+	if rec, err := db(r).ApprovalReceipt(ctx, iss.ID); err == nil {
+		m["receipt"] = receiptView(rec)
+	}
+	return m
+}
+
+// receiptView renders a stored approval receipt for the API.
+func receiptView(rec *store.ApprovalReceipt) map[string]any {
+	var checks []apiCheck
+	json.Unmarshal([]byte(rec.ChecksJSON), &checks)
+	return map[string]any{
+		"issue_id": rec.IssueID, "number": rec.Number,
+		"document_version": rec.DocumentVersion,
+		"approver":         rec.Approver,
+		"approved_at":      rec.ApprovedAt,
+		"checks":           checks,
 	}
 }
 
@@ -745,7 +762,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 	}
 	if iss.Status == "approved" {
 		// a decision after approval returns the issue to draft
-		db(r).SetIssueStatus(ctx, iss.ID, "drafted")
+		db(r).RevertIssueToDraft(ctx, iss.ID)
 	}
 	finish(ii.ID)
 }
@@ -836,12 +853,14 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	checks = append(checks, c)
 
 	missing := []string{}
-	for _, sc := range pub.Sections {
-		if sc.Commentary == "required" && strings.TrimSpace(iss.Commentary[sc.Title]) == "" {
-			missing = append(missing, sc.Title)
-			checks = append(checks, apiCheck{Code: "commentary_required", OK: false,
-				Message: fmt.Sprintf("commentary required in %q", sc.Title),
-				Target:  &apiTarget{Kind: "section", Ref: sc.Title}})
+	if pub != nil {
+		for _, sc := range pub.Sections {
+			if sc.Commentary == "required" && strings.TrimSpace(iss.Commentary[sc.Title]) == "" {
+				missing = append(missing, sc.Title)
+				checks = append(checks, apiCheck{Code: "commentary_required", OK: false,
+					Message: fmt.Sprintf("commentary required in %q", sc.Title),
+					Target:  &apiTarget{Kind: "section", Ref: sc.Title}})
+			}
 		}
 	}
 	if len(missing) == 0 {
@@ -1007,31 +1026,69 @@ func dropFlag(r *http.Request, iss *store.Issue, itemRef int64, raw string) (boo
 	return true, db(r).ResolveFlags(r.Context(), iss.ID, out)
 }
 
-// revertApproved returns an approved issue to drafted after an edit.
+// revertApproved returns an approved issue to drafted after an edit —
+// which also invalidates the stored approval receipt.
 func revertApproved(r *http.Request, iss *store.Issue) {
 	if iss.Status == "approved" {
-		db(r).SetIssueStatus(r.Context(), iss.ID, "drafted")
+		db(r).RevertIssueToDraft(r.Context(), iss.ID)
 		iss.Status = "drafted"
 	}
 }
 
-// apiSentenceEdit replaces a sentence's text. Fact sentences re-run the
-// citation check: the new text must cite an existing source [n] of the
-// item and be supported by it — the flag (or the write) is refused
-// otherwise. Interpretation sentences carry no citation requirement.
+// checkDocVersion enforces the document's optimistic-concurrency token:
+// every document mutation must send back the version it read. A stale
+// or missing version answers 409 conflict with the fresh document.
+func checkDocVersion(w http.ResponseWriter, doc *issueDocument, v string) bool {
+	if v != "" && v == doc.Version {
+		return true
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusConflict)
+	json.NewEncoder(w).Encode(map[string]any{
+		"error": apiError{Code: "conflict",
+			Message: "the document changed since this version — reload and retry the edit"},
+		"document": doc,
+	})
+	return false
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// apiSentenceEdit replaces a sentence's text. The client sends the
+// display form — {"text": "…", "citations": [1]} — and the server
+// composes the stored form (markers appended after the words). Fact
+// sentences re-run the citation check: the refs must be sources of that
+// item and the claim must stay supported — the flag (or the write) is
+// refused otherwise. Interpretation sentences carry no citation
+// requirement.
 func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
-	iss, _, loc, ok := s.apiSentenceCtx(w, r)
+	iss, doc, loc, ok := s.apiSentenceCtx(w, r)
 	if !ok {
 		return
 	}
 	var in struct {
-		Text string `json:"text"`
+		Text      string `json:"text"`
+		Citations []int  `json:"citations"`
+		Version   string `json:"version"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
 		return
 	}
-	text := strings.TrimSpace(in.Text)
+	if !checkDocVersion(w, doc, in.Version) {
+		return
+	}
+	text := displayText(in.Text) // the contract takes marker-free text
 	if text == "" {
 		apiErr(w, 400, "validation", "edited sentence cannot be empty",
 			apiReason{Code: "empty_sentence", Message: "edited sentence cannot be empty",
@@ -1043,14 +1100,15 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 	if loc.sentence.Kind == "interpretation" {
 		replacement = "> _Interpretação: " + text + "_"
 	} else {
-		// fact: the new text must keep a valid citation and stay supported
+		// fact: citations must point at this item's sources and the new
+		// claim must stay supported by them
 		d, _ := s.itemDossierByID(r, loc.item)
 		maxRef := 0
 		if d != nil {
 			maxRef = len(d.Sources)
 		}
 		var bad string
-		for _, n := range citationRefs(text) {
+		for _, n := range in.Citations {
 			if n < 1 || (maxRef > 0 && n > maxRef) {
 				bad = fmt.Sprintf("[%d]", n)
 				break
@@ -1063,31 +1121,40 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 					Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
 			return
 		}
-		if len(citationRefs(text)) == 0 {
+		if len(in.Citations) == 0 {
 			apiErr(w, 409, "citation_required",
-				"edited sentence needs a citation [n] — or mark it as interpretation",
+				"edited sentence needs a citation — or mark it as interpretation",
 				apiReason{Code: "citation_required", Message: "factual sentences need a citation",
 					Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
 			return
 		}
-		if text == strings.TrimSpace(loc.sentence.raw) {
+		if text == loc.sentence.Text && equalInts(in.Citations, loc.sentence.Citations) {
 			apiErr(w, 409, "unchanged",
 				"the sentence is unchanged — the flag stays until the claim is fixed, marked as interpretation, or removed",
 				apiReason{Code: "unchanged", Message: "sentence text is unchanged",
 					Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
 			return
 		}
-		if !s.editSupportedFor(r, loc.item, int64(loc.item.Ref), text) {
+		composed := text
+		seen := map[int]bool{}
+		for _, n := range in.Citations {
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			composed += fmt.Sprintf(" [%d]", n)
+		}
+		if !s.editSupportedFor(r, loc.item, int64(loc.item.Ref), composed) {
 			apiErr(w, 409, "unsupported_claim",
 				"the citation check still cannot verify this sentence against the cited source — the flag stays",
 				apiReason{Code: "unsupported_claim", Message: "edit could not be verified against the cited source",
 					Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
 			return
 		}
-		replacement = text
+		replacement = composed
 	}
-	body := strings.Replace(iss.BodyMD, loc.sentence.raw, replacement, 1)
-	if body == iss.BodyMD {
+	body, ok := replaceInItem(iss.BodyMD, loc.item, loc.sentence.raw, replacement)
+	if !ok {
 		apiErr(w, 409, "sentence_gone", "the sentence is no longer in the body")
 		return
 	}
@@ -1110,12 +1177,26 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 
 // apiSentenceRemove deletes a sentence (and its flag when present).
 func (s *Server) apiSentenceRemove(w http.ResponseWriter, r *http.Request) {
-	iss, _, loc, ok := s.apiSentenceCtx(w, r)
+	iss, doc, loc, ok := s.apiSentenceCtx(w, r)
 	if !ok {
 		return
 	}
+	var in struct {
+		Version string `json:"version"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if !checkDocVersion(w, doc, in.Version) {
+		return
+	}
 	ctx := r.Context()
-	body := removeSentence(iss.BodyMD, loc.sentence.raw)
+	body, ok := removeInItem(iss.BodyMD, loc.item, loc.sentence.raw)
+	if !ok {
+		apiErr(w, 409, "sentence_gone", "the sentence is no longer in the body")
+		return
+	}
 	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
 		return
 	}
@@ -1136,15 +1217,19 @@ func (s *Server) apiSentenceRemove(w http.ResponseWriter, r *http.Request) {
 // stored as an editor-attributed block, so the citation check no longer
 // applies — the flag, when present, is resolved.
 func (s *Server) apiSentenceInterpretation(w http.ResponseWriter, r *http.Request) {
-	iss, _, loc, ok := s.apiSentenceCtx(w, r)
+	iss, doc, loc, ok := s.apiSentenceCtx(w, r)
 	if !ok {
 		return
 	}
 	var in struct {
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		Version string `json:"version"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if !checkDocVersion(w, doc, in.Version) {
 		return
 	}
 	text := strings.TrimSpace(in.Text)
@@ -1157,8 +1242,8 @@ func (s *Server) apiSentenceInterpretation(w http.ResponseWriter, r *http.Reques
 	}
 	ctx := r.Context()
 	replacement := "\n> _Interpretação: " + text + "_\n"
-	body := strings.Replace(iss.BodyMD, loc.sentence.raw, replacement, 1)
-	if body == iss.BodyMD {
+	body, ok := replaceInItem(iss.BodyMD, loc.item, loc.sentence.raw, replacement)
+	if !ok {
 		apiErr(w, 409, "sentence_gone", "the sentence is no longer in the body")
 		return
 	}
@@ -1190,7 +1275,7 @@ func (s *Server) respondSentence(w http.ResponseWriter, r *http.Request, iss *st
 	if apiDBErr(w, r, err, "document") {
 		return
 	}
-	resp := map[string]any{"coverage": doc.Coverage, "flags": len(iss.Flags)}
+	resp := map[string]any{"coverage": doc.Coverage, "flags": len(iss.Flags), "version": doc.Version}
 	if loc := doc.findSentence(r.PathValue("sid")); loc != nil {
 		resp["sentence"] = loc.sentence
 	}
@@ -1211,9 +1296,22 @@ func (s *Server) apiCommentary(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Section string `json:"section"`
 		Text    string `json:"text"`
+		Version string `json:"version"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if in.Version != docVersion(iss) {
+		pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+		if apiDBErr(w, r, err, "publication") {
+			return
+		}
+		doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
+		if apiDBErr(w, r, err, "document") {
+			return
+		}
+		checkDocVersion(w, doc, in.Version)
 		return
 	}
 	if strings.TrimSpace(in.Section) == "" {
@@ -1231,6 +1329,7 @@ func (s *Server) apiCommentary(w http.ResponseWriter, r *http.Request) {
 	revertApproved(r, iss)
 	apiJSON(w, 200, map[string]any{
 		"commentary": map[string]string{"section": in.Section, "text": in.Text},
+		"version":    docVersion(iss),
 	})
 }
 
@@ -1256,19 +1355,44 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 409, "blocked", "the issue is not ready to approve — fix each reason first", reasons...)
 		return
 	}
-	if iss.Status != "approved" {
-		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "approved"), "issue") {
-			return
-		}
-		db(r).RecordDecision(r.Context(), iss.PublicationID, 0, "approve", "issue approved")
+	rec, err := s.recordApproval(r, iss, pub, checks)
+	if apiDBErr(w, r, err, "issue") {
+		return
 	}
 	fresh, _ := db(r).GetIssue(r.Context(), iss.ID)
-	receipt := map[string]any{
-		"issue_id": iss.ID, "number": iss.Number,
-		"approved_at": time.Now().UTC().Format(time.RFC3339),
-		"checks":      checks,
+	apiJSON(w, 200, map[string]any{"issue": s.issueSummary(r, fresh), "receipt": receiptView(rec)})
+}
+
+// recordApproval marks the issue approved (when it is not already) and
+// returns the stored receipt. The first receipt wins — a repeated
+// approve returns the same receipt, never a new timestamp.
+func (s *Server) recordApproval(r *http.Request, iss *store.Issue, pub *store.Publication, checks []apiCheck) (*store.ApprovalReceipt, error) {
+	ctx := r.Context()
+	if iss.Status != "approved" {
+		if err := db(r).SetIssueStatus(ctx, iss.ID, "approved"); err != nil {
+			return nil, err
+		}
+		iss.Status = "approved" // the receipt attests to the approved document
+		db(r).RecordDecision(ctx, iss.PublicationID, 0, "approve", "issue approved")
 	}
-	apiJSON(w, 200, map[string]any{"issue": s.issueSummary(r, fresh), "receipt": receipt})
+	rec, err := db(r).ApprovalReceipt(ctx, iss.ID)
+	if err != sql.ErrNoRows {
+		return rec, err
+	}
+	if checks == nil {
+		checks = s.readinessChecks(r, iss, pub, nil)
+	}
+	cj, _ := json.Marshal(checks)
+	rec = &store.ApprovalReceipt{
+		IssueID: iss.ID, Number: iss.Number,
+		DocumentVersion: docVersion(iss),
+		Approver:        reqWS(r).Label,
+		ChecksJSON:      string(cj),
+	}
+	if err := db(r).SaveApprovalReceipt(ctx, rec); err != nil {
+		return nil, err
+	}
+	return db(r).ApprovalReceipt(ctx, iss.ID)
 }
 
 func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
@@ -1312,12 +1436,18 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "send") {
 		return
 	}
-	if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
-		return
+	if kind == "issue" {
+		// a test send only records the outbox email — the issue stays
+		// approved so it can still go to readers
+		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
+			return
+		}
+		if fresh, _ := db(r).GetIssue(r.Context(), iss.ID); fresh != nil {
+			iss = fresh
+		}
 	}
-	fresh, _ := db(r).GetIssue(r.Context(), iss.ID)
 	apiJSON(w, 200, map[string]any{
-		"issue": s.issueSummary(r, fresh), "outbox_email_id": emailID,
+		"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
 	})
 }
 

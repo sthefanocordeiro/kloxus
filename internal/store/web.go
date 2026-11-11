@@ -90,6 +90,50 @@ func (db *DB) SetIssueStatus(ctx context.Context, id int64, status string) error
 	return err
 }
 
+// RevertIssueToDraft returns an approved issue to drafted and drops its
+// approval receipt — post-approval edits invalidate the approval.
+func (db *DB) RevertIssueToDraft(ctx context.Context, id int64) error {
+	if err := db.SetIssueStatus(ctx, id, "drafted"); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `DELETE FROM approval_receipts WHERE issue_id = ?`, id)
+	return err
+}
+
+// ApprovalReceipt is the stored record of an issue approval.
+type ApprovalReceipt struct {
+	IssueID         int64
+	Number          int
+	DocumentVersion string
+	Approver        string
+	ChecksJSON      string
+	ApprovedAt      string
+}
+
+// SaveApprovalReceipt records the approval of an issue. The first
+// receipt wins: a repeated approve keeps the original (INSERT OR
+// IGNORE), so the returned row carries one stable timestamp.
+func (db *DB) SaveApprovalReceipt(ctx context.Context, rec *ApprovalReceipt) error {
+	_, err := db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO approval_receipts (issue_id, number, document_version, approver, checks_json)
+		 VALUES (?,?,?,?,?)`,
+		rec.IssueID, rec.Number, rec.DocumentVersion, rec.Approver, rec.ChecksJSON)
+	return err
+}
+
+// ApprovalReceipt returns the stored receipt (sql.ErrNoRows if none).
+func (db *DB) ApprovalReceipt(ctx context.Context, issueID int64) (*ApprovalReceipt, error) {
+	var r ApprovalReceipt
+	err := db.QueryRowContext(ctx,
+		`SELECT issue_id, number, document_version, approver, checks_json, approved_at
+		 FROM approval_receipts WHERE issue_id = ?`, issueID).
+		Scan(&r.IssueID, &r.Number, &r.DocumentVersion, &r.Approver, &r.ChecksJSON, &r.ApprovedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // StoryTitle returns a story's title (empty if the story is gone).
 func (db *DB) StoryTitle(ctx context.Context, storyID int64) (string, error) {
 	var t string

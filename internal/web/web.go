@@ -207,6 +207,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(context.WithValue(r.Context(), ctxWS, ws))
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") {
+			// The API is JSON-only: mutating calls must say so.
+			if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+				apiErr(w, http.StatusUnsupportedMediaType, "unsupported_media_type",
+					"mutating /api/v1 routes need Content-Type: application/json")
+				return
+			}
+		}
 	}
 	s.mux.ServeHTTP(w, r)
 }
@@ -810,7 +818,7 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if iss.Status == "approved" {
-		db(r).SetIssueStatus(r.Context(), iss.ID, "drafted")
+		db(r).RevertIssueToDraft(r.Context(), iss.ID)
 	}
 	// The item row changed above; re-render the card with the new status
 	// and rejection reason, not the pre-decision copy.
@@ -953,7 +961,7 @@ func (s *Server) commentary(w http.ResponseWriter, r *http.Request) {
 	}
 	if iss.Status == "approved" {
 		// Edits after approval revert to drafted and require re-approval.
-		db(r).SetIssueStatus(r.Context(), iss.ID, "drafted")
+		db(r).RevertIssueToDraft(r.Context(), iss.ID)
 	}
 	s.redirect(w, r, "/issue/"+r.PathValue("id")+"/draft")
 }
@@ -970,7 +978,7 @@ func (s *Server) resolveFlag(r *http.Request, iss *store.Issue, idx int, kind, d
 	}
 	db(r).RecordDecision(r.Context(), iss.PublicationID, 0, kind, detail)
 	if iss.Status == "approved" {
-		db(r).SetIssueStatus(r.Context(), iss.ID, "drafted")
+		db(r).RevertIssueToDraft(r.Context(), iss.ID)
 	}
 	return nil
 }
@@ -992,7 +1000,13 @@ func (s *Server) flagRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sent := iss.Flags[idx].Sentence
-	body := removeSentence(iss.BodyMD, sent)
+	// scope the removal to the flagged item — an identical sentence in
+	// another item must not be hit
+	start, end := docItemSpan(iss.BodyMD, iss.Flags[idx].Item)
+	body, ok := removeInItem(iss.BodyMD, &docItem{spanStart: start, spanEnd: end}, sent)
+	if !ok {
+		body = removeSentence(iss.BodyMD, sent)
+	}
 	if err := db(r).SetIssueBody(r.Context(), iss.ID, body); err != nil {
 		s.errPage(w, r, 500, "internal error")
 		return
@@ -1066,8 +1080,11 @@ func (s *Server) flagEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		replacement = text
 	}
-	body := strings.Replace(iss.BodyMD, flag.Sentence, replacement, 1)
-	if body == iss.BodyMD {
+	// scope the replacement to the flagged item — an identical sentence
+	// in another item must not be hit
+	start, end := docItemSpan(iss.BodyMD, flag.Item)
+	body, ok := replaceInItem(iss.BodyMD, &docItem{spanStart: start, spanEnd: end}, flag.Sentence, replacement)
+	if !ok {
 		s.notFound(w, r, "flagged sentence no longer in the body")
 		return
 	}
@@ -1230,11 +1247,10 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 		s.renderDraft(w, r, iss, pub, http.StatusConflict, "")
 		return
 	}
-	if err := db(r).SetIssueStatus(r.Context(), iss.ID, "approved"); err != nil {
+	if _, err := s.recordApproval(r, iss, pub, nil); err != nil {
 		s.errPage(w, r, 500, "internal error")
 		return
 	}
-	db(r).RecordDecision(r.Context(), iss.PublicationID, 0, "approve", "issue approved")
 	s.redirect(w, r, "/issue/"+r.PathValue("id")+"/send")
 }
 
@@ -1270,11 +1286,15 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		s.errPage(w, r, 500, "internal error")
 		return
 	}
-	if err := db(r).SetIssueStatus(r.Context(), iss.ID, "sent"); err != nil {
-		s.errPage(w, r, 500, "issue sent but status update failed")
-		return
+	if kind == "issue" {
+		// a test send only records the outbox email — the issue stays
+		// approved so it can still go to readers
+		if err := db(r).SetIssueStatus(r.Context(), iss.ID, "sent"); err != nil {
+			s.errPage(w, r, 500, "issue sent but status update failed")
+			return
+		}
 	}
-	s.render(w, r, "page-sent", map[string]any{"Pub": pub, "Issue": iss, "EmailID": id})
+	s.render(w, r, "page-sent", map[string]any{"Pub": pub, "Issue": iss, "EmailID": id, "Test": kind == "test"})
 }
 
 // sendIssueMail builds the reader-facing issue email honoring the

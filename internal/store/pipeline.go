@@ -359,11 +359,18 @@ func (db *DB) Dossier(ctx context.Context, issueItemID int64) (string, error) {
 	return j, err
 }
 
-// UpdateIssue sets status, body and flags on an issue.
+// UpdateIssue sets status, body and flags on an issue. A re-draft
+// invalidates any stored approval receipt.
 func (db *DB) UpdateIssue(ctx context.Context, issueID int64, status, bodyMD, flagsJSON string) error {
 	_, err := db.ExecContext(ctx,
 		`UPDATE issues SET status = ?, body_md = ?, flags_json = ? WHERE id = ?`,
 		status, bodyMD, flagsJSON, issueID)
+	if err != nil {
+		return err
+	}
+	if status != "approved" {
+		_, err = db.ExecContext(ctx, `DELETE FROM approval_receipts WHERE issue_id = ?`, issueID)
+	}
 	return err
 }
 

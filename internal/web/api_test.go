@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -264,11 +265,19 @@ func TestAPIJourney(t *testing.T) {
 
 	// --- document ---
 	doc := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
-	if doc["coverage"].(map[string]any)["total"].(float64) == 0 {
+	cov := doc["coverage"].(map[string]any)
+	if cov["total"].(float64) == 0 {
 		t.Fatal("document has no sentences")
 	}
-	var flaggedID string
-	var flaggedRaw string
+	if _, ok := cov["ok"]; !ok {
+		t.Fatal("coverage lacks the ok counter")
+	}
+	if doc["version"] == "" {
+		t.Fatal("document has no version")
+	}
+	var flaggedID, flaggedText string
+	var flaggedCits []any
+	sawEvidence := false
 	uncited := 0
 	for _, s := range doc["sections"].([]any) {
 		sec := s.(map[string]any)
@@ -282,14 +291,25 @@ func TestAPIJourney(t *testing.T) {
 			}
 			for _, sn := range it["sentences"].([]any) {
 				snt := sn.(map[string]any)
-				if snt["kind"] == "fact" && len(snt["citations"].([]any)) == 0 {
+				cits := snt["citations"].([]any)
+				if snt["kind"] == "fact" && len(cits) == 0 {
 					uncited++
+				}
+				if len(cits) > 0 {
+					if ev, ok := snt["evidence"].([]any); ok && len(ev) == len(cits) {
+						sawEvidence = true
+					}
 				}
 				if snt["flag"] != nil && flaggedID == "" {
 					flaggedID = snt["id"].(string)
+					flaggedText = snt["text"].(string)
+					flaggedCits = cits
 				}
 			}
 		}
+	}
+	if !sawEvidence {
+		t.Error("no cited sentence carries per-citation evidence")
 	}
 	iss, _ := db.GetIssue(ctx, issueID)
 	if len(iss.Flags) == 0 {
@@ -298,7 +318,6 @@ func TestAPIJourney(t *testing.T) {
 	if flaggedID == "" {
 		t.Fatal("no flagged sentence in the document")
 	}
-	flaggedRaw = iss.Flags[0].Sentence
 
 	// --- readiness gates approve ---
 	rd := apiGet(t, srv, issueURL+"/readiness")
@@ -328,21 +347,46 @@ func TestAPIJourney(t *testing.T) {
 
 	// --- sentence mutations ---
 	sents := "/api/v1/issues/" + fmt.Sprint(issueID) + "/sentences/"
+	ver := doc["version"].(string)
 	// unchanged edit keeps the flag
-	rr = apiCall(t, srv, "PATCH", sents+flaggedID, map[string]string{"text": flaggedRaw})
+	rr = apiCall(t, srv, "PATCH", sents+flaggedID,
+		map[string]any{"text": flaggedText, "citations": flaggedCits, "version": ver})
 	if c := apiErrCode(t, rr); c != "unchanged" {
 		t.Fatalf("unchanged edit: code = %q", c)
 	}
 	// uncited edit refused
-	rr = apiCall(t, srv, "PATCH", sents+flaggedID, map[string]string{"text": "Something entirely new."})
+	rr = apiCall(t, srv, "PATCH", sents+flaggedID,
+		map[string]any{"text": "Something entirely new.", "version": ver})
 	if c := apiErrCode(t, rr); c != "citation_required" {
 		t.Fatalf("uncited edit: code = %q", c)
 	}
 	// supported edit resolves the flag (grounded in a dossier fact)
 	rr = apiCall(t, srv, "PATCH", sents+flaggedID,
-		map[string]string{"text": "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão [1]"})
+		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
+			"citations": []int{1}, "version": ver})
 	if rr.Code != 200 {
 		t.Fatalf("supported edit = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	// a stale version is a conflict carrying the fresh document
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	var anySID string
+outer0:
+	for _, s := range doc["sections"].([]any) {
+		for _, i := range s.(map[string]any)["items"].([]any) {
+			for _, sn := range i.(map[string]any)["sentences"].([]any) {
+				anySID = sn.(map[string]any)["id"].(string)
+				break outer0
+			}
+		}
+	}
+	rr = apiCall(t, srv, "PATCH", sents+anySID,
+		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
+			"citations": []int{1}, "version": ver})
+	if c := apiErrCode(t, rr); c != "conflict" {
+		t.Fatalf("stale version: code = %q", c)
+	}
+	if v := apiJSON(t, rr); v["document"] == nil {
+		t.Error("conflict response must carry the fresh document")
 	}
 	// remove the remaining flagged sentences
 	for {
@@ -366,7 +410,8 @@ func TestAPIJourney(t *testing.T) {
 		if next == "" {
 			t.Fatalf("flags remain (%d) but no flagged sentence found", len(iss.Flags))
 		}
-		if rr := apiCall(t, srv, "DELETE", sents+next, nil); rr.Code != 200 {
+		if rr := apiCall(t, srv, "DELETE", sents+next,
+			map[string]any{"version": doc["version"].(string)}); rr.Code != 200 {
 			t.Fatalf("remove flagged sentence %s = %d: %s", next, rr.Code, rr.Body.String()[:200])
 		}
 	}
@@ -377,8 +422,9 @@ func TestAPIJourney(t *testing.T) {
 	_ = uncited
 
 	// --- commentary + approve ---
+	ver = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)["version"].(string)
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "My editorial take on the regulator consultation."})
+		map[string]string{"section": "The big one", "text": "My editorial take on the regulator consultation.", "version": ver})
 	if rr.Code != 200 {
 		t.Fatalf("commentary = %d", rr.Code)
 	}
@@ -390,15 +436,25 @@ func TestAPIJourney(t *testing.T) {
 	if rr.Code != 200 {
 		t.Fatalf("approve = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
-	if v := apiJSON(t, rr); v["receipt"].(map[string]any)["approved_at"] == "" {
-		t.Error("approval receipt lacks approved_at")
+	rec := apiJSON(t, rr)["receipt"].(map[string]any)
+	if rec["approved_at"] == "" || rec["approver"] == "" || rec["document_version"] == "" {
+		t.Errorf("approval receipt incomplete: %v", rec)
 	}
-	// edits after approval revert to draft
+	// a repeated approve returns the stored receipt, not a new timestamp
+	rr = apiCall(t, srv, "POST", issueURL+"/approve", nil)
+	if rec2 := apiJSON(t, rr)["receipt"].(map[string]any); rec2["approved_at"] != rec["approved_at"] {
+		t.Error("repeated approve minted a new receipt")
+	}
+	// edits after approval revert to draft and void the receipt
+	ver = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)["version"].(string)
 	apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "v2."})
+		map[string]string{"section": "The big one", "text": "v2.", "version": ver})
 	iss, _ = db.GetIssue(ctx, issueID)
 	if iss.Status != "drafted" {
 		t.Fatalf("edit after approve: status = %q", iss.Status)
+	}
+	if v := apiGet(t, srv, issueURL)["issue"].(map[string]any); v["receipt"] != nil {
+		t.Error("post-approval edit should void the receipt")
 	}
 	apiCall(t, srv, "POST", issueURL+"/approve", nil)
 
@@ -431,12 +487,22 @@ func TestAPIJourney(t *testing.T) {
 	if c := apiErrCode(t, rr); c != "validation" {
 		t.Fatalf("send without audience: code = %q", c)
 	}
+	// a test send records the outbox email but leaves the issue approved
 	rr = apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "test"})
 	if rr.Code != 200 {
 		t.Fatalf("send test = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
 	if v := apiJSON(t, rr); v["outbox_email_id"] == nil {
 		t.Error("send response lacks outbox_email_id")
+	}
+	iss, _ = db.GetIssue(ctx, issueID)
+	if iss.Status != "approved" {
+		t.Fatalf("test send marked issue %q — it must stay approved", iss.Status)
+	}
+	// the readers send then marks it sent
+	rr = apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "readers"})
+	if rr.Code != 200 {
+		t.Fatalf("send readers = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
 	if iss.Status != "sent" {
@@ -510,6 +576,16 @@ func TestAPIJourney(t *testing.T) {
 	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
 		t.Fatalf("404 route not JSON: %s", ct)
 	}
+	// mutating calls must declare a JSON body
+	req := httptest.NewRequest("POST", issueURL+"/send", strings.NewReader("{}"))
+	raw := httptest.NewRecorder()
+	srv.ServeHTTP(raw, req)
+	if raw.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("POST without Content-Type = %d, want 415", raw.Code)
+	}
+	if c := apiErrCode(t, raw); c != "unsupported_media_type" {
+		t.Fatalf("415 code = %q", c)
+	}
 }
 
 // TestAPIDraftBlocked: drafting with open decisions is a blocked action
@@ -560,7 +636,8 @@ outer:
 		t.Fatal("no flagged sentence")
 	}
 	rr = apiCall(t, srv, "POST", issueURL+"/sentences/"+flaggedID+"/interpretation",
-		map[string]string{"text": "A leitura editorial é que a consulta pública muda o jogo."})
+		map[string]string{"text": "A leitura editorial é que a consulta pública muda o jogo.",
+			"version": doc["version"].(string)})
 	if rr.Code != 200 {
 		t.Fatalf("interpretation = %d: %s", rr.Code, rr.Body.String()[:300])
 	}

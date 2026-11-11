@@ -215,12 +215,15 @@
 {{end}}
 
 {{define "page-sent"}}
-<h1>Sent</h1>
-<p class="ok">Issue sent to the demo outbox.</p>
+{{if .Test}}<h1>Test sent</h1>
+<p class="ok">Test email sent to the demo outbox — the issue stays approved.</p>
+{{else}}<h1>Sent</h1>
+<p class="ok">Issue sent to the demo outbox.</p>{{end}}
 <p><a href="/outbox/{{.EmailID}}">View the email</a> · <a href="/pub/{{.Pub.ID}}/outbox">Outbox</a></p>
 <p class="muted">Demo mode simulates delivery — messages are stored in your session's outbox, not sent to real inboxes.</p>
 <p>
-  <a href="/issue/{{.Issue.ID}}/export?fmt=html">Download HTML</a> ·
+{{if .Test}}  <a href="/issue/{{.Issue.ID}}/send">back to send</a> ·
+{{end}}  <a href="/issue/{{.Issue.ID}}/export?fmt=html">Download HTML</a> ·
   <a href="/issue/{{.Issue.ID}}/export?fmt=markdown">Download Markdown</a> ·
   <a href="/">back to publications</a>
 </p>
