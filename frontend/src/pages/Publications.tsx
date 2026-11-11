@@ -22,7 +22,9 @@ export function Publications() {
             <Card className="hover:border-ink/40 transition-colors">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-doc text-lg font-semibold">{p.name}</h2>
-                <span className="text-xs text-muted">{p.frequency}</span>
+                <span className="text-xs text-muted">
+                  {(t.frequency as Record<string, string>)[p.frequency] ?? p.frequency}
+                </span>
               </div>
               <p className="mt-1 line-clamp-2 text-sm text-muted">{p.editorial_line}</p>
             </Card>

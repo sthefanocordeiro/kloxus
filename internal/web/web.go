@@ -168,6 +168,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/issues/{id}/document", s.apiDocument)
 	m.HandleFunc("PATCH /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceEdit)
 	m.HandleFunc("DELETE /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceRemove)
+	m.HandleFunc("POST /api/v1/issues/{id}/items/{ref}/sentences", s.apiSentenceRestore)
 	m.HandleFunc("POST /api/v1/issues/{id}/sentences/{sid}/interpretation", s.apiSentenceInterpretation)
 	m.HandleFunc("PUT /api/v1/issues/{id}/commentary", s.apiCommentary)
 	m.HandleFunc("POST /api/v1/issues/{id}/approve", s.apiApprove)

@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LangProvider } from "./i18n";
 import { AppShell } from "./AppShell";
+import { ErrorPage } from "./pages/ErrorPage";
 import { Publications } from "./pages/Publications";
 import { PublicationPage } from "./pages/PublicationPage";
 import { IssuePage } from "./pages/IssuePage";
@@ -17,6 +18,7 @@ const router = createBrowserRouter(
   [
     {
       element: <AppShell />,
+      errorElement: <ErrorPage />,
       children: [
         { path: "/", element: <Publications /> },
         { path: "/pub/:id", element: <PublicationPage /> },

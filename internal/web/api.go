@@ -194,9 +194,17 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	return m
 }
 
+// orEmpty keeps the contract's arrays as [] — never null.
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
 // receiptView renders a stored approval receipt for the API.
 func receiptView(rec *store.ApprovalReceipt) map[string]any {
-	var checks []apiCheck
+	checks := []apiCheck{}
 	json.Unmarshal([]byte(rec.ChecksJSON), &checks)
 	return map[string]any{
 		"issue_id": rec.IssueID, "number": rec.Number,
@@ -649,10 +657,20 @@ func (s *Server) apiDossier(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "dossier") {
 		return
 	}
+	var dd pipeline.Dossier
+	if err := json.Unmarshal([]byte(dj), &dd); err != nil {
+		apiErr(w, 500, "internal", "dossier is unreadable")
+		return
+	}
+	dd.Facts = orEmpty(dd.Facts)
+	dd.DeepFacts = orEmpty(dd.DeepFacts)
+	dd.Unknowns = orEmpty(dd.Unknowns)
+	dd.Interpretation = orEmpty(dd.Interpretation)
+	dd.Sources = orEmpty(dd.Sources)
 	db(r).SetProgress(r.Context(), "dossier_seen")
 	apiJSON(w, 200, map[string]any{
 		"item":    s.apiCardFor(r, *ii),
-		"dossier": json.RawMessage(dj),
+		"dossier": dd,
 	})
 }
 
@@ -788,6 +806,7 @@ func (s *Server) guideAfterRebuild(w http.ResponseWriter, r *http.Request, pub *
 type apiCheck struct {
 	Code    string     `json:"code"`
 	OK      bool       `json:"ok"`
+	Count   int        `json:"count,omitempty"` // failing items, so clients can localize
 	Message string     `json:"message,omitempty"`
 	Target  *apiTarget `json:"target,omitempty"`
 }
@@ -795,7 +814,7 @@ type apiCheck struct {
 // readinessChecks builds the checklist: every pauta decided, every
 // factual sentence sourced, no flags, required commentary written.
 func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.Publication, doc *issueDocument) []apiCheck {
-	var checks []apiCheck
+	checks := []apiCheck{}
 	if iss.Status == "sent" {
 		checks = append(checks, apiCheck{Code: "read_only", OK: false,
 			Message: "this issue was already sent — sent issues are read-only"})
@@ -805,7 +824,7 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	}
 
 	pending := pendingDecisions(r, iss.ID)
-	c := apiCheck{Code: "pending_decisions", OK: pending == 0,
+	c := apiCheck{Code: "pending_decisions", OK: pending == 0, Count: pending,
 		Message: fmt.Sprintf("%d story decision(s) still open", pending)}
 	if !c.OK {
 		c.Target = &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}
@@ -825,14 +844,14 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 			}
 		}
 	}
-	c = apiCheck{Code: "uncited_sentences", OK: uncited == 0,
+	c = apiCheck{Code: "uncited_sentences", OK: uncited == 0, Count: uncited,
 		Message: fmt.Sprintf("%d sentence(s) without a citation", uncited)}
 	if !c.OK {
 		c.Target = &apiTarget{Kind: "sentence", Ref: firstUncited}
 	}
 	checks = append(checks, c)
 
-	c = apiCheck{Code: "flags_unresolved", OK: len(iss.Flags) == 0,
+	c = apiCheck{Code: "flags_unresolved", OK: len(iss.Flags) == 0, Count: len(iss.Flags),
 		Message: fmt.Sprintf("%d flagged sentence(s) unresolved — edit, mark as interpretation or remove each", len(iss.Flags))}
 	if !c.OK {
 		// point at the first flagged sentence we can locate
@@ -1172,10 +1191,12 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 	db(r).RecordDecision(ctx, iss.PublicationID, loc.item.IssueItemID, kind,
 		loc.sentence.raw+" → "+text)
 	revertApproved(r, iss)
-	s.respondSentence(w, r, iss)
+	s.respondSentence(w, r, iss, nil)
 }
 
-// apiSentenceRemove deletes a sentence (and its flag when present).
+// apiSentenceRemove deletes a sentence (and its flag when present). The
+// response carries the removed payload so the client can offer Undo —
+// POST /issues/{id}/items/{ref}/sentences restores it verbatim.
 func (s *Server) apiSentenceRemove(w http.ResponseWriter, r *http.Request) {
 	iss, doc, loc, ok := s.apiSentenceCtx(w, r)
 	if !ok {
@@ -1190,6 +1211,22 @@ func (s *Server) apiSentenceRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	if !checkDocVersion(w, doc, in.Version) {
 		return
+	}
+	// capture the undo payload before the write: position inside the
+	// item, display text, citations, kind and the flag it carried
+	index := 0
+	for i, sn := range loc.item.Sentences {
+		if sn.ID == loc.sentence.ID {
+			index = i
+			break
+		}
+	}
+	removed := map[string]any{
+		"ref": loc.item.Ref, "index": index, "text": loc.sentence.Text,
+		"kind": loc.sentence.Kind, "citations": orEmpty(loc.sentence.Citations),
+	}
+	if loc.sentence.Flag != nil {
+		removed["flag"] = loc.sentence.Flag.Note
 	}
 	ctx := r.Context()
 	body, ok := removeInItem(iss.BodyMD, loc.item, loc.sentence.raw)
@@ -1210,7 +1247,109 @@ func (s *Server) apiSentenceRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	db(r).RecordDecision(ctx, iss.PublicationID, loc.item.IssueItemID, kind, loc.sentence.raw)
 	revertApproved(r, iss)
-	s.respondSentence(w, r, iss)
+	s.respondSentence(w, r, iss, map[string]any{"removed": removed})
+}
+
+// apiSentenceRestore re-inserts a removed sentence into its item —
+// the Undo for apiSentenceRemove. The client sends back the payload
+// DELETE returned; the server composes the stored form at the same
+// index inside the item's span and re-attaches the flag it carried.
+func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.apiIssueID(r)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	if iss.Status == "sent" {
+		apiErr(w, 409, "read_only", "this issue was already sent — sent issues are read-only")
+		return
+	}
+	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
+	if apiDBErr(w, r, err, "document") {
+		return
+	}
+	ref, _ := strconv.Atoi(r.PathValue("ref"))
+	var item *docItem
+	for si := range doc.Sections {
+		for ii := range doc.Sections[si].Items {
+			if doc.Sections[si].Items[ii].Ref == ref {
+				item = &doc.Sections[si].Items[ii]
+			}
+		}
+	}
+	if item == nil {
+		apiErr(w, 404, "not_found", "item not found in the document")
+		return
+	}
+	var in struct {
+		Index     int    `json:"index"`
+		Text      string `json:"text"`
+		Kind      string `json:"kind"`
+		Citations []int  `json:"citations"`
+		Flag      string `json:"flag,omitempty"`
+		Version   string `json:"version"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if !checkDocVersion(w, doc, in.Version) {
+		return
+	}
+	text := displayText(in.Text)
+	if text == "" {
+		apiErr(w, 400, "validation", "restored sentence cannot be empty")
+		return
+	}
+	var raw string
+	if in.Kind == "interpretation" {
+		raw = "> _Interpretação: " + text + "_"
+	} else {
+		d, _ := s.itemDossierByID(r, item)
+		maxRef := 0
+		if d != nil {
+			maxRef = len(d.Sources)
+		}
+		raw = text
+		seen := map[int]bool{}
+		for _, n := range in.Citations {
+			if n < 1 || (maxRef > 0 && n > maxRef) {
+				apiErr(w, 409, "invalid_citation",
+					fmt.Sprintf("source [%d] does not exist for this item", n))
+				return
+			}
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			raw += fmt.Sprintf(" [%d]", n)
+		}
+	}
+	if in.Index < 0 {
+		in.Index = 0
+	}
+	body, ok := insertInItem(iss.BodyMD, item, in.Index, raw)
+	if !ok {
+		apiErr(w, 409, "conflict", "the item no longer accepts this sentence")
+		return
+	}
+	ctx := r.Context()
+	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
+		return
+	}
+	if in.Flag != "" {
+		flags := append(append([]store.Flag{}, iss.Flags...),
+			store.Flag{Item: int64(ref), Sentence: raw, Note: in.Flag})
+		if apiDBErr(w, r, db(r).ResolveFlags(ctx, iss.ID, flags), "issue") {
+			return
+		}
+	}
+	db(r).RecordDecision(ctx, iss.PublicationID, item.IssueItemID, "sentence_restore", raw)
+	revertApproved(r, iss)
+	s.respondSentence(w, r, iss, nil)
 }
 
 // apiSentenceInterpretation marks a sentence as interpretation: it is
@@ -1260,12 +1399,13 @@ func (s *Server) apiSentenceInterpretation(w http.ResponseWriter, r *http.Reques
 	}
 	db(r).RecordDecision(ctx, iss.PublicationID, loc.item.IssueItemID, kind, loc.sentence.raw)
 	revertApproved(r, iss)
-	s.respondSentence(w, r, iss)
+	s.respondSentence(w, r, iss, nil)
 }
 
 // respondSentence re-parses the document after a mutation and answers
 // with fresh coverage (and the mutated sentence when it still exists).
-func (s *Server) respondSentence(w http.ResponseWriter, r *http.Request, iss *store.Issue) {
+// extra keys (e.g. "removed" for undo) are merged into the response.
+func (s *Server) respondSentence(w http.ResponseWriter, r *http.Request, iss *store.Issue, extra map[string]any) {
 	fresh, err := db(r).GetIssue(r.Context(), iss.ID)
 	if err == nil {
 		iss = fresh
@@ -1278,6 +1418,9 @@ func (s *Server) respondSentence(w http.ResponseWriter, r *http.Request, iss *st
 	resp := map[string]any{"coverage": doc.Coverage, "flags": len(iss.Flags), "version": doc.Version}
 	if loc := doc.findSentence(r.PathValue("sid")); loc != nil {
 		resp["sentence"] = loc.sentence
+	}
+	for k, v := range extra {
+		resp[k] = v
 	}
 	apiJSON(w, 200, resp)
 }
@@ -1327,6 +1470,9 @@ func (s *Server) apiCommentary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	revertApproved(r, iss)
+	// docVersion below must see the just-written commentary — when
+	// iss.Commentary was nil, c is a fresh map that iss does not alias
+	iss.Commentary = c
 	apiJSON(w, 200, map[string]any{
 		"commentary": map[string]string{"section": in.Section, "text": in.Text},
 		"version":    docVersion(iss),
@@ -1692,7 +1838,7 @@ func (s *Server) apiCosts(w http.ResponseWriter, r *http.Request) {
 		Rows     []store.CostRow `json:"rows"`
 		TotalUSD float64         `json:"total_usd"`
 	}
-	var groups []*issueCosts
+	groups := []*issueCosts{}
 	for _, row := range rows {
 		if len(groups) == 0 || groups[len(groups)-1].Number != row.IssueNumber {
 			groups = append(groups, &issueCosts{Number: row.IssueNumber})

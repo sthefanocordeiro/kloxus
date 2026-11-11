@@ -130,8 +130,19 @@ export interface IssueDocument {
 export interface Check {
   code: string;
   ok: boolean;
+  count?: number;
   message?: string;
   target?: { kind: string; ref: string };
+}
+
+// The DELETE response's undo payload — POST it back to restore.
+export interface RemovedSentence {
+  ref: number;
+  index: number;
+  text: string;
+  kind: "fact" | "interpretation";
+  citations: number[];
+  flag?: string;
 }
 
 export interface ApiError {
@@ -191,8 +202,13 @@ export const api = {
       "PATCH", `/api/v1/issues/${issueID}/sentences/${sid}`, { text, citations, version },
     ),
   removeSentence: (issueID: number, sid: string, version: string) =>
-    request<{ coverage: Coverage; flags: number; version: string }>(
+    request<{ coverage: Coverage; flags: number; version: string; removed?: RemovedSentence }>(
       "DELETE", `/api/v1/issues/${issueID}/sentences/${sid}`, { version },
+    ),
+  restoreSentence: (issueID: number, removed: RemovedSentence, version: string) =>
+    request<{ coverage: Coverage; flags: number; version: string }>(
+      "POST", `/api/v1/issues/${issueID}/items/${removed.ref}/sentences`,
+      { index: removed.index, text: removed.text, kind: removed.kind, citations: removed.citations, flag: removed.flag, version },
     ),
   markInterpretation: (issueID: number, sid: string, text: string | undefined, version: string) =>
     request<{ coverage: Coverage; flags: number; version: string }>(

@@ -5,7 +5,7 @@
   "version": "0.2.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/appdist-keep.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b"
   },
@@ -30,6 +30,7 @@
     "tailwindcss": "^4.1.10"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@tailwindcss/vite": "^4.1.10",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",

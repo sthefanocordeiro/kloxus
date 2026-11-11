@@ -96,10 +96,10 @@ describe("commentary", () => {
 });
 
 describe("docToTiptap", () => {
-  it("emits one sentence node per stored sentence", () => {
+  it("emits one sentence node per stored sentence, commentary last", () => {
     const tiptap = docToTiptap(doc()) as { content: { type: string }[] };
     const types = tiptap.content.map((n) => n.type);
-    expect(types).toEqual(["heading", "commentary", "itemHeading", "sentence", "sentence"]);
+    expect(types).toEqual(["heading", "itemHeading", "sentence", "sentence", "commentary"]);
   });
 
   it("carries sid and citations into node attrs", () => {

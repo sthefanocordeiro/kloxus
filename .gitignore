@@ -18,3 +18,5 @@ internal/web/appdist/*
 !internal/web/appdist/.keep
 frontend/node_modules/
 *.tsbuildinfo
+frontend/.e2e-data
+frontend/test-results/

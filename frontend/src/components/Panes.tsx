@@ -5,6 +5,7 @@ import { api, type Check, type Coverage, type DocItem, type IssueDocument, type 
 import { coverageDone, coverageLabel, readyFromChecks } from "../docModel";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
+import { fmtDate } from "../lib/fmt";
 import { Markdown } from "../markdown";
 import { Badge, Button, Card } from "../ui";
 
@@ -22,19 +23,21 @@ export function PautasPane({
   onSelect: (ref: number, issueItemId: number) => void;
 }) {
   const { t } = useT();
-  const statusOf = (iid: number) => items?.find((i) => i.id === iid)?.status ?? "";
+  const statusOf = (iid: number) => items?.find((i) => i.id === iid)?.status ?? "pending";
+  const statusLabel = (s: string) => (t.itemStatus as Record<string, string>)[s] ?? s;
   return (
     <div className="space-y-4 p-3">
-      {doc.sections.map((sec) => (
+      {(doc.sections ?? []).map((sec) => (
         <div key={sec.title || "_"}>
           <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
             {sec.title || t.pautas}
           </p>
           <div className="space-y-1">
-            {sec.items.map((it) => (
+            {(sec.items ?? []).map((it) => (
               <button
                 key={it.ref}
                 onClick={() => onSelect(it.ref, it.issue_item_id)}
+                aria-label={`${it.headline} — ${statusLabel(statusOf(it.issue_item_id))}`}
                 className={cn(
                   "w-full rounded-[var(--radius-card)] border px-3 py-2 text-left text-sm transition-colors",
                   selectedRef === it.ref ? "border-teal bg-teal-soft/50" : "border-line bg-paper-raised hover:border-ink/40",
@@ -43,10 +46,10 @@ export function PautasPane({
                 <span className="font-doc leading-5 block">{it.headline}</span>
                 <span className="mt-1 flex items-center gap-2">
                   <Badge tone={statusOf(it.issue_item_id) === "approved" ? "teal" : "muted"}>
-                    {statusOf(it.issue_item_id) || "—"}
+                    {statusLabel(statusOf(it.issue_item_id))}
                   </Badge>
-                  <span className="text-[10px] text-muted">{it.sentences.length} ·</span>
-                  <span className="text-[10px] text-muted">{it.sources.length} {t.evidence.sources.toLowerCase()}</span>
+                  <span className="text-[10px] text-muted">{(it.sentences ?? []).length} ·</span>
+                  <span className="text-[10px] text-muted">{(it.sources ?? []).length} {t.evidence.sources.toLowerCase()}</span>
                 </span>
               </button>
             ))}
@@ -88,7 +91,15 @@ export function ReadinessList({
   onTarget: (c: Check) => void;
 }) {
   const { t } = useT();
-  const labels = t.readiness as Record<string, string>;
+  // every check is translated here; the server's message stays a
+  // fallback for codes this UI doesn't know yet
+  const labelFor = (c: Check): string => {
+    const entry = (t.readiness.check as Record<string, { ok: string; fail: string }>)[c.code];
+    let label = entry ? (c.ok ? entry.ok : entry.fail) : (c.message || c.code);
+    if (!c.ok && c.count && c.count > 0 && !/^\d/.test(label)) label = `${c.count} ${label}`;
+    if (!c.ok && c.target?.kind === "section") label += ` — ${c.target.ref}`;
+    return label;
+  };
   return (
     <div>
       <p className="mb-2 text-sm font-semibold">
@@ -107,7 +118,7 @@ export function ReadinessList({
               onClick={() => onTarget(c)}
               className={cn("text-left", !c.ok && c.target && "text-danger underline decoration-dotted")}
             >
-              {c.message || labels[c.code] || c.code}
+              {labelFor(c)}
             </button>
           </li>
         ))}
@@ -121,6 +132,14 @@ export function ReadinessList({
 
 // --- right pane: evidence for the selected item ---
 
+// scrolls ONLY inside its own pane — scrollIntoView would scroll every
+// scrollable ancestor and yank the document away from the clicked chip
+export function scrollInPane(pane: HTMLElement, el: HTMLElement) {
+  pane.scrollTop =
+    el.getBoundingClientRect().top - pane.getBoundingClientRect().top +
+    pane.scrollTop - pane.clientHeight / 2;
+}
+
 export function EvidencePane({
   item,
   citeRef,
@@ -130,7 +149,7 @@ export function EvidencePane({
   citeRef?: number;
   sid?: string;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const dossier = useQuery({
     queryKey: ["dossier", item?.issue_item_id],
     queryFn: () => api.dossier(item!.issue_item_id),
@@ -140,9 +159,11 @@ export function EvidencePane({
 
   useEffect(() => {
     if (citeRef && flash.current) {
-      const el = flash.current.querySelector(`[data-evref="${citeRef}"]`);
-      el?.scrollIntoView({ block: "center" });
-      el?.classList.add("flash");
+      const el = flash.current.querySelector<HTMLElement>(`[data-evref="${citeRef}"]`);
+      if (el) {
+        scrollInPane(flash.current, el);
+        el.classList.add("flash");
+      }
     }
   }, [citeRef, dossier.data]);
 
@@ -156,7 +177,7 @@ export function EvidencePane({
       ?.evidence?.find((e) => e.ref === ref)?.excerpt;
 
   return (
-    <div ref={flash} className="space-y-4 p-3 text-sm">
+    <div ref={flash} className="h-full space-y-4 overflow-y-auto p-3 text-sm">
       <p className="font-doc font-semibold leading-6">{item.headline}</p>
       {d && (
         <>
@@ -197,13 +218,13 @@ export function EvidencePane({
                   {s.name}
                 </span>
                 {s.item_id !== 0 && (
-                  <a href={`/item/${s.item_id}`} target="_blank" rel="noreferrer"
+                  <a href={`/a/${s.item_id}`} target="_blank" rel="noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-teal hover:underline">
                     {t.evidence.openOriginal} <ExternalLink size={11} />
                   </a>
                 )}
               </div>
-              <p className="mt-1 text-[11px] text-muted">{s.date}</p>
+              <p className="mt-1 text-[11px] text-muted">{s.date ? fmtDate(s.date, lang) : ""}</p>
               <p className="mt-1 border-l-2 border-line pl-2 text-[13px] leading-5 text-muted">
                 {evFor(s.ref) ?? s.excerpt}
               </p>

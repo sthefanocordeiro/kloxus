@@ -4,19 +4,22 @@ import { Link, useParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { ArrowLeft, BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
-import { api, ApiRequestError, type Check, type IssueDocument, type IssueItem, type IssueSummary, type RunEvent } from "../api";
+import { api, ApiRequestError, type Check, type IssueDocument, type IssueItem, type IssueSummary, type RemovedSentence, type RunEvent } from "../api";
 import { docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
 import { Commentary, DocActionsCtx, ItemHeading, Sentence, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
+import { errText } from "../lib/errors";
+import { fmtDate } from "../lib/fmt";
 import { Badge, Button, Card, KDialog, KPopover } from "../ui";
-import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList } from "../components/Panes";
+import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
 
-// scroll the editor to a sentence/item element and flash it
+// scroll the editor pane to a sentence/item element and flash it —
+// constrained to the pane so other panes don't move
 function flashEl(docEl: HTMLElement | null, sel: string) {
   const el = docEl?.querySelector<HTMLElement>(sel);
-  if (!el) return;
-  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  if (!el || !docEl) return;
+  scrollInPane(docEl, el);
   el.classList.remove("flash");
   void el.offsetWidth;
   el.classList.add("flash");
@@ -43,12 +46,12 @@ export function IssuePage() {
     if (doc) versionRef.current = doc.version;
   }, [doc]);
 
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState<{ text: string; undo?: RemovedSentence } | null>(null);
   const toastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showToast = useCallback((s: string) => {
-    setToast(s);
+  const showToast = useCallback((text: string, undo?: RemovedSentence) => {
+    setToast({ text, undo });
     if (toastRef.current) clearTimeout(toastRef.current);
-    toastRef.current = setTimeout(() => setToast(""), 3000);
+    if (!undo) toastRef.current = setTimeout(() => setToast(null), 3000);
   }, []);
 
   // resync: a 409 carries the fresh document — accept it and tell the user
@@ -58,7 +61,7 @@ export function IssuePage() {
         qc.setQueryData(["document", issueID], err.document);
         showToast(t.errors.conflict);
       } else {
-        showToast(err instanceof ApiRequestError ? err.body.message : t.errors.generic);
+        showToast(errText(t, err));
       }
     },
     [qc, issueID, showToast, t],
@@ -77,11 +80,25 @@ export function IssuePage() {
   const editorWrapRef = useRef<HTMLDivElement>(null);
   const [saved, setSaved] = useState<"" | "saving" | "saved">("");
 
+  const undoRemove = useCallback(
+    async (removed: RemovedSentence) => {
+      try {
+        const r = await api.restoreSentence(issueID, removed, versionRef.current);
+        versionRef.current = r.version;
+        setToast(null);
+        invalidate();
+      } catch (e) {
+        resync(e);
+      }
+    },
+    [issueID, invalidate, resync],
+  );
+
   const actions: DocActions = useMemo(
     () => ({
       readOnly: doc?.status === "sent",
       showEvidence: (ref, opts) => {
-        const item = doc?.sections.flatMap((s) => s.items).find((i) => i.ref === ref);
+        const item = findItem(doc ?? null, ref);
         setSel({ ref, issueItemId: item?.issue_item_id ?? 0, citeRef: opts?.citeRef, sid: opts?.sid });
         setRightTab("evidence");
         if (window.innerWidth < 768) setMobileTab("side");
@@ -91,10 +108,13 @@ export function IssuePage() {
           const r = await api.editSentence(issueID, sid, text, citations, versionRef.current);
           versionRef.current = r.version;
           invalidate();
-          return true;
+          return null;
         } catch (e) {
-          resync(e);
-          return false;
+          if (e instanceof ApiRequestError && e.document) {
+            // version went stale — accept the fresh document, still show the reason
+            qc.setQueryData(["document", issueID], e.document);
+          }
+          return errText(t, e);
         }
       },
       interpret: async (sid, text) => {
@@ -113,6 +133,7 @@ export function IssuePage() {
           const r = await api.removeSentence(issueID, sid, versionRef.current);
           versionRef.current = r.version;
           invalidate();
+          showToast(t.doc.removed, r.removed);
           return true;
         } catch (e) {
           resync(e);
@@ -120,31 +141,51 @@ export function IssuePage() {
         }
       },
     }),
-    [doc, issueID, invalidate, resync],
+    [doc, issueID, invalidate, resync, qc, showToast, t],
   );
 
   // --- commentary autosave: watch editor updates, diff commentary
-  // nodes against what the server last saw, PUT debounced ---
+  // nodes against what the server last saw, PUT debounced.
+  // Saves are serialized through one drain worker — concurrent PUTs
+  // carrying the same version token race on the server (both read the
+  // same base state, each writes only its own key → lost update). ---
   const savedCommentary = useRef<Map<string, string>>(new Map());
-  const pendingSave = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const saveCommentary = useCallback(
-    (section: string, text: string) => {
-      setSaved("saving");
-      api
-        .commentary(issueID, section, text, versionRef.current)
-        .then((r) => {
+  const dirtyCommentary = useRef<Map<string, string>>(new Map());
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draining = useRef(false);
+  const drainSaves = useCallback(async () => {
+    if (draining.current) return;
+    draining.current = true;
+    try {
+      for (;;) {
+        const next = dirtyCommentary.current.entries().next();
+        if (next.done) return;
+        const [section, text] = next.value;
+        dirtyCommentary.current.delete(section);
+        try {
+          setSaved("saving");
+          const r = await api.commentary(issueID, section, text, versionRef.current);
           versionRef.current = r.version;
           savedCommentary.current.set(section, text);
           setSaved("saved");
           qc.invalidateQueries({ queryKey: ["readiness", issueID] });
-        })
-        .catch((e) => {
+        } catch (e) {
           setSaved("");
           resync(e);
-        });
-    },
-    [issueID, qc, resync],
-  );
+          return;
+        }
+      }
+    } finally {
+      draining.current = false;
+    }
+  }, [issueID, qc, resync]);
+  const scheduleDrain = useCallback(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
+      drainSaves();
+    }, 900);
+  }, [drainSaves]);
 
   const editor = useEditor(
     {
@@ -155,22 +196,20 @@ export function IssuePage() {
         ItemHeading,
       ],
       content: doc ? docToTiptap(doc) : { type: "doc", content: [] },
-      editable: !!doc && doc.status !== "sent",
+      editable: false, // enabled by the effect below once the document loads
       editorProps: { attributes: { class: "focus:outline-none px-4 py-2" } },
       onUpdate: ({ editor: ed }) => {
+        let dirty = false;
         ed.state.doc.descendants((n) => {
           if (n.type.name !== "commentary") return true;
           const section = String(n.attrs.section);
           const text = n.textContent;
           if (savedCommentary.current.get(section) === text) return true;
-          const prev = pendingSave.current.get(section);
-          if (prev) clearTimeout(prev);
-          pendingSave.current.set(
-            section,
-            setTimeout(() => saveCommentary(section, text), 900),
-          );
+          dirtyCommentary.current.set(section, text);
+          dirty = true;
           return true;
         });
+        if (dirty) scheduleDrain();
       },
     },
     [issueID],
@@ -180,8 +219,23 @@ export function IssuePage() {
   useEffect(() => {
     if (!editor || !doc) return;
     savedCommentary.current = new Map(doc.sections.map((s) => [s.title, s.commentary.text]));
+    dirtyCommentary.current.clear();
     editor.commands.setContent(docToTiptap(doc));
+    // setContent leaves a selection spanning the whole fresh document — a
+    // keystroke arriving before a click's selection sync would replace the
+    // entire issue. Collapse it to a cursor at the start.
+    editor.commands.setTextSelection(0);
   }, [editor, doc?.version]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // contenteditable follows the issue status once the document arrives —
+  // the editor instance is created before the first fetch resolves
+  useEffect(() => {
+    editor?.setEditable(!!doc && doc.status !== "sent");
+  }, [editor, doc?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__ed = editor;
+  }, [editor]);
 
   const goToSentence = useCallback(
     (selStr: string) => {
@@ -204,11 +258,9 @@ export function IssuePage() {
     }
     if (c.target.kind === "sentence") goToSentence(`[data-sid="${c.target.ref}"]`);
     else if (c.target.kind === "item") goToSentence(`[data-item-ref="${c.target.ref}"]`);
-    else if (c.target.kind === "section" || c.target.kind === "issue") {
-      // commentary section — scroll to its commentary node
-      goToSentence(`.ProseMirror`);
-    } else if (c.target.kind === "decision") {
-      // nothing in the doc — the list pane carries pending items
+    else if (c.target.kind === "section") goToSentence(`[data-commentary="${c.target.ref}"]`);
+    else if (c.target.kind === "issue") {
+      // open story decisions live in the list pane
       if (window.innerWidth < 768) setMobileTab("list");
     }
   };
@@ -219,7 +271,7 @@ export function IssuePage() {
   const issue = issueQ.data;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* top bar */}
       <header className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2.5">
         <Link to={`/pub/${issue.publication_id}`} className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink">
@@ -265,9 +317,15 @@ export function IssuePage() {
       ) : (
         doc && (
           <>
-            {/* desktop three-pane */}
-            <div className="hidden min-h-0 flex-1 md:flex">
-              <aside className="w-64 shrink-0 overflow-y-auto border-r border-line">
+            {/* all three panes stay mounted — visibility toggles per
+                breakpoint so the editor is never double-mounted */}
+            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+              <aside
+                className={cn(
+                  "min-h-0 shrink-0 overflow-y-auto border-line md:w-64 md:flex-none md:border-r",
+                  mobileTab === "list" ? "block flex-1" : "hidden md:block",
+                )}
+              >
                 <PautasPane
                   doc={doc}
                   items={itemsQ.data?.items}
@@ -275,12 +333,23 @@ export function IssuePage() {
                   onSelect={(ref, iid) => actions.showEvidence(ref, { issueItemId: iid })}
                 />
               </aside>
-              <main ref={editorWrapRef} className="min-w-0 flex-1 overflow-y-auto">
+              <main
+                ref={editorWrapRef}
+                className={cn(
+                  "min-h-0 min-w-0 flex-1 overflow-y-auto",
+                  mobileTab === "doc" ? "block" : "hidden md:block",
+                )}
+              >
                 <DocActionsCtx.Provider value={actions}>
                   <EditorContent editor={editor} />
                 </DocActionsCtx.Provider>
               </main>
-              <aside className="flex w-80 shrink-0 flex-col border-l border-line">
+              <aside
+                className={cn(
+                  "min-h-0 shrink-0 flex-col border-line md:flex md:w-80 md:flex-none md:border-l",
+                  mobileTab === "side" ? "flex flex-1" : "hidden",
+                )}
+              >
                 <div className="flex border-b border-line text-xs">
                   {(["evidence", "preview"] as const).map((tb) => (
                     <button
@@ -295,7 +364,7 @@ export function IssuePage() {
                     </button>
                   ))}
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="min-h-0 flex-1">
                   {rightTab === "evidence" ? (
                     <EvidencePane
                       item={sel ? findItem(doc, sel.ref) : null}
@@ -309,77 +378,65 @@ export function IssuePage() {
               </aside>
             </div>
 
-            {/* mobile: one pane at a time + bottom tabs */}
-            <div className="flex min-h-0 flex-1 flex-col md:hidden">
-              <div className="min-h-0 flex-1 overflow-y-auto" ref={mobileTab === "doc" ? editorWrapRef : undefined}>
-                {mobileTab === "list" && (
-                  <PautasPane
-                    doc={doc}
-                    items={itemsQ.data?.items}
-                    selectedRef={sel?.ref ?? null}
-                    onSelect={(ref, iid) => actions.showEvidence(ref, { issueItemId: iid })}
-                  />
-                )}
-                {mobileTab === "doc" && (
-                  <DocActionsCtx.Provider value={actions}>
-                    <EditorContent editor={editor} />
-                  </DocActionsCtx.Provider>
-                )}
-                {mobileTab === "side" &&
-                  (rightTab === "evidence" ? (
-                    <EvidencePane item={sel ? findItem(doc, sel.ref) : null} citeRef={sel?.citeRef} sid={sel?.sid} />
-                  ) : (
-                    <PreviewPane issueID={issueID} />
-                  ))}
-              </div>
-              <nav className="flex border-t border-line text-xs">
-                {(
-                  [
-                    ["list", <BookOpen key="i" size={15} />, t.pautas],
-                    ["doc", <ClipboardCheck key="i" size={15} />, t.issue],
-                    ["side", <Eye key="i" size={15} />, rightTab === "evidence" ? t.evidence.title : t.preview.title],
-                  ] as const
-                ).map(([k, icon, label]) => (
-                  <button
-                    key={k}
-                    onClick={() => {
-                      if (k === "side" && rightTab === "preview" && !sel) setRightTab("preview");
-                      setMobileTab(k);
-                    }}
-                    className={cn(
-                      "flex flex-1 flex-col items-center gap-0.5 py-2",
-                      mobileTab === k ? "text-teal" : "text-muted",
-                    )}
-                  >
-                    {icon}
-                    {label}
-                  </button>
-                ))}
+            {/* phone tab bar — bottom, per spec */}
+            <nav className="flex border-t border-line text-xs md:hidden">
+              {(
+                [
+                  ["list", <BookOpen key="i" size={15} />, t.pautas],
+                  ["doc", <ClipboardCheck key="i" size={15} />, t.issue],
+                  ["side", <Eye key="i" size={15} />, rightTab === "evidence" ? t.evidence.title : t.preview.title],
+                ] as const
+              ).map(([k, icon, label]) => (
                 <button
-                  onClick={() => setRightTab(rightTab === "evidence" ? "preview" : "evidence")}
-                  className={cn("flex flex-1 flex-col items-center gap-0.5 py-2", "text-muted")}
+                  key={k}
+                  onClick={() => setMobileTab(k)}
+                  aria-pressed={mobileTab === k}
+                  className={cn(
+                    "flex flex-1 flex-col items-center gap-0.5 py-2",
+                    mobileTab === k ? "text-teal" : "text-muted",
+                  )}
                 >
-                  <Wrench size={15} />
-                  {rightTab === "evidence" ? t.preview.title : t.evidence.title}
+                  {icon}
+                  {label}
                 </button>
-              </nav>
-            </div>
+              ))}
+              <button
+                onClick={() => {
+                  setRightTab(rightTab === "evidence" ? "preview" : "evidence");
+                  setMobileTab("side");
+                }}
+                className="flex flex-1 flex-col items-center gap-0.5 py-2 text-muted"
+              >
+                <Wrench size={15} />
+                {rightTab === "evidence" ? t.preview.title : t.evidence.title}
+              </button>
+            </nav>
           </>
         )
       )}
 
       {issue.status === "sent" && issue.receipt && <ReceiptCard issue={issue} />}
       {toast && (
-        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-xs text-paper shadow-lg">
-          {toast}
+        <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink px-4 py-2 text-xs text-paper shadow-lg">
+          {toast.text}
+          {toast.undo && (
+            <button className="font-semibold underline" onClick={() => undoRemove(toast.undo!)}>
+              {t.doc.undo}
+            </button>
+          )}
+          {toast.undo && (
+            <button className="text-muted" aria-label="dismiss" onClick={() => setToast(null)}>
+              ✕
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function findItem(doc: IssueDocument, ref: number) {
-  return doc.sections.flatMap((s) => s.items).find((i) => i.ref === ref) ?? null;
+function findItem(doc: IssueDocument | null, ref: number) {
+  return doc?.sections.flatMap((s) => s.items ?? []).find((i) => i.ref === ref) ?? null;
 }
 
 // --- approve popover + dialog ---
@@ -447,9 +504,7 @@ function ApproveBar({
           </Button>
         </div>
         {approveMut.error && (
-          <p className="mt-2 text-xs text-danger">
-            {approveMut.error instanceof ApiRequestError ? approveMut.error.body.message : t.errors.generic}
-          </p>
+          <p className="mt-2 text-xs text-danger">{errText(t, approveMut.error)}</p>
         )}
       </KDialog>
     </>
@@ -470,21 +525,17 @@ function SendRow({ issue, onDone }: { issue: IssueSummary; onDone: () => void })
       <Button size="sm" variant="danger" disabled={sendMut.isPending} onClick={() => sendMut.mutate("readers")}>
         {t.send.readers}
       </Button>
-      {sendMut.error && (
-        <p className="text-xs text-danger">
-          {sendMut.error instanceof ApiRequestError ? sendMut.error.body.message : ""}
-        </p>
-      )}
+      {sendMut.error && <p className="text-xs text-danger">{errText(t, sendMut.error)}</p>}
     </div>
   );
 }
 
 function ReceiptCard({ issue }: { issue: IssueSummary }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const r = issue.receipt!;
   return (
     <div className="border-t border-line bg-teal-soft/40 px-4 py-2 text-xs">
-      {t.receipt.title}: {t.receipt.by} {r.approver} · {new Date(r.approved_at).toLocaleString()} ·{" "}
+      {t.receipt.title}: {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)} ·{" "}
       {t.receipt.version} {r.document_version.slice(0, 8)}
     </div>
   );
@@ -507,6 +558,9 @@ function DecisionsView({
   const qc = useQueryClient();
   const [rejectReason, setRejectReason] = useState<Record<number, string>>({});
   const [draftRun, setDraftRun] = useState<string | null>(null);
+  const [draftErr, setDraftErr] = useState<string[]>([]);
+  const checkLabels = t.readiness.check as Record<string, { ok: string; fail: string }>;
+  const itemStatus = (s: string) => (t.itemStatus as Record<string, string>)[s || "pending"] ?? s;
 
   const decide = useMutation({
     mutationFn: ({ itemID, kind, reason }: { itemID: number; kind: string; reason?: string }) =>
@@ -518,11 +572,16 @@ function DecisionsView({
 
   const draft = useMutation({
     mutationFn: () => api.draft(issue.id),
-    onSuccess: (run) => setDraftRun(run.id),
+    onSuccess: (run) => {
+      setDraftErr([]);
+      setDraftRun(run.id);
+    },
     onError: (e) => {
-      if (e instanceof ApiRequestError && e.body.reasons) {
-        // surface each blocked reason instead of a generic message
-        alert(e.body.reasons.map((r) => `${r.code}: ${r.message}`).join("\n"));
+      // blocked drafts carry per-reason details — translate each
+      if (e instanceof ApiRequestError && e.body.reasons?.length) {
+        setDraftErr(e.body.reasons.map((r) => checkLabels[r.code]?.fail ?? r.message));
+      } else {
+        setDraftErr([errText(t, e)]);
       }
     },
   });
@@ -546,6 +605,14 @@ function DecisionsView({
           </Button>
         </div>
 
+        {draftErr.length > 0 && (
+          <Card className="mb-4 border-danger/40 bg-danger-soft p-3 text-sm text-danger">
+            {draftErr.map((m, i) => (
+              <p key={i}>{m}</p>
+            ))}
+          </Card>
+        )}
+
         {draftRun && <DraftProgress runID={draftRun} issueID={issue.id} onDone={() => qc.invalidateQueries()} />}
 
         <div className="space-y-3">
@@ -565,7 +632,7 @@ function DecisionsView({
                     it.status === "approved" ? "teal" : it.status === "rejected" ? "danger" : it.status === "alternative" ? "ink" : "warn"
                   }
                 >
-                  {it.status || "pending"}
+                  {itemStatus(it.status)}
                 </Badge>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -573,7 +640,7 @@ function DecisionsView({
                   <Button size="sm" variant="outline" onClick={() => decide.mutate({ itemID: it.id, kind: "undo" })}>
                     {t.decisions.undo}
                   </Button>
-                ) : (
+                ) : it.status !== "approved" && it.status !== "alternative" ? (
                   <>
                     <Button size="sm" variant="teal" onClick={() => decide.mutate({ itemID: it.id, kind: "approve" })}>
                       {t.decisions.approve}
@@ -582,7 +649,7 @@ function DecisionsView({
                       {t.decisions.alternative}
                     </Button>
                   </>
-                )}
+                ) : null}
                 {it.status !== "rejected" && (
                   <span className="flex items-center gap-1">
                     <input
@@ -613,24 +680,29 @@ function DecisionsView({
   );
 }
 
-// SSE-driven draft progress — reuses the run-events stream
+// SSE-driven draft progress — reuses the run-events stream (named
+// "step" events + a final "done", same as prepare).
 function DraftProgress({ runID, issueID, onDone }: { runID: string; issueID: number; onDone: () => void }) {
   const { t } = useT();
   const qc = useQueryClient();
   const [events, setEvents] = useState<RunEvent[]>([]);
+  const doneRef = useRef(false);
   useEffect(() => {
     const es = new EventSource(`/api/v1/runs/${runID}/events`);
-    es.onmessage = (ev) => {
-      const e = JSON.parse(ev.data) as RunEvent & { status?: string; issue_id?: number; error?: string };
-      setEvents((prev) => (prev.some((p) => p.seq === e.seq) ? prev : [...prev, e]));
-      if (e.step === "done" || e.status === "done") {
-        es.close();
-        onDone();
-        qc.invalidateQueries({ queryKey: ["document", issueID] });
-        qc.invalidateQueries({ queryKey: ["issue", issueID] });
-      }
-      if (e.status === "failed") es.close();
-    };
+    es.addEventListener("step", (e) => {
+      const ev = JSON.parse((e as MessageEvent).data) as RunEvent;
+      setEvents((prev) => (prev.some((p) => p.seq === ev.seq) ? prev : [...prev, ev]));
+    });
+    es.addEventListener("done", () => {
+      es.close();
+      if (doneRef.current) return;
+      doneRef.current = true;
+      onDone();
+      qc.invalidateQueries({ queryKey: ["document", issueID] });
+      qc.invalidateQueries({ queryKey: ["issue", issueID] });
+      qc.invalidateQueries({ queryKey: ["readiness", issueID] });
+    });
+    es.onerror = () => es.close();
     return () => es.close();
   }, [runID, issueID, onDone, qc]);
 

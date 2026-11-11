@@ -5,7 +5,7 @@ import { useT, type Lang } from "./i18n";
 export function AppShell() {
   const { t, lang, setLang } = useT();
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-dvh flex flex-col">
       <header className="border-b border-line bg-paper-raised">
         <div className="mx-auto flex h-12 max-w-[1400px] items-center gap-4 px-4">
           <Link to="/" className="font-doc text-lg font-semibold tracking-tight">
@@ -29,7 +29,7 @@ export function AppShell() {
           </div>
         </div>
       </header>
-      <main className="flex-1 min-h-0 flex flex-col">
+      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto">
         <Outlet />
       </main>
     </div>

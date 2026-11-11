@@ -8,7 +8,9 @@ import { cn } from "../lib/cn";
 import { Button } from "../ui";
 // What the sentence/commentary node views can ask the issue page to do.
 export interface DocActions {
-  editSentence: (sid: string, text: string, citations: number[]) => Promise<boolean>;
+  // returns null on success, or the refusal reason to show inline —
+  // the edit box stays open with the typed text either way
+  editSentence: (sid: string, text: string, citations: number[]) => Promise<string | null>;
   interpret: (sid: string, text?: string) => Promise<boolean>;
   removeSentence: (sid: string) => Promise<boolean>;
   // open the evidence pane on item ref, optionally highlighting a
@@ -18,7 +20,7 @@ export interface DocActions {
 }
 
 export const DocActionsCtx = createContext<DocActions>({
-  editSentence: async () => false,
+  editSentence: async () => null,
   interpret: async () => false,
   removeSentence: async () => false,
   showEvidence: () => {},
@@ -52,6 +54,8 @@ function SentenceView({ node }: NodeViewProps) {
   const text = node.textContent;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
+  const [cites, setCites] = useState<number[]>(a.citations);
+  const [editErr, setEditErr] = useState("");
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -71,6 +75,22 @@ function SentenceView({ node }: NodeViewProps) {
     setBusy(false);
     setEditing(false);
   };
+
+  const saveEdit = async () => {
+    setBusy(true);
+    setEditErr("");
+    const err = await actions.editSentence(a.sid, draft, cites);
+    setBusy(false);
+    if (err === null) {
+      setEditing(false);
+    } else {
+      // refused — keep the box open with the typed text, reason inline
+      setEditErr(err);
+    }
+  };
+
+  const toggleCite = (n: number) =>
+    setCites((c) => (c.includes(n) ? c.filter((x) => x !== n) : [...c, n].sort((x, y) => x - y)));
 
   return (
     <NodeViewWrapper
@@ -110,7 +130,8 @@ function SentenceView({ node }: NodeViewProps) {
             {a.flag}
           </span>
           <span className="flex-1" />
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => { setDraft(text); setEditing(true); }}>
+          <Button size="sm" variant="outline" disabled={busy}
+            onClick={() => { setDraft(text); setCites(a.citations); setEditErr(""); setEditing(true); }}>
             <PenLine size={12} /> {t.doc.edit}
           </Button>
           <Button size="sm" variant="outline" disabled={busy}
@@ -132,8 +153,27 @@ function SentenceView({ node }: NodeViewProps) {
             rows={2}
             className="w-full resize-y rounded-[var(--radius-input)] border border-line bg-paper p-2 font-doc text-sm leading-6"
           />
+          {a.sources.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {a.sources.map((s) => (
+                <button
+                  key={s.ref}
+                  onClick={() => toggleCite(s.ref)}
+                  aria-pressed={cites.includes(s.ref)}
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[11px] font-medium",
+                    cites.includes(s.ref) ? "bg-teal text-paper" : "bg-line/60 text-muted hover:bg-line",
+                  )}
+                  title={s.name}
+                >
+                  [{s.ref}] {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {editErr && <p className="mt-1.5 text-xs text-danger" role="alert">{editErr}</p>}
           <div className="mt-2 flex gap-2">
-            <Button size="sm" disabled={busy} onClick={() => run(() => actions.editSentence(a.sid, draft, a.citations))}>
+            <Button size="sm" disabled={busy} onClick={saveEdit}>
               {t.doc.save}
             </Button>
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>
@@ -153,10 +193,15 @@ function CommentaryView({ node }: NodeViewProps) {
   const a = node.attrs as { section: string; mode: string };
   const empty = node.textContent.trim() === "";
   return (
-    <NodeViewWrapper className="my-3 rounded-[var(--radius-card)] border border-dashed border-teal/50 bg-teal-soft/40 p-3">
+    <NodeViewWrapper
+      data-commentary={a.section}
+      className="my-3 rounded-[var(--radius-card)] border border-dashed border-teal/50 bg-teal-soft/40 p-3"
+    >
       <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-teal" contentEditable={false}>
         {t.commentary.label}
-        {a.mode === "required" && <span className="rounded bg-teal px-1.5 py-0.5 text-[9px] text-paper">required</span>}
+        {a.mode === "required" && (
+          <span className="rounded bg-teal px-1.5 py-0.5 text-[9px] text-paper">{t.commentary.requiredTag}</span>
+        )}
       </div>
       {empty && a.mode === "required" && (
         <p className="text-xs text-warn" contentEditable={false}>
@@ -169,7 +214,8 @@ function CommentaryView({ node }: NodeViewProps) {
 }
 
 // ItemHeadingView — the story's headline; click selects it in the
-// evidence pane.
+// evidence pane. The content is the editable-canonical text rendered
+// by NodeViewContent (no duplicated headline).
 function ItemHeadingView({ node }: NodeViewProps) {
   const actions = useContext(DocActionsCtx);
   const a = node.attrs as { ref: number; issueItemId: number };
@@ -179,7 +225,7 @@ function ItemHeadingView({ node }: NodeViewProps) {
       onClick={() => actions.showEvidence(a.ref, { issueItemId: a.issueItemId })}
       data-item-ref={a.ref}
     >
-      {node.textContent}
+      <NodeViewContent role="heading" aria-level={3} />
     </NodeViewWrapper>
   );
 }

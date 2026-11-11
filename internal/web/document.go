@@ -305,7 +305,7 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 	}
 	doc := &issueDocument{
 		IssueID: iss.ID, Number: iss.Number, Status: iss.Status, Subject: iss.Subject,
-		Version: docVersion(iss),
+		Version: docVersion(iss), Sections: []docSection{},
 	}
 
 	// item ref → issue item + dossier (the <!-- item N --> markers the
@@ -413,6 +413,7 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 			}
 			doc.Sections = append(doc.Sections, docSection{
 				Title: m[1], Commentary: docCommentary{Mode: mode, Text: commentary[m[1]]},
+				Items: []docItem{},
 			})
 			sec = &doc.Sections[len(doc.Sections)-1]
 			pos += len(line) + 1
@@ -421,11 +422,12 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 		if m := docItemRe.FindStringSubmatch(t); m != nil {
 			finishItem(pos)
 			if sec == nil {
-				doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"}})
+				doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"}, Items: []docItem{}})
 				sec = &doc.Sections[len(doc.Sections)-1]
 			}
 			ref, _ := strconv.Atoi(m[2])
-			it := docItem{Ref: ref, Headline: m[1], spanStart: pos, openings: map[int]string{}}
+			it := docItem{Ref: ref, Headline: m[1], spanStart: pos, openings: map[int]string{},
+				Sentences: []docSentence{}, Sources: []docSource{}}
 			if info, ok := byRef[ref]; ok {
 				it.IssueItemID = info.issueItemID
 				it.dossier = info.dossier
@@ -481,6 +483,7 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 		if !found {
 			doc.Sections = append(doc.Sections, docSection{
 				Title: sc.Title, Commentary: docCommentary{Mode: sc.Commentary, Text: commentary[sc.Title]},
+				Items: []docItem{},
 			})
 		}
 	}
@@ -502,10 +505,45 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 		}
 	}
 	doc.Coverage.Flagged = len(iss.Flags)
-	if doc.Sections == nil {
-		doc.Sections = []docSection{}
-	}
 	return doc, nil
+}
+
+// insertInItem writes composed raw back into the item's span at the
+// index-th sentence position (appended before the span end when idx is
+// past the current count). Used by the sentence-restore endpoint.
+func insertInItem(body string, item *docItem, idx int, raw string) (string, bool) {
+	if item.spanStart < 0 || item.spanEnd > len(body) || item.spanStart >= item.spanEnd {
+		return body, false
+	}
+	seg := body[item.spanStart:item.spanEnd]
+	// find the byte offset inside seg where the idx-th sentence starts
+	pos := 0
+	if idx < len(item.Sentences) {
+		target := item.Sentences[idx].raw
+		for i := 0; i <= idx; i++ {
+			j := strings.Index(seg[pos:], target)
+			if j < 0 {
+				pos = len(seg)
+				break
+			}
+			pos += j
+			if i == idx {
+				break
+			}
+			pos += len(target)
+		}
+	} else {
+		pos = len(seg)
+	}
+	// raw is a block of whole lines; splice it in on line boundaries
+	head := seg[:pos]
+	if head != "" && !strings.HasSuffix(head, "\n") {
+		raw = "\n" + raw
+	}
+	if pos < len(seg) && !strings.HasSuffix(raw, "\n") {
+		raw += "\n"
+	}
+	return body[:item.spanStart] + head + raw + seg[pos:], true
 }
 
 // truncateStr shortens s to n runes for excerpts (rune-safe: never

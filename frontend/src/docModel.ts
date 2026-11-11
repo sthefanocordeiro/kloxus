@@ -16,10 +16,10 @@ export function coverageDone(c: Coverage): boolean {
 // work (flagged, or a fact with no citations) in document order — the
 // target of the "Fix now" button.
 export function nextPendingSentence(doc: IssueDocument): string | null {
-  for (const sec of doc.sections) {
-    for (const item of sec.items) {
-      for (const s of item.sentences) {
-        if (s.flag || (s.kind === "fact" && s.citations.length === 0)) {
+  for (const sec of doc.sections ?? []) {
+    for (const item of sec.items ?? []) {
+      for (const s of item.sentences ?? []) {
+        if (s.flag || (s.kind === "fact" && (s.citations ?? []).length === 0)) {
           return s.id;
         }
       }
@@ -51,7 +51,7 @@ export function failingChecks(checks: Check[]): Check[] {
 // (sid, kind, citations, flag) — node views read them back out.
 export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
   const content: Record<string, unknown>[] = [];
-  for (const sec of doc.sections) {
+  for (const sec of doc.sections ?? []) {
     if (sec.title) {
       content.push({
         type: "heading",
@@ -59,33 +59,36 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
         content: [{ type: "text", text: sec.title }],
       });
     }
-    content.push({
-      type: "commentary",
-      attrs: { section: sec.title, mode: sec.commentary.mode },
-      content: [
-        { type: "paragraph", content: sec.commentary.text ? [{ type: "text", text: sec.commentary.text }] : [] },
-      ],
-    });
-    for (const item of sec.items) {
+    for (const item of sec.items ?? []) {
       content.push({
         type: "itemHeading",
         attrs: { ref: item.ref, issueItemId: item.issue_item_id },
         content: [{ type: "text", text: item.headline }],
       });
-      for (const s of item.sentences) {
+      for (const s of item.sentences ?? []) {
         content.push({
           type: "sentence",
           attrs: {
             sid: s.id,
             kind: s.kind,
-            citations: s.citations,
+            citations: s.citations ?? [],
             flag: s.flag?.note ?? null,
-            sources: item.sources,
+            sources: item.sources ?? [],
             evidence: s.evidence ?? [],
           },
           content: [{ type: "text", text: s.text }],
         });
       }
+    }
+    // commentary closes the section, where it appears in the output
+    if (sec.commentary.mode !== "none") {
+      content.push({
+        type: "commentary",
+        attrs: { section: sec.title, mode: sec.commentary.mode },
+        content: [
+          { type: "paragraph", content: sec.commentary.text ? [{ type: "text", text: sec.commentary.text }] : [] },
+        ],
+      });
     }
   }
   return { type: "doc", content };
