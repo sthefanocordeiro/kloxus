@@ -31,12 +31,12 @@ func TestRemoveSentenceDropsCitationMarker(t *testing.T) {
 	}
 }
 
-// TestGateSections: a paid section keeps each item's headline and first
-// sentence plus the subscribers-only note; every other line — remaining
-// sentences, sources, commentary — must not reach the gated output, and
-// free sections pass through untouched.
+// TestGateSections: a paid section keeps its heading, the first item's
+// headline and opening lines, then a single subscribers-only note.
+// Everything after the note — the rest of that item and every other
+// item in the section — must not reach the gated output; free sections
+// pass through untouched.
 func TestGateSections(t *testing.T) {
-	note := paywallNote("en")
 	body := strings.Join([]string{
 		"# Title",
 		"",
@@ -49,7 +49,6 @@ func TestGateSections(t *testing.T) {
 		"### Item B",
 		"Only sentence of B.",
 		"",
-		"More of B that must be hidden.",
 		"> **Comentário do editor:** paid commentary must be hidden",
 		"",
 		"## Free",
@@ -59,11 +58,11 @@ func TestGateSections(t *testing.T) {
 		"**Sources:** [1] [Y](http://y)",
 	}, "\n")
 
-	got := gateSections(body, []string{"Paid"}, note)
+	got := gateSections(body, []string{"Paid"}, "en")
 
 	for _, want := range []string{
-		"## Paid", "### Item A", "### Item B",
-		"First sentence of A.", "Only sentence of B.",
+		"## Paid", "### Item A",
+		"First sentence of A.",
 		"## Free", "### Item C",
 		"All of C stays visible. Every sentence of it.",
 		"**Sources:** [1] [Y](http://y)",
@@ -75,7 +74,7 @@ func TestGateSections(t *testing.T) {
 	for _, leak := range []string{
 		"Second sentence of A", "Third of A",
 		"Second paragraph of A leaks",
-		"More of B that must be hidden",
+		"### Item B", "Only sentence of B",
 		"Comentário do editor",
 		"[X](http://x)",
 	} {
@@ -83,25 +82,40 @@ func TestGateSections(t *testing.T) {
 			t.Fatalf("gated body leaked %q:\n%s", leak, got)
 		}
 	}
-	if c := strings.Count(got, note); c != 2 {
-		t.Fatalf("expected one paywall note per paid item, got %d:\n%s", c, got)
+	// exactly one wall per paid section, naming the hidden count
+	if c := strings.Count(got, "Subscribers only"); c != 1 {
+		t.Fatalf("expected one paywall note, got %d:\n%s", c, got)
+	}
+	if !strings.Contains(got, "1 more stories") {
+		t.Fatalf("note should say one item is hidden:\n%s", got)
 	}
 
+	// a single-item paid section gets the plain note
+	single := "## Paid\n### Only\nOne sentence. Another one."
+	if out := gateSections(single, []string{"Paid"}, "en"); !strings.Contains(out, "subscribe to keep reading") {
+		t.Fatalf("single-item note should not carry a count:\n%s", out)
+	}
 	// no paid sections configured → body passes through unchanged
-	if out := gateSections(body, nil, note); out != body {
+	if out := gateSections(body, nil, "en"); out != body {
 		t.Fatalf("empty paid list should pass body through:\n%s", out)
 	}
 	// a section name that merely resembles a paid one is not gated
-	if out := gateSections("## Paid extra\n### I\nFull text stays.", []string{"Paid"}, note); !strings.Contains(out, "Full text stays.") {
+	if out := gateSections("## Paid extra\n### I\nFull text stays.", []string{"Paid"}, "en"); !strings.Contains(out, "Full text stays.") {
 		t.Fatalf("non-matching section was gated:\n%s", out)
 	}
 }
 
 func TestPaywallNoteLocalized(t *testing.T) {
-	if n := paywallNote("pt-BR"); !strings.Contains(n, "assinantes") {
+	if n := paywallNote("pt-BR", 0); !strings.Contains(n, "assinantes") {
 		t.Fatalf("pt note expected, got %q", n)
 	}
-	if n := paywallNote("en"); !strings.Contains(n, "Subscribers only") {
+	if n := paywallNote("pt-BR", 3); !strings.Contains(n, "mais 3 matérias") {
+		t.Fatalf("pt counted note expected, got %q", n)
+	}
+	if n := paywallNote("en", 0); !strings.Contains(n, "Subscribers only") {
 		t.Fatalf("en note expected, got %q", n)
+	}
+	if n := paywallNote("en", 2); !strings.Contains(n, "2 more stories") {
+		t.Fatalf("en counted note expected, got %q", n)
 	}
 }
