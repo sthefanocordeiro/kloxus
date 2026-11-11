@@ -137,6 +137,14 @@ const dict = {
     },
     outbox: "Outbox",
     back: "back",
+    demo: {
+      title: "Demo",
+      reset: "Reset demo",
+      resetHint: "Restores this demo session to fresh fixtures — only your workspace is affected",
+      resetDone: "Demo reset",
+      newWs: "New workspace",
+      newHint: "Starts a separate demo session in this browser",
+    },
     error: { title: "Something broke", detail: "The screen hit an unexpected error.", retry: "Reload", home: "Back to publications" },
   },
   pt: {
@@ -270,6 +278,14 @@ const dict = {
     },
     outbox: "Caixa de saída",
     back: "voltar",
+    demo: {
+      title: "Demo",
+      reset: "Reiniciar demo",
+      resetHint: "Restaura apenas a sua sessão de demo — não afeta outras pessoas",
+      resetDone: "Demo reiniciada",
+      newWs: "Novo espaço",
+      newHint: "Começa uma sessão de demo separada neste navegador",
+    },
     error: { title: "Algo quebrou", detail: "A tela encontrou um erro inesperado.", retry: "Recarregar", home: "Voltar às publicações" },
   },
 } as const;

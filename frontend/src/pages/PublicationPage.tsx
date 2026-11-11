@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Run } from "../api";
 import { useT } from "../i18n";
+import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
 
 // RunProgress streams /runs/{id}/events (SSE) and narrates each finished
@@ -63,15 +64,27 @@ export function PublicationPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id) });
+  const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
   const issues = useQuery({
     queryKey: ["issues", id],
     queryFn: () => api.issues(Number(id)),
     enabled: !!pub.data,
   });
   const [runID, setRunID] = useState<string | null>(null);
+  const [runMsg, setRunMsg] = useState<string | null>(null);
   const start = useMutation({
     mutationFn: () => api.startRun(Number(id)),
-    onSuccess: (r) => setRunID(r.id),
+    onSuccess: (r) => {
+      setRunMsg(null);
+      setRunID(r.id);
+    },
+  });
+  const reset = useMutation({
+    mutationFn: api.demoReset,
+    onSuccess: () => {
+      setRunMsg(null);
+      qc.clear();
+    },
   });
 
   return (
@@ -86,14 +99,37 @@ export function PublicationPage() {
         </Button>
       </div>
 
+      {start.error && (
+        <Card className="mb-4 border-danger/40 bg-danger-soft p-3 text-sm text-danger">
+          {errText(t, start.error)}
+        </Card>
+      )}
+
+      {runMsg && (
+        <Card className="mb-4 flex flex-wrap items-center justify-between gap-3 border-warn/40 bg-warn-soft p-3 text-sm">
+          <span>{runMsg}</span>
+          {ws.data?.mode === "demo" && (
+            <Button variant="outline" size="sm" disabled={reset.isPending} onClick={() => reset.mutate()}>
+              {reset.isPending ? "…" : t.demo.reset}
+            </Button>
+          )}
+        </Card>
+      )}
+
       {runID && (
         <div className="mb-6">
           <RunProgress
             runID={runID}
             onDone={(r) => {
+              // clear before anything else — React keeps this component's
+              // state when the user navigates back, and a stale runID
+              // would leave the button disabled forever
+              setRunID(null);
               qc.invalidateQueries({ queryKey: ["issues", id] });
               if (r.issue_id) nav(`/issues/${r.issue_id}`);
-              else setRunID(null);
+              // a finished run without an issue means the fixture had
+              // nothing left — say so instead of looking broken
+              else setRunMsg(r.error ?? t.run.noNewItems);
             }}
           />
         </div>

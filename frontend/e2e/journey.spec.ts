@@ -98,3 +98,24 @@ for (const vp of viewports) {
     await approveIssue(page);
   });
 }
+
+test("demo reset restores the fixture after items run out", async ({ page }) => {
+  await page.setViewportSize({ width: 1360, height: 850 });
+  await page.goto("/app/");
+  await page.locator('a[href*="/pub/"]').first().click();
+  await page.getByRole("button", { name: "Prepare next issue" }).click();
+  await page.waitForURL(/\/app\/issues\/\d+/, { timeout: 120000 });
+
+  // fixture exhausted: a second prepare must say so, not fail silently
+  await page.goBack();
+  await page.getByRole("button", { name: "Prepare next issue" }).click();
+  await expect(page.getByText(/Nothing new/)).toBeVisible({ timeout: 120000 });
+
+  // reset restores the fixture — prepare works again
+  await page.getByRole("button", { name: "Reset demo" }).click();
+  await expect(page.getByRole("button", { name: "Prepare next issue" })).toBeEnabled({
+    timeout: 30000,
+  });
+  await page.getByRole("button", { name: "Prepare next issue" }).click();
+  await page.waitForURL(/\/app\/issues\/\d+/, { timeout: 120000 });
+});

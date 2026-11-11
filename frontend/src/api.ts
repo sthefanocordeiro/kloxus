@@ -228,4 +228,7 @@ export const api = {
     request<{ body_md: string; gated: boolean; reader: string; surface: string }>(
       "GET", `/api/v1/issues/${issueID}/preview?reader=${reader}&surface=${surface}`,
     ),
+  demoReset: () => request<{ ok: boolean }>("POST", "/api/v1/demo/reset", {}),
+  demoNew: () =>
+    request<{ workspace: { id: string; label: string } }>("POST", "/api/v1/demo/new", {}),
 };
