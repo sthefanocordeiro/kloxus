@@ -15,7 +15,9 @@ export function SourcesPage() {
   const qc = useQueryClient();
   const [previews, setPreviews] = useState<Record<string, PreviewItem[] | "loading">>({});
   const [previewNote, setPreviewNote] = useState<Record<string, string>>({});
+  const [sel, setSel] = useState<Record<string, boolean>>({});
   const [ownURL, setOwnURL] = useState("");
+  const [ownName, setOwnName] = useState("");
   const [ownType, setOwnType] = useState<"rss" | "page">("rss");
   const [ownPreview, setOwnPreview] = useState<{ items: PreviewItem[]; note?: string } | null>(null);
 
@@ -28,16 +30,24 @@ export function SourcesPage() {
   };
 
   const add = useMutation({
-    mutationFn: ({ type, url }: { type: string; url: string }) => api.sourceAdd(id!, type, url),
-    onSuccess: () => { refresh(); setOwnURL(""); setOwnPreview(null); },
+    mutationFn: ({ type, url, name }: { type: string; url: string; name?: string }) =>
+      api.sourceAdd(id!, type, url, name),
+    onSuccess: () => { refresh(); setOwnURL(""); setOwnName(""); setOwnPreview(null); },
   });
   const remove = useMutation({
     mutationFn: (sid: number) => api.sourceDelete(id!, sid),
     onSuccess: refresh,
   });
+  const checked = (u: string) => sel[u] !== false;
+  // the catalog only lists sources not yet added — the belt-and-
+  // suspenders filter also drops an offered row the moment a source
+  // with that URL exists
+  const addedURLs = new Set((sources.data ?? []).map((s) => s.url));
+  const offered = (catalog.data ?? []).filter((o) => !addedURLs.has(o.url));
+  const count = (sources.data?.length ?? 0) + offered.filter((o) => checked(o.url)).length;
   const confirm = useMutation({
     mutationFn: async () => {
-      await api.sourceConfirm(id!);
+      await api.sourceConfirm(id!, offered.filter((o) => checked(o.url)).map((o) => o.url));
       return api.startRun(Number(id));
     },
     onSuccess: (run) => nav(`/runs/${run.id}`, { replace: true }),
@@ -53,12 +63,6 @@ export function SourcesPage() {
       setPreviews((p) => ({ ...p, [url]: [] }));
     }
   };
-
-  // the catalog only lists sources not yet added — the belt-and-
-  // suspenders filter also hides an "Add" the moment a row exists
-  const addedURLs = new Set((sources.data ?? []).map((s) => s.url));
-  const offered = (catalog.data ?? []).filter((o) => !addedURLs.has(o.url));
-  const count = (sources.data?.length ?? 0) + offered.length;
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
@@ -106,18 +110,25 @@ export function SourcesPage() {
             {offered.map((o) => (
               <Card key={o.url} className="p-3">
                 <div className="flex items-center gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{o.name || o.url}</p>
-                    <Badge>{o.type === "rss" ? t.sourcesPage.ownType.rss : t.sourcesPage.ownType.page}</Badge>
-                  </div>
+                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-teal"
+                      checked={checked(o.url)}
+                      onChange={(e) => setSel((s) => ({ ...s, [o.url]: e.target.checked }))}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{o.name || o.url}</span>
+                      <span className="mt-0.5 flex items-center gap-2 text-xs text-muted">
+                        <Badge>{o.type === "rss" ? t.sourcesPage.ownType.rss : t.sourcesPage.ownType.page}</Badge>
+                        {o.items_per_week != null && o.items_per_week > 0 && (
+                          <span>{t.sourcesPage.itemsWeek(o.items_per_week)}</span>
+                        )}
+                      </span>
+                    </span>
+                  </label>
                   <Button variant="outline" size="sm" onClick={() => preview(o.type, o.url)}>
                     {t.sourcesPage.preview}
-                  </Button>
-                  <Button
-                    variant="outline" size="sm" disabled={add.isPending}
-                    onClick={() => add.mutate({ type: o.type, url: o.url })}
-                  >
-                    {t.sourcesPage.add}
                   </Button>
                 </div>
                 {previews[o.url] === "loading" && <p className="mt-2 text-xs text-muted">…</p>}
@@ -152,6 +163,13 @@ export function SourcesPage() {
             <option value="page">{t.sourcesPage.ownType.page}</option>
           </select>
           <input
+            value={ownName}
+            onChange={(e) => setOwnName(e.target.value)}
+            placeholder={t.sourcesPage.ownName}
+            aria-label={t.sourcesPage.ownName}
+            className="w-36 rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+          />
+          <input
             value={ownURL}
             onChange={(e) => { setOwnURL(e.target.value); setOwnPreview(null); }}
             placeholder={t.sourcesPage.ownPlaceholder}
@@ -165,7 +183,7 @@ export function SourcesPage() {
           </Button>
           <Button
             variant="outline" size="sm" disabled={!ownURL.trim() || add.isPending}
-            onClick={() => add.mutate({ type: ownType, url: ownURL.trim() })}
+            onClick={() => add.mutate({ type: ownType, url: ownURL.trim(), name: ownName.trim() || undefined })}
           >
             {t.sourcesPage.ownAdd}
           </Button>

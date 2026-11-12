@@ -16,6 +16,14 @@ import { OutboxPage } from "./pages/OutboxPage";
 import { PublicIssue, ReaderShell, UnsubPage } from "./pages/ReaderPage";
 import "./styles.css";
 
+// Legacy /app/* URLs are served the SPA as-is (a 301 back to "/" would
+// loop against browsers that cached the old "/" → "/app/" 301), so the
+// router sees the stripped path.
+if (location.pathname === "/app" || location.pathname.startsWith("/app/")) {
+  const stripped = location.pathname.slice(4) || "/";
+  history.replaceState(null, "", stripped + location.search + location.hash);
+}
+
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
 });

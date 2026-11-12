@@ -6,7 +6,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { ArrowLeft, BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
 import { api, ApiRequestError, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
 import { docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
-import { Commentary, DocActionsCtx, ItemHeading, Sentence, type DocActions } from "../editor/nodes";
+import { Commentary, DocActionsCtx, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
@@ -210,10 +210,11 @@ export function IssuePage() {
   const editor = useEditor(
     {
       extensions: [
-        StarterKit.configure({ heading: { levels: [2] } }),
+        StarterKit.configure({ heading: false }),
         Sentence,
         Commentary,
         ItemHeading,
+        SectionHeading,
       ],
       content: doc ? docToTiptap(doc) : { type: "doc", content: [] },
       editable: false, // enabled by the effect below once the document loads
@@ -250,7 +251,7 @@ export function IssuePage() {
   // contenteditable follows the issue status once the document arrives —
   // the editor instance is created before the first fetch resolves
   useEffect(() => {
-    editor?.setEditable(!!doc && doc.status !== "sent");
+    editor?.setEditable(!!doc && doc.status !== "sent" && doc.status !== "scheduled");
   }, [editor, doc?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -603,8 +604,8 @@ function ApproveBar({
         <p className="mb-3 text-sm font-semibold">
           #{issue.number} · {issue.subject}
         </p>
-        <div className="mb-3">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{t.send.audience}</p>
+        <fieldset className="mb-3">
+          <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{t.send.audience}</legend>
           <label className="flex items-center gap-2 py-1 text-sm">
             <input type="radio" name="aud" checked={audience === "nobody"} onChange={() => setAudience("nobody")} />
             {t.send.nobody}
@@ -613,10 +614,10 @@ function ApproveBar({
             <input type="radio" name="aud" checked={audience === "readers"} onChange={() => setAudience("readers")} />
             {t.send.allReaders}
           </label>
-        </div>
+        </fieldset>
         {audience === "readers" && (
-          <div className="mb-3">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{t.send.when}</p>
+          <fieldset className="mb-3">
+            <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{t.send.when}</legend>
             <label className="flex items-center gap-2 py-1 text-sm">
               <input type="radio" name="when" checked={when === "now"} onChange={() => setWhen("now")} />
               {t.send.now}
@@ -638,7 +639,7 @@ function ApproveBar({
                 {!atOK && <span className="text-danger">{t.send.pickTime}</span>}
               </label>
             )}
-          </div>
+          </fieldset>
         )}
         <dl className="mb-4 space-y-1 border-t border-line pt-3 text-xs text-muted">
           <div className="flex justify-between">
@@ -656,7 +657,7 @@ function ApproveBar({
           {audience === "readers" && (
             <div className="flex justify-between">
               <dt>{t.send.recipients}</dt>
-              <dd>{t.send.subscriberCount(readerQ.data?.subscribers ?? 0)}</dd>
+              <dd>{readerQ.data ? t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0) : "…"}</dd>
             </div>
           )}
           <div className="flex justify-between">
@@ -747,7 +748,7 @@ function SendRow({ issue, onDone, onToast }: {
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.recipients}</dt>
-            <dd>{t.send.subscriberCount(readerQ.data?.subscribers ?? 0)}</dd>
+            <dd>{readerQ.data ? t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0) : "…"}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.sender}</dt>

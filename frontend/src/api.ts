@@ -375,7 +375,7 @@ export const api = {
   outboxEmail: (id: number) =>
     request<{ email: OutboxEmail }>("GET", `/api/v1/outbox/${id}`).then((r) => r.email),
   reader: (pubID: number) =>
-    request<{ reader: { email: string; name: string }; subscribed: boolean; subscribers?: number; issue?: IssueSummary }>(
+    request<{ reader: { email: string; name: string }; subscribed: boolean; subscribers?: number; readers?: number; issue?: IssueSummary }>(
       "GET", `/api/v1/publications/${pubID}/reader`),
   paywallSimulate: (pubID: number | string, query = "") =>
     request<{ subscribed: boolean; outbox_email_id: number; magic_link: string }>(
@@ -395,14 +395,15 @@ export const api = {
   sources: (pubID: number | string) =>
     request<{ sources: SourceRow[] }>("GET", `/api/v1/publications/${pubID}/sources`).then((r) => r.sources),
   sourceCatalog: (pubID: number | string) =>
-    request<{ offered: { type: string; url: string; name?: string }[] }>("GET", `/api/v1/publications/${pubID}/sources/catalog`).then((r) => r.offered),
+    request<{ offered: { type: string; url: string; name?: string; items_per_week?: number }[] }>(
+      "GET", `/api/v1/publications/${pubID}/sources/catalog`).then((r) => r.offered),
   sourcePreview: (pubID: number | string, type: string, url: string) =>
     request<{ items: PreviewItem[]; note?: string }>(
       "GET", `/api/v1/publications/${pubID}/sources/preview?type=${type}&url=${encodeURIComponent(url)}`),
-  sourceAdd: (pubID: number | string, type: string, url: string) =>
-    request<{ source: SourceRow }>("POST", `/api/v1/publications/${pubID}/sources`, { type, url }).then((r) => r.source),
-  sourceConfirm: (pubID: number | string) =>
-    request<{ sources: SourceRow[] }>("POST", `/api/v1/publications/${pubID}/sources/confirm`, {}).then((r) => r.sources),
+  sourceAdd: (pubID: number | string, type: string, url: string, name?: string) =>
+    request<{ source: SourceRow }>("POST", `/api/v1/publications/${pubID}/sources`, { type, url, name }).then((r) => r.source),
+  sourceConfirm: (pubID: number | string, include?: string[]) =>
+    request<{ sources: SourceRow[] }>("POST", `/api/v1/publications/${pubID}/sources/confirm`, { include }).then((r) => r.sources),
   sourceDelete: (pubID: number | string, sid: number) =>
     request<{ ok: boolean }>("DELETE", `/api/v1/publications/${pubID}/sources/${sid}`),
   demoReset: () => request<{ ok: boolean }>("POST", "/api/v1/demo/reset", {}),

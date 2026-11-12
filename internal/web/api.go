@@ -165,6 +165,9 @@ func (s *Server) localizeReaderMD(md string, pub *store.Publication) string {
 	}
 	if strings.HasPrefix(strings.ToLower(pub.Language), "pt") {
 		md = strings.ReplaceAll(md, "**Sources:**", "**Fontes:**")
+		md = strings.ReplaceAll(md,
+			"_Prepared with AI assistance and reviewed by the editor._",
+			"_Preparado com auxílio de IA e revisado pelo editor._")
 	}
 	return md
 }
@@ -561,9 +564,16 @@ func (s *Server) apiSourceCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	var offered []map[string]any
 	for _, sd := range def.Sources {
-		if !existing[sd.URL] {
-			offered = append(offered, map[string]any{"type": sd.Type, "url": sd.URL, "name": sd.Name})
+		if existing[sd.URL] {
+			continue
 		}
+		row := map[string]any{"type": sd.Type, "url": sd.URL, "name": sd.Name, "items_per_week": 0}
+		// the fixture fetch is local — count what the source would bring
+		// in so the row shows a real items-per-week before it's added
+		if items, err := s.d.Fetcher.Fetch(r.Context(), sd.Type, sd.URL); err == nil {
+			row["items_per_week"] = len(items)
+		}
+		offered = append(offered, row)
 	}
 	if offered == nil {
 		offered = []map[string]any{}
@@ -616,11 +626,21 @@ func (s *Server) apiSourcePreview(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{"items": out})
 }
 
-// apiSourceConfirm accepts the remaining offered fixture sources and marks
-// onboarding done — the client then starts the first run itself.
+// apiSourceConfirm accepts the selected offered fixture sources and marks
+// onboarding done — the client then starts the first run itself. An
+// optional {"include": [...urls]} body limits which offered sources are
+// added; no body accepts them all.
 func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
 	pub, err := s.apiPub(r)
 	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	var in struct {
+		Include []string `json:"include"`
+	}
+	decoded, err := apiDecode(r, &in)
+	if err != nil {
+		apiErr(w, 400, "validation", "invalid JSON body")
 		return
 	}
 	if s.d.Cfg.Mode == "demo" {
@@ -629,10 +649,15 @@ func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
 			for _, src := range mustSources(r, pub.ID) {
 				existing[src.URL] = true
 			}
+			want := map[string]bool{}
+			for _, u := range in.Include {
+				want[u] = true
+			}
 			for _, sd := range def.Sources {
-				if !existing[sd.URL] {
-					db(r).AddSource(r.Context(), pub.ID, sd.Type, sd.URL, sd.Name)
+				if existing[sd.URL] || (decoded && !want[sd.URL]) {
+					continue
 				}
+				db(r).AddSource(r.Context(), pub.ID, sd.Type, sd.URL, sd.Name)
 			}
 		}
 	}
@@ -2358,10 +2383,12 @@ func (s *Server) apiReader(w http.ResponseWriter, r *http.Request) {
 	rid, _ := db(r).UpsertReader(r.Context(), pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
 	subs, _ := db(r).SubscriberCount(r.Context(), pub.ID)
+	readers, _ := db(r).ReaderCount(r.Context(), pub.ID)
 	resp := map[string]any{
 		"reader":      map[string]string{"email": demoReaderEmail, "name": demoReaderName},
 		"subscribed":  active,
 		"subscribers": subs,
+		"readers":     readers,
 	}
 	if iss, err := db(r).LatestFinishedIssue(r.Context(), pub.ID); err == nil {
 		resp["issue"] = s.issueSummary(r, iss)

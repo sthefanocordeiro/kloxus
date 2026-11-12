@@ -141,7 +141,8 @@ by the canonical sample at run time so fixture replay stays stable.
 The fixture sources not yet added — the "suggested" cards on the sources
 screen.
 ```json
-{"offered": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml"}]}
+{"offered": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml",
+  "name": "Radar Tech", "items_per_week": 3}]}
 ```
 
 ### `GET /api/v1/publications/{id}/sources/preview?type=rss&url=…`
@@ -154,8 +155,11 @@ simulation note (demo never fetches). Bad input → `invalid_source`.
 ```
 
 ### `POST /api/v1/publications/{id}/sources/confirm`
-Adds every offered source not yet present and marks onboarding done →
-`{"sources": […]}`. The client then starts the first run itself.
+Adds the selected offered sources and marks onboarding done →
+`{"sources": […]}`. An optional `{"include": ["…url…"]}` body limits
+which offered sources are added (the sources screen sends the checked
+URLs); no body accepts them all. The client then starts the first run
+itself.
 
 ### `DELETE /api/v1/publications/{id}/sources/{sid}`
 Removes a source — collected items go with it (stories and past issues
@@ -503,7 +507,7 @@ Kinds: `issue`, `test`, `magic_link`.
 ### `GET /api/v1/publications/{id}/reader`
 ```json
 {"reader": {"email": "demo@reader.test", "name": "Demo Reader"},
- "subscribed": false, "subscribers": 0,
+ "subscribed": false, "subscribers": 0, "readers": 1,
  "issue": {"id": 1, "number": 1, "status": "sent", "…": "…"}}
 ```
 

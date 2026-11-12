@@ -149,7 +149,7 @@ async function scheduleAndHold(page: Page) {
   await page.getByRole("button", { name: "Schedule for later" }).click();
   // scheduling confirms through the same dialog as sending — count, subject, sender
   const schedDialog = page.getByRole("dialog");
-  await expect(schedDialog.getByText(/subscriber/)).toBeVisible();
+  await expect(schedDialog.getByText(/reader.*paying/)).toBeVisible();
   await schedDialog.getByRole("button", { name: "Schedule for later" }).click();
   // the scheduled issue locks; the header chip shows the queued time
   const scheduled = page.getByRole("button", { name: /Scheduled/ });
@@ -166,7 +166,7 @@ async function sendToReaders(page: Page) {
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await page.getByRole("button", { name: "Send to readers" }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText(/subscriber/)).toBeVisible();
+  await expect(dialog.getByText(/reader.*paying/)).toBeVisible();
   await expect(dialog.getByText(/Subject|Assunto/)).toBeVisible();
   await dialog.getByRole("button", { name: "Send now" }).click();
   // the after-sending surface replaces the editor chrome

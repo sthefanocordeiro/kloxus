@@ -617,11 +617,13 @@ outer0:
 	if rr.Code != 404 {
 		t.Fatalf("public page for missing issue = %d", rr.Code)
 	}
-	// the short public URL serves the reader page at the root now; the
-	// legacy /app/* path redirects there
+	// the short public URL serves the reader page at the root now; a
+	// legacy /app/* path serves the same SPA response without redirecting —
+	// browsers that cached the old "/" → "/app/" 301 must not loop.
+	root := apiCall(t, srv, "GET", "/p/futuro-proximo/"+fmt.Sprint(iss.Number), nil)
 	rr = apiCall(t, srv, "GET", "/app/p/futuro-proximo/"+fmt.Sprint(iss.Number), nil)
-	if rr.Code != 301 || !strings.Contains(rr.Header().Get("Location"), "/p/futuro-proximo/") {
-		t.Fatalf("/app/p redirect = %d %s", rr.Code, rr.Header().Get("Location"))
+	if loc := rr.Header().Get("Location"); loc != "" || rr.Code != root.Code {
+		t.Fatalf("/app/p = %d Location %q (want %d, no redirect)", rr.Code, loc, root.Code)
 	}
 	// an unsent issue is not publicly visible — the drafted issue number
 	// belongs to this same fixture set, so probe a non-existent status:

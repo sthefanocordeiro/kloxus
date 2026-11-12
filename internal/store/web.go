@@ -370,6 +370,16 @@ func (db *DB) ReaderUnsubscribed(ctx context.Context, readerID int64) bool {
 }
 
 // HasActiveSubscription reports whether the reader has an active sub.
+// ReaderCount returns how many readers would receive an issue — every
+// reader who hasn't unsubscribed. SubscriberCount counts the paying
+// subset; the send dialog shows both ("N readers (M paying)").
+func (db *DB) ReaderCount(ctx context.Context, pubID int64) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM readers WHERE publication_id = ? AND unsubscribed_at = ''`, pubID).Scan(&n)
+	return n, err
+}
+
 // SubscriberCount returns how many readers hold an active subscription
 // on a publication — the "recipients" line of the send confirmation.
 func (db *DB) SubscriberCount(ctx context.Context, pubID int64) (int, error) {

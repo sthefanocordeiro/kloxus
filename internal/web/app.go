@@ -24,14 +24,13 @@ func appDist() fs.FS {
 	return sub
 }
 
-// appLegacyRedirect forwards old /app/* URLs to the root app paths,
-// preserving the query (key / tok / view / run…).
+// appLegacyRedirect serves the SPA at old /app/* URLs with a plain 200 —
+// no HTTP redirect: browsers that cached the earlier 301 "/" → "/app/"
+// would loop forever if /app/* 301'd back to "/". The client router
+// strips the /app prefix itself on load.
 func (s *Server) appLegacyRedirect(w http.ResponseWriter, r *http.Request) {
-	target := "/" + strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/app"), "/")
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
-	}
-	http.Redirect(w, r, target, http.StatusMovedPermanently)
+	r.URL.Path = "/" + strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/app"), "/")
+	s.appPage(w, r)
 }
 
 // appPage serves the SPA from the site root: real files get served
