@@ -1639,9 +1639,12 @@ func gateSections(body string, paid []string, lang string) string {
 	for _, line := range strings.Split(body, "\n") {
 		t := strings.TrimSpace(line)
 		if strings.HasPrefix(t, "## ") {
+			if teased {
+				// the wall ends the issue — nothing below it ships
+				continue
+			}
 			seal()
 			gated = paidSet[strings.TrimSpace(strings.TrimPrefix(t, "## "))]
-			teased = false
 			out = append(out, line)
 			continue
 		}

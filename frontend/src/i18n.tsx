@@ -145,6 +145,7 @@ const dict = {
       },
     },
     send: {
+      action: "Send",
       test: "Send a test",
       readers: "Send to readers",
       audience: "Audience",
@@ -322,6 +323,7 @@ const dict = {
       },
     },
     send: {
+      action: "Enviar",
       test: "Enviar teste",
       readers: "Enviar aos leitores",
       audience: "Destinatários",

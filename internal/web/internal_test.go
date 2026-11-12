@@ -63,9 +63,6 @@ func TestGateSections(t *testing.T) {
 	for _, want := range []string{
 		"## Paid", "### Item A",
 		"First sentence of A.",
-		"## Free", "### Item C",
-		"All of C stays visible. Every sentence of it.",
-		"**Sources:** [1] [Y](http://y)",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("gated body missing %q:\n%s", want, got)
@@ -77,17 +74,20 @@ func TestGateSections(t *testing.T) {
 		"### Item B", "Only sentence of B",
 		"Comentário do editor",
 		"[X](http://x)",
+		"## Free", "### Item C",
+		"All of C stays visible",
+		"[Y](http://y)",
 	} {
 		if strings.Contains(got, leak) {
 			t.Fatalf("gated body leaked %q:\n%s", leak, got)
 		}
 	}
-	// exactly one wall per paid section, naming the hidden count
+	// one wall ends the issue, counting everything dropped below it
 	if c := strings.Count(got, "Subscribers only"); c != 1 {
 		t.Fatalf("expected one paywall note, got %d:\n%s", c, got)
 	}
-	if !strings.Contains(got, "1 more stories") {
-		t.Fatalf("note should say one item is hidden:\n%s", got)
+	if !strings.Contains(got, "2 more stories") {
+		t.Fatalf("note should count items B and C:\n%s", got)
 	}
 
 	// a single-item paid section gets the plain note

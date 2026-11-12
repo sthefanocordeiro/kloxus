@@ -1,14 +1,14 @@
 slug: futuro-proximo
 name: Futuro Próximo
 language: pt-BR
-topic: Technology and trends that will affect Brazilian professionals
-audience: Mid-career professionals who are curious but not engineers
+topic: Tecnologia e tendências que afetam profissionais valdorianos
+audience: Profissionais em meio de carreira, curiosos mas não engenheiros
 editorial_line: |
-  Prioritize real-world adoption over announcements.
-  Skip product launches without availability in Brazil.
-  Skip funding rounds unless they change a market.
-  Prefer primary sources (company blogs, papers, regulators).
-tone: Plain, first person, no hype
+  Priorize adoção real em vez de anúncios.
+  Pule lançamentos de produto sem disponibilidade na Valdória.
+  Pule rodadas de investimento, a menos que mudem um mercado.
+  Prefira fontes primárias (blogs de empresas, papers, reguladores).
+tone: Direto, em primeira pessoa, sem hype
 frequency: weekly
 sections:
   - title: The big one

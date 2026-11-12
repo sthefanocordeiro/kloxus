@@ -311,14 +311,31 @@ export function IssuePage() {
             );
           })}
         </ol>
+        <span className="flex-1" />
         {saved && (
-          <span className="text-[11px] text-muted">
+          <span className="rounded-full bg-teal-soft px-2 py-0.5 text-[11px] text-teal">
             {saved === "saving" ? t.commentary.saving : t.commentary.saved}
           </span>
         )}
-        <span className="flex-1" />
         {!BOARD_STATUSES.has(issue.status) && doc && (
           <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />
+        )}
+        {issue.status === "approved" && (
+          <KPopover
+            trigger={
+              <Button size="sm" variant="danger">
+                <Send size={12} /> {t.send.action}
+              </Button>
+            }
+          >
+            {issue.receipt && (
+              <p className="mb-2 text-xs text-muted">
+                {t.receipt.by} {issue.receipt.approver} · {t.receipt.version}{" "}
+                {issue.receipt.document_version.slice(0, 8)}
+              </p>
+            )}
+            <SendRow issue={issue} onDone={() => invalidate()} />
+          </KPopover>
         )}
         {readinessQ.data && !BOARD_STATUSES.has(issue.status) && issue.status !== "sent" && (
           <ApproveBar
@@ -540,7 +557,6 @@ function ApproveBar({
         {issue.status === "approved" && issue.receipt && (
           <div className="mt-3 border-t border-line pt-2 text-xs text-muted">
             {t.receipt.by} {issue.receipt.approver} · {t.receipt.version} {issue.receipt.document_version.slice(0, 8)}
-            <SendRow issue={issue} onDone={onApproved} />
           </div>
         )}
       </KPopover>
