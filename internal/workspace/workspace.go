@@ -146,6 +146,9 @@ func loadOrCreateSecret(path string) ([]byte, error) {
 }
 
 // rebuildTemplate recreates the seeded template database at boot.
+// rebuildTemplate recreates the workspace template database at boot. The
+// template is schema-only — onboarding creates the publication — so every
+// visitor starts from an empty workspace and walks the create flow.
 func (m *Manager) rebuildTemplate(ctx context.Context) error {
 	for _, suf := range []string{"", "-wal", "-shm"} {
 		os.Remove(m.template + suf)
@@ -153,12 +156,6 @@ func (m *Manager) rebuildTemplate(ctx context.Context) error {
 	db, err := store.Open(m.template)
 	if err != nil {
 		return fmt.Errorf("template db: %w", err)
-	}
-	if m.seed != nil {
-		if err := m.seed(ctx, db); err != nil {
-			db.Close()
-			return fmt.Errorf("seeding template: %w", err)
-		}
 	}
 	if err := db.Close(); err != nil {
 		return err
@@ -335,13 +332,18 @@ func (m *Manager) Get(ctx context.Context, id string) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Refresh publication config from the current template so sessions
-	// created before a deploy pick up fixture/config changes (price,
-	// sections…). Visitor data (issues, decisions, sources, readers) is
-	// preserved — SeedPublication only updates config columns.
+	// Refresh canonical publication config from the current template so
+	// sessions created before a deploy pick up fixture changes (price,
+	// sections…). Only workspaces with a template-seeded (non-custom)
+	// publication get the refresh — creator-made publications keep their
+	// edited blocks, and empty workspaces stay empty.
 	if m.seed != nil {
-		if err := m.seed(ctx, db); err != nil {
-			slog.Warn("workspace reseed failed", "ws", id, "err", err)
+		if has, herr := db.HasCanonicalPublication(ctx); herr != nil {
+			slog.Warn("workspace reseed check failed", "ws", id, "err", herr)
+		} else if has {
+			if err := m.seed(ctx, db); err != nil {
+				slog.Warn("workspace reseed failed", "ws", id, "err", err)
+			}
 		}
 	}
 	ws := &Workspace{ID: id, Label: labelOf(id), Dir: m.dir, DB: db}
@@ -373,8 +375,9 @@ func (m *Manager) Create(ctx context.Context) (*Workspace, error) {
 	return m.Get(ctx, id)
 }
 
-// Reset wipes and reseeds one workspace's data, waiting for in-flight
-// pipeline runs to finish.
+// Reset wipes one workspace's data, waiting for in-flight pipeline runs
+// to finish. The workspace returns to the empty state the visitor had at
+// onboarding — nothing is reseeded, so they walk the create flow again.
 func (m *Manager) Reset(ctx context.Context, ws *Workspace) error {
 	ws.Activity.Lock()
 	defer ws.Activity.Unlock()
@@ -385,9 +388,6 @@ func (m *Manager) Reset(ctx context.Context, ws *Workspace) error {
 		ws.Runs.Delete(k)
 		return true
 	})
-	if m.seed != nil {
-		return m.seed(ctx, ws.DB)
-	}
 	return nil
 }
 

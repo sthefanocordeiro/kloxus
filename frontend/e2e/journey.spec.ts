@@ -1,13 +1,37 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// The main path at both widths: prepare → build board → remove w/ reason
-// → add from the bench → move between sections → draft → fix the flag →
-// commentary (Saved, survives reload) → approve.
+// The judge path at both widths: landing → cited sample → create the
+// sample newsletter → sources → auto first run → build board → remove
+// w/ reason → add from the bench → move between sections → draft → fix
+// the flag → commentary → approve → schedule + hold → send → reader.
 
 const issueCol = (page: Page) => page.locator('section[aria-label="This issue"]');
 const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
+
+// The workspace starts empty — every journey walks onboarding first:
+// landing → /new → /pub/:id/sources → confirm → first run → board.
+async function onboard(page: Page) {
+  await page.goto("/app/");
+  // the landing renders the cited sample dossier before any workspace
+  await expect(page.getByText(/dossier from the sample issue/i)).toBeVisible({ timeout: 15000 });
+  await page.getByRole("link", { name: /Create your newsletter/ }).click();
+  await page.waitForURL(/\/app\/new/);
+
+  // the sample proposal pre-fills the five editable blocks
+  await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Create newsletter", exact: true }).click();
+  await page.waitForURL(/\/app\/pub\/\d+\/sources/);
+
+  // the sources screen offers the fixture sources — preview one, then
+  // confirm all: the first collection runs automatically into the board
+  await expect(page.getByText("Suggested sources")).toBeVisible();
+  await page.getByRole("button", { name: "Latest items", exact: true }).first().click();
+  await expect(page.locator("ul li a").first()).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: /Confirm \d+ sources & collect/ }).click();
+  await page.waitForURL(/\/app\/issues\/\d+/, { timeout: 180000 });
+}
 
 async function boardReady(page: Page, isPhone: boolean) {
   // the step rail finishes, then the board lands. On phone the issue
@@ -162,12 +186,7 @@ for (const vp of viewports) {
   test(`demo journey at ${vp.name} (${vp.width}px)`, async ({ page }) => {
     const isPhone = vp.width < 768;
     await page.setViewportSize({ width: vp.width, height: vp.height });
-    await page.goto("/app/");
-    await page.locator('a[href*="/pub/"]').first().click();
-
-    // prepare → the run landing page redirects into the board
-    await page.getByRole("button", { name: "Prepare next issue" }).click();
-    await page.waitForURL(/\/app\/issues\/\d+/, { timeout: 120000 });
+    await onboard(page);
     await boardReady(page, isPhone);
 
     await boardOps(page, isPhone);
@@ -190,26 +209,25 @@ for (const vp of viewports) {
   });
 }
 
-test("demo reset restores the fixture after items run out", async ({ page }) => {
+test("demo reset returns to onboarding and the sample journey still works", async ({ page }) => {
   await page.setViewportSize({ width: 1360, height: 850 });
-  await page.goto("/app/");
-  await page.locator('a[href*="/pub/"]').first().click();
-  await page.getByRole("button", { name: "Prepare next issue" }).click();
-  await page.waitForURL(/\/app\/issues\/\d+/, { timeout: 120000 });
+  await onboard(page);
   await boardReady(page, false);
 
   // fixture exhausted: a second prepare must say so on the board,
   // not fail silently
   await page.goto("/app/");
-  await page.locator('a[href*="/pub/"]').first().click();
+  await page.getByRole("link", { name: /Continue to/ }).click();
   await page.getByRole("button", { name: "Prepare next issue" }).click();
   await expect(page.getByText(/Nothing new/)).toBeVisible({ timeout: 120000 });
 
-  // reset restores the fixture — prepare works again
+  // reset wipes the workspace — the visitor walks onboarding again and
+  // the fixture sources collect a fresh issue
+  await page.goto("/app/publications");
   await page.getByRole("button", { name: "Reset demo" }).click();
-  await page.waitForURL(/\/app\/?$/);
-  await page.locator('a[href*="/pub/"]').first().click();
-  await page.getByRole("button", { name: "Prepare next issue" }).click();
-  await page.waitForURL(/\/app\/issues\/\d+/, { timeout: 120000 });
+  await expect(page.getByRole("link", { name: /Create your newsletter/ })).toBeVisible({
+    timeout: 15000,
+  });
+  await onboard(page);
   await boardReady(page, false);
 });

@@ -62,9 +62,47 @@ conflict` and the response carries the fresh `document`.
 
 ## Publications
 
+### `GET /api/v1/sample` — the landing page's cited dossier
+Workspace-free: no workspace is resolved or created.
+```json
+{"publication": "Futuro Próximo", "issue_number": 7, "date": "2026-03-02",
+ "dossiers": [{"ref": 1, "title": "…", "summary": "…",
+   "facts": [{"text": "…", "ref": 1}],
+   "quote": {"text": "…", "attribution": "…"},
+   "unknowns": ["…"], "interpretation": ["…"],
+   "sources": [{"ref": 1, "url": "…", "name": "…"}]}],
+ "how_it_works": ["…"]}
+```
+
+### `GET /api/v1/proposal` — the create screen's five editable blocks
+```json
+{"proposal": {
+  "name": "Futuro Próximo", "topic": "…", "audience": "…",
+  "editorial_line": "…", "tone": "…",
+  "language": "pt-BR", "frequency": "weekly", "ai_disclosure": "short",
+  "sections": [{"title": "The big one", "items": 1, "commentary": "required"}],
+  "sources": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml"}],
+  "paywall": {"enabled": true, "paid_sections": ["The big one"], "price": "V$ 12/month"}
+}}
+```
+
+### `POST /api/v1/publications/propose`
+`{"material": "https://… or pasted text"}` — turns pasted material into a
+proposal. Demo mode: `422 live_only` (only the sample is offered).
+
+### `POST /api/v1/publications` → `201`
+Creates a publication from the (possibly edited) proposal blocks.
+`{"name": "…", "topic": "…", "audience": "…", "editorial_line": "…",
+  "tone": "…", "language": "pt-BR", "frequency": "weekly",
+  "ai_disclosure": "short", "sections": [{…}], "paywall": {…}}`
+Validation failure → `validation`. The stored publication is flagged
+`"custom": true`; in demo mode its prompt-bearing fields are substituted
+by the canonical sample at run time so fixture replay stays stable.
+
 ### `GET /api/v1/publications`
 ```json
-{"publications": [{"id": 1, "slug": "futuro-proximo", "name": "Futuro Próximo", "...": "…"}]}
+{"publications": [{"id": 1, "slug": "futuro-proximo", "name": "Futuro Próximo",
+  "custom": false, "...": "…"}]}
 ```
 
 ### `GET /api/v1/publications/{id|slug}` — publication + settings
@@ -91,9 +129,34 @@ conflict` and the response carries the fresh `document`.
   "url": "fixtures/feeds/radar-tech.xml",
   "canonical_url": "fixtures/feeds/radar-tech.xml",
   "last_fetch_at": "2026-11-11 12:00:00", "last_status": "ok: 12 items, 9 new",
+  "items_per_week": 12,
   "monitor": {"provider": "", "id": "", "status": ""}
 }]}
 ```
+
+### `GET /api/v1/publications/{id}/sources/catalog`
+The fixture sources not yet added — the "suggested" cards on the sources
+screen.
+```json
+{"offered": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml"}]}
+```
+
+### `GET /api/v1/publications/{id}/sources/preview?type=rss&url=…`
+The three latest items a source would bring in. Fixture URLs read the
+embedded files; other URLs are format-validated only and return a
+simulation note (demo never fetches). Bad input → `invalid_source`.
+```json
+{"items": [{"title": "…", "url": "…", "outlet": "Radar Tech",
+  "published_at": "2026-11-10"}]}
+```
+
+### `POST /api/v1/publications/{id}/sources/confirm`
+Adds every offered source not yet present and marks onboarding done →
+`{"sources": […]}`. The client then starts the first run itself.
+
+### `DELETE /api/v1/publications/{id}/sources/{sid}`
+Removes a source — collected items go with it (stories and past issues
+keep their own rows).
 
 ### `POST /api/v1/publications/{id}/sources`
 `{"type": "rss", "url": "https://feed.test/rss.xml"}` → `201`

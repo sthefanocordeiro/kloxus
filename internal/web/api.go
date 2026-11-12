@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
+	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
@@ -106,6 +107,40 @@ func (s *Server) apiPub(r *http.Request) (*store.Publication, error) {
 	return s.pub(r)
 }
 
+// canonicalPub swaps a creator-made (custom) publication's prompt-bearing
+// fields for the canonical demo sample. Demo fixtures replay by prompt
+// hash, so the stored blocks are display-only — runs, section capacities
+// and editorial prompts must use the sample's text. The signature matches
+// GetPublication's so it wraps a load directly.
+func (s *Server) canonicalPub(pub *store.Publication, err error) (*store.Publication, error) {
+	if err != nil || s.d.Cfg.Mode != "demo" || pub == nil || !pub.Custom {
+		return pub, err
+	}
+	def, derr := s.sampleDef()
+	if derr != nil {
+		return pub, err
+	}
+	cp := *pub
+	cp.Language, cp.Topic, cp.Audience = def.Language, def.Topic, def.Audience
+	cp.EditorialLine, cp.Tone, cp.Sections = def.EditorialLine, def.Tone, def.Sections
+	return &cp, err
+}
+
+// sampleDef loads the embedded sample publication definition once —
+// the proposal source for the create-newsletter screen and the
+// canonical prompt input for custom publications in demo mode.
+func (s *Server) sampleDef() (*config.Publication, error) {
+	s.sampleOnce.Do(func() {
+		data, err := examples.FS.ReadFile("publications/futuro-proximo.yaml")
+		if err == nil {
+			s.sampleV, s.sampleErr = config.ParsePublication(data)
+		} else {
+			s.sampleErr = err
+		}
+	})
+	return s.sampleV, s.sampleErr
+}
+
 func (s *Server) apiIssueID(r *http.Request) (*store.Issue, error) {
 	return s.issue(r)
 }
@@ -117,6 +152,7 @@ type apiPublication struct {
 	ID            int64        `json:"id"`
 	Slug          string       `json:"slug"`
 	Name          string       `json:"name"`
+	Custom        bool         `json:"custom"`
 	Language      string       `json:"language"`
 	Topic         string       `json:"topic"`
 	Audience      string       `json:"audience"`
@@ -142,7 +178,7 @@ type apiPaywall struct {
 
 func publicationView(p *store.Publication) apiPublication {
 	v := apiPublication{
-		ID: p.ID, Slug: p.Slug, Name: p.Name, Language: p.Language,
+		ID: p.ID, Slug: p.Slug, Name: p.Name, Custom: p.Custom, Language: p.Language,
 		Topic: p.Topic, Audience: p.Audience, EditorialLine: p.EditorialLine,
 		Tone: p.Tone, Frequency: p.Frequency, AIDisclosure: p.AIDisclosure,
 		Paywall: apiPaywall{
@@ -174,7 +210,7 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 		}
 	}
 	missing := 0
-	if pub, err := db(r).GetPublication(ctx, fmt.Sprint(iss.PublicationID)); err == nil {
+	if pub, err := s.canonicalPub(db(r).GetPublication(ctx, fmt.Sprint(iss.PublicationID))); err == nil {
 		for _, sc := range pub.Sections {
 			if sc.Commentary == "required" && strings.TrimSpace(iss.Commentary[sc.Title]) == "" {
 				missing++
@@ -303,7 +339,9 @@ func (s *Server) apiPublications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiPublication(w http.ResponseWriter, r *http.Request) {
-	pub, err := s.apiPub(r)
+	// detail view shows the stored (creator-edited) blocks — canonicalPub
+	// applies only to prompt/section semantics
+	pub, err := db(r).GetPublication(r.Context(), r.PathValue("id"))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -323,6 +361,7 @@ type apiSourceRow struct {
 	CanonicalURL string         `json:"canonical_url"`
 	LastFetchAt  *string        `json:"last_fetch_at"`
 	LastStatus   *string        `json:"last_status"`
+	ItemsPerWeek int            `json:"items_per_week"`
 	Monitor      apiMonitorView `json:"monitor"`
 }
 
@@ -345,6 +384,7 @@ func (s *Server) sourceRow(r *http.Request, src store.Source) apiSourceRow {
 	}
 	p, mid, st, _ := db(r).SourceMonitor(r.Context(), src.ID)
 	row.Monitor = apiMonitorView{Provider: p, ID: mid, Status: st}
+	row.ItemsPerWeek, _ = db(r).ItemsPerWeek(r.Context(), src.ID)
 	return row
 }
 
@@ -430,6 +470,216 @@ func (s *Server) apiSourceAdd(w http.ResponseWriter, r *http.Request) {
 func mustSources(r *http.Request, pubID int64) []store.Source {
 	srcs, _ := db(r).Sources(r.Context(), pubID)
 	return srcs
+}
+
+// apiSourceDelete removes a source — the way out for a failing one.
+func (s *Server) apiSourceDelete(w http.ResponseWriter, r *http.Request) {
+	pub, err := s.apiPub(r)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	sid, _ := strconv.ParseInt(r.PathValue("sid"), 10, 64)
+	if apiDBErr(w, r, db(r).DeleteSource(r.Context(), pub.ID, sid), "source") {
+		return
+	}
+	apiJSON(w, 200, map[string]any{"ok": true})
+}
+
+// apiSourceCatalog lists the sample fixture sources not yet added — the
+// "offered" sources the sources screen proposes in demo mode.
+func (s *Server) apiSourceCatalog(w http.ResponseWriter, r *http.Request) {
+	pub, err := s.apiPub(r)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	def, err := s.sampleDef()
+	if err != nil {
+		apiErr(w, 500, "internal", "source catalog unavailable")
+		return
+	}
+	existing := map[string]bool{}
+	for _, src := range mustSources(r, pub.ID) {
+		existing[src.URL] = true
+	}
+	var offered []map[string]any
+	for _, sd := range def.Sources {
+		if !existing[sd.URL] {
+			offered = append(offered, map[string]any{"type": sd.Type, "url": sd.URL})
+		}
+	}
+	if offered == nil {
+		offered = []map[string]any{}
+	}
+	apiJSON(w, 200, map[string]any{"offered": offered})
+}
+
+// apiSourcePreview shows the three latest items a source would bring in.
+// Fixture URLs read from the embedded files; a pasted URL is validated
+// for format only — demo mode never fetches it.
+func (s *Server) apiSourcePreview(w http.ResponseWriter, r *http.Request) {
+	_, err := s.apiPub(r)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	typ, rawURL := r.URL.Query().Get("type"), strings.TrimSpace(r.URL.Query().Get("url"))
+	if rawURL == "" || (typ != "rss" && typ != "page") {
+		apiErr(w, 400, "validation", "type rss|page and url are required")
+		return
+	}
+	if !strings.HasPrefix(rawURL, "fixtures/") && s.d.Cfg.Mode == "demo" {
+		u, perr := url.Parse(rawURL)
+		if perr != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			apiErr(w, 400, "invalid_source", fmt.Sprintf("invalid source URL %q", rawURL))
+			return
+		}
+		apiJSON(w, 200, map[string]any{
+			"items": []any{},
+			"note":  "Simulated in demo mode: this URL is never fetched — in live mode the three latest items appear here.",
+		})
+		return
+	}
+	items, err := s.d.Fetcher.Fetch(r.Context(), typ, rawURL)
+	if err != nil {
+		apiErr(w, 400, "invalid_source", "cannot read that source: "+err.Error())
+		return
+	}
+	var out []map[string]any
+	for i, it := range items {
+		if i == 3 {
+			break
+		}
+		out = append(out, map[string]any{
+			"title": it.Title, "url": it.URL, "outlet": it.Outlet, "published_at": it.PublishedAt,
+		})
+	}
+	if out == nil {
+		out = []map[string]any{}
+	}
+	apiJSON(w, 200, map[string]any{"items": out})
+}
+
+// apiSourceConfirm accepts the remaining offered fixture sources and marks
+// onboarding done — the client then starts the first run itself.
+func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
+	pub, err := s.apiPub(r)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	if s.d.Cfg.Mode == "demo" {
+		if def, err := s.sampleDef(); err == nil {
+			existing := map[string]bool{}
+			for _, src := range mustSources(r, pub.ID) {
+				existing[src.URL] = true
+			}
+			for _, sd := range def.Sources {
+				if !existing[sd.URL] {
+					db(r).AddSource(r.Context(), pub.ID, sd.Type, sd.URL)
+				}
+			}
+		}
+	}
+	db(r).SetProgress(r.Context(), "sources_confirmed")
+	out := []apiSourceRow{}
+	for _, src := range mustSources(r, pub.ID) {
+		out = append(out, s.sourceRow(r, src))
+	}
+	apiJSON(w, 200, map[string]any{"sources": out})
+}
+
+// apiSample serves the landing page's cited dossier — workspace-free, so
+// the first screen doesn't create a demo workspace before Start.
+func (s *Server) apiSample(w http.ResponseWriter, r *http.Request) {
+	data, err := examples.FS.ReadFile("landing/sample.json")
+	if err != nil {
+		apiErr(w, 500, "internal", "sample dossier unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write(data)
+}
+
+// apiProposal returns the sample newsletter's proposed definition — the
+// five editable blocks plus carried settings and the sources offered next.
+func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
+	def, err := s.sampleDef()
+	if err != nil {
+		apiErr(w, 500, "internal", "sample proposal unavailable")
+		return
+	}
+	secs := []apiSection{}
+	for _, sec := range def.Sections {
+		secs = append(secs, apiSection{Title: sec.Title, Items: sec.Items, Commentary: sec.Commentary})
+	}
+	srcs := []map[string]string{}
+	for _, sd := range def.Sources {
+		srcs = append(srcs, map[string]string{"type": sd.Type, "url": sd.URL})
+	}
+	apiJSON(w, 200, map[string]any{"proposal": map[string]any{
+		"name": def.Name, "topic": def.Topic, "audience": def.Audience,
+		"editorial_line": def.EditorialLine, "tone": def.Tone,
+		"language": def.Language, "frequency": def.Frequency,
+		"ai_disclosure": def.AIDisclosure,
+		"sections":      secs, "sources": srcs,
+		"paywall": apiPaywall{Enabled: def.Paywall.Enabled, PaidSections: def.Paywall.PaidSections, Price: def.Paywall.Price},
+	}})
+}
+
+// apiPropose turns pasted material into a proposal. In demo mode only the
+// sample newsletter is offered — pasted links/issues are refused with
+// live_only, matching the "available in live mode" UX.
+func (s *Server) apiPropose(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Material string `json:"material"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if s.d.Cfg.Mode == "demo" {
+		apiErr(w, 422, "live_only",
+			"proposals from pasted material are available in live mode — the hosted demo offers the sample newsletter")
+		return
+	}
+	apiErr(w, 501, "not_implemented", "proposal extraction is not implemented")
+}
+
+// apiPublicationCreate stores a creator-made publication from the
+// (possibly edited) proposal blocks. Sources are added separately on the
+// sources screen.
+func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name          string           `json:"name"`
+		Topic         string           `json:"topic"`
+		Audience      string           `json:"audience"`
+		EditorialLine string           `json:"editorial_line"`
+		Tone          string           `json:"tone"`
+		Language      string           `json:"language"`
+		Frequency     string           `json:"frequency"`
+		AIDisclosure  string           `json:"ai_disclosure"`
+		Sections      []config.Section `json:"sections"`
+		Paywall       config.Paywall   `json:"paywall"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	def := &config.Publication{
+		Name: in.Name, Topic: in.Topic, Audience: in.Audience,
+		EditorialLine: in.EditorialLine, Tone: in.Tone,
+		Language: in.Language, Frequency: in.Frequency,
+		AIDisclosure: in.AIDisclosure, Sections: in.Sections, Paywall: in.Paywall,
+	}
+	if err := def.Validate(); err != nil {
+		apiErr(w, 400, "validation", err.Error())
+		return
+	}
+	id, err := db(r).CreatePublication(r.Context(), def)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	db(r).SetProgress(r.Context(), "publication_created")
+	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(id))
+	apiJSON(w, 201, map[string]any{"publication": publicationView(pub)})
 }
 
 func (s *Server) apiSourceWatch(w http.ResponseWriter, r *http.Request) {
@@ -682,7 +932,7 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -778,7 +1028,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	pub, err := db(r).GetPublication(ctx, fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(ctx, fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -966,7 +1216,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	pub, _ := db(r).GetPublication(ctx, fmt.Sprint(iss.PublicationID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(ctx, fmt.Sprint(iss.PublicationID)))
 	var guide any
 
 	finish := func(iid int64) {
@@ -1160,7 +1410,7 @@ func (s *Server) apiReadiness(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -1192,7 +1442,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -1277,7 +1527,7 @@ func (s *Server) apiDocument(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -1298,7 +1548,7 @@ func (s *Server) apiSentenceCtx(w http.ResponseWriter, r *http.Request) (*store.
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return nil, nil, nil, false
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return nil, nil, nil, false
 	}
@@ -1551,7 +1801,7 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -1698,7 +1948,7 @@ func (s *Server) respondSentence(w http.ResponseWriter, r *http.Request, iss *st
 	if err == nil {
 		iss = fresh
 	}
-	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
 	if apiDBErr(w, r, err, "document") {
 		return
@@ -1734,7 +1984,7 @@ func (s *Server) apiCommentary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Version != docVersion(iss) {
-		pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+		pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 		if apiDBErr(w, r, err, "publication") {
 			return
 		}
@@ -1774,7 +2024,7 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -1834,7 +2084,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -1946,7 +2196,7 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -1977,7 +2227,7 @@ func (s *Server) apiPreview(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -2128,7 +2378,7 @@ func (s *Server) withWS(r *http.Request) *http.Request {
 // forced free preview), with no editor-only fields.
 func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	r = s.withWS(r)
-	pub, err := db(r).GetPublication(r.Context(), r.PathValue("slug"))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), r.PathValue("slug")))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -2181,7 +2431,7 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -2209,7 +2459,7 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 // it once with the link's parameters.
 func (s *Server) apiUnsub(w http.ResponseWriter, r *http.Request) {
 	r = s.withWS(r)
-	pub, err := db(r).GetPublication(r.Context(), r.URL.Query().Get("pub"))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), r.URL.Query().Get("pub")))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}

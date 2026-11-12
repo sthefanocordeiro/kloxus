@@ -1,0 +1,66 @@
+{
+  "publication": "Futuro Próximo",
+  "issue_number": 7,
+  "date": "2026-03-02",
+  "dossiers": [
+    {
+      "ref": 1,
+      "title": "Universidade de Valdória lança modelo climático aberto",
+      "summary": "A Universidade Federal de Valdória publicou o VCM-2, um modelo climático regional de código aberto que projeta chuvas e temperaturas para o bioma do vale até 2070.",
+      "facts": [
+        { "text": "O VCM-2 projeta precipitação e temperatura para o bioma do vale de Valdória com resolução de 4 km até 2070.", "ref": 1 },
+        { "text": "O código e os dados de calibração foram publicados sob licença aberta no repositório da universidade.", "ref": 1 },
+        { "text": "O modelo foi treinado com 41 anos de séries históricas de 230 estações meteorológicas.", "ref": 2 },
+        { "text": "Segundo os autores, a precisão nas projeções de chuva superou em 18% a geração anterior do modelo.", "ref": 2 }
+      ],
+      "deep_facts": [
+        { "text": "O Instituto de Águas do vale já anunciou que usará o VCM-2 no planejamento de reservatórios a partir de 2027.", "ref": 3 }
+      ],
+      "quote": {
+        "text": "Queremos que qualquer prefeitura consiga rodar as mesmas projeções que o governo federal usa.",
+        "attribution": "Lia Amaral, coordenadora do grupo de modelagem, à UFV Notícias"
+      },
+      "unknowns": [
+        "Quando o modelo será calibrado para a região costeira",
+        "Se o supercomputador da universidade será aberto a outras instituições"
+      ],
+      "interpretation": [
+        "Abrir o modelo pressiona agências estaduais que hoje vendem projeções semelhantes."
+      ],
+      "sources": [
+        { "ref": 1, "url": "https://ufv.edu.vd/noticias/vcm2-lancamento", "name": "UFV Notícias" },
+        { "ref": 2, "url": "https://repositorio.ufv.edu.vd/vcm2/artigo", "name": "Artigo no repositório institucional" },
+        { "ref": 3, "url": "https://iaguas.gov.vd/planos/2027", "name": "Instituto de Águas de Valdória" }
+      ]
+    },
+    {
+      "ref": 2,
+      "title": "Tram de Valdória bate recorde de passageiros",
+      "summary": "A linha central do tram transportou 118 mil passageiros em fevereiro, o maior número desde a inauguração.",
+      "facts": [
+        { "text": "A linha central transportou 118 mil passageiros em fevereiro, recorde desde a inauguração em 2023.", "ref": 1 },
+        { "text": "A operadora atribui o aumento à tarifa integrada com ônibus, em vigor desde janeiro.", "ref": 1 },
+        { "text": "O intervalo médio em horário de pico caiu de 9 para 7 minutos após a entrada de quatro novos veículos.", "ref": 2 }
+      ],
+      "quote": {
+        "text": "A integração tarifária mudou o comportamento: o passageiro deixou de escolher entre tram e ônibus.",
+        "attribution": "Paulo Renner, diretor de operações da ViaLume"
+      },
+      "unknowns": [
+        "Se a expansão para o distrito norte entra no orçamento de 2027"
+      ],
+      "interpretation": [
+        "O recorde fortalece o lobby pela extensão da linha ao distrito norte."
+      ],
+      "sources": [
+        { "ref": 1, "url": "https://vialume.vd/dados/balanco-fevereiro", "name": "ViaLume — balanço operacional" },
+        { "ref": 2, "url": "https://diariodevaldoria.vd/cidades/tram-recorde", "name": "Diário de Valdória" }
+      ]
+    }
+  ],
+  "how_it_works": [
+    "Cada frase factual carrega uma fonte — clique na referência para abrir o original.",
+    "O editor aprova cada edição antes do envio; nada sai sem aprovação explícita.",
+    "Frases sem fonte não chegam aos leitores."
+  ]
+}

@@ -10,6 +10,7 @@ export interface Publication {
   id: number;
   slug: string;
   name: string;
+  custom?: boolean;
   language: string;
   topic: string;
   audience: string;
@@ -231,6 +232,53 @@ export interface RemovedSentence {
   flag?: string;
 }
 
+// The landing page's cited sample — workspace-free demo content.
+export interface SampleDossier extends Dossier {
+  title: string;
+}
+export interface Sample {
+  publication: string;
+  issue_number: number;
+  date: string;
+  dossiers: SampleDossier[];
+  how_it_works: string[];
+}
+
+// The proposal is the five editable blocks plus carried settings and the
+// sources offered next on the sources screen.
+export interface Proposal {
+  name: string;
+  topic: string;
+  audience: string;
+  editorial_line: string;
+  tone: string;
+  language: string;
+  frequency: string;
+  ai_disclosure: string;
+  sections: { title: string; items: number; commentary: string }[];
+  sources: { type: string; url: string }[];
+  paywall: { enabled: boolean; paid_sections: string[]; price: string };
+}
+
+export interface SourceRow {
+  id: number;
+  name: string;
+  type: string;
+  url: string;
+  canonical_url: string;
+  last_fetch_at?: string;
+  last_status?: string;
+  items_per_week: number;
+  monitor: { provider?: string; id?: string; status?: string };
+}
+
+export interface PreviewItem {
+  title: string;
+  url: string;
+  outlet: string;
+  published_at?: string;
+}
+
 export interface ApiError {
   code: string;
   message: string;
@@ -338,6 +386,25 @@ export const api = {
     request<{ body_md: string; gated: boolean; reader: string; surface: string }>(
       "GET", `/api/v1/issues/${issueID}/preview?reader=${reader}&surface=${surface}`,
     ),
+  sample: () => request<Sample>("GET", "/api/v1/sample"),
+  proposal: () => request<{ proposal: Proposal }>("GET", "/api/v1/proposal").then((r) => r.proposal),
+  propose: (material: string) =>
+    request<{ proposal: Proposal }>("POST", "/api/v1/publications/propose", { material }).then((r) => r.proposal),
+  createPublication: (p: Omit<Proposal, "sources">) =>
+    request<{ publication: Publication }>("POST", "/api/v1/publications", p).then((r) => r.publication),
+  sources: (pubID: number | string) =>
+    request<{ sources: SourceRow[] }>("GET", `/api/v1/publications/${pubID}/sources`).then((r) => r.sources),
+  sourceCatalog: (pubID: number | string) =>
+    request<{ offered: { type: string; url: string }[] }>("GET", `/api/v1/publications/${pubID}/sources/catalog`).then((r) => r.offered),
+  sourcePreview: (pubID: number | string, type: string, url: string) =>
+    request<{ items: PreviewItem[]; note?: string }>(
+      "GET", `/api/v1/publications/${pubID}/sources/preview?type=${type}&url=${encodeURIComponent(url)}`),
+  sourceAdd: (pubID: number | string, type: string, url: string) =>
+    request<{ source: SourceRow }>("POST", `/api/v1/publications/${pubID}/sources`, { type, url }).then((r) => r.source),
+  sourceConfirm: (pubID: number | string) =>
+    request<{ sources: SourceRow[] }>("POST", `/api/v1/publications/${pubID}/sources/confirm`, {}).then((r) => r.sources),
+  sourceDelete: (pubID: number | string, sid: number) =>
+    request<{ ok: boolean }>("DELETE", `/api/v1/publications/${pubID}/sources/${sid}`),
   demoReset: () => request<{ ok: boolean }>("POST", "/api/v1/demo/reset", {}),
   demoNew: () =>
     request<{ workspace: { id: string; label: string } }>("POST", "/api/v1/demo/new", {}),

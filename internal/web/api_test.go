@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -934,5 +935,130 @@ func TestAPILearnedRuleContext(t *testing.T) {
 		if strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-")) == "Too early" {
 			t.Fatalf("bare chip label stored as a rule: %q", content)
 		}
+	}
+}
+
+// TestAPIOnboarding covers the create-newsletter contract end to end: the
+// landing sample, the proposal blocks, publication creation with the
+// custom flag, the sources screen catalog/preview/confirm/delete, and —
+// the critical invariant — a run on the custom publication still replays
+// the demo fixtures via canonical prompt substitution.
+func TestAPIOnboarding(t *testing.T) {
+	srv, _, _, _ := demoServer(t)
+
+	// the landing page's cited sample — workspace-free
+	rr := apiCall(t, srv, "GET", "/api/v1/sample", nil)
+	if rr.Code != 200 {
+		t.Fatalf("GET sample = %d", rr.Code)
+	}
+	if dossiers, _ := apiJSON(t, rr)["dossiers"].([]any); len(dossiers) == 0 {
+		t.Fatal("sample has no dossiers")
+	}
+
+	// the proposal carries the editable blocks + offered sources
+	prop, _ := apiGet(t, srv, "/api/v1/proposal")["proposal"].(map[string]any)
+	for _, k := range []string{"name", "audience", "editorial_line", "tone", "sections", "sources"} {
+		if prop[k] == nil {
+			t.Fatalf("proposal missing %s", k)
+		}
+	}
+	if secs, _ := prop["sections"].([]any); len(secs) == 0 {
+		t.Fatal("proposal has no sections")
+	}
+
+	// pasted material is live-only in demo mode
+	if code := apiErrCode(t, apiCall(t, srv, "POST", "/api/v1/publications/propose",
+		map[string]any{"material": "https://example.com/issue"})); code != "live_only" {
+		t.Fatalf("propose = %q, want live_only", code)
+	}
+
+	// create — the blocks become a custom publication
+	body := map[string]any{
+		"name": prop["name"], "topic": prop["topic"], "audience": prop["audience"],
+		"editorial_line": prop["editorial_line"], "tone": prop["tone"],
+		"language": prop["language"], "frequency": prop["frequency"],
+		"ai_disclosure": prop["ai_disclosure"], "sections": prop["sections"],
+		"paywall": prop["paywall"],
+	}
+	rr = apiCall(t, srv, "POST", "/api/v1/publications", body)
+	if rr.Code != 201 {
+		t.Fatalf("create publication = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	pub, _ := apiJSON(t, rr)["publication"].(map[string]any)
+	pubID := fmt.Sprint(int64(pub["id"].(float64)))
+	if pub["custom"] != true {
+		t.Fatal("created publication is not flagged custom")
+	}
+	if pub["slug"] == "futuro-proximo" {
+		t.Fatal("slug collided with the seeded publication")
+	}
+
+	// an empty submission fails validation
+	if code := apiErrCode(t, apiCall(t, srv, "POST", "/api/v1/publications", map[string]any{})); code != "validation" {
+		t.Fatalf("empty create = %q", code)
+	}
+
+	base := "/api/v1/publications/" + pubID
+
+	// the sources screen offers the fixture sources not yet added
+	offered, _ := apiGet(t, srv, base+"/sources/catalog")["offered"].([]any)
+	if len(offered) == 0 {
+		t.Fatal("catalog offers nothing")
+	}
+	first := offered[0].(map[string]any)
+
+	// preview a fixture source → real items; a pasted URL → simulated
+	// note; a malformed one → invalid_source
+	pv := apiGet(t, srv, fmt.Sprintf("%s/sources/preview?type=%s&url=%s",
+		base, first["type"], url.QueryEscape(first["url"].(string))))
+	if n := len(pv["items"].([]any)); n == 0 || n > 3 {
+		t.Fatalf("fixture preview returned %d items", n)
+	}
+	pv = apiGet(t, srv, base+"/sources/preview?type=rss&url="+url.QueryEscape("https://example.com/feed"))
+	if pv["note"] == nil {
+		t.Fatal("pasted-URL preview has no simulated note")
+	}
+	if code := apiErrCode(t, apiCall(t, srv, "GET", base+"/sources/preview?type=rss&url=notaurl", nil)); code != "invalid_source" {
+		t.Fatalf("bad preview = %q", code)
+	}
+
+	// confirm adds everything offered and marks onboarding done
+	rr = apiCall(t, srv, "POST", base+"/sources/confirm", nil)
+	if rr.Code != 200 {
+		t.Fatalf("confirm = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	srcs, _ := apiJSON(t, rr)["sources"].([]any)
+	if len(srcs) != len(offered) {
+		t.Fatalf("confirm added %d sources, want %d", len(srcs), len(offered))
+	}
+	if _, ok := srcs[0].(map[string]any)["items_per_week"]; !ok {
+		t.Fatal("source row has no items_per_week")
+	}
+	if left, _ := apiGet(t, srv, base+"/sources/catalog")["offered"].([]any); len(left) != 0 {
+		t.Fatal("catalog still offers confirmed sources")
+	}
+
+	// the run on the custom publication replays demo fixtures — canonical
+	// substitution keeps edited blocks from breaking prompt-hash lookups
+	rr = apiCall(t, srv, "POST", base+"/runs", nil)
+	if rr.Code != 202 {
+		t.Fatalf("start run = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	run, _ := apiJSON(t, rr)["run"].(map[string]any)
+	done := waitRun(t, srv, run["id"].(string))
+	if done["status"] != "done" {
+		t.Fatalf("run on custom publication failed: %v", done["error"])
+	}
+	if done["issue_id"] == nil {
+		t.Fatal("run produced no issue")
+	}
+
+	// and a source can be removed afterwards
+	sid := fmt.Sprint(int64(srcs[0].(map[string]any)["id"].(float64)))
+	if rr := apiCall(t, srv, "DELETE", base+"/sources/"+sid, nil); rr.Code != 200 {
+		t.Fatalf("delete source = %d", rr.Code)
+	}
+	if n := len(apiGet(t, srv, base+"/sources")["sources"].([]any)); n != len(srcs)-1 {
+		t.Fatalf("sources after delete = %d", n)
 	}
 }
