@@ -8,10 +8,10 @@ const baseURL = process.argv[2] ?? "http://localhost:8142";
 const outDir = process.argv[3] ?? "recordings";
 
 async function prepare(page) {
-  await page.goto("/app/");
-  await page.locator('a[href*="/pub/"]').first().click();
+  await page.goto("/");
+  await page.locator('a[href*="/publications/"]').first().click();
   await page.getByRole("button", { name: "Prepare next issue" }).click();
-  await page.waitForURL(/\/app\/issues\/\d+/, { timeout: 120000 });
+  await page.waitForURL(/\/issues\/\d+/, { timeout: 120000 });
   await page
     .locator('section[aria-label="Pautas"] p.font-doc, [aria-label="Pautas"] p.font-doc')
     .first()

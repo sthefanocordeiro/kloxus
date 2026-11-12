@@ -75,8 +75,11 @@ type runProgress struct {
 
 // Server is the UI handler.
 type Server struct {
-	d   Deps
-	mux *http.ServeMux
+	d          Deps
+	mux        *http.ServeMux
+	sampleOnce sync.Once
+	sampleV    *config.Publication
+	sampleErr  error
 }
 
 type ctxKey int
@@ -93,18 +96,17 @@ func New(d Deps) *Server {
 	m.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(mustSub(webFS, "static"))))
 	m.HandleFunc("GET /healthz", s.healthz)
 	// The root belongs to the React interface now; the server-rendered
-	// interface stays reachable from /classic until the submission.
-	m.HandleFunc("GET /", s.appRedirect)
+	// interface stays reachable from /classic until the submission. The
+	// catch-all GET / serves the SPA (it matches every path not claimed
+	// by a more specific route — classic pages, the API, static).
 	m.HandleFunc("GET /classic", s.classicHome)
 	m.HandleFunc("GET /classic/", s.classicHome)
-	// Public issue URLs (/p/<slug>/<number>, as in emails and the
-	// after-sending view) land on the reader page inside the app.
-	m.HandleFunc("GET /p/{slug}/{num}", s.publicIssueRedirect)
 	m.HandleFunc("GET /demo/reset", s.demoResetConfirm)
 	m.HandleFunc("POST /demo/reset", s.demoReset)
 	m.HandleFunc("POST /demo/new", s.demoNew)
 	m.HandleFunc("GET /pub/{id}", s.pubOverview)
 	m.HandleFunc("GET /pub/{id}/settings", s.pubSettings)
+	m.HandleFunc("POST /classic/seed", s.classicSeed)
 	m.HandleFunc("GET /pub/{id}/sources", s.sources)
 	m.HandleFunc("POST /pub/{id}/sources/add", s.sourceAdd)
 	m.HandleFunc("POST /pub/{id}/sources/{sid}/watch", s.sourceWatch)
@@ -142,14 +144,27 @@ func New(d Deps) *Server {
 
 	// JSON API (v2 contract — see docs/api.md). Same workspace cookie,
 	// rate limits and isolation as the HTML routes.
-	m.HandleFunc("GET /app", s.appRedirect)
-	m.HandleFunc("GET /app/", s.appPage)
+	// Old /app/* URLs forward to the same paths at the root; anything
+	// else GETable falls through to the SPA.
+	m.HandleFunc("GET /app", s.appLegacyRedirect)
+	m.HandleFunc("GET /app/", s.appLegacyRedirect)
+	m.HandleFunc("GET /", s.appPage)
 
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
+	m.HandleFunc("GET /api/v1/sample", s.apiSample)
+	m.HandleFunc("GET /sample/a", s.sampleArticle)
+	m.HandleFunc("GET /sample/a/", s.sampleArticle) // tolerate a stray trailing slash
+	m.HandleFunc("GET /api/v1/proposal", s.apiProposal)
+	m.HandleFunc("POST /api/v1/publications", s.apiPublicationCreate)
+	m.HandleFunc("POST /api/v1/publications/propose", s.apiPropose)
 	m.HandleFunc("GET /api/v1/publications", s.apiPublications)
 	m.HandleFunc("GET /api/v1/publications/{id}", s.apiPublication)
 	m.HandleFunc("GET /api/v1/publications/{id}/sources", s.apiSources)
 	m.HandleFunc("POST /api/v1/publications/{id}/sources", s.apiSourceAdd)
+	m.HandleFunc("DELETE /api/v1/publications/{id}/sources/{sid}", s.apiSourceDelete)
+	m.HandleFunc("GET /api/v1/publications/{id}/sources/catalog", s.apiSourceCatalog)
+	m.HandleFunc("GET /api/v1/publications/{id}/sources/preview", s.apiSourcePreview)
+	m.HandleFunc("POST /api/v1/publications/{id}/sources/confirm", s.apiSourceConfirm)
 	m.HandleFunc("POST /api/v1/publications/{id}/sources/{sid}/watch", s.apiSourceWatch)
 	m.HandleFunc("POST /api/v1/publications/{id}/sources/{sid}/check", s.apiSourceCheck)
 	m.HandleFunc("POST /api/v1/publications/{id}/runs", s.apiRunStart)
@@ -198,16 +213,6 @@ func New(d Deps) *Server {
 	return s
 }
 
-// publicIssueRedirect forwards the short public URL to the app's reader
-// route, preserving the query (ws / key / view).
-func (s *Server) publicIssueRedirect(w http.ResponseWriter, r *http.Request) {
-	target := "/app/p/" + r.PathValue("slug") + "/" + r.PathValue("num")
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
-	}
-	http.Redirect(w, r, target, http.StatusFound)
-}
-
 func mustSub(fsys embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)
 	if err != nil {
@@ -223,7 +228,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Request-Id", rid)
 	r = r.WithContext(context.WithValue(r.Context(), ctxReqID, rid))
 
-	if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" {
+	if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" ||
+		r.URL.Path == "/api/v1/sample" || strings.HasPrefix(r.URL.Path, "/sample/a") {
 		s.mux.ServeHTTP(w, r)
 		return
 	}
@@ -351,7 +357,7 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, path string) {
 }
 
 func (s *Server) pub(r *http.Request) (*store.Publication, error) {
-	return db(r).GetPublication(r.Context(), r.PathValue("id"))
+	return s.canonicalPub(db(r).GetPublication(r.Context(), r.PathValue("id")))
 }
 
 func (s *Server) issue(r *http.Request) (*store.Issue, error) {
@@ -372,6 +378,21 @@ func (s *Server) classicHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, r, "page-publications", map[string]any{"Pubs": pubs, "Demo": s.d.Cfg.Mode == "demo"})
+}
+
+// classicSeed gives the no-JS fallback a way out of the empty workspace:
+// it seeds the canonical demo publication in one step, bypassing the
+// React onboarding flow.
+func (s *Server) classicSeed(w http.ResponseWriter, r *http.Request) {
+	if s.d.Cfg.Mode != "demo" || s.d.Seed == nil {
+		s.errPage(w, r, 403, "seeding is only available in demo mode")
+		return
+	}
+	if err := s.d.Seed(r.Context(), db(r)); err != nil {
+		s.errPage(w, r, 500, "seed failed: "+err.Error())
+		return
+	}
+	s.redirect(w, r, "/classic")
 }
 
 func (s *Server) pubOverview(w http.ResponseWriter, r *http.Request) {
@@ -508,7 +529,7 @@ func (s *Server) sourceAdd(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := db(r).AddSource(r.Context(), pub.ID, typ, rawURL); err != nil {
+	if _, err := db(r).AddSource(r.Context(), pub.ID, typ, rawURL, ""); err != nil {
 		s.errPage(w, r, 500, "internal error")
 		return
 	}
@@ -740,7 +761,7 @@ func (s *Server) issueReview(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, s.cardFor(r, ii))
 	}
-	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	s.render(w, r, "page-review", map[string]any{
 		"Pub": pub, "Issue": iss, "Items": rows, "Pending": pending,
 	})
@@ -790,7 +811,7 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 		}
 		db(r).RecordDecision(r.Context(), iss.PublicationID, iid, "undo", "")
 		// an undone rejection must leave the editorial guide too
-		if pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)); err == nil && pub != nil {
+		if pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))); err == nil && pub != nil {
 			editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
 		}
 		ii.Status = "pending"
@@ -820,12 +841,12 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db(r).RecordDecision(r.Context(), iss.PublicationID, iid, kind, reason)
-		pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+		pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 		if pub != nil {
 			editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
 		}
 	case "alternative":
-		pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+		pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 		runner := &pipeline.Runner{
 			DB: db(r), LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
@@ -877,7 +898,7 @@ func (s *Server) itemDossier(w http.ResponseWriter, r *http.Request) {
 	iss, _ := db(r).GetIssue(r.Context(), ii.IssueID)
 	var pub *store.Publication
 	if iss != nil {
-		pub, _ = db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+		pub, _ = s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	}
 	db(r).SetProgress(r.Context(), "dossier_seen")
 	s.render(w, r, "page-dossier", map[string]any{
@@ -904,7 +925,7 @@ func (s *Server) draftRun(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/issue/"+r.PathValue("id")+"?pending="+strconv.Itoa(pending))
 		return
 	}
-	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if err != nil {
 		s.dbErr(w, r, err, "publication")
 		return
@@ -954,7 +975,7 @@ func (s *Server) draftPage(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "issue")
 		return
 	}
-	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	s.renderDraft(w, r, iss, pub, http.StatusOK, "")
 }
 
@@ -1068,7 +1089,7 @@ func (s *Server) flagEdit(w http.ResponseWriter, r *http.Request) {
 	flag := iss.Flags[idx]
 	text := strings.TrimSpace(r.FormValue("text"))
 	mode := r.FormValue("mode")
-	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if iss.Status == "sent" {
 		s.errPage(w, r, http.StatusConflict, "this issue was already sent — sent issues are read-only")
 		return
@@ -1274,7 +1295,7 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "issue")
 		return
 	}
-	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if b := s.blockers(r, iss, pub); len(b) > 0 {
 		s.renderDraft(w, r, iss, pub, http.StatusConflict, "")
 		return
@@ -1292,7 +1313,7 @@ func (s *Server) sendPage(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "issue")
 		return
 	}
-	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	s.render(w, r, "page-send", map[string]any{"Pub": pub, "Issue": iss})
 }
 
@@ -1302,7 +1323,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "issue")
 		return
 	}
-	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if iss.Status != "approved" {
 		s.renderDraft(w, r, iss, pub, http.StatusConflict, "")
 		return
@@ -1335,14 +1356,21 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 // the workspace outbox. Shared by the HTML route and the API.
 func (s *Server) sendIssueMail(r *http.Request, iss *store.Issue, pub *store.Publication, to []string, kind string) (string, error) {
 	base := requestBase(r)
-	md := delivery.ReaderBody(iss, pub, base)
+	cpub, _ := s.canonicalPub(pub, nil)
+	md := delivery.ReaderBody(iss, cpub, base)
 	rid, _ := db(r).UpsertReader(r.Context(), pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
-	unsub := fmt.Sprintf("%s/app/unsub?pub=%d&ws=%s&r=%d&t=%s",
-		base, pub.ID, reqWS(r).ID, rid, s.d.WS.MAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid)))
-	publicPage := fmt.Sprintf("%s/app/p/%s/%d?ws=%s", base, pub.Slug, iss.Number, reqWS(r).ID)
+	unsub := fmt.Sprintf("%s/unsub?pub=%d%s&r=%d&t=%s",
+		base, pub.ID, s.tokQ(r), rid, s.d.WS.MAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid)))
+	publicPage := fmt.Sprintf("%s/p/%s/%d", base, pub.Slug, iss.Number)
+	if tok := s.readerToken(r); tok != "" {
+		publicPage += "?tok=" + url.QueryEscape(tok)
+	}
 	if !active {
-		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
+		md = gateSections(md, cpub.Paywall.PaidSections, cpub.Language)
+	}
+	md = s.localizeReaderMD(md, pub)
+	if !active {
 		md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s) · [cancelar assinatura](%s)*",
 			pub.Name, publicPage, unsub)
 	} else {
@@ -1358,7 +1386,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "issue")
 		return
 	}
-	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
 	if iss.Status != "approved" && iss.Status != "sent" {
 		// Exports ship only approved output: show the draft with blockers.
 		s.renderDraft(w, r, iss, pub, http.StatusConflict, "")
@@ -1499,7 +1527,7 @@ func (s *Server) paywallSimulate(w http.ResponseWriter, r *http.Request) {
 	// Demo mode delivers the magic link through the workspace outbox. The
 	// link carries the workspace id so it opens the right issue in any
 	// browser, not just the one that simulated the payment.
-	link := requestBase(r) + "/pub/" + r.PathValue("id") + "/reader?key=" + token + "&ws=" + reqWS(r).ID
+	link := requestBase(r) + "/pub/" + r.PathValue("id") + "/reader?key=" + token + s.tokQ(r)
 	htmlBody := fmt.Sprintf(
 		`<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:38em;margin:2em auto">`+
 			`<h2>%s — acesso de assinante</h2>`+
@@ -1531,11 +1559,7 @@ func (s *Server) paywallCancel(w http.ResponseWriter, r *http.Request) {
 // token; the workspace is resolved for this request only — the visitor's
 // own session cookie is never changed.
 func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
-	if wsid := r.URL.Query().Get("ws"); wsid != "" && wsid != reqWS(r).ID && s.d.WS.Hosted() {
-		if target, err := s.d.WS.Get(r.Context(), wsid); err == nil {
-			r = r.WithContext(context.WithValue(r.Context(), ctxWS, target))
-		}
-	}
+	r = s.withWS(r)
 	pub, err := s.pub(r)
 	if err != nil {
 		s.dbErr(w, r, err, "publication")
@@ -1558,7 +1582,11 @@ func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
 // teaser unless the demo reader is subscribed (or opens a magic link).
 func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if wsid, key := q.Get("ws"), q.Get("key"); wsid != "" && key != "" &&
+	wsid := q.Get("ws")
+	if wsid == "" && q.Get("tok") != "" && s.d.WS.Hosted() {
+		wsid = s.d.WS.ResolvePublicToken(q.Get("tok"))
+	}
+	if key := q.Get("key"); wsid != "" && key != "" &&
 		wsid != reqWS(r).ID && s.d.WS.Hosted() {
 		// Magic link opened in a different browser: resolve the link's
 		// workspace for this reader request only. The visitor's own
@@ -1599,14 +1627,18 @@ func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 	} else if unlocked {
 		db(r).SetProgress(r.Context(), "reader_sub")
 	}
-	md := delivery.ReaderBody(iss, pub, requestBase(r))
+	cpub, _ := s.canonicalPub(pub, nil)
+	md := delivery.ReaderBody(iss, cpub, requestBase(r))
 	if !unlocked {
-		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
+		md = gateSections(md, cpub.Paywall.PaidSections, cpub.Language)
 	}
+	md = s.localizeReaderMD(md, pub)
 	linkQ := ""
 	if key != "" {
 		linkQ = "key=" + url.QueryEscape(key)
-		if wsid := q.Get("ws"); wsid != "" {
+		if tok := q.Get("tok"); tok != "" {
+			linkQ += "&tok=" + url.QueryEscape(tok)
+		} else if wsid := q.Get("ws"); wsid != "" {
 			linkQ += "&ws=" + url.QueryEscape(wsid)
 		}
 	}
@@ -1735,7 +1767,7 @@ func (s *Server) outboxView(w http.ResponseWriter, r *http.Request) {
 	}
 	var pubID int64
 	db(r).QueryRowContext(r.Context(), `SELECT id FROM publications ORDER BY id LIMIT 1`).Scan(&pubID)
-	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(pubID))
+	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(pubID)))
 	s.render(w, r, "page-outbox-view", map[string]any{"Pub": pub, "Email": e})
 }
 

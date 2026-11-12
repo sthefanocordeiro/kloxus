@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -581,8 +582,11 @@ outer0:
 
 	// --- after sending: public URL, downloads, learned rules ---
 	af := apiGet(t, srv, issueURL+"/after")
-	if af["public_url"] == "" || !strings.Contains(af["public_url"].(string), "/app/p/futuro-proximo/") {
+	if af["public_url"] == "" || !strings.Contains(af["public_url"].(string), "/p/futuro-proximo/") {
 		t.Fatalf("after: public_url = %v", af["public_url"])
+	}
+	if strings.Contains(af["public_url"].(string), "ws=") {
+		t.Error("public_url must never carry the workspace id")
 	}
 	if af["export_html"] == nil || af["export_md"] == nil {
 		t.Error("after: export links missing")
@@ -613,15 +617,17 @@ outer0:
 	if rr.Code != 404 {
 		t.Fatalf("public page for missing issue = %d", rr.Code)
 	}
-	// the short public URL redirects into the app
-	rr = apiCall(t, srv, "GET", "/p/futuro-proximo/"+fmt.Sprint(iss.Number), nil)
-	if rr.Code != 302 || !strings.Contains(rr.Header().Get("Location"), "/app/p/futuro-proximo/") {
-		t.Fatalf("/p redirect = %d %s", rr.Code, rr.Header().Get("Location"))
+	// the short public URL serves the reader page at the root now; a
+	// legacy /app/* path serves the same SPA response without redirecting —
+	// browsers that cached the old "/" → "/app/" 301 must not loop.
+	root := apiCall(t, srv, "GET", "/p/futuro-proximo/"+fmt.Sprint(iss.Number), nil)
+	rr = apiCall(t, srv, "GET", "/app/p/futuro-proximo/"+fmt.Sprint(iss.Number), nil)
+	if loc := rr.Header().Get("Location"); loc != "" || rr.Code != root.Code {
+		t.Fatalf("/app/p = %d Location %q (want %d, no redirect)", rr.Code, loc, root.Code)
 	}
 	// an unsent issue is not publicly visible — the drafted issue number
 	// belongs to this same fixture set, so probe a non-existent status:
 	// /after on a sent issue works (above); a drafted issue would 409.
-
 
 	// --- sent issue is read-only ---
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
@@ -927,12 +933,186 @@ func TestAPILearnedRuleContext(t *testing.T) {
 	}
 	g := apiGet(t, srv, "/api/v1/publications/"+strconv.FormatInt(pub.ID, 10)+"/guide")
 	content := g["guide"].(map[string]any)["content"].(string)
-	if !strings.Contains(content, title) {
-		t.Fatalf("rule lacks the story context: %q", content)
+	// the learned rule generalizes the chip — it names the kind of
+	// story to skip, never the specific headline
+	if strings.Contains(content, title) {
+		t.Fatalf("learned rule leaked a headline: %q", content)
+	}
+	if !strings.Contains(content, "Skip stories that just broke") {
+		t.Fatalf("chip reason was not generalized into a rule: %q", content)
 	}
 	for line := range strings.Lines(content) {
 		if strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-")) == "Too early" {
 			t.Fatalf("bare chip label stored as a rule: %q", content)
 		}
+	}
+}
+
+// TestAPIOnboarding covers the create-newsletter contract end to end: the
+// landing sample, the proposal blocks, publication creation with the
+// custom flag, the sources screen catalog/preview/confirm/delete, and —
+// the critical invariant — a run on the custom publication still replays
+// the demo fixtures via canonical prompt substitution.
+func TestAPIOnboarding(t *testing.T) {
+	srv, db, _, _ := demoServer(t)
+	ctx := context.Background()
+
+	// the landing page's cited sample — workspace-free
+	rr := apiCall(t, srv, "GET", "/api/v1/sample", nil)
+	if rr.Code != 200 {
+		t.Fatalf("GET sample = %d", rr.Code)
+	}
+	if dossiers, _ := apiJSON(t, rr)["dossiers"].([]any); len(dossiers) == 0 {
+		t.Fatal("sample has no dossiers")
+	}
+
+	// the proposal carries the editable blocks + offered sources
+	prop, _ := apiGet(t, srv, "/api/v1/proposal")["proposal"].(map[string]any)
+	for _, k := range []string{"name", "audience", "editorial_line", "tone", "sections", "sources"} {
+		if prop[k] == nil {
+			t.Fatalf("proposal missing %s", k)
+		}
+	}
+	if secs, _ := prop["sections"].([]any); len(secs) == 0 {
+		t.Fatal("proposal has no sections")
+	}
+
+	// pasted material is live-only in demo mode
+	if code := apiErrCode(t, apiCall(t, srv, "POST", "/api/v1/publications/propose",
+		map[string]any{"material": "https://example.com/issue"})); code != "live_only" {
+		t.Fatalf("propose = %q, want live_only", code)
+	}
+
+	// create — the blocks become a custom publication
+	body := map[string]any{
+		"name": prop["name"], "topic": prop["topic"], "audience": prop["audience"],
+		"editorial_line": prop["editorial_line"], "tone": prop["tone"],
+		"language": prop["language"], "frequency": prop["frequency"],
+		"ai_disclosure": prop["ai_disclosure"], "sections": prop["sections"],
+		"paywall": prop["paywall"],
+	}
+	rr = apiCall(t, srv, "POST", "/api/v1/publications", body)
+	if rr.Code != 201 {
+		t.Fatalf("create publication = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	pub, _ := apiJSON(t, rr)["publication"].(map[string]any)
+	pubID := fmt.Sprint(int64(pub["id"].(float64)))
+	if pub["custom"] != true {
+		t.Fatal("created publication is not flagged custom")
+	}
+	if pub["slug"] == "futuro-proximo" {
+		t.Fatal("slug collided with the seeded publication")
+	}
+
+	// an empty submission fails validation
+	if code := apiErrCode(t, apiCall(t, srv, "POST", "/api/v1/publications", map[string]any{})); code != "validation" {
+		t.Fatalf("empty create = %q", code)
+	}
+
+	base := "/api/v1/publications/" + pubID
+
+	// the sources screen offers the fixture sources not yet added
+	offered, _ := apiGet(t, srv, base+"/sources/catalog")["offered"].([]any)
+	if len(offered) == 0 {
+		t.Fatal("catalog offers nothing")
+	}
+	first := offered[0].(map[string]any)
+
+	// preview a fixture source → real items; a pasted URL → simulated
+	// note; a malformed one → invalid_source
+	pv := apiGet(t, srv, fmt.Sprintf("%s/sources/preview?type=%s&url=%s",
+		base, first["type"], url.QueryEscape(first["url"].(string))))
+	if n := len(pv["items"].([]any)); n == 0 || n > 3 {
+		t.Fatalf("fixture preview returned %d items", n)
+	}
+	pv = apiGet(t, srv, base+"/sources/preview?type=rss&url="+url.QueryEscape("https://example.com/feed"))
+	if pv["note"] == nil {
+		t.Fatal("pasted-URL preview has no simulated note")
+	}
+	if code := apiErrCode(t, apiCall(t, srv, "GET", base+"/sources/preview?type=rss&url=notaurl", nil)); code != "invalid_source" {
+		t.Fatalf("bad preview = %q", code)
+	}
+
+	// confirm adds everything offered and marks onboarding done
+	rr = apiCall(t, srv, "POST", base+"/sources/confirm", nil)
+	if rr.Code != 200 {
+		t.Fatalf("confirm = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	srcs, _ := apiJSON(t, rr)["sources"].([]any)
+	if len(srcs) != len(offered) {
+		t.Fatalf("confirm added %d sources, want %d", len(srcs), len(offered))
+	}
+	if _, ok := srcs[0].(map[string]any)["items_per_week"]; !ok {
+		t.Fatal("source row has no items_per_week")
+	}
+	if left, _ := apiGet(t, srv, base+"/sources/catalog")["offered"].([]any); len(left) != 0 {
+		t.Fatal("catalog still offers confirmed sources")
+	}
+
+	// the run on the custom publication replays demo fixtures — canonical
+	// substitution keeps edited blocks from breaking prompt-hash lookups
+	rr = apiCall(t, srv, "POST", base+"/runs", nil)
+	if rr.Code != 202 {
+		t.Fatalf("start run = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	run, _ := apiJSON(t, rr)["run"].(map[string]any)
+	done := waitRun(t, srv, run["id"].(string))
+	if done["status"] != "done" {
+		t.Fatalf("run on custom publication failed: %v", done["error"])
+	}
+	if done["issue_id"] == nil {
+		t.Fatal("run produced no issue")
+	}
+
+	// and a source can be removed afterwards
+	sid := fmt.Sprint(int64(srcs[0].(map[string]any)["id"].(float64)))
+	if rr := apiCall(t, srv, "DELETE", base+"/sources/"+sid, nil); rr.Code != 200 {
+		t.Fatalf("delete source = %d", rr.Code)
+	}
+	if n := len(apiGet(t, srv, base+"/sources")["sources"].([]any)); n != len(srcs)-1 {
+		t.Fatalf("sources after delete = %d", n)
+	}
+
+	// --- paywall regression on a custom (JSON-created) publication:
+	// both reader outputs gate the paid section for a non-subscriber —
+	// teaser only, the wall, nothing below it ---
+	issueID := int64(done["issue_id"].(float64))
+	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
+	rr = apiCall(t, srv, "POST", issueURL+"/draft", nil)
+	if rr.Code != 202 {
+		t.Fatalf("draft on custom pub = %d: %s", rr.Code, rr.Body.String()[:200])
+	}
+	if dr := waitRun(t, srv, apiJSON(t, rr)["run"].(map[string]any)["id"].(string)); dr["status"] != "done" {
+		t.Fatalf("draft run on custom pub failed: %v", dr["error"])
+	}
+	// approve readiness (flags/commentary) is covered in TestAPIJourney;
+	// this test targets the gating on the two reader outputs
+	if err := db.SetIssueStatus(ctx, issueID, "approved"); err != nil {
+		t.Fatalf("approve on custom pub: %v", err)
+	}
+	if rr := apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "readers"}); rr.Code != 200 {
+		t.Fatalf("send on custom pub = %d: %s", rr.Code, rr.Body.String()[:200])
+	}
+	pp := apiGet(t, srv, "/api/v1/p/"+pub["slug"].(string)+"/1")
+	if pp["gated"] != true {
+		t.Fatalf("custom-pub public page not gated: %v", pp["gated"])
+	}
+	if md := pp["body_md"].(string); !strings.Contains(md, "Exclusivo para assinantes") ||
+		strings.Contains(md, "Worth knowing") {
+		t.Errorf("public page leaked the paid section: %.200s", md)
+	}
+	var issueEmail map[string]any
+	for _, e := range apiGet(t, srv, base+"/outbox")["emails"].([]any) {
+		if e.(map[string]any)["kind"] == "issue" {
+			issueEmail = e.(map[string]any)
+		}
+	}
+	if issueEmail == nil {
+		t.Fatal("no readers email in outbox")
+	}
+	em := apiGet(t, srv, "/api/v1/outbox/"+fmt.Sprint(int64(issueEmail["id"].(float64))))["email"].(map[string]any)
+	if md, _ := em["body_md"].(string); !strings.Contains(md, "Exclusivo para assinantes") ||
+		strings.Contains(md, "Worth knowing") {
+		t.Errorf("readers email leaked the paid section: %.200s", md)
 	}
 }

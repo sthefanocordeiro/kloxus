@@ -30,9 +30,17 @@ export function Publications() {
       </p>
       <h1 className="mb-6 font-doc text-2xl font-semibold">{t.publications}</h1>
       {pubs.isLoading && <p className="text-muted">…</p>}
+      {pubs.data?.length === 0 && (
+        <Card className="p-6 text-center">
+          <p className="text-sm text-muted">{t.landing.lede}</p>
+          <Link to="/new" className="mt-3 inline-block">
+            <Button>{t.landing.start}</Button>
+          </Link>
+        </Card>
+      )}
       <div className="grid gap-3">
         {pubs.data?.map((p) => (
-          <Link key={p.id} to={`/pub/${p.id}`}>
+          <Link key={p.id} to={`/publications/${p.id}`}>
             <Card className="hover:border-ink/40 transition-colors">
               <div className="flex items-baseline justify-between">
                 <h2 className="font-doc text-lg font-semibold">{p.name}</h2>

@@ -6,12 +6,23 @@ import { LangProvider } from "./i18n";
 import { AppShell } from "./AppShell";
 import { ErrorPage } from "./pages/ErrorPage";
 import { Publications } from "./pages/Publications";
+import { Landing } from "./pages/Landing";
+import { CreateNewsletter } from "./pages/Create";
+import { SourcesPage } from "./pages/Sources";
 import { PublicationPage } from "./pages/PublicationPage";
 import { IssuePage } from "./pages/IssuePage";
 import { RunLanding } from "./pages/Board";
 import { OutboxPage } from "./pages/OutboxPage";
 import { PublicIssue, ReaderShell, UnsubPage } from "./pages/ReaderPage";
 import "./styles.css";
+
+// Legacy /app/* URLs are served the SPA as-is (a 301 back to "/" would
+// loop against browsers that cached the old "/" → "/app/" 301), so the
+// router sees the stripped path.
+if (location.pathname === "/app" || location.pathname.startsWith("/app/")) {
+  const stripped = location.pathname.slice(4) || "/";
+  history.replaceState(null, "", stripped + location.search + location.hash);
+}
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -23,9 +34,12 @@ const router = createBrowserRouter(
       element: <AppShell />,
       errorElement: <ErrorPage />,
       children: [
-        { path: "/", element: <Publications /> },
-        { path: "/pub/:id", element: <PublicationPage /> },
-        { path: "/pub/:id/outbox", element: <OutboxPage /> },
+        { path: "/", element: <Landing /> },
+        { path: "/new", element: <CreateNewsletter /> },
+        { path: "/publications", element: <Publications /> },
+        { path: "/publications/:id", element: <PublicationPage /> },
+        { path: "/publications/:id/sources", element: <SourcesPage /> },
+        { path: "/publications/:id/outbox", element: <OutboxPage /> },
         { path: "/issues/:id", element: <IssuePage /> },
         { path: "/runs/:runID", element: <RunLanding /> },
       ],
@@ -40,7 +54,6 @@ const router = createBrowserRouter(
       ],
     },
   ],
-  { basename: "/app" },
 );
 
 createRoot(document.getElementById("root")!).render(

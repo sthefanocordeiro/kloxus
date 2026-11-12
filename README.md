@@ -35,6 +35,7 @@ only they can write, and sends.
 - [Deploying](#deploying)
 - [Implementation architecture](#implementation-architecture)
 - [Estimated costs](#estimated-costs)
+- [Troubleshooting](#troubleshooting)
 - [Open questions](#open-questions)
 - [Roadmap](#roadmap)
 - [License](#license)
@@ -176,6 +177,16 @@ Demo mode replays recorded calls and reports an *estimated* USD cost per
 step on the Costs page — about **$0.18** for a full issue at list prices.
 Real mode reports actual token usage. Fixture regeneration requires an
 Anthropic key: `kloxus record --publication futuro-proximo`.
+
+## Troubleshooting
+
+- **The demo URL bounces or shows a blank page after an earlier visit:**
+  the app moved from `/app/` to the site root during development, and
+  browsers cache the old permanent redirects (`/` → `/app/` and back),
+  which can loop forever. Nothing the server sends can clear a cached
+  301 — **clear site data** for `kloxus-demo.fly.dev` (or open a private
+  window) and reload once. Current builds never issue a 301 on app
+  paths, so a fresh visit cannot get stuck again.
 
 ## Open questions
 

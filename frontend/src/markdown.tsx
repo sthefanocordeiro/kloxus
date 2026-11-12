@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 // trusted — it comes from our API — so inline HTML is not a concern.
 function inline(text: string, key: string | number): ReactNode {
   const parts: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g;
+  const re = /(\*\*[^*]+\*\*|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^)]+\))/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;
@@ -13,7 +13,7 @@ function inline(text: string, key: string | number): ReactNode {
     if (m.index > last) parts.push(text.slice(last, m.index));
     const s = m[0];
     if (s.startsWith("**")) parts.push(<strong key={i++}>{s.slice(2, -2)}</strong>);
-    else if (s.startsWith("*")) parts.push(<em key={i++}>{s.slice(1, -1)}</em>);
+    else if (s.startsWith("*") || s.startsWith("_")) parts.push(<em key={i++}>{s.slice(1, -1)}</em>);
     else {
       const [, label, url] = s.match(/\[([^\]]+)\]\(([^)]+)\)/)!;
       parts.push(

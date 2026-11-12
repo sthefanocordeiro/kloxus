@@ -157,17 +157,19 @@ func cmdDemo(args []string) error {
 	}
 	defer db.Close()
 	ctx := context.Background()
-	pub, err := seedExample(ctx, db)
-	if err != nil {
-		return err
-	}
 	fetcher, provider := demoRuntime(cfg)
 	seed := func(ctx context.Context, sdb *store.DB) error {
 		_, err := seedExample(ctx, sdb)
 		return err
 	}
 	if !*headless {
+		// The UI starts from an empty workspace — onboarding creates the
+		// publication through the sample-proposal flow.
 		return serveUI(cfg, db, fetcher, provider, seed)
+	}
+	pub, err := seedExample(ctx, db)
+	if err != nil {
+		return err
 	}
 	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, true)
 	if err != nil {

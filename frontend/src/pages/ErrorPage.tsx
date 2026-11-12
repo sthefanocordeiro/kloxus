@@ -1,4 +1,4 @@
-import { Link, useRouteError } from "react-router-dom";
+import { isRouteErrorResponse, Link, useRouteError } from "react-router-dom";
 import { useT } from "../i18n";
 import { Button, Card } from "../ui";
 
@@ -7,7 +7,13 @@ import { Button, Card } from "../ui";
 export function ErrorPage() {
   const { t } = useT();
   const err = useRouteError();
-  const detail = err instanceof Error ? err.message : String(err ?? "");
+  const detail = isRouteErrorResponse(err)
+    ? `${err.status} ${err.statusText}`
+    : err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : JSON.stringify(err);
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper p-4">
       <Card className="w-full max-w-md text-center">

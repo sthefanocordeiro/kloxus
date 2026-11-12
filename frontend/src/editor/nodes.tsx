@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { mergeAttributes, Node } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { createContext, useContext } from "react";
@@ -17,6 +17,23 @@ export interface DocActions {
   // citation's passage and flashing the sentence
   showEvidence: (itemRef: number, opts?: { citeRef?: number; sid?: string; issueItemId?: number }) => void;
   readOnly: boolean;
+}
+
+// insideCommentary reports whether a resolved position sits inside a
+// commentary block — the only editable region in an issue document.
+export function insideCommentary($pos: { depth: number; node: (d: number) => { type: { name: string } } | null }): boolean {
+  for (let d = $pos.depth; d >= 0; d--) {
+    if ($pos.node(d)?.type?.name === "commentary") return true;
+  }
+  return false;
+}
+
+// blurEditor pulls the caret out of the document when a heading is
+// clicked — headlines open evidence, they never take text input, so the
+// editor must not keep a live selection somewhere a keystroke could
+// land outside commentary.
+function blurEditor(editor: NodeViewProps["editor"]) {
+  editor.commands.blur();
 }
 
 export const DocActionsCtx = createContext<DocActions>({
@@ -188,14 +205,24 @@ function SentenceView({ node }: NodeViewProps) {
 
 // CommentaryView is the one editable region: labelled so nobody confuses
 // it with AI output, gently prompting while a required block is empty.
-function CommentaryView({ node }: NodeViewProps) {
+// The whole card — label, helper text, padding — focuses the content.
+function CommentaryView({ node, editor, getPos }: NodeViewProps) {
   const { t } = useT();
   const a = node.attrs as { section: string; mode: string };
   const empty = node.textContent.trim() === "";
   return (
     <NodeViewWrapper
       data-commentary={a.section}
-      className="my-3 rounded-[var(--radius-card)] border border-dashed border-teal/50 bg-teal-soft/40 p-3"
+      className="my-3 cursor-text rounded-[var(--radius-card)] border border-dashed border-teal/50 bg-teal-soft/40 p-3"
+      onClick={(e: MouseEvent) => {
+        // clicks inside the editable text position the cursor naturally;
+        // clicks on the label, helper or padding focus the content's end
+        if ((e.target as HTMLElement).closest(".commentary-content")) return;
+        const pos = typeof getPos === "function" ? getPos() : undefined;
+        if (pos != null) {
+          editor.chain().focus(pos + node.nodeSize - 1).run();
+        }
+      }}
     >
       <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-teal" contentEditable={false}>
         {t.commentary.label}
@@ -208,29 +235,59 @@ function CommentaryView({ node }: NodeViewProps) {
           {t.commentary.required}
         </p>
       )}
-      <NodeViewContent className="font-doc text-[15px] leading-7 min-h-7" />
+      <NodeViewContent className="commentary-content min-h-16 font-doc text-[15px] leading-7" />
     </NodeViewWrapper>
   );
 }
 
-// ItemHeadingView — the story's headline; click selects it in the
-// evidence pane. The content is the editable-canonical text rendered
-// by NodeViewContent (no duplicated headline).
-function ItemHeadingView({ node }: NodeViewProps) {
+// ItemHeadingView — the story's headline as a non-editable atom; click
+// selects it in the evidence pane. The headline lives in attrs so no
+// keystroke can rewrite or merge it into a sentence.
+function ItemHeadingView({ node, editor }: NodeViewProps) {
   const actions = useContext(DocActionsCtx);
-  const a = node.attrs as { ref: number; issueItemId: number };
+  const a = node.attrs as { ref: number; issueItemId: number; headline: string };
   return (
     <NodeViewWrapper
       className="mt-6 cursor-pointer font-doc text-lg font-semibold hover:text-teal"
-      onClick={() => actions.showEvidence(a.ref, { issueItemId: a.issueItemId })}
+      onMouseDown={(e: MouseEvent) => e.preventDefault()}
+      onClick={() => {
+        blurEditor(editor);
+        actions.showEvidence(a.ref, { issueItemId: a.issueItemId });
+      }}
       data-item-ref={a.ref}
     >
-      <NodeViewContent role="heading" aria-level={3} />
+      <h3>{a.headline}</h3>
+    </NodeViewWrapper>
+  );
+}
+
+// SectionHeadingView — the section title atom; clicking it only defocuses
+// the editor, it is never a text target.
+function SectionHeadingView({ node, editor }: NodeViewProps) {
+  const a = node.attrs as { title: string };
+  return (
+    <NodeViewWrapper
+      onMouseDown={(e: MouseEvent) => e.preventDefault()}
+      onClick={() => blurEditor(editor)}
+      data-section-title="1"
+    >
+      <h2 className="mb-1 mt-8 font-doc text-xl font-semibold">{a.title}</h2>
     </NodeViewWrapper>
   );
 }
 
 // --- node definitions ---
+
+// IssueDoc is the issue's top node: the only things that may exist at
+// document level are the issue's real parts — section/item heading
+// atoms, sentence atoms and commentary blocks. A paragraph can't wrap
+// here, so a stray click+type next to a heading inserts nothing instead
+// of a phantom paragraph that vanishes on reload.
+export const IssueDoc = Node.create({
+  name: "doc",
+  topNode: true,
+  content: "(sectionHeading | itemHeading | sentence | commentary)+",
+});
 
 export const Sentence = Node.create({
   name: "sentence",
@@ -281,17 +338,47 @@ export const Commentary = Node.create({
 export const ItemHeading = Node.create({
   name: "itemHeading",
   group: "block",
-  content: "inline*",
+  atom: true,
+  selectable: false,
   addAttributes() {
-    return { ref: { default: 0 }, issueItemId: { default: 0 } };
+    return { ref: { default: 0 }, issueItemId: { default: 0 }, headline: { default: "" } };
   },
   parseHTML() {
     return [{ tag: "h3[data-item-ref]" }];
   },
   renderHTML({ node, HTMLAttributes }) {
-    return ["h3", mergeAttributes(HTMLAttributes, { "data-item-ref": node.attrs.ref }), 0];
+    return ["h3", mergeAttributes(HTMLAttributes, { "data-item-ref": node.attrs.ref }), node.attrs.headline];
   },
   addNodeView() {
     return ReactNodeViewRenderer(ItemHeadingView);
+  },
+});
+
+// SectionHeading is the non-editable h2 that opens a section — an atom
+// like ItemHeading so section names always come from the publication,
+// never from typing into the document.
+export const SectionHeading = Node.create({
+  name: "sectionHeading",
+  group: "block",
+  atom: true,
+  selectable: false,
+  addAttributes() {
+    return { title: { default: "" } };
+  },
+  parseHTML() {
+    return [{ tag: "h2[data-section-title]" }];
+  },
+  renderHTML({ node, HTMLAttributes }) {
+    return [
+      "h2",
+      mergeAttributes(HTMLAttributes, {
+        "data-section-title": "1",
+        class: "mt-8 mb-1 font-doc text-xl font-semibold",
+      }),
+      node.attrs.title,
+    ];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(SectionHeadingView);
   },
 });

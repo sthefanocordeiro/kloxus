@@ -30,7 +30,7 @@ export function PublicationPage() {
       <div className="mt-3 mb-6 flex items-baseline justify-between gap-4">
         <div className="flex items-baseline gap-4">
           <h1 className="font-doc text-2xl font-semibold">{pub.data?.publication.name ?? "…"}</h1>
-          <Link to={`/pub/${id}/outbox`} className="text-xs text-muted underline hover:text-ink">
+          <Link to={`/publications/${id}/outbox`} className="text-xs text-muted underline hover:text-ink">
             {t.outbox}
           </Link>
         </div>
