@@ -111,8 +111,31 @@ async function approveIssue(page: Page) {
   const dialog = page
     .getByRole("dialog")
     .filter({ has: page.getByRole("button", { name: "Cancel" }) });
-  await dialog.getByRole("button", { name: "Approve issue" }).click();
+  // the Approve & send dialog defaults to "Nobody (test only)" — the
+  // confirm approves without sending to readers
+  await dialog.getByRole("button", { name: "Approve & send" }).click();
   await expect(page.getByText("approved", { exact: false }).first()).toBeVisible({ timeout: 15000 });
+}
+
+async function sendToReaders(page: Page) {
+  // the send action is its own header button post-approval
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.getByRole("button", { name: "Send to readers" }).click();
+  // the after-sending surface replaces the editor chrome
+  await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/guide learned|guide/i).first()).toBeVisible();
+}
+
+async function readerJourney(page: Page) {
+  // the after-sending view links to the public issue page — open it and
+  // confirm the non-subscriber gets the gated cut
+  const href = await page.getByRole("link", { name: /reader page/ }).getAttribute("href");
+  expect(href).toContain("/app/p/futuro-proximo/");
+  await page.goto(href!.replace(/^https?:\/\/[^/]+/, ""));
+  await expect(page.getByText("For paying readers")).toBeVisible({ timeout: 15000 });
+  // subscribe → the magic-link offer appears
+  await page.getByRole("button", { name: "Subscribe" }).click();
+  await expect(page.getByText(/magic link/i).first()).toBeVisible({ timeout: 15000 });
 }
 
 const viewports = [
@@ -145,6 +168,8 @@ for (const vp of viewports) {
     });
 
     await approveIssue(page);
+    await sendToReaders(page);
+    await readerJourney(page);
   });
 }
 

@@ -25,13 +25,43 @@ export interface IssueSummary {
   id: number;
   publication_id: number;
   number: number;
-  status: "" | "reviewing" | "drafted" | "approved" | "sent";
+  status: "" | "reviewing" | "drafted" | "approved" | "sent" | "scheduled";
   subject: string;
   created_at: string;
   items: Record<string, number>;
   flags: number;
   missing_required_commentary: number;
+  document_version?: string;
   receipt?: ApprovalReceipt;
+}
+
+export interface OutboxEmail {
+  id: number;
+  kind: string;
+  to: string;
+  subject: string;
+  body_md?: string;
+  body_html?: string;
+  created_at: string;
+}
+
+export interface PublicIssue {
+  publication: { name: string; slug: string; language: string };
+  issue: { number: number; subject: string; created_at: string };
+  body_md: string;
+  gated: boolean;
+  subscribed: boolean;
+  reader: { name: string };
+  paid_sections: string[];
+}
+
+export interface AfterSend {
+  issue: IssueSummary;
+  public_url: string;
+  learned: string[];
+  guide: { version: number };
+  export_html: string;
+  export_md: string;
 }
 
 export interface ApprovalReceipt {
@@ -282,10 +312,27 @@ export const api = {
     ),
   approve: (issueID: number) =>
     request<{ issue: IssueSummary; receipt: ApprovalReceipt }>("POST", `/api/v1/issues/${issueID}/approve`, {}),
-  send: (issueID: number, audience: "test" | "readers", to?: string) =>
-    request<{ issue: IssueSummary; outbox_email_id: number; audience: string }>(
-      "POST", `/api/v1/issues/${issueID}/send`, { audience, to },
+  send: (issueID: number, audience: "test" | "readers", when: "now" | "schedule" = "now", to?: string) =>
+    request<{ issue: IssueSummary; outbox_email_id?: number; audience?: string; scheduled?: boolean }>(
+      "POST", `/api/v1/issues/${issueID}/send`, { audience, when, to },
     ),
+  hold: (issueID: number) =>
+    request<{ issue: IssueSummary }>("POST", `/api/v1/issues/${issueID}/hold`, {}),
+  after: (issueID: number) => request<AfterSend>("GET", `/api/v1/issues/${issueID}/after`),
+  publicIssue: (slug: string, num: string | number, query = "") =>
+    request<PublicIssue>("GET", `/api/v1/p/${slug}/${num}${query}`),
+  outbox: (pubID: number) =>
+    request<{ emails: OutboxEmail[] }>("GET", `/api/v1/publications/${pubID}/outbox`).then((r) => r.emails),
+  outboxEmail: (id: number) =>
+    request<{ email: OutboxEmail }>("GET", `/api/v1/outbox/${id}`).then((r) => r.email),
+  reader: (pubID: number) =>
+    request<{ reader: { email: string; name: string }; subscribed: boolean; issue?: IssueSummary }>(
+      "GET", `/api/v1/publications/${pubID}/reader`),
+  paywallSimulate: (pubID: number | string, query = "") =>
+    request<{ subscribed: boolean; outbox_email_id: number; magic_link: string }>(
+      "POST", `/api/v1/publications/${pubID}/paywall/simulate${query}`, {}),
+  paywallCancel: (pubID: number | string, query = "") =>
+    request<{ subscribed: boolean }>("POST", `/api/v1/publications/${pubID}/paywall/cancel${query}`, {}),
   preview: (issueID: number, reader: string, surface: string) =>
     request<{ body_md: string; gated: boolean; reader: string; surface: string }>(
       "GET", `/api/v1/issues/${issueID}/preview?reader=${reader}&surface=${surface}`,

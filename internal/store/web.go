@@ -71,6 +71,14 @@ func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
 	return out, rows.Err()
 }
 
+// IssueByNumber loads one issue by publication and issue number — the
+// pair a public issue URL like /p/{slug}/{num} addresses.
+func (db *DB) IssueByNumber(ctx context.Context, pubID int64, number int) (*Issue, error) {
+	return db.scanIssue(db.QueryRowContext(ctx,
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		 FROM issues WHERE publication_id = ? AND number = ?`, pubID, number))
+}
+
 // LatestIssue returns a publication's newest issue (sql.ErrNoRows if none).
 func (db *DB) LatestIssue(ctx context.Context, pubID int64) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,
@@ -161,6 +169,45 @@ func (db *DB) GetIssueItem(ctx context.Context, id int64) (*IssueItem, error) {
 		return nil, err
 	}
 	return &ii, nil
+}
+
+// LatestPublicIssue returns the newest sent or scheduled issue — what a
+// public issue URL may resolve (sql.ErrNoRows when none is out yet).
+func (db *DB) LatestPublicIssue(ctx context.Context, pubID int64) (*Issue, error) {
+	return db.scanIssue(db.QueryRowContext(ctx,
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		 FROM issues WHERE publication_id = ? AND status IN ('sent','scheduled')
+		 ORDER BY number DESC LIMIT 1`, pubID))
+}
+
+// IssueRejectionReasons returns the rejection reasons still standing on
+// an issue's items — the rules the editorial guide learned from it. An
+// undone rejection (whose latest decision is no longer "reject") drops
+// out, matching how Rebuild condenses the guide.
+func (db *DB) IssueRejectionReasons(ctx context.Context, issueID int64) ([]string, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT ii.id FROM issue_items ii WHERE ii.issue_id = ?`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	var itemIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		itemIDs = append(itemIDs, id)
+	}
+	rows.Close()
+	var out []string
+	for _, id := range itemIDs {
+		kind, reason, err := db.LatestDecision(ctx, id)
+		if err == nil && kind == "reject" && strings.TrimSpace(reason) != "" {
+			out = append(out, reason)
+		}
+	}
+	return out, nil
 }
 
 // LatestFinishedIssue returns the newest approved or sent issue — what a

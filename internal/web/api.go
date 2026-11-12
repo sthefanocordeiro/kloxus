@@ -187,6 +187,7 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 		"items":                       counts,
 		"flags":                       len(iss.Flags),
 		"missing_required_commentary": missing,
+		"document_version":            docVersion(iss),
 	}
 	if rec, err := db(r).ApprovalReceipt(ctx, iss.ID); err == nil {
 		m["receipt"] = receiptView(rec)
@@ -759,8 +760,8 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" {
-		apiErr(w, 409, "read_only", "this issue was already sent — sent issues are read-only")
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
 	var in struct {
@@ -949,8 +950,8 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "item") {
 		return
 	}
-	if iss.Status == "sent" {
-		apiErr(w, 409, "read_only", "this issue was already sent — sent issues are read-only")
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
 	var in struct {
@@ -1078,9 +1079,9 @@ type apiCheck struct {
 // factual sentence sourced, no flags, required commentary written.
 func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.Publication, doc *issueDocument) []apiCheck {
 	checks := []apiCheck{}
-	if iss.Status == "sent" {
+	if iss.Status == "sent" || iss.Status == "scheduled" {
 		checks = append(checks, apiCheck{Code: "read_only", OK: false,
-			Message: "this issue was already sent — sent issues are read-only"})
+			Message: "this issue is sent or scheduled — locked issues are read-only"})
 	}
 	if doc == nil {
 		doc, _ = buildIssueDocument(r.Context(), db(r), iss, pub)
@@ -1184,8 +1185,8 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" {
-		apiErr(w, 409, "read_only", "this issue was already sent — sent issues are read-only")
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
 	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
@@ -1290,8 +1291,8 @@ func (s *Server) apiSentenceCtx(w http.ResponseWriter, r *http.Request) (*store.
 	if apiDBErr(w, r, err, "issue") {
 		return nil, nil, nil, false
 	}
-	if iss.Status == "sent" {
-		apiErr(w, 409, "read_only", "this issue was already sent — sent issues are read-only")
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return nil, nil, nil, false
 	}
 	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
@@ -1543,8 +1544,8 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" {
-		apiErr(w, 409, "read_only", "this issue was already sent — sent issues are read-only")
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
 	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
@@ -1716,8 +1717,8 @@ func (s *Server) apiCommentary(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" {
-		apiErr(w, 409, "read_only", "this issue was already sent — sent issues are read-only")
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
 	var in struct {
@@ -1837,6 +1838,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Audience string `json:"audience"` // test | readers (safe default: explicit choice required)
 		To       string `json:"to"`       // optional test address
+		When     string `json:"when"`     // now | schedule — scheduling locks the issue until Hold
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
@@ -1846,10 +1848,32 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "audience is required: test | readers — sending needs an explicit choice")
 		return
 	}
+	if in.When == "" {
+		in.When = "now"
+	}
+	if in.When != "now" && in.When != "schedule" {
+		apiErr(w, 400, "validation", "when must be now | schedule")
+		return
+	}
+	if in.When == "schedule" && in.Audience != "readers" {
+		apiErr(w, 400, "validation", "scheduling applies to a reader send — a test send goes out now")
+		return
+	}
 	if iss.Status != "approved" {
 		apiErr(w, 409, "blocked", "the issue must be approved before sending",
 			apiReason{Code: "not_approved", Message: "issue is not approved",
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
+		return
+	}
+	if in.When == "schedule" {
+		// demo mode has no dispatch clock: a scheduled issue is locked
+		// and stays queued until Hold returns it to draft.
+		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "scheduled"), "issue") {
+			return
+		}
+		db(r).RecordDecision(r.Context(), iss.PublicationID, 0, "schedule", "issue scheduled")
+		fresh, _ := db(r).GetIssue(r.Context(), iss.ID)
+		apiJSON(w, 200, map[string]any{"issue": s.issueSummary(r, fresh), "scheduled": true})
 		return
 	}
 	to := []string{"readers@kloxus.demo"}
@@ -1879,6 +1903,26 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{
 		"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
 	})
+}
+
+// apiHold unschedules a queued issue: the spec's Hold returns a
+// scheduled (locked) issue to draft so it can be edited and approved
+// again. Hold is a no-op for anything not scheduled.
+func (s *Server) apiHold(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.apiIssueID(r)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	if iss.Status != "scheduled" {
+		apiErr(w, 409, "validation", "only a scheduled issue can be held")
+		return
+	}
+	if apiDBErr(w, r, db(r).RevertIssueToDraft(r.Context(), iss.ID), "issue") {
+		return
+	}
+	db(r).RecordDecision(r.Context(), iss.PublicationID, 0, "hold", "scheduled issue held")
+	fresh, _ := db(r).GetIssue(r.Context(), iss.ID)
+	apiJSON(w, 200, map[string]any{"issue": s.issueSummary(r, fresh)})
 }
 
 func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
@@ -1997,6 +2041,7 @@ func (s *Server) apiReader(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiPaywallSimulate(w http.ResponseWriter, r *http.Request) {
+	r = s.withWS(r)
 	pub, err := s.apiPub(r)
 	if apiDBErr(w, r, err, "publication") {
 		return
@@ -2010,8 +2055,13 @@ func (s *Server) apiPaywallSimulate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Demo mode delivers the magic link through the workspace outbox; it
-	// carries the workspace id so it opens in any browser.
-	link := requestBase(r) + "/pub/" + r.PathValue("id") + "/reader?key=" + token + "&ws=" + reqWS(r).ID
+	// carries the workspace id so it opens in any browser. The link opens
+	// the latest finished issue on the reader-facing page.
+	link := requestBase(r) + "/app/p/" + pub.Slug + "/latest?key=" + token + "&ws=" + reqWS(r).ID
+	if iss, err := db(r).LatestPublicIssue(ctx, pub.ID); err == nil {
+		link = fmt.Sprintf("%s/app/p/%s/%d?key=%s&ws=%s",
+			requestBase(r), pub.Slug, iss.Number, token, reqWS(r).ID)
+	}
 	htmlBody := fmt.Sprintf(
 		`<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:38em;margin:2em auto">`+
 			`<h2>%s — acesso de assinante</h2>`+
@@ -2030,6 +2080,7 @@ func (s *Server) apiPaywallSimulate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiPaywallCancel(w http.ResponseWriter, r *http.Request) {
+	r = s.withWS(r)
 	pub, err := s.apiPub(r)
 	if apiDBErr(w, r, err, "publication") {
 		return
@@ -2039,6 +2090,123 @@ func (s *Server) apiPaywallCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiJSON(w, 200, map[string]any{"subscribed": false})
+}
+
+// withWS resolves a ?ws= workspace override for reader-facing requests —
+// magic links, public issue pages and unsubscribe links carry the
+// creator's workspace id so they open in any browser. The visitor's own
+// session workspace is never touched.
+func (s *Server) withWS(r *http.Request) *http.Request {
+	wsid := r.URL.Query().Get("ws")
+	if wsid == "" || wsid == reqWS(r).ID || !s.d.WS.Hosted() {
+		return r
+	}
+	if target, err := s.d.WS.Get(r.Context(), wsid); err == nil {
+		return r.WithContext(context.WithValue(r.Context(), ctxWS, target))
+	}
+	return r
+}
+
+// apiPublicIssue serves the reader-facing issue page data: the gated or
+// full body depending on the reader's subscription (magic-link key or a
+// forced free preview), with no editor-only fields.
+func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
+	r = s.withWS(r)
+	pub, err := db(r).GetPublication(r.Context(), r.PathValue("slug"))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	var iss *store.Issue
+	if r.PathValue("num") == "latest" {
+		iss, err = db(r).LatestPublicIssue(r.Context(), pub.ID)
+	} else {
+		num, nerr := strconv.Atoi(r.PathValue("num"))
+		if nerr != nil {
+			apiErr(w, 404, "not_found", "issue not found")
+			return
+		}
+		iss, err = db(r).IssueByNumber(r.Context(), pub.ID, num)
+	}
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	if iss.Status != "sent" && iss.Status != "scheduled" {
+		apiErr(w, 404, "not_found", "issue not found")
+		return
+	}
+	ctx := r.Context()
+	rid, _ := db(r).UpsertReader(ctx, pub.ID, demoReaderEmail, demoReaderName)
+	active, _ := db(r).HasActiveSubscription(ctx, rid)
+	key := r.URL.Query().Get("key")
+	if key != "" {
+		if mrid, err := db(r).ReaderByMagicToken(ctx, pub.ID, key); err == nil && mrid == rid {
+			active = true
+		}
+	}
+	forceFree := r.URL.Query().Get("view") == "free"
+	unlocked := active && !forceFree
+	md := delivery.ReaderBody(iss, pub, requestBase(r))
+	if !unlocked {
+		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
+	}
+	apiJSON(w, 200, map[string]any{
+		"publication": map[string]any{"name": pub.Name, "slug": pub.Slug, "language": pub.Language},
+		"issue":       map[string]any{"number": iss.Number, "subject": iss.Subject, "created_at": iss.CreatedAt},
+		"body_md":     md, "gated": !unlocked, "subscribed": active,
+		"reader":      map[string]string{"name": demoReaderName},
+		"paid_sections": pub.Paywall.PaidSections,
+	})
+}
+
+// apiAfter is the post-send summary: public URL, downloads, the approval
+// receipt and the rules the editorial guide learned from this issue.
+func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.apiIssueID(r)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	pub, err := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	if iss.Status != "sent" && iss.Status != "scheduled" {
+		apiErr(w, 409, "blocked", "the public page exists once the issue is sent or scheduled",
+			apiReason{Code: "not_sent", Message: "issue is not sent",
+				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
+		return
+	}
+	learned, _ := db(r).IssueRejectionReasons(r.Context(), iss.ID)
+	version, _, _ := db(r).LatestGuide(r.Context(), pub.ID)
+	publicURL := fmt.Sprintf("%s/app/p/%s/%d?ws=%s", requestBase(r), pub.Slug, iss.Number, reqWS(r).ID)
+	apiJSON(w, 200, map[string]any{
+		"issue":       s.issueSummary(r, iss),
+		"public_url":  publicURL,
+		"learned":     orEmpty(learned),
+		"guide":       map[string]any{"version": version},
+		"export_html": fmt.Sprintf("/api/v1/issues/%d/export?fmt=html", iss.ID),
+		"export_md":   fmt.Sprintf("/api/v1/issues/%d/export", iss.ID),
+	})
+}
+
+// apiUnsub performs the reader-facing one-click unsubscribe behind the
+// signed link every issue email carries. The React unsubscribe page calls
+// it once with the link's parameters.
+func (s *Server) apiUnsub(w http.ResponseWriter, r *http.Request) {
+	r = s.withWS(r)
+	pub, err := db(r).GetPublication(r.Context(), r.URL.Query().Get("pub"))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	rid, _ := strconv.ParseInt(r.URL.Query().Get("r"), 10, 64)
+	tok := r.URL.Query().Get("t")
+	if rid == 0 || !s.d.WS.ValidMAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid), tok) {
+		apiErr(w, 403, "validation", "invalid unsubscribe link")
+		return
+	}
+	if apiDBErr(w, r, db(r).UnsubscribeReader(r.Context(), rid), "reader") {
+		return
+	}
+	apiJSON(w, 200, map[string]any{"unsubscribed": true})
 }
 
 // --- guide / costs ---

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { ArrowLeft, BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
@@ -292,7 +292,10 @@ export function IssuePage() {
         </div>
         <ol className="flex items-center gap-1 text-[11px]" aria-label={(t.status as Record<string, string>)[issue.status]}>
           {t.board.steps.map((label, i) => {
-            const step = issue.status === "drafted" ? 2 : issue.status === "approved" || issue.status === "sent" ? 3 : 1;
+            const step =
+              issue.status === "drafted" ? 2
+              : issue.status === "approved" || issue.status === "sent" || issue.status === "scheduled" ? 3
+              : 1;
             return (
               <li key={label} className="flex items-center gap-1">
                 {i > 0 && <span className="mx-0.5 text-muted/40">·</span>}
@@ -346,6 +349,7 @@ export function IssuePage() {
             onApproved={() => invalidate()}
           />
         )}
+        {issue.status === "scheduled" && <HoldBar issue={issue} onDone={() => invalidate()} />}
         {issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
       </header>
 
@@ -486,7 +490,7 @@ export function IssuePage() {
         )
       )}
 
-      {issue.status === "sent" && issue.receipt && <ReceiptCard issue={issue} />}
+      {(issue.status === "sent" || issue.status === "scheduled") && <AfterSend issue={issue} />}
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink px-4 py-2 text-xs text-paper shadow-lg">
           {toast.text}
@@ -528,8 +532,22 @@ function ApproveBar({
   const { t } = useT();
   const ready = readyFromChecks(checks);
   const [confirm, setConfirm] = useState(false);
-  const approveMut = useMutation({
-    mutationFn: () => api.approve(issue.id),
+  const [audience, setAudience] = useState<"nobody" | "readers">("nobody");
+  const [when, setWhen] = useState<"now" | "schedule">("now");
+  const pubQ = useQuery({
+    queryKey: ["publication", issue.publication_id],
+    queryFn: () => api.publication(issue.publication_id),
+  });
+  const pub = pubQ.data?.publication;
+  // the dialog approves first, then sends per the chosen audience —
+  // "Nobody (test only)" only approves; readers send now or schedules.
+  const flow = useMutation({
+    mutationFn: async () => {
+      await api.approve(issue.id);
+      if (audience === "readers") {
+        await api.send(issue.id, "readers", when);
+      }
+    },
     onSuccess: () => {
       setConfirm(false);
       onApproved();
@@ -561,21 +579,65 @@ function ApproveBar({
         )}
       </KPopover>
 
-      <KDialog open={confirm} onOpenChange={setConfirm} title={t.readiness.approve}>
-        <p className="mb-4 text-sm text-muted">
+      <KDialog open={confirm} onOpenChange={setConfirm} title={t.send.approveSend}>
+        <p className="mb-3 text-sm font-semibold">
           #{issue.number} · {issue.subject}
         </p>
+        <div className="mb-3">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{t.send.audience}</p>
+          <label className="flex items-center gap-2 py-1 text-sm">
+            <input type="radio" name="aud" checked={audience === "nobody"} onChange={() => setAudience("nobody")} />
+            {t.send.nobody}
+          </label>
+          <label className="flex items-center gap-2 py-1 text-sm">
+            <input type="radio" name="aud" checked={audience === "readers"} onChange={() => setAudience("readers")} />
+            {t.send.allReaders}
+          </label>
+        </div>
+        {audience === "readers" && (
+          <div className="mb-3">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{t.send.when}</p>
+            <label className="flex items-center gap-2 py-1 text-sm">
+              <input type="radio" name="when" checked={when === "now"} onChange={() => setWhen("now")} />
+              {t.send.now}
+            </label>
+            <label className="flex items-center gap-2 py-1 text-sm">
+              <input type="radio" name="when" checked={when === "schedule"} onChange={() => setWhen("schedule")} />
+              {t.send.schedule}
+            </label>
+          </div>
+        )}
+        <dl className="mb-4 space-y-1 border-t border-line pt-3 text-xs text-muted">
+          <div className="flex justify-between">
+            <dt>{t.send.version}</dt>
+            <dd className="font-mono">{(issue.document_version ?? "").slice(0, 8)}</dd>
+          </div>
+          {coverage && (
+            <div className="flex justify-between">
+              <dt>{t.send.sourced}</dt>
+              <dd>
+                {coverage.cited}/{coverage.total}
+              </dd>
+            </div>
+          )}
+          <div className="flex justify-between">
+            <dt>{t.send.sender}</dt>
+            <dd>{pub?.name} &lt;{pub?.slug}@kloxus.demo&gt;</dd>
+          </div>
+        </dl>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setConfirm(false)}>
             {t.doc.cancel}
           </Button>
-          <Button variant="teal" disabled={approveMut.isPending} onClick={() => approveMut.mutate()}>
-            {t.readiness.approve}
+          <Button
+            variant={audience === "readers" ? "danger" : "teal"}
+            disabled={flow.isPending}
+            onClick={() => flow.mutate()}
+          >
+            {t.send.confirm}
           </Button>
         </div>
-        {approveMut.error && (
-          <p className="mt-2 text-xs text-danger">{errText(t, approveMut.error)}</p>
-        )}
+        {flow.error && <p className="mt-2 text-xs text-danger">{errText(t, flow.error)}</p>}
       </KDialog>
     </>
   );
@@ -584,29 +646,107 @@ function ApproveBar({
 function SendRow({ issue, onDone }: { issue: IssueSummary; onDone: () => void }) {
   const { t } = useT();
   const sendMut = useMutation({
-    mutationFn: (aud: "test" | "readers") => api.send(issue.id, aud),
+    mutationFn: ({ aud, when }: { aud: "test" | "readers"; when: "now" | "schedule" }) =>
+      api.send(issue.id, aud, when),
     onSuccess: onDone,
   });
   return (
-    <div className="mt-2 flex gap-2">
-      <Button size="sm" variant="outline" disabled={sendMut.isPending} onClick={() => sendMut.mutate("test")}>
-        <Send size={12} /> {t.send.test}
-      </Button>
-      <Button size="sm" variant="danger" disabled={sendMut.isPending} onClick={() => sendMut.mutate("readers")}>
-        {t.send.readers}
+    <div className="mt-2 space-y-2">
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "test", when: "now" })}>
+          <Send size={12} /> {t.send.test}
+        </Button>
+        <Button size="sm" variant="danger" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "readers", when: "now" })}>
+          {t.send.readers}
+        </Button>
+      </div>
+      <Button size="sm" variant="ghost" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "readers", when: "schedule" })}>
+        {t.send.schedule}
       </Button>
       {sendMut.error && <p className="text-xs text-danger">{errText(t, sendMut.error)}</p>}
     </div>
   );
 }
 
-function ReceiptCard({ issue }: { issue: IssueSummary }) {
-  const { t, lang } = useT();
-  const r = issue.receipt!;
+// HoldBar surfaces the scheduled state in the header: the issue is
+// locked until it ships; Hold returns it to draft for re-approval.
+function HoldBar({ issue, onDone }: { issue: IssueSummary; onDone: () => void }) {
+  const { t } = useT();
+  const holdMut = useMutation({
+    mutationFn: () => api.hold(issue.id),
+    onSuccess: onDone,
+  });
   return (
-    <div className="border-t border-line bg-teal-soft/40 px-4 py-2 text-xs">
-      {t.receipt.title}: {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)} ·{" "}
-      {t.receipt.version} {r.document_version.slice(0, 8)}
+    <KPopover
+      trigger={
+        <Button size="sm" variant="outline">
+          {t.send.scheduled}
+        </Button>
+      }
+    >
+      <p className="mb-2 text-xs text-muted">{t.send.scheduledHint}</p>
+      <Button size="sm" variant="danger" disabled={holdMut.isPending} onClick={() => holdMut.mutate()}>
+        {t.send.hold}
+      </Button>
+      {holdMut.error && <p className="mt-2 text-xs text-danger">{errText(t, holdMut.error)}</p>}
+    </KPopover>
+  );
+}
+
+// AfterSend is the "after sending" surface: public link, downloads, the
+// receipt, what the guide learned and the way to the next issue.
+function AfterSend({ issue }: { issue: IssueSummary }) {
+  const { t, lang } = useT();
+  const nav = useNavigate();
+  const afterQ = useQuery({ queryKey: ["after", issue.id], queryFn: () => api.after(issue.id) });
+  const next = useMutation({
+    mutationFn: () => api.startRun(issue.publication_id),
+    onSuccess: (r) => nav(`/runs/${r.id}`),
+  });
+  const a = afterQ.data;
+  const r = issue.receipt;
+  return (
+    <div className="border-t border-line bg-paper-raised px-4 py-3">
+      <div className="mx-auto flex max-w-3xl flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs">
+          {r && (
+            <span className="text-muted">
+              {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)} · {t.receipt.version}{" "}
+              {r.document_version.slice(0, 8)}
+            </span>
+          )}
+          {a && (
+            <a href={a.public_url} target="_blank" rel="noreferrer" className="font-semibold text-teal hover:underline">
+              {t.after.open} ↗
+            </a>
+          )}
+          {a && (
+            <span className="text-muted">
+              {t.after.downloads}:{" "}
+              <a className="text-ink underline" href={a.export_html}>HTML</a>
+              {" · "}
+              <a className="text-ink underline" href={a.export_md}>Markdown</a>
+            </span>
+          )}
+          <span className="flex-1" />
+          <Button size="sm" variant="teal" disabled={next.isPending} onClick={() => next.mutate()}>
+            {t.after.next}
+          </Button>
+        </div>
+        {a && (a.learned.length > 0 ? (
+          <div className="text-xs">
+            <p className="mb-1 font-semibold uppercase tracking-wide text-muted">
+              {t.after.learned} · {t.guide.title} v{a.guide.version}
+            </p>
+            <ul className="list-disc space-y-0.5 pl-5 text-ink/80">
+              {a.learned.map((rule, i) => <li key={i}>{rule}</li>)}
+            </ul>
+          </div>
+        ) : (
+          <p className="text-xs text-muted">{t.after.learnedEmpty}</p>
+        ))}
+        {next.error && <p className="text-xs text-danger">{errText(t, next.error)}</p>}
+      </div>
     </div>
   );
 }
