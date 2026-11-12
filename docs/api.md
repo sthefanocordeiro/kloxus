@@ -369,7 +369,7 @@ fresh one.
 ```
 
 ### `POST /api/v1/issues/{id}/send`
-`{"audience": "test"|"readers", "to": "optional@test.address", "when": "now"|"schedule"}`
+`{"audience": "test"|"readers", "to": "optional@test.address", "when": "now"|"schedule", "at": "RFC3339"}`
 Safe audience by default: `audience` is required — sending needs an
 explicit choice. Requires `approved` (`blocked`/`not_approved`
 otherwise). In demo mode every send lands in the outbox.
@@ -377,17 +377,22 @@ otherwise). In demo mode every send lands in the outbox.
   and can still go to readers.
 - `"readers"` + `"when":"now"` marks the issue `sent`; sent issues are
   read-only.
-- `"readers"` + `"when":"schedule"` marks the issue `scheduled`:
+- `"readers"` + `"when":"schedule"` requires `"at"`, an RFC3339 time in
+  the future (`bad_time` when missing, malformed or past). It marks the
+  issue `scheduled`, stores the send time on `issue.scheduled_at`:
   locked like a sent issue, but nothing reaches the outbox yet (demo
   mode has no dispatch clock). Scheduling a `test` send is rejected.
 ```json
 {"issue": {"id": 1, "status": "sent", "…": "…"},
  "outbox_email_id": 7, "audience": "readers"}
 ```
+A scheduled send answers `{"issue": {…}, "scheduled": true,
+"scheduled_at": "2026-11-12T08:00:00Z"}`.
 
 ### `POST /api/v1/issues/{id}/hold`
-Only valid on a `scheduled` issue. Returns it to `drafted` and drops the
-approval receipt (re-approval required — Hold is an un-approval).
+Only valid on a `scheduled` issue. Returns it to `drafted`, clears the
+queued send time and drops the approval receipt (re-approval required —
+Hold is an un-approval).
 ```json
 {"issue": {"id": 1, "status": "drafted", "…": "…"}}
 ```

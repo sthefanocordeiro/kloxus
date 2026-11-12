@@ -189,6 +189,9 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 		"missing_required_commentary": missing,
 		"document_version":            docVersion(iss),
 	}
+	if iss.ScheduledAt != "" {
+		m["scheduled_at"] = iss.ScheduledAt
+	}
 	if rec, err := db(r).ApprovalReceipt(ctx, iss.ID); err == nil {
 		m["receipt"] = receiptView(rec)
 	}
@@ -1839,6 +1842,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		Audience string `json:"audience"` // test | readers (safe default: explicit choice required)
 		To       string `json:"to"`       // optional test address
 		When     string `json:"when"`     // now | schedule — scheduling locks the issue until Hold
+		At       string `json:"at"`       // RFC3339 send time, required when when=schedule
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
@@ -1866,14 +1870,26 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.When == "schedule" {
-		// demo mode has no dispatch clock: a scheduled issue is locked
-		// and stays queued until Hold returns it to draft.
-		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "scheduled"), "issue") {
+		at, err := time.Parse(time.RFC3339, strings.TrimSpace(in.At))
+		if err != nil {
+			apiErr(w, 400, "bad_time", "scheduling needs a send time: at must be RFC3339 (e.g. 2026-01-04T08:00:00Z)")
 			return
 		}
-		db(r).RecordDecision(r.Context(), iss.PublicationID, 0, "schedule", "issue scheduled")
+		if !at.After(time.Now()) {
+			apiErr(w, 400, "bad_time", "the scheduled time must be in the future")
+			return
+		}
+		atStr := at.UTC().Format(time.RFC3339)
+		// demo mode has no dispatch clock: a scheduled issue is locked
+		// and stays queued until Hold returns it to draft.
+		if apiDBErr(w, r, db(r).ScheduleIssue(r.Context(), iss.ID, atStr), "issue") {
+			return
+		}
+		db(r).RecordDecision(r.Context(), iss.PublicationID, 0, "schedule", "issue scheduled for "+atStr)
 		fresh, _ := db(r).GetIssue(r.Context(), iss.ID)
-		apiJSON(w, 200, map[string]any{"issue": s.issueSummary(r, fresh), "scheduled": true})
+		apiJSON(w, 200, map[string]any{
+			"issue": s.issueSummary(r, fresh), "scheduled": true, "scheduled_at": atStr,
+		})
 		return
 	}
 	to := []string{"readers@kloxus.demo"}

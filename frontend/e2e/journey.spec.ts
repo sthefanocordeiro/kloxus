@@ -117,6 +117,21 @@ async function approveIssue(page: Page) {
   await expect(page.getByText("approved", { exact: false }).first()).toBeVisible({ timeout: 15000 });
 }
 
+async function scheduleAndHold(page: Page) {
+  // post-approval the send popover schedules with a real date+time —
+  // the datetime input defaults to tomorrow
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByLabel("Send at")).toBeVisible();
+  await page.getByRole("button", { name: "Schedule for later" }).click();
+  // the scheduled issue locks; the header chip shows the queued time
+  const scheduled = page.getByRole("button", { name: /Scheduled/ });
+  await expect(scheduled).toBeVisible({ timeout: 15000 });
+  // Hold unlocks back to draft — re-approval is required before sending
+  await scheduled.click();
+  await page.getByRole("button", { name: "Hold" }).click();
+  await expect(page.getByRole("button", { name: "Approve issue" }).first()).toBeVisible({ timeout: 15000 });
+}
+
 async function sendToReaders(page: Page) {
   // the send action is its own header button post-approval
   await page.getByRole("button", { name: "Send", exact: true }).click();
@@ -167,6 +182,8 @@ for (const vp of viewports) {
       timeout: 30000,
     });
 
+    await approveIssue(page);
+    await scheduleAndHold(page);
     await approveIssue(page);
     await sendToReaders(page);
     await readerJourney(page);

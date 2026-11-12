@@ -11,6 +11,13 @@ import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
 import { fmtDate } from "../lib/fmt";
+
+// datetime-local inputs work in local time without a zone; the API gets
+// the same instant as RFC3339 via new Date(v).toISOString().
+function localInput(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 import { Badge, Button, KDialog, KPopover } from "../ui";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
 import { BoardSkeleton, BuildBoard, StepRail } from "./Board";
@@ -534,18 +541,21 @@ function ApproveBar({
   const [confirm, setConfirm] = useState(false);
   const [audience, setAudience] = useState<"nobody" | "readers">("nobody");
   const [when, setWhen] = useState<"now" | "schedule">("now");
+  const [at, setAt] = useState(() => localInput(new Date(Date.now() + 24 * 3600e3)));
   const pubQ = useQuery({
     queryKey: ["publication", issue.publication_id],
     queryFn: () => api.publication(issue.publication_id),
   });
   const pub = pubQ.data?.publication;
+  const atOK = when !== "schedule" || new Date(at).getTime() > Date.now();
   // the dialog approves first, then sends per the chosen audience —
   // "Nobody (test only)" only approves; readers send now or schedules.
   const flow = useMutation({
     mutationFn: async () => {
       await api.approve(issue.id);
       if (audience === "readers") {
-        await api.send(issue.id, "readers", when);
+        await api.send(issue.id, "readers", when, undefined,
+          when === "schedule" ? new Date(at).toISOString() : undefined);
       }
     },
     onSuccess: () => {
@@ -605,6 +615,19 @@ function ApproveBar({
               <input type="radio" name="when" checked={when === "schedule"} onChange={() => setWhen("schedule")} />
               {t.send.schedule}
             </label>
+            {when === "schedule" && (
+              <label className="mt-1 flex items-center gap-2 pl-6 text-xs text-muted">
+                {t.send.at}
+                <input
+                  type="datetime-local"
+                  className="rounded border border-line bg-paper px-2 py-1 text-xs text-ink"
+                  min={localInput(new Date())}
+                  value={at}
+                  onChange={(e) => setAt(e.target.value)}
+                />
+                {!atOK && <span className="text-danger">{t.send.pickTime}</span>}
+              </label>
+            )}
           </div>
         )}
         <dl className="mb-4 space-y-1 border-t border-line pt-3 text-xs text-muted">
@@ -631,7 +654,7 @@ function ApproveBar({
           </Button>
           <Button
             variant={audience === "readers" ? "danger" : "teal"}
-            disabled={flow.isPending}
+            disabled={flow.isPending || !atOK}
             onClick={() => flow.mutate()}
           >
             {t.send.confirm}
@@ -645,9 +668,12 @@ function ApproveBar({
 
 function SendRow({ issue, onDone }: { issue: IssueSummary; onDone: () => void }) {
   const { t } = useT();
+  const [at, setAt] = useState(() => localInput(new Date(Date.now() + 24 * 3600e3)));
+  const atOK = new Date(at).getTime() > Date.now();
   const sendMut = useMutation({
     mutationFn: ({ aud, when }: { aud: "test" | "readers"; when: "now" | "schedule" }) =>
-      api.send(issue.id, aud, when),
+      api.send(issue.id, aud, when, undefined,
+        when === "schedule" ? new Date(at).toISOString() : undefined),
     onSuccess: onDone,
   });
   return (
@@ -660,9 +686,24 @@ function SendRow({ issue, onDone }: { issue: IssueSummary; onDone: () => void })
           {t.send.readers}
         </Button>
       </div>
-      <Button size="sm" variant="ghost" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "readers", when: "schedule" })}>
-        {t.send.schedule}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="datetime-local"
+          aria-label={t.send.at}
+          className="rounded border border-line bg-paper px-2 py-1 text-xs text-ink"
+          min={localInput(new Date())}
+          value={at}
+          onChange={(e) => setAt(e.target.value)}
+        />
+        <Button
+          size="sm" variant="ghost"
+          disabled={sendMut.isPending || !atOK}
+          onClick={() => sendMut.mutate({ aud: "readers", when: "schedule" })}
+        >
+          {t.send.schedule}
+        </Button>
+        {!atOK && <span className="text-[11px] text-danger">{t.send.pickTime}</span>}
+      </div>
       {sendMut.error && <p className="text-xs text-danger">{errText(t, sendMut.error)}</p>}
     </div>
   );
@@ -671,7 +712,7 @@ function SendRow({ issue, onDone }: { issue: IssueSummary; onDone: () => void })
 // HoldBar surfaces the scheduled state in the header: the issue is
 // locked until it ships; Hold returns it to draft for re-approval.
 function HoldBar({ issue, onDone }: { issue: IssueSummary; onDone: () => void }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const holdMut = useMutation({
     mutationFn: () => api.hold(issue.id),
     onSuccess: onDone,
@@ -681,10 +722,16 @@ function HoldBar({ issue, onDone }: { issue: IssueSummary; onDone: () => void })
       trigger={
         <Button size="sm" variant="outline">
           {t.send.scheduled}
+          {issue.scheduled_at && (
+            <span className="text-[10px] opacity-80">· {fmtDate(issue.scheduled_at, lang, true)}</span>
+          )}
         </Button>
       }
     >
-      <p className="mb-2 text-xs text-muted">{t.send.scheduledHint}</p>
+      <p className="mb-2 text-xs text-muted">
+        {issue.scheduled_at && <>{t.send.scheduledFor} {fmtDate(issue.scheduled_at, lang, true)} — </>}
+        {t.send.scheduledHint}
+      </p>
       <Button size="sm" variant="danger" disabled={holdMut.isPending} onClick={() => holdMut.mutate()}>
         {t.send.hold}
       </Button>
@@ -713,6 +760,11 @@ function AfterSend({ issue }: { issue: IssueSummary }) {
             <span className="text-muted">
               {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)} · {t.receipt.version}{" "}
               {r.document_version.slice(0, 8)}
+            </span>
+          )}
+          {issue.status === "scheduled" && issue.scheduled_at && (
+            <span className="font-semibold text-ink">
+              {t.send.scheduledFor} {fmtDate(issue.scheduled_at, lang, true)}
             </span>
           )}
           {a && (

@@ -18,6 +18,7 @@ type Issue struct {
 	Flags         []Flag
 	Commentary    map[string]string
 	CreatedAt     string
+	ScheduledAt   string
 }
 
 // Flag is a citation-check flag stored in issues.flags_json.
@@ -31,7 +32,7 @@ func (db *DB) scanIssue(row *sql.Row) (*Issue, error) {
 	var i Issue
 	var flags, commentary string
 	err := row.Scan(&i.ID, &i.PublicationID, &i.Number, &i.Status, &i.Subject,
-		&i.BodyMD, &flags, &commentary, &i.CreatedAt)
+		&i.BodyMD, &flags, &commentary, &i.CreatedAt, &i.ScheduledAt)
 	if err != nil {
 		return nil, err
 	}
@@ -43,14 +44,14 @@ func (db *DB) scanIssue(row *sql.Row) (*Issue, error) {
 // GetIssue loads an issue by id.
 func (db *DB) GetIssue(ctx context.Context, id int64) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,
-		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at, scheduled_at
 		 FROM issues WHERE id = ?`, id))
 }
 
 // ListIssues returns a publication's issues, newest first.
 func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at, scheduled_at
 		 FROM issues WHERE publication_id = ? ORDER BY number DESC`, pubID)
 	if err != nil {
 		return nil, err
@@ -61,7 +62,7 @@ func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
 		var i Issue
 		var flags, commentary string
 		if err := rows.Scan(&i.ID, &i.PublicationID, &i.Number, &i.Status,
-			&i.Subject, &i.BodyMD, &flags, &commentary, &i.CreatedAt); err != nil {
+			&i.Subject, &i.BodyMD, &flags, &commentary, &i.CreatedAt, &i.ScheduledAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(flags), &i.Flags)
@@ -75,14 +76,14 @@ func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
 // pair a public issue URL like /p/{slug}/{num} addresses.
 func (db *DB) IssueByNumber(ctx context.Context, pubID int64, number int) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,
-		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at, scheduled_at
 		 FROM issues WHERE publication_id = ? AND number = ?`, pubID, number))
 }
 
 // LatestIssue returns a publication's newest issue (sql.ErrNoRows if none).
 func (db *DB) LatestIssue(ctx context.Context, pubID int64) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,
-		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at, scheduled_at
 		 FROM issues WHERE publication_id = ? ORDER BY number DESC LIMIT 1`, pubID))
 }
 
@@ -92,9 +93,20 @@ func (db *DB) SetIssueItemStatus(ctx context.Context, id int64, status string) e
 	return err
 }
 
-// SetIssueStatus updates an issue's status.
+// SetIssueStatus updates an issue's status. Moving to any status other
+// than "scheduled" clears the queued send time.
 func (db *DB) SetIssueStatus(ctx context.Context, id int64, status string) error {
-	_, err := db.ExecContext(ctx, `UPDATE issues SET status = ? WHERE id = ?`, status, id)
+	_, err := db.ExecContext(ctx,
+		`UPDATE issues SET status = ?, scheduled_at = CASE WHEN ? = 'scheduled' THEN scheduled_at ELSE '' END
+		 WHERE id = ?`, status, status, id)
+	return err
+}
+
+// ScheduleIssue locks an issue for a future send, remembering when it is
+// queued for (demo mode stores the time; there is no dispatch clock).
+func (db *DB) ScheduleIssue(ctx context.Context, id int64, at string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE issues SET status = 'scheduled', scheduled_at = ? WHERE id = ?`, at, id)
 	return err
 }
 
@@ -175,7 +187,7 @@ func (db *DB) GetIssueItem(ctx context.Context, id int64) (*IssueItem, error) {
 // public issue URL may resolve (sql.ErrNoRows when none is out yet).
 func (db *DB) LatestPublicIssue(ctx context.Context, pubID int64) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,
-		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at, scheduled_at
 		 FROM issues WHERE publication_id = ? AND status IN ('sent','scheduled')
 		 ORDER BY number DESC LIMIT 1`, pubID))
 }
@@ -214,7 +226,7 @@ func (db *DB) IssueRejectionReasons(ctx context.Context, issueID int64) ([]strin
 // reader is allowed to see (sql.ErrNoRows when none).
 func (db *DB) LatestFinishedIssue(ctx context.Context, pubID int64) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,
-		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at
+		`SELECT id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at, scheduled_at
 		 FROM issues WHERE publication_id = ? AND status IN ('approved','sent')
 		 ORDER BY number DESC LIMIT 1`, pubID))
 }

@@ -32,6 +32,7 @@ export interface IssueSummary {
   flags: number;
   missing_required_commentary: number;
   document_version?: string;
+  scheduled_at?: string;
   receipt?: ApprovalReceipt;
 }
 
@@ -312,9 +313,9 @@ export const api = {
     ),
   approve: (issueID: number) =>
     request<{ issue: IssueSummary; receipt: ApprovalReceipt }>("POST", `/api/v1/issues/${issueID}/approve`, {}),
-  send: (issueID: number, audience: "test" | "readers", when: "now" | "schedule" = "now", to?: string) =>
-    request<{ issue: IssueSummary; outbox_email_id?: number; audience?: string; scheduled?: boolean }>(
-      "POST", `/api/v1/issues/${issueID}/send`, { audience, when, to },
+  send: (issueID: number, audience: "test" | "readers", when: "now" | "schedule" = "now", to?: string, at?: string) =>
+    request<{ issue: IssueSummary; outbox_email_id?: number; audience?: string; scheduled?: boolean; scheduled_at?: string }>(
+      "POST", `/api/v1/issues/${issueID}/send`, { audience, when, to, at },
     ),
   hold: (issueID: number) =>
     request<{ issue: IssueSummary }>("POST", `/api/v1/issues/${issueID}/hold`, {}),

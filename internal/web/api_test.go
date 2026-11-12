@@ -503,21 +503,43 @@ outer0:
 	// --- schedule locks the issue; Hold returns it to draft ---
 	// a test send cannot be scheduled
 	rr = apiCall(t, srv, "POST", issueURL+"/send",
-		map[string]string{"audience": "test", "when": "schedule"})
+		map[string]string{"audience": "test", "when": "schedule",
+			"at": time.Now().Add(24 * time.Hour).Format(time.RFC3339)})
 	if c := apiErrCode(t, rr); c != "validation" {
 		t.Fatalf("schedule a test send: code = %q", c)
 	}
+	// scheduling needs a send time, in the future
 	rr = apiCall(t, srv, "POST", issueURL+"/send",
 		map[string]string{"audience": "readers", "when": "schedule"})
+	if c := apiErrCode(t, rr); c != "bad_time" {
+		t.Fatalf("schedule without at: code = %q", c)
+	}
+	rr = apiCall(t, srv, "POST", issueURL+"/send",
+		map[string]string{"audience": "readers", "when": "schedule", "at": "tomorrow-ish"})
+	if c := apiErrCode(t, rr); c != "bad_time" {
+		t.Fatalf("schedule with malformed at: code = %q", c)
+	}
+	rr = apiCall(t, srv, "POST", issueURL+"/send",
+		map[string]string{"audience": "readers", "when": "schedule",
+			"at": time.Now().Add(-time.Hour).Format(time.RFC3339)})
+	if c := apiErrCode(t, rr); c != "bad_time" {
+		t.Fatalf("schedule in the past: code = %q", c)
+	}
+	at := time.Now().Add(26 * time.Hour).UTC().Truncate(time.Second)
+	rr = apiCall(t, srv, "POST", issueURL+"/send",
+		map[string]string{"audience": "readers", "when": "schedule", "at": at.Format(time.RFC3339)})
 	if rr.Code != 200 {
 		t.Fatalf("schedule = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
-	if !apiJSON(t, rr)["scheduled"].(bool) {
-		t.Error("schedule response must carry scheduled: true")
+	if v := apiJSON(t, rr); !v["scheduled"].(bool) || v["scheduled_at"] != at.Format(time.RFC3339) {
+		t.Errorf("schedule response = %v", v)
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
-	if iss.Status != "scheduled" {
-		t.Fatalf("status after schedule = %q", iss.Status)
+	if iss.Status != "scheduled" || iss.ScheduledAt != at.Format(time.RFC3339) {
+		t.Fatalf("after schedule: status = %q at = %q", iss.Status, iss.ScheduledAt)
+	}
+	if v := apiGet(t, srv, issueURL)["issue"].(map[string]any); v["scheduled_at"] != at.Format(time.RFC3339) {
+		t.Error("issue summary must carry scheduled_at")
 	}
 	// a scheduled issue is locked like a sent one
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
@@ -533,6 +555,9 @@ outer0:
 	iss, _ = db.GetIssue(ctx, issueID)
 	if iss.Status != "drafted" {
 		t.Fatalf("status after hold = %q — Hold must return to draft", iss.Status)
+	}
+	if iss.ScheduledAt != "" {
+		t.Error("hold must clear the queued send time")
 	}
 	if v := apiGet(t, srv, issueURL)["issue"].(map[string]any); v["receipt"] != nil {
 		t.Error("hold should drop the approval receipt")
