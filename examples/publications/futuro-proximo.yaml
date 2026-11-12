@@ -21,13 +21,17 @@ sections:
     items: 5
     commentary: none
 sources:
-  - type: rss
+  - name: Radar Tech
+    type: rss
     url: fixtures/feeds/radar-tech.xml
-  - type: rss
+  - name: Pulso Digital
+    type: rss
     url: fixtures/feeds/pulso-digital.xml
-  - type: rss
+  - name: Correio do Código
+    type: rss
     url: fixtures/feeds/correio-do-codigo.xml
-  - type: page
+  - name: Observatório Aberto
+    type: page
     url: fixtures/pages/observatorio-aberto.html
 paywall:
   enabled: true

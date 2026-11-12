@@ -66,8 +66,13 @@ export function IssuePage() {
   const showToast = useCallback((text: string, undo?: RemovedSentence) => {
     setToast({ text, undo });
     if (toastRef.current) clearTimeout(toastRef.current);
-    if (!undo) toastRef.current = setTimeout(() => setToast(null), 3000);
+    toastRef.current = setTimeout(() => setToast(null), 8000);
   }, []);
+
+  // a pending Undo dies with the context it belonged to — approval or
+  // sending makes "restore that sentence" meaningless
+  const issueStatus = issueQ.data?.status;
+  useEffect(() => { setToast(null); }, [issueStatus]);
 
   // resync: a 409 carries the fresh document — accept it and tell the user
   const resync = useCallback(
@@ -289,7 +294,7 @@ export function IssuePage() {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* top bar */}
       <header className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2.5">
-        <Link to={`/pub/${issue.publication_id}`} className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink">
+        <Link to={`/publications/${issue.publication_id}`} className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink">
           <ArrowLeft size={13} /> {t.back}
         </Link>
         <div className="min-w-0">
@@ -344,7 +349,7 @@ export function IssuePage() {
                 {issue.receipt.document_version.slice(0, 8)}
               </p>
             )}
-            <SendRow issue={issue} onDone={() => invalidate()} />
+            <SendRow issue={issue} onDone={() => invalidate()} onToast={showToast} />
           </KPopover>
         )}
         {readinessQ.data && !BOARD_STATUSES.has(issue.status) && issue.status !== "sent" && (
@@ -546,6 +551,11 @@ function ApproveBar({
     queryKey: ["publication", issue.publication_id],
     queryFn: () => api.publication(issue.publication_id),
   });
+  const readerQ = useQuery({
+    queryKey: ["reader", issue.publication_id],
+    queryFn: () => api.reader(issue.publication_id),
+    enabled: audience === "readers",
+  });
   const pub = pubQ.data?.publication;
   const atOK = when !== "schedule" || new Date(at).getTime() > Date.now();
   // the dialog approves first, then sends per the chosen audience —
@@ -643,6 +653,12 @@ function ApproveBar({
               </dd>
             </div>
           )}
+          {audience === "readers" && (
+            <div className="flex justify-between">
+              <dt>{t.send.recipients}</dt>
+              <dd>{t.send.subscriberCount(readerQ.data?.subscribers ?? 0)}</dd>
+            </div>
+          )}
           <div className="flex justify-between">
             <dt>{t.send.sender}</dt>
             <dd>{pub?.name} &lt;{pub?.slug}@kloxus.demo&gt;</dd>
@@ -666,23 +682,40 @@ function ApproveBar({
   );
 }
 
-function SendRow({ issue, onDone }: { issue: IssueSummary; onDone: () => void }) {
+function SendRow({ issue, onDone, onToast }: {
+  issue: IssueSummary; onDone: () => void; onToast: (text: string) => void;
+}) {
   const { t } = useT();
   const [at, setAt] = useState(() => localInput(new Date(Date.now() + 24 * 3600e3)));
+  const [confirmSend, setConfirmSend] = useState<null | { when: "now" | "schedule" }>(null);
   const atOK = new Date(at).getTime() > Date.now();
+  const pubQ = useQuery({
+    queryKey: ["publication", issue.publication_id],
+    queryFn: () => api.publication(issue.publication_id),
+  });
+  const readerQ = useQuery({
+    queryKey: ["reader", issue.publication_id],
+    queryFn: () => api.reader(issue.publication_id),
+  });
   const sendMut = useMutation({
     mutationFn: ({ aud, when }: { aud: "test" | "readers"; when: "now" | "schedule" }) =>
       api.send(issue.id, aud, when, undefined,
         when === "schedule" ? new Date(at).toISOString() : undefined),
-    onSuccess: onDone,
+    onSuccess: (r, { aud }) => {
+      setConfirmSend(null);
+      // a test send lands in the outbox — say where it went
+      if (r.to?.length) onToast(aud === "test" ? t.send.testSentTo(r.to.join(", ")) : t.send.sentTo(r.to.join(", ")));
+      onDone();
+    },
   });
+  const pub = pubQ.data?.publication;
   return (
     <div className="mt-2 space-y-2">
       <div className="flex gap-2">
         <Button size="sm" variant="outline" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "test", when: "now" })}>
           <Send size={12} /> {t.send.test}
         </Button>
-        <Button size="sm" variant="danger" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "readers", when: "now" })}>
+        <Button size="sm" variant="danger" disabled={sendMut.isPending} onClick={() => setConfirmSend({ when: "now" })}>
           {t.send.readers}
         </Button>
       </div>
@@ -698,13 +731,46 @@ function SendRow({ issue, onDone }: { issue: IssueSummary; onDone: () => void })
         <Button
           size="sm" variant="ghost"
           disabled={sendMut.isPending || !atOK}
-          onClick={() => sendMut.mutate({ aud: "readers", when: "schedule" })}
+          onClick={() => setConfirmSend({ when: "schedule" })}
         >
           {t.send.schedule}
         </Button>
         {!atOK && <span className="text-[11px] text-danger">{t.send.pickTime}</span>}
       </div>
       {sendMut.error && <p className="text-xs text-danger">{errText(t, sendMut.error)}</p>}
+
+      <KDialog open={confirmSend !== null} onOpenChange={(o) => !o && setConfirmSend(null)} title={t.send.confirmSend}>
+        <dl className="mb-4 space-y-1 text-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-muted">{t.send.subject}</dt>
+            <dd className="text-right font-medium">#{issue.number} · {issue.subject}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-muted">{t.send.recipients}</dt>
+            <dd>{t.send.subscriberCount(readerQ.data?.subscribers ?? 0)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-muted">{t.send.sender}</dt>
+            <dd>{pub?.name} &lt;{pub?.slug}@kloxus.demo&gt;</dd>
+          </div>
+          {confirmSend?.when === "schedule" && (
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">{t.send.at}</dt>
+              <dd>{new Date(at).toLocaleString()}</dd>
+            </div>
+          )}
+        </dl>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setConfirmSend(null)}>{t.doc.cancel}</Button>
+          <Button
+            variant="danger"
+            disabled={sendMut.isPending}
+            onClick={() => sendMut.mutate({ aud: "readers", when: confirmSend!.when })}
+          >
+            {confirmSend?.when === "schedule" ? t.send.schedule : t.send.now}
+          </Button>
+        </div>
+      </KDialog>
     </div>
   );
 }

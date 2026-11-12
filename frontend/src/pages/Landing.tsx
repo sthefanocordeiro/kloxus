@@ -24,7 +24,7 @@ export function Landing() {
           <Button size="lg">{t.landing.start}</Button>
         </Link>
         {first && (
-          <Link to={`/pub/${first.id}`} className="text-sm text-teal underline underline-offset-2">
+          <Link to={`/publications/${first.id}`} className="text-sm text-teal underline underline-offset-2">
             {t.landing.continueHint} {first.name} →
           </Link>
         )}
@@ -80,7 +80,7 @@ function SampleCard({ d }: { t?: unknown; d: SampleDossier }) {
             <span className="min-w-0 flex-1">{f.text}</span>
             {src(f.ref) && (
               <a
-                href={src(f.ref)!.url}
+                href={`/sample/a/?u=${encodeURIComponent(src(f.ref)!.url)}`}
                 target="_blank"
                 rel="noreferrer"
                 title={src(f.ref)!.name || src(f.ref)!.url}
@@ -114,7 +114,7 @@ function SampleCard({ d }: { t?: unknown; d: SampleDossier }) {
       <div className="mt-4 flex flex-wrap gap-1.5 border-t border-line pt-3">
         <span className="mr-1 text-xs uppercase tracking-wide text-muted">{t.landing.citedFrom}:</span>
         {d.sources.map((s) => (
-          <a key={s.ref} href={s.url} target="_blank" rel="noreferrer">
+          <a key={s.ref} href={`/sample/a/?u=${encodeURIComponent(s.url)}`} target="_blank" rel="noreferrer">
             <Badge>{s.name || s.url}</Badge>
           </a>
         ))}

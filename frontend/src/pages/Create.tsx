@@ -31,7 +31,7 @@ export function CreateNewsletter() {
       const { sources: _s, ...body } = form!;
       return api.createPublication(body);
     },
-    onSuccess: (pub) => nav(`/pub/${pub.id}/sources`, { replace: true }),
+    onSuccess: (pub) => nav(`/publications/${pub.id}/sources`, { replace: true }),
   });
 
   const set = (k: keyof Proposal, v: string) => form && setForm({ ...form, [k]: v });

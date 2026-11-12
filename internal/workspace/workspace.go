@@ -6,10 +6,13 @@ package workspace
 import (
 	"container/list"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -198,6 +201,52 @@ func (m *Manager) MAC(scope, value string) string {
 // ValidMAC reports whether tok is the MAC for (scope, value).
 func (m *Manager) ValidMAC(scope, value, tok string) bool {
 	return subtle.ConstantTimeCompare([]byte(m.MAC(scope, value)), []byte(tok)) == 1
+}
+
+// PublicToken wraps a workspace id in an opaque, tamper-proof token for
+// reader-facing links — the workspace id never appears in a public URL.
+// AES-256-GCM authenticated encryption with a random nonce.
+func (m *Manager) PublicToken(wsID string) string {
+	key := sha256.Sum256(m.secret)
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return ""
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return ""
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(gcm.Seal(nonce, nonce, []byte(wsID), nil))
+}
+
+// ResolvePublicToken unwraps a PublicToken back to the workspace id, or
+// "" when the token is malformed or forged.
+func (m *Manager) ResolvePublicToken(tok string) string {
+	raw, err := base64.RawURLEncoding.DecodeString(tok)
+	if err != nil {
+		return ""
+	}
+	key := sha256.Sum256(m.secret)
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return ""
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return ""
+	}
+	if len(raw) < gcm.NonceSize()+gcm.Overhead() {
+		return ""
+	}
+	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
+	if err != nil {
+		return ""
+	}
+	return string(plain)
 }
 
 func (m *Manager) sign(id string) string {

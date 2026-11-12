@@ -54,11 +54,11 @@ export function PublicIssue() {
     retry: false,
   });
   const [simDone, setSimDone] = useState<string | null>(null);
-  const wsQuery = params.get("ws") ? `?ws=${params.get("ws")}` : "";
+  const tokQuery = params.get("tok") ? `?tok=${params.get("tok")}` : "";
   const sim = useMutation({
-    // the slug works where an id would — the API resolves both; ws
+    // the slug works where an id would — the API resolves both; tok
     // resolves the creator's workspace for cross-browser readers
-    mutationFn: () => api.paywallSimulate(q.data!.publication.slug, wsQuery),
+    mutationFn: () => api.paywallSimulate(q.data!.publication.slug, tokQuery),
     onSuccess: (r) => setSimDone(r.magic_link),
   });
   const d = q.data;
@@ -87,7 +87,7 @@ export function PublicIssue() {
       <h1 className="mt-1 mb-6 font-doc text-3xl font-semibold leading-tight">{d.issue.subject}</h1>
 
       <article className="font-doc text-[15px] leading-relaxed">
-        <Markdown md={d.body_md} />
+        <Markdown md={d.body_md.replace(/^#\s.*(\n+|$)/, "")} />
       </article>
 
       {d.gated && (

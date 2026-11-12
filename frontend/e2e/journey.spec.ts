@@ -13,16 +13,16 @@ const sectionBox = (page: Page, name: string) =>
 // The workspace starts empty — every journey walks onboarding first:
 // landing → /new → /pub/:id/sources → confirm → first run → board.
 async function onboard(page: Page) {
-  await page.goto("/app/");
+  await page.goto("/");
   // the landing renders the cited sample dossier before any workspace
   await expect(page.getByText(/dossier from the sample issue/i)).toBeVisible({ timeout: 15000 });
   await page.getByRole("link", { name: /Create your newsletter/ }).click();
-  await page.waitForURL(/\/app\/new/);
+  await page.waitForURL(/\/new/);
 
   // the sample proposal pre-fills the five editable blocks
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Create newsletter", exact: true }).click();
-  await page.waitForURL(/\/app\/pub\/\d+\/sources/);
+  await page.waitForURL(/\/publications\/\d+\/sources/);
 
   // the sources screen offers the fixture sources — preview one, then
   // confirm all: the first collection runs automatically into the board
@@ -30,7 +30,7 @@ async function onboard(page: Page) {
   await page.getByRole("button", { name: "Latest items", exact: true }).first().click();
   await expect(page.locator("ul li a").first()).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Confirm \d+ sources & collect/ }).click();
-  await page.waitForURL(/\/app\/issues\/\d+/, { timeout: 180000 });
+  await page.waitForURL(/\/issues\/\d+/, { timeout: 180000 });
 }
 
 async function boardReady(page: Page, isPhone: boolean) {
@@ -147,6 +147,10 @@ async function scheduleAndHold(page: Page) {
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByLabel("Send at")).toBeVisible();
   await page.getByRole("button", { name: "Schedule for later" }).click();
+  // scheduling confirms through the same dialog as sending — count, subject, sender
+  const schedDialog = page.getByRole("dialog");
+  await expect(schedDialog.getByText(/subscriber/)).toBeVisible();
+  await schedDialog.getByRole("button", { name: "Schedule for later" }).click();
   // the scheduled issue locks; the header chip shows the queued time
   const scheduled = page.getByRole("button", { name: /Scheduled/ });
   await expect(scheduled).toBeVisible({ timeout: 15000 });
@@ -157,9 +161,14 @@ async function scheduleAndHold(page: Page) {
 }
 
 async function sendToReaders(page: Page) {
-  // the send action is its own header button post-approval
+  // the send action is its own header button post-approval; readers get
+  // a confirmation dialog (count, subject, sender) — never one-click
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await page.getByRole("button", { name: "Send to readers" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText(/subscriber/)).toBeVisible();
+  await expect(dialog.getByText(/Subject|Assunto/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Send now" }).click();
   // the after-sending surface replaces the editor chrome
   await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible({ timeout: 15000 });
   await expect(page.getByText(/guide learned|guide/i).first()).toBeVisible();
@@ -169,7 +178,7 @@ async function readerJourney(page: Page) {
   // the after-sending view links to the public issue page — open it and
   // confirm the non-subscriber gets the gated cut
   const href = await page.getByRole("link", { name: /reader page/ }).getAttribute("href");
-  expect(href).toContain("/app/p/futuro-proximo/");
+  expect(href).toContain("/p/futuro-proximo/");
   await page.goto(href!.replace(/^https?:\/\/[^/]+/, ""));
   await expect(page.getByText("For paying readers")).toBeVisible({ timeout: 15000 });
   // subscribe → the magic-link offer appears
@@ -216,14 +225,14 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
 
   // fixture exhausted: a second prepare must say so on the board,
   // not fail silently
-  await page.goto("/app/");
+  await page.goto("/");
   await page.getByRole("link", { name: /Continue to/ }).click();
   await page.getByRole("button", { name: "Prepare next issue" }).click();
   await expect(page.getByText(/Nothing new/)).toBeVisible({ timeout: 120000 });
 
   // reset wipes the workspace — the visitor walks onboarding again and
   // the fixture sources collect a fresh issue
-  await page.goto("/app/publications");
+  await page.goto("/publications");
   await page.getByRole("button", { name: "Reset demo" }).click();
   await expect(page.getByRole("link", { name: /Create your newsletter/ })).toBeVisible({
     timeout: 15000,

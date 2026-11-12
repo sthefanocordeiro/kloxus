@@ -148,10 +148,13 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     ) => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
       setToast({ text, undo, guide });
-      toastTimer.current = setTimeout(() => setToast(null), 5000);
+      toastTimer.current = setTimeout(() => setToast(null), 8000);
     },
     [],
   );
+
+  // a pending Undo dies with the context it belonged to
+  useEffect(() => { setToast(null); }, [issue.status]);
 
   const putLineup = useMutation({
     mutationFn: (v: { entries: LineupEntry[]; prev?: Board }) => api.lineup(issue.id, v.entries),
@@ -285,7 +288,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             showToast(
               rule ? t.board.ruleLearned(rule) : t.board.removed(short(cand.title)),
               { kind: "reject", itemID: cand.item_id! },
-              rule ? { text: t.board.viewGuide, url: `/pub/${issue.publication_id}/guide` } : undefined,
+              rule ? { text: t.board.viewGuide, url: `/publications/${issue.publication_id}/guide` } : undefined,
             );
             qc.invalidateQueries({ queryKey: ["candidates", issue.id] });
           },

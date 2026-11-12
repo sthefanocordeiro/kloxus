@@ -6,7 +6,7 @@ import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
 
-// /pub/:id/sources — the onboarding sources screen: suggested fixture
+// /publications/:id/sources — the onboarding sources screen: suggested fixture
 // sources with real previews, add/remove, and confirm → auto first run.
 export function SourcesPage() {
   const { id } = useParams();
@@ -54,11 +54,15 @@ export function SourcesPage() {
     }
   };
 
-  const count = (sources.data?.length ?? 0) + (catalog.data?.length ?? 0);
+  // the catalog only lists sources not yet added — the belt-and-
+  // suspenders filter also hides an "Add" the moment a row exists
+  const addedURLs = new Set((sources.data ?? []).map((s) => s.url));
+  const offered = (catalog.data ?? []).filter((o) => !addedURLs.has(o.url));
+  const count = (sources.data?.length ?? 0) + offered.length;
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      <Link to={`/pub/${id}`} className="text-xs text-muted hover:text-ink">←</Link>
+      <Link to={`/publications/${id}`} className="text-xs text-muted hover:text-ink">←</Link>
       <h1 className="mt-1 font-doc text-2xl font-semibold">
         {t.sourcesPage.title}
         {pub.data && <span className="ml-2 text-base font-normal text-muted">— {pub.data.publication.name}</span>}
@@ -95,15 +99,15 @@ export function SourcesPage() {
         </>
       )}
 
-      {(catalog.data?.length ?? 0) > 0 && (
+      {offered.length > 0 && (
         <>
           <h2 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.offered}</h2>
           <div className="mt-2 grid gap-2">
-            {catalog.data!.map((o) => (
+            {offered.map((o) => (
               <Card key={o.url} className="p-3">
                 <div className="flex items-center gap-3">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{o.url}</p>
+                    <p className="truncate text-sm font-medium">{o.name || o.url}</p>
                     <Badge>{o.type === "rss" ? t.sourcesPage.ownType.rss : t.sourcesPage.ownType.page}</Badge>
                   </div>
                   <Button variant="outline" size="sm" onClick={() => preview(o.type, o.url)}>

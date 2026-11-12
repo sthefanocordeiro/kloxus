@@ -308,7 +308,7 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 	}
 	// the unsubscribe link opens the reader-facing React page, whose
 	// /api/v1/unsub call performs the signed one-click opt-out
-	m := regexp.MustCompile(`/app/unsub\?[^\s)]+`).FindString(full.BodyMD)
+	m := regexp.MustCompile(`/unsub\?[^\s)]+`).FindString(full.BodyMD)
 	if m == "" {
 		t.Fatal("issue email has no unsubscribe URL")
 	}
@@ -552,14 +552,14 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	for _, e := range emails {
 		if e.Kind == "magic_link" {
 			full, _ := wsA.DB.GetOutboxEmail(ctx, e.ID)
-			m := regexp.MustCompile(`key=([^&"']+)&(?:amp;)?ws=([^"']+)`).FindStringSubmatch(full.BodyHTML)
+			m := regexp.MustCompile(`key=([^&"']+)&(?:amp;)?tok=([^"']+)`).FindStringSubmatch(full.BodyHTML)
 			if m != nil {
-				link = fmt.Sprintf("%s/reader?key=%s&ws=%s", pubURL, m[1], m[2])
+				link = fmt.Sprintf("%s/reader?key=%s&tok=%s", pubURL, m[1], m[2])
 			}
 		}
 	}
 	if link == "" {
-		t.Fatal("magic-link email does not carry key + ws parameters")
+		t.Fatal("magic-link email does not carry key + tok parameters")
 	}
 
 	// visitor B (no cookie): the ws parameter lands them in wsA's issue
@@ -569,7 +569,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	}
 	// sanity: the same link minus ws opens the visitor's own (empty)
 	// workspace — the sent content must not render
-	rr = serve("GET", strings.SplitN(link, "&ws=", 2)[0], "", nil)
+	rr = serve("GET", strings.SplitN(link, "&tok=", 2)[0], "", nil)
 	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
 		t.Error("link without ws leaked content into another workspace")
 	}

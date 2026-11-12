@@ -6,7 +6,7 @@
     {
       "ref": 1,
       "title": "Universidade de Valdória lança modelo climático aberto",
-      "summary": "A Universidade Federal de Valdória publicou o VCM-2, um modelo climático regional de código aberto que projeta chuvas e temperaturas para o bioma do vale até 2070.",
+      "summary": "A Universidade de Valdória publicou o VCM-2, um modelo climático regional de código aberto que projeta chuvas e temperaturas para o bioma do vale até 2070.",
       "facts": [
         { "text": "O VCM-2 projeta precipitação e temperatura para o bioma do vale de Valdória com resolução de 4 km até 2070.", "ref": 1 },
         { "text": "O código e os dados de calibração foram publicados sob licença aberta no repositório da universidade.", "ref": 1 },
@@ -18,7 +18,7 @@
       ],
       "quote": {
         "text": "Queremos que qualquer prefeitura consiga rodar as mesmas projeções que o governo federal usa.",
-        "attribution": "Lia Amaral, coordenadora do grupo de modelagem, à UFV Notícias"
+        "attribution": "Lia Amaral, coordenadora do grupo de modelagem, à UDV Notícias"
       },
       "unknowns": [
         "Quando o modelo será calibrado para a região costeira",
@@ -28,9 +28,9 @@
         "Abrir o modelo pressiona agências estaduais que hoje vendem projeções semelhantes."
       ],
       "sources": [
-        { "ref": 1, "url": "https://ufv.edu.vd/noticias/vcm2-lancamento", "name": "UFV Notícias" },
-        { "ref": 2, "url": "https://repositorio.ufv.edu.vd/vcm2/artigo", "name": "Artigo no repositório institucional" },
-        { "ref": 3, "url": "https://iaguas.gov.vd/planos/2027", "name": "Instituto de Águas de Valdória" }
+        { "ref": 1, "url": "https://udv.edu.example/noticias/vcm2-lancamento", "name": "UDV Notícias" },
+        { "ref": 2, "url": "https://repositorio.udv.edu.example/vcm2/artigo", "name": "Artigo no repositório institucional" },
+        { "ref": 3, "url": "https://iaguas.gov.example/planos/2027", "name": "Instituto de Águas de Valdória" }
       ]
     },
     {
@@ -53,8 +53,8 @@
         "O recorde fortalece o lobby pela extensão da linha ao distrito norte."
       ],
       "sources": [
-        { "ref": 1, "url": "https://vialume.vd/dados/balanco-fevereiro", "name": "ViaLume — balanço operacional" },
-        { "ref": 2, "url": "https://diariodevaldoria.vd/cidades/tram-recorde", "name": "Diário de Valdória" }
+        { "ref": 1, "url": "https://vialume.example/dados/balanco-fevereiro", "name": "ViaLume — balanço operacional" },
+        { "ref": 2, "url": "https://diariodevaldoria.example/cidades/tram-recorde", "name": "Diário de Valdória" }
       ]
     }
   ],

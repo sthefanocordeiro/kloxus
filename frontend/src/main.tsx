@@ -29,9 +29,9 @@ const router = createBrowserRouter(
         { path: "/", element: <Landing /> },
         { path: "/new", element: <CreateNewsletter /> },
         { path: "/publications", element: <Publications /> },
-        { path: "/pub/:id", element: <PublicationPage /> },
-        { path: "/pub/:id/sources", element: <SourcesPage /> },
-        { path: "/pub/:id/outbox", element: <OutboxPage /> },
+        { path: "/publications/:id", element: <PublicationPage /> },
+        { path: "/publications/:id/sources", element: <SourcesPage /> },
+        { path: "/publications/:id/outbox", element: <OutboxPage /> },
         { path: "/issues/:id", element: <IssuePage /> },
         { path: "/runs/:runID", element: <RunLanding /> },
       ],
@@ -46,7 +46,6 @@ const router = createBrowserRouter(
       ],
     },
   ],
-  { basename: "/app" },
 );
 
 createRoot(document.getElementById("root")!).render(

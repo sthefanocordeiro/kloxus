@@ -362,7 +362,7 @@ export const api = {
   approve: (issueID: number) =>
     request<{ issue: IssueSummary; receipt: ApprovalReceipt }>("POST", `/api/v1/issues/${issueID}/approve`, {}),
   send: (issueID: number, audience: "test" | "readers", when: "now" | "schedule" = "now", to?: string, at?: string) =>
-    request<{ issue: IssueSummary; outbox_email_id?: number; audience?: string; scheduled?: boolean; scheduled_at?: string }>(
+    request<{ issue: IssueSummary; outbox_email_id?: number; audience?: string; scheduled?: boolean; scheduled_at?: string; to?: string[]; subject?: string }>(
       "POST", `/api/v1/issues/${issueID}/send`, { audience, when, to, at },
     ),
   hold: (issueID: number) =>
@@ -375,7 +375,7 @@ export const api = {
   outboxEmail: (id: number) =>
     request<{ email: OutboxEmail }>("GET", `/api/v1/outbox/${id}`).then((r) => r.email),
   reader: (pubID: number) =>
-    request<{ reader: { email: string; name: string }; subscribed: boolean; issue?: IssueSummary }>(
+    request<{ reader: { email: string; name: string }; subscribed: boolean; subscribers?: number; issue?: IssueSummary }>(
       "GET", `/api/v1/publications/${pubID}/reader`),
   paywallSimulate: (pubID: number | string, query = "") =>
     request<{ subscribed: boolean; outbox_email_id: number; magic_link: string }>(
@@ -395,7 +395,7 @@ export const api = {
   sources: (pubID: number | string) =>
     request<{ sources: SourceRow[] }>("GET", `/api/v1/publications/${pubID}/sources`).then((r) => r.sources),
   sourceCatalog: (pubID: number | string) =>
-    request<{ offered: { type: string; url: string }[] }>("GET", `/api/v1/publications/${pubID}/sources/catalog`).then((r) => r.offered),
+    request<{ offered: { type: string; url: string; name?: string }[] }>("GET", `/api/v1/publications/${pubID}/sources/catalog`).then((r) => r.offered),
   sourcePreview: (pubID: number | string, type: string, url: string) =>
     request<{ items: PreviewItem[]; note?: string }>(
       "GET", `/api/v1/publications/${pubID}/sources/preview?type=${type}&url=${encodeURIComponent(url)}`),

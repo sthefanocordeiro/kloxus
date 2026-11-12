@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -141,8 +142,63 @@ func (s *Server) sampleDef() (*config.Publication, error) {
 	return s.sampleV, s.sampleErr
 }
 
+// localizeReaderMD makes a rendered reader body speak the
+// publication's own words: canonical section headings (which a custom
+// publication replays internally for fixture compatibility) swap for
+// the creator's titles, and boilerplate chrome translates for pt
+// publications. Gating happens on canonical titles, so callers must
+// gate first, then localize.
+func (s *Server) localizeReaderMD(md string, pub *store.Publication) string {
+	if pub == nil {
+		return md
+	}
+	if pub.Custom && s.d.Cfg.Mode == "demo" {
+		if def, err := s.sampleDef(); err == nil && len(def.Sections) == len(pub.Sections) {
+			for i, cs := range def.Sections {
+				if cs.Title == pub.Sections[i].Title {
+					continue
+				}
+				md = regexp.MustCompile(`(?m)^##\s+`+regexp.QuoteMeta(cs.Title)+`$`).
+					ReplaceAllString(md, "## "+pub.Sections[i].Title)
+			}
+		}
+	}
+	if strings.HasPrefix(strings.ToLower(pub.Language), "pt") {
+		md = strings.ReplaceAll(md, "**Sources:**", "**Fontes:**")
+	}
+	return md
+}
+
 func (s *Server) apiIssueID(r *http.Request) (*store.Issue, error) {
 	return s.issue(r)
+}
+
+// sampleArticle serves a stub article page for the landing sample's
+// sources: the dossiers cite fictional .example outlets, so the links
+// resolve inside the app instead of hitting a dead external domain.
+// Workspace-free like /api/v1/sample — no session before Start.
+func (s *Server) sampleArticle(w http.ResponseWriter, r *http.Request) {
+	u, err := url.Parse(strings.TrimSpace(r.URL.Query().Get("u")))
+	if err != nil || u.Host == "" || !strings.HasSuffix(u.Host, ".example") {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	title := strings.Trim(strings.ReplaceAll(u.Path, "/", " "), " ")
+	if title == "" {
+		title = u.Host
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>%s — %s</title>`+
+		`<style>body{font-family:Georgia,serif;max-width:38em;margin:3em auto;padding:0 1.2em;color:#1c1c1c;line-height:1.6}`+
+		`.site{color:#0e7a6d;font-size:.85em;text-transform:uppercase;letter-spacing:.08em}`+
+		`.note{margin-top:3em;padding:.9em 1.1em;border:1px dashed #bbb;border-radius:.5em;color:#666;font-size:.85em;font-family:system-ui,sans-serif}`+
+		`</style></head><body>`+
+		`<p class="site">%s</p><h1>%s</h1>`+
+		`<p>Este é um artigo de demonstração do universo ficcional de Valdória — `+
+		`o Kloxus serve fontes simuladas para que cada citação abra um original de verdade, mesmo em modo demo.</p>`+
+		`<div class="note">Conteúdo simulado · fictional source · <a href="/">← Kloxus</a></div>`+
+		`</body></html>`,
+		title, u.Host, u.Host, title)
 }
 
 // --- helpers shared by handlers ---
@@ -409,12 +465,14 @@ func (s *Server) apiSourceAdd(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Type string `json:"type"`
 		URL  string `json:"url"`
+		Name string `json:"name"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
 		return
 	}
 	typ, rawURL := strings.TrimSpace(in.Type), strings.TrimSpace(in.URL)
+	in.Name = strings.TrimSpace(in.Name)
 	if rawURL == "" || (typ != "rss" && typ != "page") {
 		apiErr(w, 400, "validation", "type rss|page and url are required")
 		return
@@ -445,7 +503,7 @@ func (s *Server) apiSourceAdd(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	id, err := db(r).AddSource(r.Context(), pub.ID, typ, rawURL)
+	id, err := db(r).AddSource(r.Context(), pub.ID, typ, rawURL, in.Name)
 	if apiDBErr(w, r, err, "source") {
 		return
 	}
@@ -504,7 +562,7 @@ func (s *Server) apiSourceCatalog(w http.ResponseWriter, r *http.Request) {
 	var offered []map[string]any
 	for _, sd := range def.Sources {
 		if !existing[sd.URL] {
-			offered = append(offered, map[string]any{"type": sd.Type, "url": sd.URL})
+			offered = append(offered, map[string]any{"type": sd.Type, "url": sd.URL, "name": sd.Name})
 		}
 	}
 	if offered == nil {
@@ -573,7 +631,7 @@ func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, sd := range def.Sources {
 				if !existing[sd.URL] {
-					db(r).AddSource(r.Context(), pub.ID, sd.Type, sd.URL)
+					db(r).AddSource(r.Context(), pub.ID, sd.Type, sd.URL, sd.Name)
 				}
 			}
 		}
@@ -612,7 +670,7 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 	}
 	srcs := []map[string]string{}
 	for _, sd := range def.Sources {
-		srcs = append(srcs, map[string]string{"type": sd.Type, "url": sd.URL})
+		srcs = append(srcs, map[string]string{"type": sd.Type, "url": sd.URL, "name": sd.Name})
 	}
 	apiJSON(w, 200, map[string]any{"proposal": map[string]any{
 		"name": def.Name, "topic": def.Topic, "audience": def.Audience,
@@ -2168,6 +2226,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	}
 	apiJSON(w, 200, map[string]any{
 		"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
+		"to": to, "subject": iss.Subject,
 	})
 }
 
@@ -2227,7 +2286,8 @@ func (s *Server) apiPreview(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
+	rawPub, loadErr := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(rawPub, loadErr)
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -2253,6 +2313,7 @@ func (s *Server) apiPreview(w http.ResponseWriter, r *http.Request) {
 		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
 		gated = true
 	}
+	md = s.localizeReaderMD(md, rawPub)
 	apiJSON(w, 200, map[string]any{
 		"body_md": md, "gated": gated, "reader": reader, "surface": surface,
 	})
@@ -2296,9 +2357,11 @@ func (s *Server) apiReader(w http.ResponseWriter, r *http.Request) {
 	}
 	rid, _ := db(r).UpsertReader(r.Context(), pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
+	subs, _ := db(r).SubscriberCount(r.Context(), pub.ID)
 	resp := map[string]any{
-		"reader":     map[string]string{"email": demoReaderEmail, "name": demoReaderName},
-		"subscribed": active,
+		"reader":      map[string]string{"email": demoReaderEmail, "name": demoReaderName},
+		"subscribed":  active,
+		"subscribers": subs,
 	}
 	if iss, err := db(r).LatestFinishedIssue(r.Context(), pub.ID); err == nil {
 		resp["issue"] = s.issueSummary(r, iss)
@@ -2320,13 +2383,13 @@ func (s *Server) apiPaywallSimulate(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, db(r).ActivateSubscription(ctx, rid, "fake", "sim-"+strconv.FormatInt(rid, 10), token), "subscription") {
 		return
 	}
-	// Demo mode delivers the magic link through the workspace outbox; it
-	// carries the workspace id so it opens in any browser. The link opens
-	// the latest finished issue on the reader-facing page.
-	link := requestBase(r) + "/app/p/" + pub.Slug + "/latest?key=" + token + "&ws=" + reqWS(r).ID
+	// Demo mode delivers the magic link through the workspace outbox; the
+	// sealed token lets it open in any browser. It opens the latest
+	// finished issue on the reader-facing page.
+	link := requestBase(r) + "/p/" + pub.Slug + "/latest?key=" + token + s.tokQ(r)
 	if iss, err := db(r).LatestPublicIssue(ctx, pub.ID); err == nil {
-		link = fmt.Sprintf("%s/app/p/%s/%d?key=%s&ws=%s",
-			requestBase(r), pub.Slug, iss.Number, token, reqWS(r).ID)
+		link = fmt.Sprintf("%s/p/%s/%d?key=%s%s",
+			requestBase(r), pub.Slug, iss.Number, token, s.tokQ(r))
 	}
 	htmlBody := fmt.Sprintf(
 		`<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:38em;margin:2em auto">`+
@@ -2358,13 +2421,21 @@ func (s *Server) apiPaywallCancel(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{"subscribed": false})
 }
 
-// withWS resolves a ?ws= workspace override for reader-facing requests —
-// magic links, public issue pages and unsubscribe links carry the
-// creator's workspace id so they open in any browser. The visitor's own
-// session workspace is never touched.
+// withWS resolves a cross-workspace override for reader-facing requests.
+// New links carry ?tok= — an AES-GCM sealed workspace id that reveals
+// nothing in the URL. ?ws= is still honored for links already delivered.
+// The visitor's own session workspace is never touched.
 func (s *Server) withWS(r *http.Request) *http.Request {
+	if !s.d.WS.Hosted() {
+		return r
+	}
 	wsid := r.URL.Query().Get("ws")
-	if wsid == "" || wsid == reqWS(r).ID || !s.d.WS.Hosted() {
+	if wsid == "" {
+		if tok := r.URL.Query().Get("tok"); tok != "" {
+			wsid = s.d.WS.ResolvePublicToken(tok)
+		}
+	}
+	if wsid == "" || wsid == reqWS(r).ID {
 		return r
 	}
 	if target, err := s.d.WS.Get(r.Context(), wsid); err == nil {
@@ -2373,12 +2444,30 @@ func (s *Server) withWS(r *http.Request) *http.Request {
 	return r
 }
 
+// readerToken is the opaque workspace reference for public links.
+func (s *Server) readerToken(r *http.Request) string {
+	if !s.d.WS.Hosted() {
+		return ""
+	}
+	return s.d.WS.PublicToken(reqWS(r).ID)
+}
+
+// tokQ is the "&tok=…" query suffix for public links — empty in local
+// mode, where the workspace is already the reader's own.
+func (s *Server) tokQ(r *http.Request) string {
+	if tok := s.readerToken(r); tok != "" {
+		return "&tok=" + url.QueryEscape(tok)
+	}
+	return ""
+}
+
 // apiPublicIssue serves the reader-facing issue page data: the gated or
 // full body depending on the reader's subscription (magic-link key or a
 // forced free preview), with no editor-only fields.
 func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	r = s.withWS(r)
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), r.PathValue("slug")))
+	rawPub, loadErr := db(r).GetPublication(r.Context(), r.PathValue("slug"))
+	pub, err := s.canonicalPub(rawPub, loadErr)
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -2415,11 +2504,12 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	if !unlocked {
 		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
 	}
+	md = s.localizeReaderMD(md, rawPub)
 	apiJSON(w, 200, map[string]any{
-		"publication": map[string]any{"name": pub.Name, "slug": pub.Slug, "language": pub.Language},
+		"publication": map[string]any{"name": rawPub.Name, "slug": rawPub.Slug, "language": rawPub.Language},
 		"issue":       map[string]any{"number": iss.Number, "subject": iss.Subject, "created_at": iss.CreatedAt},
 		"body_md":     md, "gated": !unlocked, "subscribed": active,
-		"reader":      map[string]string{"name": demoReaderName},
+		"reader":        map[string]string{"name": demoReaderName},
 		"paid_sections": pub.Paywall.PaidSections,
 	})
 }
@@ -2441,9 +2531,13 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
 		return
 	}
-	learned, _ := db(r).IssueRejectionReasons(r.Context(), iss.ID)
+	rawReasons, _ := db(r).IssueRejectionReasons(r.Context(), iss.ID)
+	learned := editorial.RulesFrom(rawReasons)
 	version, _, _ := db(r).LatestGuide(r.Context(), pub.ID)
-	publicURL := fmt.Sprintf("%s/app/p/%s/%d?ws=%s", requestBase(r), pub.Slug, iss.Number, reqWS(r).ID)
+	publicURL := fmt.Sprintf("%s/p/%s/%d", requestBase(r), pub.Slug, iss.Number)
+	if tok := s.readerToken(r); tok != "" {
+		publicURL += "?tok=" + url.QueryEscape(tok)
+	}
 	apiJSON(w, 200, map[string]any{
 		"issue":       s.issueSummary(r, iss),
 		"public_url":  publicURL,

@@ -261,13 +261,18 @@ func (db *DB) SaveCommentary(ctx context.Context, issueID int64, commentary map[
 }
 
 // AddSource registers a new source on a publication.
-func (db *DB) AddSource(ctx context.Context, pubID int64, typ, url string) (int64, error) {
-	res, err := db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO sources (publication_id, type, url) VALUES (?,?,?)`, pubID, typ, url)
-	if err != nil {
+func (db *DB) AddSource(ctx context.Context, pubID int64, typ, url, name string) (int64, error) {
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO sources (publication_id, type, url, name) VALUES (?,?,?,?)
+		 ON CONFLICT(publication_id, url) DO UPDATE SET
+		   name = CASE WHEN excluded.name != '' THEN excluded.name ELSE sources.name END`,
+		pubID, typ, url, name); err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	var id int64
+	err := db.QueryRowContext(ctx,
+		`SELECT id FROM sources WHERE publication_id = ? AND url = ?`, pubID, url).Scan(&id)
+	return id, err
 }
 
 // SetSourceMonitor records monitor provider state on a source.
@@ -365,6 +370,17 @@ func (db *DB) ReaderUnsubscribed(ctx context.Context, readerID int64) bool {
 }
 
 // HasActiveSubscription reports whether the reader has an active sub.
+// SubscriberCount returns how many readers hold an active subscription
+// on a publication — the "recipients" line of the send confirmation.
+func (db *DB) SubscriberCount(ctx context.Context, pubID int64) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT s.reader_id) FROM subscriptions s
+		JOIN readers r ON r.id = s.reader_id
+		WHERE r.publication_id = ? AND s.status = 'active' AND r.unsubscribed_at = ''`, pubID).Scan(&n)
+	return n, err
+}
+
 func (db *DB) HasActiveSubscription(ctx context.Context, readerID int64) (bool, error) {
 	var n int
 	err := db.QueryRowContext(ctx,
