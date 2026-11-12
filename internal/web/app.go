@@ -27,10 +27,7 @@ func appDist() fs.FS {
 // appLegacyRedirect forwards old /app/* URLs to the root app paths,
 // preserving the query (key / tok / view / run…).
 func (s *Server) appLegacyRedirect(w http.ResponseWriter, r *http.Request) {
-	target := "/" + strings.TrimPrefix(r.URL.Path, "/app")
-	if target == "" {
-		target = "/"
-	}
+	target := "/" + strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/app"), "/")
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
