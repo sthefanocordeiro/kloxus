@@ -499,7 +499,77 @@ outer0:
 	if iss.Status != "approved" {
 		t.Fatalf("test send marked issue %q — it must stay approved", iss.Status)
 	}
-	// the readers send then marks it sent
+
+	// --- schedule locks the issue; Hold returns it to draft ---
+	// a test send cannot be scheduled
+	rr = apiCall(t, srv, "POST", issueURL+"/send",
+		map[string]string{"audience": "test", "when": "schedule",
+			"at": time.Now().Add(24 * time.Hour).Format(time.RFC3339)})
+	if c := apiErrCode(t, rr); c != "validation" {
+		t.Fatalf("schedule a test send: code = %q", c)
+	}
+	// scheduling needs a send time, in the future
+	rr = apiCall(t, srv, "POST", issueURL+"/send",
+		map[string]string{"audience": "readers", "when": "schedule"})
+	if c := apiErrCode(t, rr); c != "bad_time" {
+		t.Fatalf("schedule without at: code = %q", c)
+	}
+	rr = apiCall(t, srv, "POST", issueURL+"/send",
+		map[string]string{"audience": "readers", "when": "schedule", "at": "tomorrow-ish"})
+	if c := apiErrCode(t, rr); c != "bad_time" {
+		t.Fatalf("schedule with malformed at: code = %q", c)
+	}
+	rr = apiCall(t, srv, "POST", issueURL+"/send",
+		map[string]string{"audience": "readers", "when": "schedule",
+			"at": time.Now().Add(-time.Hour).Format(time.RFC3339)})
+	if c := apiErrCode(t, rr); c != "bad_time" {
+		t.Fatalf("schedule in the past: code = %q", c)
+	}
+	at := time.Now().Add(26 * time.Hour).UTC().Truncate(time.Second)
+	rr = apiCall(t, srv, "POST", issueURL+"/send",
+		map[string]string{"audience": "readers", "when": "schedule", "at": at.Format(time.RFC3339)})
+	if rr.Code != 200 {
+		t.Fatalf("schedule = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	if v := apiJSON(t, rr); !v["scheduled"].(bool) || v["scheduled_at"] != at.Format(time.RFC3339) {
+		t.Errorf("schedule response = %v", v)
+	}
+	iss, _ = db.GetIssue(ctx, issueID)
+	if iss.Status != "scheduled" || iss.ScheduledAt != at.Format(time.RFC3339) {
+		t.Fatalf("after schedule: status = %q at = %q", iss.Status, iss.ScheduledAt)
+	}
+	if v := apiGet(t, srv, issueURL)["issue"].(map[string]any); v["scheduled_at"] != at.Format(time.RFC3339) {
+		t.Error("issue summary must carry scheduled_at")
+	}
+	// a scheduled issue is locked like a sent one
+	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
+		map[string]string{"section": "The big one", "text": "v3"})
+	if c := apiErrCode(t, rr); c != "read_only" {
+		t.Fatalf("commentary on scheduled issue: code = %q", c)
+	}
+	// hold is a no-op for a non-scheduled issue — here it unlocks
+	rr = apiCall(t, srv, "POST", issueURL+"/hold", nil)
+	if rr.Code != 200 {
+		t.Fatalf("hold = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	iss, _ = db.GetIssue(ctx, issueID)
+	if iss.Status != "drafted" {
+		t.Fatalf("status after hold = %q — Hold must return to draft", iss.Status)
+	}
+	if iss.ScheduledAt != "" {
+		t.Error("hold must clear the queued send time")
+	}
+	if v := apiGet(t, srv, issueURL)["issue"].(map[string]any); v["receipt"] != nil {
+		t.Error("hold should drop the approval receipt")
+	}
+	rr = apiCall(t, srv, "POST", issueURL+"/hold", nil)
+	if c := apiErrCode(t, rr); c != "validation" {
+		t.Fatalf("hold on unscheduled issue: code = %q", c)
+	}
+	// re-approve, then the readers send marks it sent
+	if rr := apiCall(t, srv, "POST", issueURL+"/approve", nil); rr.Code != 200 {
+		t.Fatalf("re-approve after hold = %d", rr.Code)
+	}
 	rr = apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "readers"})
 	if rr.Code != 200 {
 		t.Fatalf("send readers = %d: %s", rr.Code, rr.Body.String()[:300])
@@ -508,6 +578,50 @@ outer0:
 	if iss.Status != "sent" {
 		t.Fatalf("status after send = %q", iss.Status)
 	}
+
+	// --- after sending: public URL, downloads, learned rules ---
+	af := apiGet(t, srv, issueURL+"/after")
+	if af["public_url"] == "" || !strings.Contains(af["public_url"].(string), "/app/p/futuro-proximo/") {
+		t.Fatalf("after: public_url = %v", af["public_url"])
+	}
+	if af["export_html"] == nil || af["export_md"] == nil {
+		t.Error("after: export links missing")
+	}
+	if _, ok := af["learned"].([]any); !ok {
+		t.Error("after: learned must be an array")
+	}
+	// after is blocked before the issue ships — covered by the 409 above?
+
+	// --- public reader page: gated for non-subscribers ---
+	pu := apiGet(t, srv, "/api/v1/p/futuro-proximo/"+fmt.Sprint(iss.Number))
+	if pu["gated"] != true {
+		t.Error("public page should be gated for the unsubscribed demo reader")
+	}
+	pubBody := pu["body_md"].(string)
+	if !strings.Contains(pubBody, "Exclusivo para assinantes") {
+		t.Error("public page leaked the paid section to a non-subscriber")
+	}
+	if pu["issue"].(map[string]any)["number"].(float64) != float64(iss.Number) {
+		t.Error("public page issue number mismatch")
+	}
+	// forced free view stays gated even with a key
+	pu2 := apiGet(t, srv, "/api/v1/p/futuro-proximo/"+fmt.Sprint(iss.Number)+"?view=free&key=whatever")
+	if pu2["gated"] != true {
+		t.Error("view=free must stay gated")
+	}
+	rr = apiCall(t, srv, "GET", "/api/v1/p/futuro-proximo/999", nil)
+	if rr.Code != 404 {
+		t.Fatalf("public page for missing issue = %d", rr.Code)
+	}
+	// the short public URL redirects into the app
+	rr = apiCall(t, srv, "GET", "/p/futuro-proximo/"+fmt.Sprint(iss.Number), nil)
+	if rr.Code != 302 || !strings.Contains(rr.Header().Get("Location"), "/app/p/futuro-proximo/") {
+		t.Fatalf("/p redirect = %d %s", rr.Code, rr.Header().Get("Location"))
+	}
+	// an unsent issue is not publicly visible — the drafted issue number
+	// belongs to this same fixture set, so probe a non-existent status:
+	// /after on a sent issue works (above); a drafted issue would 409.
+
 
 	// --- sent issue is read-only ---
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",

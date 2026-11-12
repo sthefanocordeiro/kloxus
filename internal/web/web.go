@@ -92,7 +92,14 @@ func New(d Deps) *Server {
 	m := s.mux
 	m.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(mustSub(webFS, "static"))))
 	m.HandleFunc("GET /healthz", s.healthz)
-	m.HandleFunc("GET /", s.publications)
+	// The root belongs to the React interface now; the server-rendered
+	// interface stays reachable from /classic until the submission.
+	m.HandleFunc("GET /", s.appRedirect)
+	m.HandleFunc("GET /classic", s.classicHome)
+	m.HandleFunc("GET /classic/", s.classicHome)
+	// Public issue URLs (/p/<slug>/<number>, as in emails and the
+	// after-sending view) land on the reader page inside the app.
+	m.HandleFunc("GET /p/{slug}/{num}", s.publicIssueRedirect)
 	m.HandleFunc("GET /demo/reset", s.demoResetConfirm)
 	m.HandleFunc("POST /demo/reset", s.demoReset)
 	m.HandleFunc("POST /demo/new", s.demoNew)
@@ -176,6 +183,10 @@ func New(d Deps) *Server {
 	m.HandleFunc("PUT /api/v1/issues/{id}/commentary", s.apiCommentary)
 	m.HandleFunc("POST /api/v1/issues/{id}/approve", s.apiApprove)
 	m.HandleFunc("POST /api/v1/issues/{id}/send", s.apiSend)
+	m.HandleFunc("POST /api/v1/issues/{id}/hold", s.apiHold)
+	m.HandleFunc("GET /api/v1/issues/{id}/after", s.apiAfter)
+	m.HandleFunc("GET /api/v1/p/{slug}/{num}", s.apiPublicIssue)
+	m.HandleFunc("GET /api/v1/unsub", s.apiUnsub)
 	m.HandleFunc("GET /api/v1/issues/{id}/export", s.apiExport)
 	m.HandleFunc("GET /api/v1/issues/{id}/preview", s.apiPreview)
 	m.HandleFunc("GET /api/v1/outbox/{id}", s.apiOutboxEmail)
@@ -185,6 +196,16 @@ func New(d Deps) *Server {
 		m.HandleFunc(method+" /api/v1/", s.apiNotFound)
 	}
 	return s
+}
+
+// publicIssueRedirect forwards the short public URL to the app's reader
+// route, preserving the query (ws / key / view).
+func (s *Server) publicIssueRedirect(w http.ResponseWriter, r *http.Request) {
+	target := "/app/p/" + r.PathValue("slug") + "/" + r.PathValue("num")
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 func mustSub(fsys embed.FS, dir string) fs.FS {
@@ -341,11 +362,10 @@ func (s *Server) issue(r *http.Request) (*store.Issue, error) {
 	return db(r).GetIssue(r.Context(), id)
 }
 
-func (s *Server) publications(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		s.notFound(w, r, r.URL.Path)
-		return
-	}
+// classicHome is the entry point of the server-rendered fallback —
+// same publications page the old root served, kept reachable while the
+// React app owns /.
+func (s *Server) classicHome(w http.ResponseWriter, r *http.Request) {
 	pubs, err := db(r).ListPublications(r.Context())
 	if err != nil {
 		s.errPage(w, r, 500, "internal error")
@@ -1318,12 +1338,13 @@ func (s *Server) sendIssueMail(r *http.Request, iss *store.Issue, pub *store.Pub
 	md := delivery.ReaderBody(iss, pub, base)
 	rid, _ := db(r).UpsertReader(r.Context(), pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
-	unsub := fmt.Sprintf("%s/pub/%d/unsubscribe?ws=%s&r=%d&t=%s",
+	unsub := fmt.Sprintf("%s/app/unsub?pub=%d&ws=%s&r=%d&t=%s",
 		base, pub.ID, reqWS(r).ID, rid, s.d.WS.MAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid)))
+	publicPage := fmt.Sprintf("%s/app/p/%s/%d?ws=%s", base, pub.Slug, iss.Number, reqWS(r).ID)
 	if !active {
 		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
-		md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s/pub/%d/paywall) · [cancelar assinatura](%s)*",
-			pub.Name, base, pub.ID, unsub)
+		md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s) · [cancelar assinatura](%s)*",
+			pub.Name, publicPage, unsub)
 	} else {
 		md += fmt.Sprintf("\n\n---\n*[cancelar assinatura](%s)*", unsub)
 	}

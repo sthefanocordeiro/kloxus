@@ -298,29 +298,25 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 	if !strings.Contains(full.BodyMD, "cancelar assinatura") {
 		t.Error("issue email lacks an unsubscribe link")
 	}
-	// the unsubscribe link leads to a reader-facing, signed opt-out page
-	m := regexp.MustCompile(`/pub/\d+/unsubscribe\?[^\s)]+`).FindString(full.BodyMD)
+	// the unsubscribe link opens the reader-facing React page, whose
+	// /api/v1/unsub call performs the signed one-click opt-out
+	m := regexp.MustCompile(`/app/unsub\?[^\s)]+`).FindString(full.BodyMD)
 	if m == "" {
 		t.Fatal("issue email has no unsubscribe URL")
 	}
 	rid, _ := db.UpsertReader(ctx, pub.ID, "demo@reader.test", "Demo Reader")
+	apiPath := "/api/v1/unsub?" + strings.SplitN(m, "?", 2)[1]
 	// a forged token is refused
-	bad := regexp.MustCompile(`t=[^\s)]+`).ReplaceAllString(m, "t=forged")
+	bad := regexp.MustCompile(`t=[^\s)]+`).ReplaceAllString(apiPath, "t=forged")
 	if rr := call(t, srv, "GET", bad, nil); rr.Code != http.StatusForbidden {
 		t.Errorf("forged unsubscribe token = %d, want 403", rr.Code)
 	}
-	rr = call(t, srv, "GET", m, nil)
-	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "desinscrito") {
+	rr = call(t, srv, "GET", apiPath, nil)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"unsubscribed":true`) {
 		t.Fatalf("unsubscribe = %d / %q", rr.Code, rr.Body.String()[:120])
 	}
 	if !db.ReaderUnsubscribed(ctx, rid) {
 		t.Error("unsubscribe not recorded on the reader")
-	}
-	// reader-facing page: no editor navigation
-	for _, nav := range []string{">Sources<", ">Run<", ">Guide<", ">Costs<", ">Outbox<", ">Settings<"} {
-		if strings.Contains(rr.Body.String(), nav) {
-			t.Errorf("unsubscribe page shows editor nav %q", nav)
-		}
 	}
 	// sent issue is read-only
 	if rr := post(issueURL+"/commentary", url.Values{"section": {"The big one"}, "text": {"v3"}}); rr.Code == 200 {

@@ -369,16 +369,43 @@ fresh one.
 ```
 
 ### `POST /api/v1/issues/{id}/send`
-`{"audience": "test"|"readers", "to": "optional@test.address"}`
+`{"audience": "test"|"readers", "to": "optional@test.address", "when": "now"|"schedule", "at": "RFC3339"}`
 Safe audience by default: `audience` is required — sending needs an
 explicit choice. Requires `approved` (`blocked`/`not_approved`
 otherwise). In demo mode every send lands in the outbox.
 - `"test"` only records the outbox email — the issue stays `approved`
   and can still go to readers.
-- `"readers"` marks the issue `sent`; sent issues are read-only.
+- `"readers"` + `"when":"now"` marks the issue `sent`; sent issues are
+  read-only.
+- `"readers"` + `"when":"schedule"` requires `"at"`, an RFC3339 time in
+  the future (`bad_time` when missing, malformed or past). It marks the
+  issue `scheduled`, stores the send time on `issue.scheduled_at`:
+  locked like a sent issue, but nothing reaches the outbox yet (demo
+  mode has no dispatch clock). Scheduling a `test` send is rejected.
 ```json
 {"issue": {"id": 1, "status": "sent", "…": "…"},
  "outbox_email_id": 7, "audience": "readers"}
+```
+A scheduled send answers `{"issue": {…}, "scheduled": true,
+"scheduled_at": "2026-11-12T08:00:00Z"}`.
+
+### `POST /api/v1/issues/{id}/hold`
+Only valid on a `scheduled` issue. Returns it to `drafted`, clears the
+queued send time and drops the approval receipt (re-approval required —
+Hold is an un-approval).
+```json
+{"issue": {"id": 1, "status": "drafted", "…": "…"}}
+```
+
+### `GET /api/v1/issues/{id}/after`
+The post-send summary. Requires `sent` or `scheduled` (`blocked`/
+`not_sent` otherwise).
+```json
+{"issue": {…}, "public_url": "https://demo.example/app/p/futuro-proximo/1?ws=…",
+ "learned": ["Cedo demais — Universidade federal lança modelo…"],
+ "guide": {"version": 3},
+ "export_html": "/api/v1/issues/1/export?fmt=html",
+ "export_md": "/api/v1/issues/1/export"}
 ```
 
 ### `GET /api/v1/issues/{id}/export?fmt=markdown|html`
@@ -418,10 +445,34 @@ Simulates a paid subscription and records the magic-link email in the
 outbox.
 ```json
 {"subscribed": true, "outbox_email_id": 8,
- "magic_link": "https://demo.example/pub/1/reader?key=…&ws=…"}
+ "magic_link": "https://demo.example/app/p/futuro-proximo/1?key=…&ws=…"}
 ```
 
 ### `POST /api/v1/publications/{id}/paywall/cancel` → `{"subscribed": false}`
+
+## Reader-facing endpoints
+
+These serve the public reader pages (`/app/p/<slug>/<num>`,
+`/app/unsub`). They accept `?ws=` to resolve the creator's workspace —
+the link a reader receives carries it so it opens in any browser.
+
+### `GET /api/v1/p/{slug}/{num}?key=…&ws=…&view=free`
+`num` is the issue number (`latest` also works). Only `sent` or
+`scheduled` issues are visible (`404` otherwise). The magic-link `key`
+unlocks the full body; `view=free` forces the gated teaser.
+```json
+{"publication": {"name": "Futuro Próximo", "slug": "futuro-proximo", "language": "pt-BR"},
+ "issue": {"number": 1, "subject": "…", "created_at": "…"},
+ "body_md": "…", "gated": true, "subscribed": false,
+ "reader": {"name": "Demo Reader"}, "paid_sections": ["The big one"]}
+```
+
+### `GET /api/v1/unsub?pub={id|slug}&r={reader_id}&t={token}&ws={ws}`
+One-click unsubscribe behind the signed link in every issue email;
+forged tokens get `403`.
+```json
+{"unsubscribed": true}
+```
 
 ## Editorial guide
 

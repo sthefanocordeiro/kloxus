@@ -9,6 +9,8 @@ import { Publications } from "./pages/Publications";
 import { PublicationPage } from "./pages/PublicationPage";
 import { IssuePage } from "./pages/IssuePage";
 import { RunLanding } from "./pages/Board";
+import { OutboxPage } from "./pages/OutboxPage";
+import { PublicIssue, ReaderShell, UnsubPage } from "./pages/ReaderPage";
 import "./styles.css";
 
 const qc = new QueryClient({
@@ -23,8 +25,18 @@ const router = createBrowserRouter(
       children: [
         { path: "/", element: <Publications /> },
         { path: "/pub/:id", element: <PublicationPage /> },
+        { path: "/pub/:id/outbox", element: <OutboxPage /> },
         { path: "/issues/:id", element: <IssuePage /> },
         { path: "/runs/:runID", element: <RunLanding /> },
+      ],
+    },
+    // reader-facing pages live outside the editor shell — no app nav
+    {
+      element: <ReaderShell />,
+      errorElement: <ErrorPage />,
+      children: [
+        { path: "/p/:slug/:num", element: <PublicIssue /> },
+        { path: "/unsub", element: <UnsubPage /> },
       ],
     },
   ],
