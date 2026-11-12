@@ -135,6 +135,9 @@ func New(d Deps) *Server {
 
 	// JSON API (v2 contract — see docs/api.md). Same workspace cookie,
 	// rate limits and isolation as the HTML routes.
+	m.HandleFunc("GET /app", s.appRedirect)
+	m.HandleFunc("GET /app/", s.appPage)
+
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
 	m.HandleFunc("GET /api/v1/publications", s.apiPublications)
 	m.HandleFunc("GET /api/v1/publications/{id}", s.apiPublication)
@@ -159,12 +162,16 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/issues/{id}", s.apiIssue)
 	m.HandleFunc("GET /api/v1/issues/{id}/readiness", s.apiReadiness)
 	m.HandleFunc("GET /api/v1/issues/{id}/items", s.apiIssueItems)
+	m.HandleFunc("GET /api/v1/issues/{id}/candidates", s.apiCandidates)
+	m.HandleFunc("PUT /api/v1/issues/{id}/lineup", s.apiLineup)
+	m.HandleFunc("GET /api/v1/stories/{sid}", s.apiStory)
 	m.HandleFunc("POST /api/v1/issues/{id}/items/{iid}/decisions", s.apiDecision)
 	m.HandleFunc("GET /api/v1/items/{iid}/dossier", s.apiDossier)
 	m.HandleFunc("POST /api/v1/issues/{id}/draft", s.apiDraft)
 	m.HandleFunc("GET /api/v1/issues/{id}/document", s.apiDocument)
 	m.HandleFunc("PATCH /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceEdit)
 	m.HandleFunc("DELETE /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceRemove)
+	m.HandleFunc("POST /api/v1/issues/{id}/items/{ref}/sentences", s.apiSentenceRestore)
 	m.HandleFunc("POST /api/v1/issues/{id}/sentences/{sid}/interpretation", s.apiSentenceInterpretation)
 	m.HandleFunc("PUT /api/v1/issues/{id}/commentary", s.apiCommentary)
 	m.HandleFunc("POST /api/v1/issues/{id}/approve", s.apiApprove)
@@ -599,6 +606,11 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 			OnEvent: func(ev pipeline.StepEvent) {
 				st.mu.Lock()
 				st.events = append(st.events, ev)
+				st.mu.Unlock()
+			},
+			OnIssue: func(issueID int64) {
+				st.mu.Lock()
+				st.st.IssueID = issueID
 				st.mu.Unlock()
 			},
 		}
@@ -1309,7 +1321,7 @@ func (s *Server) sendIssueMail(r *http.Request, iss *store.Issue, pub *store.Pub
 	unsub := fmt.Sprintf("%s/pub/%d/unsubscribe?ws=%s&r=%d&t=%s",
 		base, pub.ID, reqWS(r).ID, rid, s.d.WS.MAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid)))
 	if !active {
-		md = gateSections(md, pub.Paywall.PaidSections)
+		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
 		md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s/pub/%d/paywall) · [cancelar assinatura](%s)*",
 			pub.Name, base, pub.ID, unsub)
 	} else {
@@ -1568,7 +1580,7 @@ func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 	}
 	md := delivery.ReaderBody(iss, pub, requestBase(r))
 	if !unlocked {
-		md = gateSections(md, pub.Paywall.PaidSections)
+		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
 	}
 	linkQ := ""
 	if key != "" {
@@ -1585,21 +1597,54 @@ func (s *Server) readerPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// gateSections reduces paid sections of the issue to a teaser: the
-// headline and first sentence of each item plus a subscribers-only note.
-func gateSections(body string, paid []string) string {
+// paywallNote is the subscribers-only marker inserted after a paid
+// section's teaser, in the publication's own language. When the wall
+// also hides further items, "more" names how many.
+func paywallNote(lang string, more int) string {
+	pt := strings.HasPrefix(strings.ToLower(lang), "pt")
+	if more > 0 {
+		if pt {
+			return fmt.Sprintf("Exclusivo para assinantes — assine para ler esta e mais %d matérias.", more)
+		}
+		return fmt.Sprintf("Subscribers only — subscribe to read this and %d more stories.", more)
+	}
+	if pt {
+		return "Exclusivo para assinantes — assine para continuar a leitura."
+	}
+	return "Subscribers only — subscribe to keep reading."
+}
+
+// gateSections gates a paid section like a real paywall: the section
+// and first item's headings plus the opening lines, then one
+// subscribers-only note. Everything after the note — the rest of that
+// item and every following item in the section — is removed, and the
+// note says how many items were hidden.
+func gateSections(body string, paid []string, lang string) string {
 	paidSet := map[string]bool{}
 	for _, p := range paid {
 		paidSet[p] = true
 	}
 	var out []string
 	gated := false
-	skipRest := false
+	teased := false
+	noteIdx := -1
+	hidden := 0
+	seal := func() {
+		if hidden > 0 && noteIdx >= 0 {
+			out[noteIdx] = "> **" + paywallNote(lang, hidden) + "**"
+		}
+		hidden = 0
+		noteIdx = -1
+	}
 	for _, line := range strings.Split(body, "\n") {
 		t := strings.TrimSpace(line)
 		if strings.HasPrefix(t, "## ") {
+			if teased {
+				// the wall ends the issue — nothing below it ships
+				continue
+			}
+			seal()
 			gated = paidSet[strings.TrimSpace(strings.TrimPrefix(t, "## "))]
-			skipRest = false
 			out = append(out, line)
 			continue
 		}
@@ -1607,30 +1652,40 @@ func gateSections(body string, paid []string) string {
 			out = append(out, line)
 			continue
 		}
+		if teased {
+			if strings.HasPrefix(t, "### ") {
+				hidden++
+			}
+			continue
+		}
 		if strings.HasPrefix(t, "### ") {
 			out = append(out, line)
-			skipRest = false
 			continue
 		}
-		if skipRest || t == "" {
+		if t == "" {
 			continue
 		}
-		// first content line of an item inside a paid section: teaser
-		first := firstSentence(t)
-		out = append(out, first)
-		out = append(out, "", "> **Subscribers only — subscribe to keep reading.**", "")
-		skipRest = true
+		out = append(out, firstSentences(t, 1))
+		out = append(out, "", "> **"+paywallNote(lang, 0)+"**", "")
+		noteIdx = len(out) - 2
+		teased = true
 	}
+	seal()
 	return strings.Join(out, "\n")
 }
 
-// firstSentence returns text up to the first sentence end (or the whole
-// line when shorter than ~30 words).
-func firstSentence(t string) string {
-	if i := strings.Index(t, ". "); i >= 0 {
-		return t[:i+1]
+// firstSentences returns text up to the nth sentence end (or the whole
+// line when shorter).
+func firstSentences(t string, n int) string {
+	pos := 0
+	for i := 0; i < n; i++ {
+		j := strings.Index(t[pos:], ". ")
+		if j < 0 {
+			return t
+		}
+		pos += j + 1
 	}
-	return t
+	return t[:pos]
 }
 
 // --- outbox ---

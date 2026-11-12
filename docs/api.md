@@ -201,6 +201,52 @@ data: {"id": "a1b2c3d4", "kind": "prepare", "status": "done", "issue_id": 1, "�
 - A decision on an `approved` issue reverts it to `drafted`; on a `sent`
   issue → `read_only`.
 
+### `GET /api/v1/issues/{id}/candidates` — the build board
+Every ranked story of the run, best first — the left "Pautas" column
+plus the lineup state in one snapshot:
+```json
+{"candidates": [{
+  "story_id": 4, "item_id": 9, "title": "…", "outlets": ["Radar Tech"],
+  "sources": 2, "duplicates": 1,
+  "score": 8.7, "reason": "why this belongs", "rank": 1,
+  "in_issue": true, "section": "The big one",
+  "suggested_section": "The big one",
+  "status": "approved", "origin": "phaseA", "position": 0,
+  "dossier": true, "available": true
+}],
+ "sections": [{"title": "The big one", "capacity": 1, "commentary": "required"}],
+ "demo": true}
+```
+- `in_issue` = currently on the board (`pending`/`approved`); stories
+  removed without a reason come back `status: "removed"`, rejections
+  `status: "rejected"` — neither is in the issue.
+- `suggested_section` only on AI-picked items (`origin: "phaseA"`).
+- `dossier` = a dossier already exists; creator-added stories get one
+  generated during the draft run.
+- In demo mode only the top-`14` ranked stories are `available`;
+  adding another → `demo_unavailable`.
+
+### `PUT /api/v1/issues/{id}/lineup` — set the board
+`{"entries": [{"story_id": 4, "section": "Worth knowing"}, …]}` —
+the full desired lineup; order within a section is the array order
+(`position` 0-based). Returns the candidates snapshot (plus `guide`
+when a re-included rejection rebuilt it).
+- Stories already in the issue keep their row (`manual` adds create
+  one); everything in the lineup becomes `approved`.
+- In-issue stories absent from `entries` become `removed` — not
+  rejected. Reject-with-reason stays on `…/decisions`.
+- `unknown_story` (not a ranked candidate), `duplicate_story`,
+  `unknown_section`, `section_full` (409, carries the section target),
+  `demo_unavailable` (409) on violations. Sent issues → `read_only`.
+
+### `GET /api/v1/stories/{sid}` — story detail for the board sheet
+```json
+{"story": {"id": 4, "title": "…", "score": 8.7, "reason": "…",
+  "outlets": ["Radar Tech"],
+  "items": [{"id": 41, "title": "…", "url": "/a/41", "outlet": "Radar Tech",
+             "published_at": "…", "snippet": "…"}]}}
+```
+
 ### `GET /api/v1/items/{iid}/dossier`
 ```json
 {"item": {"id": 9, "…": "…"},
@@ -214,8 +260,9 @@ data: {"id": "a1b2c3d4", "kind": "prepare", "status": "done", "issue_id": 1, "�
 
 ### `POST /api/v1/issues/{id}/draft` → `202` `{"run": {…}}`
 Starts Phase B as a `kind: "draft"` run (events via
-`/runs/{id}/events`). Open decisions → `blocked` with a
-`pending_decisions` reason.
+`/runs/{id}/events`). Every configured section must hold at least one
+lineup item — an empty one → `blocked` with `section_empty` reasons.
+Lineup items still `pending` are promoted to `approved` at draft.
 
 ## The issue document
 

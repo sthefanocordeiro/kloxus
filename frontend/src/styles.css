@@ -1,0 +1,82 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/source-serif-4";
+
+/* "Editorial ink" — a calm, rigorous newsroom: warm paper for reading,
+   ink blue for decisions. Tokens are the single source; components use
+   them, never raw hex. */
+@theme {
+  --color-ink: #172033;
+  --color-ink-soft: #2a3450;
+  --color-paper: #faf8f3;
+  --color-paper-raised: #fffef9;
+  --color-muted: #556070;
+  --color-line: #e3ddd0;
+  --color-teal: #0f766e;
+  --color-teal-soft: #e6f4f2;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+  --color-warn: #854d0e;
+  --color-warn-soft: #fef3c7;
+
+  --font-ui: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-doc: "Source Serif 4 Variable", ui-serif, Georgia, serif;
+
+  --radius-input: 6px;
+  --radius-card: 10px;
+  --radius-panel: 16px;
+  --radius-dialog: 24px;
+}
+
+html {
+  font-family: var(--font-ui);
+  color: var(--color-ink);
+  background: var(--color-paper);
+}
+
+/* Visible focus everywhere (WCAG): keyboard users always see the ring. */
+:focus-visible {
+  outline: 2px solid var(--color-teal);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Short, functional motion only. */
+.flash {
+  animation: flash-bg 1.2s ease-out;
+}
+@keyframes flash-bg {
+  0% {
+    background-color: var(--color-warn-soft);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash {
+    animation: none;
+  }
+}
+
+/* board cards slide up into place when the board lands (or a story
+   changes columns) — gated on the reduced-motion setting */
+.card-in {
+  animation: card-in 0.35s ease-out both;
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-in {
+    animation: none;
+  }
+}

@@ -13,3 +13,14 @@ out/
 /kloxus.exe
 /kloxus
 server.log
+# frontend build output (Docker builds it; keep the placeholder so clean checkouts compile)
+internal/web/appdist/*
+!internal/web/appdist/.keep
+frontend/node_modules/
+*.tsbuildinfo
+frontend/.e2e-data
+frontend/test-results/
+
+.rec-data/
+frontend/recordings/
+.omc/

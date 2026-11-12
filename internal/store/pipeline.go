@@ -300,14 +300,20 @@ func (db *DB) MergeStories(ctx context.Context, primary int64, secondaries []int
 
 // IssueItem is one scored, sectioned entry of an issue.
 type IssueItem struct {
-	ID      int64
-	IssueID int64
-	StoryID int64
-	Section string
-	Score   float64
-	Reason  string
-	Status  string
-	Origin  string // phaseA | alternative
+	ID       int64
+	IssueID  int64
+	StoryID  int64
+	Section  string
+	Score    float64
+	Reason   string
+	Status   string
+	Origin   string // phaseA | alternative | manual
+	Position int    // slot order inside its section, set by the lineup
+	// OrigSection is the section Phase A first slotted the story into.
+	// The board mutates Section when the creator moves a story; the
+	// canonical replay input (demo fixtures) reads OrigSection so its
+	// prompt keys stay stable no matter how the lineup changes.
+	OrigSection string
 }
 
 // CreateIssueItem inserts an issue_item row.
@@ -315,9 +321,12 @@ func (db *DB) CreateIssueItem(ctx context.Context, ii IssueItem) (int64, error) 
 	if ii.Origin == "" {
 		ii.Origin = "phaseA"
 	}
+	if ii.OrigSection == "" {
+		ii.OrigSection = ii.Section
+	}
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO issue_items (issue_id, story_id, section, score, reason, status, origin) VALUES (?,?,?,?,?,?,?)`,
-		ii.IssueID, ii.StoryID, ii.Section, ii.Score, ii.Reason, ii.Status, ii.Origin)
+		`INSERT INTO issue_items (issue_id, story_id, section, score, reason, status, origin, position, orig_section) VALUES (?,?,?,?,?,?,?,?,?)`,
+		ii.IssueID, ii.StoryID, ii.Section, ii.Score, ii.Reason, ii.Status, ii.Origin, ii.Position, ii.OrigSection)
 	if err != nil {
 		return 0, err
 	}
@@ -327,7 +336,7 @@ func (db *DB) CreateIssueItem(ctx context.Context, ii IssueItem) (int64, error) 
 // IssueItems lists an issue's items ordered by score descending.
 func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status, origin FROM issue_items WHERE issue_id = ? ORDER BY score DESC`, issueID)
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section FROM issue_items WHERE issue_id = ? ORDER BY score DESC`, issueID)
 	if err != nil {
 		return nil, err
 	}
@@ -335,12 +344,93 @@ func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error
 	var out []IssueItem
 	for rows.Next() {
 		var ii IssueItem
-		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin); err != nil {
+		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection); err != nil {
 			return nil, err
 		}
 		out = append(out, ii)
 	}
 	return out, rows.Err()
+}
+
+// SetIssueItemPlacement moves an issue item to a section slot. The empty
+// status keeps the current one.
+func (db *DB) SetIssueItemPlacement(ctx context.Context, iiID int64, section string, position int, status string) error {
+	if status == "" {
+		_, err := db.ExecContext(ctx,
+			`UPDATE issue_items SET section = ?, position = ? WHERE id = ?`, section, position, iiID)
+		return err
+	}
+	_, err := db.ExecContext(ctx,
+		`UPDATE issue_items SET section = ?, position = ?, status = ? WHERE id = ?`, section, position, status, iiID)
+	return err
+}
+
+// RankedCandidate is one triaged story offered to the issue lineup:
+// either already in the issue or still on the bench.
+type RankedCandidate struct {
+	Story      *Story
+	Item       *IssueItem // nil when the story is not in this issue
+	Rank       int        // 1 = best triage score of this run
+	Duplicates int        // same-event stories merged into this one
+	Dossier    bool
+}
+
+// RankedCandidates lists the run's ranked stories for an issue: every
+// triaged story of the publication that is not already placed in another
+// issue, best score first. `inIssue` tells which are currently in.
+func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]RankedCandidate, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.id, s.title, COALESCE(s.triage_score,0), COALESCE(s.triage_reason,''),
+		       (SELECT COUNT(*) FROM story_items si WHERE si.story_id = s.id)
+		FROM stories s
+		WHERE s.publication_id = ?
+		  AND s.triage_score IS NOT NULL
+		  AND s.id NOT IN (
+		    SELECT ii.story_id FROM issue_items ii
+		    JOIN issues i ON i.id = ii.issue_id
+		    WHERE i.id != ? AND i.publication_id = s.publication_id)
+		ORDER BY COALESCE(s.triage_score,0) DESC, s.id`, pubID, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type row struct {
+		id      int64
+		title   string
+		score   float64
+		reason  string
+		members int
+	}
+	var rws []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.title, &r.score, &r.reason, &r.members); err != nil {
+			return nil, err
+		}
+		rws = append(rws, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]RankedCandidate, 0, len(rws))
+	for i, r := range rws {
+		st := &Story{ID: r.id, Title: r.title, TriageScore: r.score, TriageReason: r.reason}
+		ii, err := db.IssueItemByStory(ctx, issueID, r.id)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		dossier := false
+		if ii != nil {
+			if _, err := db.Dossier(ctx, ii.ID); err == nil {
+				dossier = true
+			}
+		}
+		out = append(out, RankedCandidate{
+			Story: st, Item: ii, Rank: i + 1,
+			Duplicates: r.members - 1, Dossier: dossier,
+		})
+	}
+	return out, nil
 }
 
 // SaveDossier upserts the dossier JSON for an issue item.
