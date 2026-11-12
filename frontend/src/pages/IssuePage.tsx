@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { ArrowLeft, BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
 import { api, ApiRequestError, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
 import { docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
-import { Commentary, DocActionsCtx, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
+import { Commentary, DocActionsCtx, insideCommentary, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
@@ -210,7 +211,11 @@ export function IssuePage() {
   const editor = useEditor(
     {
       extensions: [
-        StarterKit.configure({ heading: false }),
+        // no editable heading node, no gap cursor at atom boundaries and
+        // a top-level schema that admits only the issue's real nodes —
+        // free paragraphs simply cannot be created in this editor
+        StarterKit.configure({ heading: false, gapcursor: false, document: false }),
+        IssueDoc,
         Sentence,
         Commentary,
         ItemHeading,
@@ -218,7 +223,20 @@ export function IssuePage() {
       ],
       content: doc ? docToTiptap(doc) : { type: "doc", content: [] },
       editable: false, // enabled by the effect below once the document loads
-      editorProps: { attributes: { class: "focus:outline-none px-4 py-2" } },
+      editorProps: {
+        attributes: { class: "focus:outline-none px-4 py-2" },
+        // the schema already forbids free paragraphs; these guards make
+        // it airtight — a click landing on a boundary between atoms, or
+        // a stray selection, can never turn a keystroke into text outside
+        // a commentary block
+        handleTextInput: (view, from) =>
+          !insideCommentary(view.state.doc.resolve(from)),
+        handleKeyDown: (view, event) =>
+          ["Enter", "Backspace", "Delete"].includes(event.key) &&
+          !insideCommentary(view.state.selection.$from),
+        handlePaste: (view) =>
+          !insideCommentary(view.state.selection.$from),
+      },
       onUpdate: ({ editor: ed }) => {
         let dirty = false;
         ed.state.doc.descendants((n) => {
@@ -244,8 +262,13 @@ export function IssuePage() {
     editor.commands.setContent(docToTiptap(doc));
     // setContent leaves a selection spanning the whole fresh document — a
     // keystroke arriving before a click's selection sync would replace the
-    // entire issue. Collapse it to a cursor at the start.
-    editor.commands.setTextSelection(0);
+    // entire issue. Collapse it to the nearest text position from the
+    // start (a plain TextSelection at a node boundary isn't valid now
+    // that the schema forbids top-level text).
+    editor.commands.command(({ tr, dispatch }) => {
+      if (dispatch) tr.setSelection(TextSelection.near(tr.doc.resolve(0), 1));
+      return true;
+    });
   }, [editor, doc?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // contenteditable follows the issue status once the document arrives —

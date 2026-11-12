@@ -88,6 +88,26 @@ async function boardOps(page: Page, isPhone: boolean) {
   // 5) draft — the step rail runs, then the editor lands
   await page.getByRole("button", { name: /Draft the issue/ }).click();
   await expect(page.locator("[data-sid]").first()).toBeVisible({ timeout: 120000 });
+
+  // 6) the document is sealed: clicking a section or item heading and
+  //    typing must not create free text anywhere — the schema only
+  //    carries atoms + commentary
+  const docEl = page.locator(".ProseMirror");
+  const before = await docEl.first().textContent();
+  // :visible skips a StrictMode ghost node-view that renders an empty h2
+  const headings = docEl.locator("h2:visible, [data-item-ref]:visible");
+  const n = await headings.count();
+  for (let i = 0; i < n; i++) {
+    // an item-heading click opens the evidence pane — on phone that
+    // swaps tabs, so reopen the document before the next heading
+    if (isPhone) await page.getByRole("button", { name: /^Issue$/ }).click();
+    await headings.nth(i).click();
+    await page.keyboard.type("XYZ", { delay: 10 });
+  }
+  await page.waitForTimeout(300);
+  expect(await docEl.first().textContent()).toBe(before);
+  await expect(docEl.getByText("XYZ")).toHaveCount(0);
+  if (isPhone) await page.getByRole("button", { name: /^Issue$/ }).click();
 }
 
 async function clearFlags(page: Page) {

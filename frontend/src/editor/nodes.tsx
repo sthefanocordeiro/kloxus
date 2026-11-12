@@ -19,6 +19,23 @@ export interface DocActions {
   readOnly: boolean;
 }
 
+// insideCommentary reports whether a resolved position sits inside a
+// commentary block — the only editable region in an issue document.
+export function insideCommentary($pos: { depth: number; node: (d: number) => { type: { name: string } } | null }): boolean {
+  for (let d = $pos.depth; d >= 0; d--) {
+    if ($pos.node(d)?.type?.name === "commentary") return true;
+  }
+  return false;
+}
+
+// blurEditor pulls the caret out of the document when a heading is
+// clicked — headlines open evidence, they never take text input, so the
+// editor must not keep a live selection somewhere a keystroke could
+// land outside commentary.
+function blurEditor(editor: NodeViewProps["editor"]) {
+  editor.commands.blur();
+}
+
 export const DocActionsCtx = createContext<DocActions>({
   editSentence: async () => null,
   interpret: async () => false,
@@ -226,13 +243,17 @@ function CommentaryView({ node, editor, getPos }: NodeViewProps) {
 // ItemHeadingView — the story's headline as a non-editable atom; click
 // selects it in the evidence pane. The headline lives in attrs so no
 // keystroke can rewrite or merge it into a sentence.
-function ItemHeadingView({ node }: NodeViewProps) {
+function ItemHeadingView({ node, editor }: NodeViewProps) {
   const actions = useContext(DocActionsCtx);
   const a = node.attrs as { ref: number; issueItemId: number; headline: string };
   return (
     <NodeViewWrapper
       className="mt-6 cursor-pointer font-doc text-lg font-semibold hover:text-teal"
-      onClick={() => actions.showEvidence(a.ref, { issueItemId: a.issueItemId })}
+      onMouseDown={(e: MouseEvent) => e.preventDefault()}
+      onClick={() => {
+        blurEditor(editor);
+        actions.showEvidence(a.ref, { issueItemId: a.issueItemId });
+      }}
       data-item-ref={a.ref}
     >
       <h3>{a.headline}</h3>
@@ -240,7 +261,33 @@ function ItemHeadingView({ node }: NodeViewProps) {
   );
 }
 
+// SectionHeadingView — the section title atom; clicking it only defocuses
+// the editor, it is never a text target.
+function SectionHeadingView({ node, editor }: NodeViewProps) {
+  const a = node.attrs as { title: string };
+  return (
+    <NodeViewWrapper
+      onMouseDown={(e: MouseEvent) => e.preventDefault()}
+      onClick={() => blurEditor(editor)}
+      data-section-title="1"
+    >
+      <h2 className="mb-1 mt-8 font-doc text-xl font-semibold">{a.title}</h2>
+    </NodeViewWrapper>
+  );
+}
+
 // --- node definitions ---
+
+// IssueDoc is the issue's top node: the only things that may exist at
+// document level are the issue's real parts — section/item heading
+// atoms, sentence atoms and commentary blocks. A paragraph can't wrap
+// here, so a stray click+type next to a heading inserts nothing instead
+// of a phantom paragraph that vanishes on reload.
+export const IssueDoc = Node.create({
+  name: "doc",
+  topNode: true,
+  content: "(sectionHeading | itemHeading | sentence | commentary)+",
+});
 
 export const Sentence = Node.create({
   name: "sentence",
@@ -330,5 +377,8 @@ export const SectionHeading = Node.create({
       }),
       node.attrs.title,
     ];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(SectionHeadingView);
   },
 });
