@@ -153,6 +153,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
 	m.HandleFunc("GET /api/v1/sample", s.apiSample)
 	m.HandleFunc("GET /sample/a", s.sampleArticle)
+	m.HandleFunc("GET /sample/a/", s.sampleArticle) // tolerate a stray trailing slash
 	m.HandleFunc("GET /api/v1/proposal", s.apiProposal)
 	m.HandleFunc("POST /api/v1/publications", s.apiPublicationCreate)
 	m.HandleFunc("POST /api/v1/publications/propose", s.apiPropose)
@@ -228,7 +229,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(context.WithValue(r.Context(), ctxReqID, rid))
 
 	if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" ||
-		r.URL.Path == "/api/v1/sample" || r.URL.Path == "/sample/a" {
+		r.URL.Path == "/api/v1/sample" || strings.HasPrefix(r.URL.Path, "/sample/a") {
 		s.mux.ServeHTTP(w, r)
 		return
 	}
