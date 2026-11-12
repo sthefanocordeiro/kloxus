@@ -5,5 +5,5 @@ package examples
 
 import "embed"
 
-//go:embed publications fixtures
+//go:embed publications fixtures landing
 var FS embed.FS

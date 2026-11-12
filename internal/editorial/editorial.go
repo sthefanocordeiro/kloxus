@@ -39,16 +39,18 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 	var reasons []string
 	for i, d := range decisions {
 		if i == lastIdx[d.ItemID] && d.Kind == "reject" && strings.TrimSpace(d.Reason) != "" {
-			// a bare chip label ("too early") is a useless rule — compose
-			// it with the story it applies to so the learned rule reads
-			// "Too early — Universidade federal lança modelo…"
+			bare := strings.TrimSpace(d.Reason)
+			// the prompt keeps the story title for context ("Too early —
+			// Universidade lança modelo…"), but the rules distilled in
+			// demo fallback stay general — a learned rule names the
+			// objection, never a specific headline.
 			if ii, err := db.GetIssueItem(ctx, d.ItemID); err == nil {
 				if title, err := db.StoryTitle(ctx, ii.StoryID); err == nil && title != "" {
-					d.Reason = strings.TrimSpace(d.Reason) + " — " + title
+					d.Reason = bare + " — " + title
 				}
 			}
 			ds = append(ds, d)
-			reasons = append(reasons, d.Reason)
+			reasons = append(reasons, bare)
 		}
 	}
 	if len(reasons) == 0 {
@@ -138,8 +140,39 @@ func buildGuide(reasons []string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// chipRules generalizes the fixed rejection chips into standing
+// editorial rules (EN + PT) — "too early" becomes a rule about the kind
+// of story to skip, not a note about one headline.
+var chipRules = map[string]string{
+	"too early":              "Skip stories that just broke, with no confirmed outcome yet",
+	"cedo demais":            "Pular pautas recém-abertas, ainda sem desfecho confirmado",
+	"not for my audience":    "Skip stories that don't serve this newsletter's audience",
+	"não é para meu público": "Pular pautas que não servem ao público desta newsletter",
+	"already covered":        "Skip stories already covered in previous issues",
+	"já coberto":             "Pular pautas já cobertas em edições anteriores",
+	"weak source":            "Skip stories backed by weak or low-trust sources",
+	"fonte fraca":            "Pular pautas sustentadas por fontes fracas",
+}
+
+// RulesFrom turns rejection reasons into general rules — the same
+// output the guide fallback writes, exposed for views that need the
+// learned rules (e.g. the after-sending screen).
+func RulesFrom(reasons []string) []string {
+	guide := buildGuide(reasons)
+	var out []string
+	for _, line := range strings.Split(guide, "\n") {
+		if r := strings.TrimSpace(strings.TrimPrefix(line, "- ")); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // ruleFor normalizes a free-text reason into one short rule.
 func ruleFor(reason string) string {
+	if general, ok := chipRules[strings.ToLower(strings.TrimSpace(reason))]; ok {
+		return general
+	}
 	rule := strings.TrimSpace(reason)
 	rule = guideSubject.ReplaceAllString(rule, "")
 	rule = strings.TrimSpace(rule)

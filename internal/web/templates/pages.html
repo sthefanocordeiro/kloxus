@@ -6,7 +6,13 @@
   <p class="muted">{{.Topic}}</p>
   <p class="muted">{{.Frequency}} · {{.Audience}}</p>
 </div>
-{{else}}<p>No publications yet.</p>{{end}}
+{{else}}<p>No publications yet.</p>
+{{if .Demo}}
+<form method="post" action="/classic/seed" style="display:inline">
+  <button class="primary" type="submit">Create the sample newsletter</button>
+</form>
+<p class="muted">The no-JS fallback can't walk the create flow — this seeds the demo publication in one step.</p>
+{{end}}{{end}}
 {{if .Demo}}
 <p><a href="/demo/reset">Reset demo</a> resets only your own demo session.</p>
 <form method="post" action="/demo/new" style="display:inline">

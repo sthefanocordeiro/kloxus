@@ -27,7 +27,7 @@ export function OutboxPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-8">
-      <Link to={`/pub/${id}`} className="text-sm text-muted hover:text-ink">
+      <Link to={`/publications/${id}`} className="text-sm text-muted hover:text-ink">
         ← {t.back}
       </Link>
       <h1 className="mt-3 mb-6 font-doc text-2xl font-semibold">{t.outbox}</h1>

@@ -104,13 +104,14 @@ type Publication struct {
 	Sections      []config.Section
 	Paywall       config.Paywall
 	AIDisclosure  string
+	Custom        bool
 }
 
 func (db *DB) scanPublication(row *sql.Row) (*Publication, error) {
 	var p Publication
 	var sections, paywall string
 	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Language, &p.Topic, &p.Audience,
-		&p.EditorialLine, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure)
+		&p.EditorialLine, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +124,7 @@ func (db *DB) scanPublication(row *sql.Row) (*Publication, error) {
 	return &p, nil
 }
 
-const publicationCols = `id, slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure`
+const publicationCols = `id, slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure, custom`
 
 // GetPublication resolves a publication by numeric id or slug.
 func (db *DB) GetPublication(ctx context.Context, ref string) (*Publication, error) {
@@ -147,7 +148,7 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 		var p Publication
 		var sections, paywall string
 		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Language, &p.Topic, &p.Audience,
-			&p.EditorialLine, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure); err != nil {
+			&p.EditorialLine, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(sections), &p.Sections)
@@ -155,6 +156,82 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 		out = append(out, &p)
 	}
 	return out, rows.Err()
+}
+
+// HasCanonicalPublication reports whether any publication is template-seeded
+// (not creator-made). The workspace config refresh only touches canonical
+// rows — a publication the creator wrote keeps its edited blocks.
+func (db *DB) HasCanonicalPublication(ctx context.Context) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM publications WHERE custom = 0`).Scan(&n)
+	return n > 0, err
+}
+
+// CreatePublication stores a creator-made publication (custom=1). Unlike
+// SeedPublication it does not attach sources — onboarding offers them on a
+// separate screen — and it slugifies the name into a unique slug.
+func (db *DB) CreatePublication(ctx context.Context, p *config.Publication) (int64, error) {
+	sections, _ := json.Marshal(p.Sections)
+	paywall, _ := json.Marshal(p.Paywall)
+	slug := p.Slug
+	for i := 2; ; i++ {
+		var n int
+		if err := db.QueryRowContext(ctx,
+			`SELECT count(*) FROM publications WHERE slug = ?`, slug).Scan(&n); err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			break
+		}
+		slug = fmt.Sprintf("%s-%d", p.Slug, i)
+	}
+	res, err := db.ExecContext(ctx, `INSERT INTO publications
+		(slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure, custom)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`,
+		slug, p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine,
+		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// DeleteSource removes one source from a publication. Collected items go
+// with it — stories and past issues keep their own rows, only the raw
+// fetch links are dropped.
+func (db *DB) DeleteSource(ctx context.Context, pubID, sourceID int64) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM story_items WHERE item_id IN (SELECT id FROM items WHERE source_id = ?)`,
+		`DELETE FROM items WHERE source_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, sourceID); err != nil {
+			return err
+		}
+	}
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM sources WHERE id = ? AND publication_id = ?`, sourceID, pubID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
+}
+
+// ItemsPerWeek counts items collected from a source in the last 7 days.
+func (db *DB) ItemsPerWeek(ctx context.Context, sourceID int64) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM items WHERE source_id = ? AND fetched_at > datetime('now','-7 days')`,
+		sourceID).Scan(&n)
+	return n, err
 }
 
 // SeedPublication inserts a publication definition and its sources.

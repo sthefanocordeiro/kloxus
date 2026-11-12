@@ -62,9 +62,50 @@ conflict` and the response carries the fresh `document`.
 
 ## Publications
 
+### `GET /api/v1/sample` — the landing page's cited dossier
+Workspace-free: no workspace is resolved or created.
+```json
+{"publication": "Futuro Próximo", "issue_number": 7, "date": "2026-03-02",
+ "dossiers": [{"ref": 1, "title": "…", "summary": "…",
+   "facts": [{"text": "…", "ref": 1}],
+   "quote": {"text": "…", "attribution": "…"},
+   "unknowns": ["…"], "interpretation": ["…"],
+   "sources": [{"ref": 1, "url": "…", "name": "…"}]}],
+ "how_it_works": ["…"]}
+```
+The sample's sources live on fictional `.example` outlets; their links
+resolve at `GET /sample/a?u=<url>` — an app-served stub article, also
+workspace-free, so every citation opens an original inside the demo.
+
+### `GET /api/v1/proposal` — the create screen's five editable blocks
+```json
+{"proposal": {
+  "name": "Futuro Próximo", "topic": "…", "audience": "…",
+  "editorial_line": "…", "tone": "…",
+  "language": "pt-BR", "frequency": "weekly", "ai_disclosure": "short",
+  "sections": [{"title": "The big one", "items": 1, "commentary": "required"}],
+  "sources": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml"}],
+  "paywall": {"enabled": true, "paid_sections": ["The big one"], "price": "V$ 12/month"}
+}}
+```
+
+### `POST /api/v1/publications/propose`
+`{"material": "https://… or pasted text"}` — turns pasted material into a
+proposal. Demo mode: `422 live_only` (only the sample is offered).
+
+### `POST /api/v1/publications` → `201`
+Creates a publication from the (possibly edited) proposal blocks.
+`{"name": "…", "topic": "…", "audience": "…", "editorial_line": "…",
+  "tone": "…", "language": "pt-BR", "frequency": "weekly",
+  "ai_disclosure": "short", "sections": [{…}], "paywall": {…}}`
+Validation failure → `validation`. The stored publication is flagged
+`"custom": true`; in demo mode its prompt-bearing fields are substituted
+by the canonical sample at run time so fixture replay stays stable.
+
 ### `GET /api/v1/publications`
 ```json
-{"publications": [{"id": 1, "slug": "futuro-proximo", "name": "Futuro Próximo", "...": "…"}]}
+{"publications": [{"id": 1, "slug": "futuro-proximo", "name": "Futuro Próximo",
+  "custom": false, "...": "…"}]}
 ```
 
 ### `GET /api/v1/publications/{id|slug}` — publication + settings
@@ -91,9 +132,38 @@ conflict` and the response carries the fresh `document`.
   "url": "fixtures/feeds/radar-tech.xml",
   "canonical_url": "fixtures/feeds/radar-tech.xml",
   "last_fetch_at": "2026-11-11 12:00:00", "last_status": "ok: 12 items, 9 new",
+  "items_per_week": 12,
   "monitor": {"provider": "", "id": "", "status": ""}
 }]}
 ```
+
+### `GET /api/v1/publications/{id}/sources/catalog`
+The fixture sources not yet added — the "suggested" cards on the sources
+screen.
+```json
+{"offered": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml",
+  "name": "Radar Tech", "items_per_week": 3}]}
+```
+
+### `GET /api/v1/publications/{id}/sources/preview?type=rss&url=…`
+The three latest items a source would bring in. Fixture URLs read the
+embedded files; other URLs are format-validated only and return a
+simulation note (demo never fetches). Bad input → `invalid_source`.
+```json
+{"items": [{"title": "…", "url": "…", "outlet": "Radar Tech",
+  "published_at": "2026-11-10"}]}
+```
+
+### `POST /api/v1/publications/{id}/sources/confirm`
+Adds the selected offered sources and marks onboarding done →
+`{"sources": […]}`. An optional `{"include": ["…url…"]}` body limits
+which offered sources are added (the sources screen sends the checked
+URLs); no body accepts them all. The client then starts the first run
+itself.
+
+### `DELETE /api/v1/publications/{id}/sources/{sid}`
+Removes a source — collected items go with it (stories and past issues
+keep their own rows).
 
 ### `POST /api/v1/publications/{id}/sources`
 `{"type": "rss", "url": "https://feed.test/rss.xml"}` → `201`
@@ -384,7 +454,8 @@ otherwise). In demo mode every send lands in the outbox.
   mode has no dispatch clock). Scheduling a `test` send is rejected.
 ```json
 {"issue": {"id": 1, "status": "sent", "…": "…"},
- "outbox_email_id": 7, "audience": "readers"}
+ "outbox_email_id": 7, "audience": "readers",
+ "to": ["readers@kloxus.demo"], "subject": "Futuro Próximo — issue 1"}
 ```
 A scheduled send answers `{"issue": {…}, "scheduled": true,
 "scheduled_at": "2026-11-12T08:00:00Z"}`.
@@ -401,8 +472,8 @@ Hold is an un-approval).
 The post-send summary. Requires `sent` or `scheduled` (`blocked`/
 `not_sent` otherwise).
 ```json
-{"issue": {…}, "public_url": "https://demo.example/app/p/futuro-proximo/1?ws=…",
- "learned": ["Cedo demais — Universidade federal lança modelo…"],
+{"issue": {…}, "public_url": "https://demo.example/p/futuro-proximo/1?tok=…",
+ "learned": ["Skip stories that just broke, with no confirmed outcome yet"],
  "guide": {"version": 3},
  "export_html": "/api/v1/issues/1/export?fmt=html",
  "export_md": "/api/v1/issues/1/export"}
@@ -436,7 +507,7 @@ Kinds: `issue`, `test`, `magic_link`.
 ### `GET /api/v1/publications/{id}/reader`
 ```json
 {"reader": {"email": "demo@reader.test", "name": "Demo Reader"},
- "subscribed": false,
+ "subscribed": false, "subscribers": 0, "readers": 1,
  "issue": {"id": 1, "number": 1, "status": "sent", "…": "…"}}
 ```
 
@@ -445,18 +516,19 @@ Simulates a paid subscription and records the magic-link email in the
 outbox.
 ```json
 {"subscribed": true, "outbox_email_id": 8,
- "magic_link": "https://demo.example/app/p/futuro-proximo/1?key=…&ws=…"}
+ "magic_link": "https://demo.example/p/futuro-proximo/1?key=…&tok=…"}
 ```
 
 ### `POST /api/v1/publications/{id}/paywall/cancel` → `{"subscribed": false}`
 
 ## Reader-facing endpoints
 
-These serve the public reader pages (`/app/p/<slug>/<num>`,
-`/app/unsub`). They accept `?ws=` to resolve the creator's workspace —
-the link a reader receives carries it so it opens in any browser.
+These serve the public reader pages (`/p/<slug>/<num>`, `/unsub`).
+They accept `?tok=` — an AES-GCM sealed workspace reference — so a
+reader link opens in any browser without ever exposing the editor's
+workspace id. `?ws=` from links delivered before the change still works.
 
-### `GET /api/v1/p/{slug}/{num}?key=…&ws=…&view=free`
+### `GET /api/v1/p/{slug}/{num}?key=…&tok=…&view=free`
 `num` is the issue number (`latest` also works). Only `sent` or
 `scheduled` issues are visible (`404` otherwise). The magic-link `key`
 unlocks the full body; `view=free` forces the gated teaser.
@@ -467,7 +539,7 @@ unlocks the full body; `view=free` forces the gated teaser.
  "reader": {"name": "Demo Reader"}, "paid_sections": ["The big one"]}
 ```
 
-### `GET /api/v1/unsub?pub={id|slug}&r={reader_id}&t={token}&ws={ws}`
+### `GET /api/v1/unsub?pub={id|slug}&r={reader_id}&t={token}&tok={tok}`
 One-click unsubscribe behind the signed link in every issue email;
 forged tokens get `403`.
 ```json

@@ -99,7 +99,19 @@ describe("docToTiptap", () => {
   it("emits one sentence node per stored sentence, commentary last", () => {
     const tiptap = docToTiptap(doc()) as { content: { type: string }[] };
     const types = tiptap.content.map((n) => n.type);
-    expect(types).toEqual(["heading", "itemHeading", "sentence", "sentence", "commentary"]);
+    expect(types).toEqual(["sectionHeading", "itemHeading", "sentence", "sentence", "commentary"]);
+  });
+
+  it("keeps headings out of editable content — titles live in attrs", () => {
+    const tiptap = docToTiptap(doc()) as {
+      content: { type: string; attrs?: { title?: string; headline?: string }; content?: unknown[] }[];
+    };
+    const sec = tiptap.content.find((n) => n.type === "sectionHeading");
+    const item = tiptap.content.find((n) => n.type === "itemHeading");
+    expect(sec?.attrs?.title).toBe("Lead");
+    expect(sec?.content).toBeUndefined();
+    expect(item?.attrs?.headline).toBe("Story one");
+    expect(item?.content).toBeUndefined();
   });
 
   it("carries sid and citations into node attrs", () => {

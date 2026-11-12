@@ -35,7 +35,7 @@ func TestFixturesAreFictional(t *testing.T) {
 		"radartech.com", "pulsodigital.com", "correiodocodigo.com", "observatorioaberto.org",
 	}
 	var files []string
-	for _, dir := range []string{"fixtures/feeds", "fixtures/llm", "fixtures/pages", "publications"} {
+	for _, dir := range []string{"fixtures/feeds", "fixtures/llm", "fixtures/pages", "publications", "landing"} {
 		entries, err := examples.FS.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("ReadDir %s: %v", dir, err)
@@ -171,6 +171,14 @@ func TestWorkspaceIsolation(t *testing.T) {
 	if ws1.ID == ws2.ID {
 		t.Fatal("two visitors share a workspace")
 	}
+	// hosted workspaces start empty — onboarding creates the publication;
+	// seed both explicitly so the isolation assertions below stay identical
+	if err := seed(ctx, ws1.DB); err != nil {
+		t.Fatalf("seed ws1: %v", err)
+	}
+	if err := seed(ctx, ws2.DB); err != nil {
+		t.Fatalf("seed ws2: %v", err)
+	}
 	// marker write in ws1 only
 	if err := ws1.DB.SetProgress(ctx, "marker"); err != nil {
 		t.Fatalf("SetProgress: %v", err)
@@ -300,7 +308,7 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 	}
 	// the unsubscribe link opens the reader-facing React page, whose
 	// /api/v1/unsub call performs the signed one-click opt-out
-	m := regexp.MustCompile(`/app/unsub\?[^\s)]+`).FindString(full.BodyMD)
+	m := regexp.MustCompile(`/unsub\?[^\s)]+`).FindString(full.BodyMD)
 	if m == "" {
 		t.Fatal("issue email has no unsubscribe URL")
 	}
@@ -524,6 +532,10 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	}
 	t.Cleanup(mgr.Close)
 
+	// hosted workspaces start empty — onboarding creates the publication
+	if err := seed(ctx, wsA.DB); err != nil {
+		t.Fatalf("seed wsA: %v", err)
+	}
 	pubs, _ := wsA.DB.ListPublications(ctx)
 	pub := pubs[0]
 	body := "# Edição 1\n\n## The big one\n\n### Manchete\n\nFrase de abertura curta. Conteúdo completo para assinantes [1]."
@@ -540,14 +552,14 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	for _, e := range emails {
 		if e.Kind == "magic_link" {
 			full, _ := wsA.DB.GetOutboxEmail(ctx, e.ID)
-			m := regexp.MustCompile(`key=([^&"']+)&(?:amp;)?ws=([^"']+)`).FindStringSubmatch(full.BodyHTML)
+			m := regexp.MustCompile(`key=([^&"']+)&(?:amp;)?tok=([^"']+)`).FindStringSubmatch(full.BodyHTML)
 			if m != nil {
-				link = fmt.Sprintf("%s/reader?key=%s&ws=%s", pubURL, m[1], m[2])
+				link = fmt.Sprintf("%s/reader?key=%s&tok=%s", pubURL, m[1], m[2])
 			}
 		}
 	}
 	if link == "" {
-		t.Fatal("magic-link email does not carry key + ws parameters")
+		t.Fatal("magic-link email does not carry key + tok parameters")
 	}
 
 	// visitor B (no cookie): the ws parameter lands them in wsA's issue
@@ -555,10 +567,11 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "Conteúdo completo") {
 		t.Fatalf("magic link cross-browser: got %d / %q", rr.Code, rr.Body.String()[:200])
 	}
-	// sanity: the same link minus ws opens the empty workspace → no issue
-	rr = serve("GET", strings.SplitN(link, "&ws=", 2)[0], "", nil)
-	if !strings.Contains(rr.Body.String(), "no published issue") {
-		t.Error("link without ws should land in an empty workspace")
+	// sanity: the same link minus ws opens the visitor's own (empty)
+	// workspace — the sent content must not render
+	rr = serve("GET", strings.SplitN(link, "&tok=", 2)[0], "", nil)
+	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
+		t.Error("link without ws leaked content into another workspace")
 	}
 	// ws alone (no valid key) must not open the other workspace either
 	rr = serve("GET", pubURL+"/reader?key=deadbeef&ws="+wsA.ID, "", nil)

@@ -111,38 +111,39 @@ func parseDotEnv(r io.Reader) map[string]string {
 
 // Section is one issue section from a publication definition.
 type Section struct {
-	Title      string `yaml:"title"`
-	Items      int    `yaml:"items"`
-	Commentary string `yaml:"commentary"` // required | optional | none
+	Title      string `yaml:"title" json:"title"`
+	Items      int    `yaml:"items" json:"items"`
+	Commentary string `yaml:"commentary" json:"commentary"` // required | optional | none
 }
 
-// SourceDef is one collection source: an RSS feed or an open web page.
+// SourceDef is one collection source: a name, an RSS feed or an open web page.
 type SourceDef struct {
-	Type string `yaml:"type"` // rss | page
-	URL  string `yaml:"url"`
+	Name string `yaml:"name" json:"name"`
+	Type string `yaml:"type" json:"type"` // rss | page
+	URL  string `yaml:"url" json:"url"`
 }
 
 // Paywall holds the paid-issue settings.
 type Paywall struct {
-	Enabled      bool     `yaml:"enabled"`
-	PaidSections []string `yaml:"paid_sections"`
-	Price        string   `yaml:"price"`
+	Enabled      bool     `yaml:"enabled" json:"enabled"`
+	PaidSections []string `yaml:"paid_sections" json:"paid_sections"`
+	Price        string   `yaml:"price" json:"price"`
 }
 
 // Publication is a creator's publication definition.
 type Publication struct {
-	Slug          string      `yaml:"slug"`
-	Name          string      `yaml:"name"`
-	Language      string      `yaml:"language"`
-	Topic         string      `yaml:"topic"`
-	Audience      string      `yaml:"audience"`
-	EditorialLine string      `yaml:"editorial_line"`
-	Tone          string      `yaml:"tone"`
-	Frequency     string      `yaml:"frequency"`
-	Sections      []Section   `yaml:"sections"`
-	Sources       []SourceDef `yaml:"sources"`
-	Paywall       Paywall     `yaml:"paywall"`
-	AIDisclosure  string      `yaml:"ai_disclosure"` // none | short | detailed
+	Slug          string      `yaml:"slug" json:"slug"`
+	Name          string      `yaml:"name" json:"name"`
+	Language      string      `yaml:"language" json:"language"`
+	Topic         string      `yaml:"topic" json:"topic"`
+	Audience      string      `yaml:"audience" json:"audience"`
+	EditorialLine string      `yaml:"editorial_line" json:"editorial_line"`
+	Tone          string      `yaml:"tone" json:"tone"`
+	Frequency     string      `yaml:"frequency" json:"frequency"`
+	Sections      []Section   `yaml:"sections" json:"sections"`
+	Sources       []SourceDef `yaml:"sources" json:"sources"`
+	Paywall       Paywall     `yaml:"paywall" json:"paywall"`
+	AIDisclosure  string      `yaml:"ai_disclosure" json:"ai_disclosure"` // none | short | detailed
 }
 
 // ParsePublication decodes and validates a publication YAML document.
