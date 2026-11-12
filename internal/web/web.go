@@ -95,8 +95,8 @@ func New(d Deps) *Server {
 	// The root belongs to the React interface now; the server-rendered
 	// interface stays reachable from /classic until the submission.
 	m.HandleFunc("GET /", s.appRedirect)
-	m.HandleFunc("GET /classic", s.publications)
-	m.HandleFunc("GET /classic/", s.publications)
+	m.HandleFunc("GET /classic", s.classicHome)
+	m.HandleFunc("GET /classic/", s.classicHome)
 	// Public issue URLs (/p/<slug>/<number>, as in emails and the
 	// after-sending view) land on the reader page inside the app.
 	m.HandleFunc("GET /p/{slug}/{num}", s.publicIssueRedirect)
@@ -362,11 +362,10 @@ func (s *Server) issue(r *http.Request) (*store.Issue, error) {
 	return db(r).GetIssue(r.Context(), id)
 }
 
-func (s *Server) publications(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		s.notFound(w, r, r.URL.Path)
-		return
-	}
+// classicHome is the entry point of the server-rendered fallback —
+// same publications page the old root served, kept reachable while the
+// React app owns /.
+func (s *Server) classicHome(w http.ResponseWriter, r *http.Request) {
 	pubs, err := db(r).ListPublications(r.Context())
 	if err != nil {
 		s.errPage(w, r, 500, "internal error")
