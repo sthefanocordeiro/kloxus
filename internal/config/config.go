@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -40,6 +41,13 @@ type Config struct {
 	AbacatePayKey   string
 	PublicURL       string
 	WebhookSecret   string
+	// ResendWebhookSecret verifies Svix signatures on /webhooks/resend.
+	ResendWebhookSecret string
+	// EmailDailyCap bounds real sends across all workspaces per UTC day
+	// (Resend free tier is 100/day); EmailWorkspaceDailyCap bounds one
+	// workspace. Both are persisted in the outbox ledger.
+	EmailDailyCap          int
+	EmailWorkspaceDailyCap int
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
@@ -70,11 +78,34 @@ func Load() (*Config, error) {
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
 		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),
 		CookieSecret:    os.Getenv("KLOXUS_COOKIE_SECRET"),
+
+		ResendWebhookSecret:    os.Getenv("RESEND_WEBHOOK_SECRET"),
+		EmailDailyCap:          getint("KLOXUS_EMAIL_DAILY_CAP", 80),
+		EmailWorkspaceDailyCap: getint("KLOXUS_EMAIL_WS_DAILY_CAP", 25),
 	}
 	if cfg.Mode != "demo" && cfg.Mode != "real" {
 		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)
 	}
+	if cfg.ResendAPIKey != "" {
+		if err := ValidFromAddress(cfg.FromAddress); err != nil {
+			return nil, err
+		}
+	}
 	return cfg, nil
+}
+
+// ValidFromAddress requires the full "Name <local@domain>" form — a
+// bare domain or bare address is a config error that would surface only
+// when the first send is rejected (CTO note on KLOX-11).
+func ValidFromAddress(s string) error {
+	a, err := mail.ParseAddress(s)
+	if err != nil || a.Address == "" || !strings.Contains(a.Address, "@") {
+		return fmt.Errorf("KLOXUS_FROM_ADDRESS must be a full \"Name <local@domain>\" sender address, got %q", s)
+	}
+	if strings.TrimSpace(a.Name) == "" {
+		return fmt.Errorf("KLOXUS_FROM_ADDRESS must include a display name (\"Name <local@domain>\"), got %q", s)
+	}
+	return nil
 }
 
 func getenv(key, fallback string) string {

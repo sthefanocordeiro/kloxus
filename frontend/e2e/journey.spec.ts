@@ -211,6 +211,30 @@ async function scheduleAndHold(page: Page) {
   await expect(page.getByRole("button", { name: "Approve issue" }).first()).toBeVisible({ timeout: 15000 });
 }
 
+async function claimIfLive(page: Page) {
+  // Live deployments gate sends behind a claimed workspace. The claim
+  // email lands in a real inbox — and in the workspace outbox, where
+  // the API request context can complete the magic-link round trip.
+  const ws = await (await page.request.get("/api/v1/workspace")).json();
+  if (ws.mail !== "live" || ws.claimed) return;
+  const claim = await page.request.post("/api/v1/workspace/claim", {
+    data: { email: "smoke@kloxus.dev" },
+  });
+  expect(claim.ok()).toBeTruthy();
+  const pubs = await (await page.request.get("/api/v1/publications")).json();
+  const outbox = await (
+    await page.request.get(`/api/v1/publications/${pubs.publications[0].id}/outbox`)
+  ).json();
+  const ml = outbox.emails.find((e: { kind: string }) => e.kind === "magic_link");
+  expect(ml).toBeTruthy();
+  const mail = await (await page.request.get(`/api/v1/outbox/${ml.id}`)).json();
+  const link = mail.email.body_md.match(/\/claim\?t=[A-Za-z0-9_-]+/)?.[0];
+  expect(link).toBeTruthy();
+  // GET /claim sets the workspace cookie on this browser context
+  const confirmed = await page.request.get(link!);
+  expect(confirmed.status()).toBe(200);
+}
+
 async function sendToReaders(page: Page) {
   // the send action is its own header button post-approval; readers get
   // a confirmation dialog (count, subject, sender) — never one-click
@@ -264,6 +288,7 @@ for (const vp of viewports) {
     await approveIssue(page);
     await scheduleAndHold(page);
     await approveIssue(page);
+    await claimIfLive(page);
     await sendToReaders(page);
     await readerJourney(page);
   });

@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/mmcdole/gofeed v1.5.0
+	github.com/resend/resend-go/v4 v4.12.0
 	golang.org/x/net v0.62.0
 	gopkg.in/yaml.v3 v3.0.1
 )

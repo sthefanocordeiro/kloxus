@@ -4,6 +4,10 @@ export interface Workspace {
   label: string;
   mode: string;
   hosted: boolean;
+  // live mail (Resend configured) requires a claim before any send
+  claimed?: boolean;
+  owner_email?: string;
+  mail?: "live" | "outbox";
 }
 
 export interface Publication {
@@ -362,8 +366,24 @@ export const api = {
   approve: (issueID: number) =>
     request<{ issue: IssueSummary; receipt: ApprovalReceipt }>("POST", `/api/v1/issues/${issueID}/approve`, {}),
   send: (issueID: number, audience: "test" | "readers", when: "now" | "schedule" = "now", to?: string, at?: string) =>
-    request<{ issue: IssueSummary; outbox_email_id?: number; audience?: string; scheduled?: boolean; scheduled_at?: string; to?: string[]; subject?: string }>(
+    request<{
+      issue: IssueSummary; outbox_email_id?: number; audience?: string; scheduled?: boolean; scheduled_at?: string;
+      to?: string[]; subject?: string; delivery?: string; sent?: number; refused?: string[]; deduped?: number;
+      fallback?: boolean; warnings?: string[];
+    }>(
       "POST", `/api/v1/issues/${issueID}/send`, { audience, when, to, at },
+    ),
+  // Workspace claim: mails a single-use magic link to the creator.
+  // Outbox mode answers with the link itself so the demo can open it.
+  claim: (email: string) =>
+    request<{ sent: boolean; email: string; delivery?: string; claim_url?: string; refused?: string; outbox_email_id?: number }>(
+      "POST", "/api/v1/workspace/claim", { email },
+    ),
+  // Reader double opt-in: mails a confirm link; nothing is sent to the
+  // reader until they open it. query carries the sealed ?tok.
+  subscribe: (slug: string, email: string, query = "") =>
+    request<{ sent: boolean; already_confirmed?: boolean; delivery?: string; confirm_url?: string; refused?: string }>(
+      "POST", `/api/v1/p/${slug}/subscribe${query}`, { email },
     ),
   hold: (issueID: number) =>
     request<{ issue: IssueSummary }>("POST", `/api/v1/issues/${issueID}/hold`, {}),
@@ -375,7 +395,7 @@ export const api = {
   outboxEmail: (id: number) =>
     request<{ email: OutboxEmail }>("GET", `/api/v1/outbox/${id}`).then((r) => r.email),
   reader: (pubID: number) =>
-    request<{ reader: { email: string; name: string }; subscribed: boolean; subscribers?: number; readers?: number; issue?: IssueSummary }>(
+    request<{ reader: { email: string; name: string }; subscribed: boolean; subscribers?: number; readers?: number; confirmed?: number; issue?: IssueSummary }>(
       "GET", `/api/v1/publications/${pubID}/reader`),
   paywallSimulate: (pubID: number | string, query = "") =>
     request<{ subscribed: boolean; outbox_email_id: number; magic_link: string }>(
