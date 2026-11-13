@@ -20,12 +20,16 @@ const dict = {
       approved: "approved",
       scheduled: "scheduled",
       sent: "sent",
+      blocked: "blocked",
     },
     run: {
       start: "Prepare next issue",
       running: "Preparing…",
       done: "Done",
       failed: "Failed",
+      blocked: "Model calls are limited right now — try again later.",
+      blockedTitle: "Run paused by a spend guard",
+      sampleCaption: "Recorded sample — a real dossier produced by the pipeline",
       noNewItems: "Nothing new since the last run",
       step: {
         starting: "starting",
@@ -380,12 +384,16 @@ const dict = {
       approved: "aprovada",
       scheduled: "agendada",
       sent: "enviada",
+      blocked: "bloqueada",
     },
     run: {
       start: "Preparar próxima edição",
       running: "Preparando…",
       done: "Concluído",
       failed: "Falhou",
+      blocked: "As chamadas ao modelo estão limitadas agora — tente mais tarde.",
+      blockedTitle: "Coleta pausada por um limite de uso",
+      sampleCaption: "Amostra gravada — um dossiê real produzido pelo pipeline",
       noNewItems: "Nada novo desde a última coleta",
       step: {
         starting: "iniciando",

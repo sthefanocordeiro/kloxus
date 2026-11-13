@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
@@ -40,6 +41,55 @@ type runState struct {
 	IssueID    int64  `json:"issue_id"`
 	NoNewItems bool   `json:"no_new_items"`
 	Err        string `json:"error"`
+	// Blocked marks a run refused or aborted by a spend guard; the
+	// creator gets the message in Err plus the recorded sample.
+	Blocked       bool   `json:"blocked,omitempty"`
+	BlockedReason string `json:"blocked_reason,omitempty"`
+	Sample        bool   `json:"sample,omitempty"`
+}
+
+// blockRun marks a refused/failed-guard run: done, carrying the
+// creator-facing message and the recorded-sample pointer.
+func (st *runProgress) blockRun(b *llm.BlockedError) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.st.Done = true
+	st.st.Blocked = true
+	st.st.BlockedReason = string(b.Reason)
+	st.st.Sample = true
+	st.st.Err = b.Message
+}
+
+// admitRun applies the spend guards before a pipeline run launches
+// (D32/D36). A bookkeeping failure logs and admits — the guards degrade
+// rather than wedge the product on a ledger hiccup.
+func (s *Server) admitRun(ctx context.Context, wsID string) *llm.BlockedError {
+	if s.d.Guard == nil {
+		return nil
+	}
+	err := s.d.Guard.AdmitRun(ctx, wsID)
+	if err == nil {
+		return nil
+	}
+	if b, ok := llm.AsBlocked(err); ok {
+		return b
+	}
+	slog.Warn("run admission check failed", "ws", wsID, "err", err)
+	return nil
+}
+
+// markIssueBlocked leaves a failed Phase A issue in a resumable state:
+// 'blocked' keeps whatever triage the run completed on the board while
+// telling the creator a fresh run is the way forward.
+func (s *Server) markIssueBlocked(wsp *workspace.Workspace, issueID int64) {
+	if issueID == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := wsp.DB.SetIssueStatus(ctx, issueID, "blocked"); err != nil {
+		slog.Warn("failed issue could not be marked blocked", "issue", issueID, "err", err)
+	}
 }
 
 // runProgress wraps runState with a mutex: the pipeline goroutine writes
@@ -67,6 +117,13 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		}
 		wsp.Runs.Store(pub.ID, st)
 	}
+	// Spend guards: a refused run still gets a run record — done,
+	// blocked, carrying the message and the recorded sample — so the
+	// creator sees an answer, never an error page.
+	if b := s.admitRun(context.Background(), wsp.ID); b != nil {
+		st.blockRun(b)
+		return st
+	}
 	go func() {
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
@@ -75,9 +132,11 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		defer func() {
 			if p := recover(); p != nil {
 				st.mu.Lock()
-				defer st.mu.Unlock()
 				st.st.Done = true
 				st.st.Err = fmt.Sprintf("pipeline panic: %v", p)
+				issueID := st.st.IssueID
+				st.mu.Unlock()
+				s.markIssueBlocked(wsp, issueID)
 				slog.Error("pipeline run panicked", "pub", pub.ID, "panic", p, "rid", st.st.RunID)
 			}
 		}()
@@ -103,20 +162,30 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 				st.mu.Unlock()
 			},
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), s.runTimeout())
+		ctx, cancel := context.WithTimeout(llm.WithRunScope(context.Background(), wsp.ID), s.runTimeout())
 		defer cancel()
 		res, err := runner.RunPhaseA(ctx, pub)
 		st.mu.Lock()
-		defer st.mu.Unlock()
 		st.st.Done = true
+		issueID := st.st.IssueID
 		if err != nil {
 			st.st.Err = err.Error()
+			if b, ok := llm.AsBlocked(err); ok {
+				st.st.Blocked = true
+				st.st.BlockedReason = string(b.Reason)
+				st.st.Sample = true
+			}
+			st.mu.Unlock()
+			// A failed step leaves the run resumable: the partial issue
+			// is marked blocked and a fresh run starts clean.
+			s.markIssueBlocked(wsp, issueID)
 			slog.Error("pipeline run failed", "pub", pub.ID, "err", err, "rid", st.st.RunID)
 			return
 		}
 		st.st.NoNewItems = res.NoNewItems
 		st.st.IssueID = res.IssueID
 		st.st.Step = pipeline.Steps[len(pipeline.Steps)-1] // report the final step, not the last one ticked
+		st.mu.Unlock()
 	}()
 	return st
 }

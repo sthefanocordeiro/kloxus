@@ -167,11 +167,14 @@ export interface LineupEntry {
 export interface Run {
   id: string;
   kind: "prepare" | "draft";
-  status: "running" | "done" | "failed";
+  status: "running" | "done" | "failed" | "blocked";
   step: string;
   issue_id?: number;
   no_new_items: boolean;
   error?: string;
+  blocked?: boolean;
+  blocked_reason?: string;
+  sample?: boolean;
   events: RunEvent[];
 }
 
