@@ -468,6 +468,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         >
           <div className="mb-3 flex items-center gap-2">
             <h2 className="text-sm font-semibold">{t.board.bench}</h2>
+            {candsQ.data?.llm_mode === "off" && <Badge tone="warn">{t.board.aiOff}</Badge>}
             <span className="flex-1" />
             <div className="relative">
               <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />

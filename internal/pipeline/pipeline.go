@@ -48,6 +48,11 @@ type Runner struct {
 	// draft/citecheck (stable fixture keys) while the stored body and
 	// flags are built from active items only.
 	DemoMode bool
+	// Deterministic runs the no-model pipeline (KLOXUS_LLM_MODE=off):
+	// triage, storylist, dossier, deepdive, draft and citecheck use the
+	// deterministic implementations in rank.go and no model call is
+	// ever made — call() refuses outright.
+	Deterministic bool
 	// OnStep, if set, is called as each step starts (progress reporting).
 	OnStep func(step string)
 	// OnEvent, if set, is called as each step finishes with the step's
@@ -139,6 +144,11 @@ func decodeJSON(text string, out any) error {
 // call renders a prompt, calls the model and decodes JSON output,
 // retrying once on invalid JSON.
 func (r *Runner) call(ctx context.Context, model, name string, data any, out any) (llm.Response, error) {
+	if r.Deterministic {
+		// Defense in depth: deterministic mode must never reach a model
+		// call — fail loudly even if a code path misses its branch.
+		return llm.Response{}, fmt.Errorf("template %s: %w", name, llm.ErrDisabled)
+	}
 	user, err := RenderPrompt(name, data)
 	if err != nil {
 		return llm.Response{}, err
@@ -333,7 +343,8 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 				title = it.Title
 			}
 		}
-		storyID, err := r.DB.CreateStory(ctx, pub.ID, title, int64(dedupe.SimHash(g[0].Title+"\n"+g[0].ContentText)))
+		storyID, err := r.DB.CreateStory(ctx, pub.ID, title,
+			int64(dedupe.SimHash(g[0].Title+"\n"+g[0].ContentText)), dedupeKey(g))
 		if err != nil {
 			return nil, err
 		}
@@ -399,43 +410,57 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		}
 		ts[i] = triStory{Ref: i + 1, Title: s.Title, Outlets: strings.Join(s.Outlets(), ", "), Snippet: snip}
 	}
-	var triage []struct {
-		Ref    int     `json:"ref"`
-		Score  float64 `json:"score"`
-		Reason string  `json:"reason"`
-	}
-	resp, err := r.call(ctx, r.TriageModel, "triage", map[string]any{
-		"Publication":   pub.Name,
-		"Audience":      pub.Audience,
-		"Language":      pub.Language,
-		"EditorialLine": pub.EditorialLine,
-		"Guide":         r.guide(ctx, pub.ID),
-		"Stories":       ts,
-	}, &triage)
-	if err != nil {
-		return nil, fmt.Errorf("triage: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("triage", map[string]int{"ranked": len(triage)})
-	r.record(ctx, pub.ID, issueID, "triage", r.TriageModel, start, resp)
 	scoreByRef := map[int]struct {
 		score  float64
 		reason string
 	}{}
-	for i, t := range triage {
-		// Daily Journal's outlet_count boosts the story: a signal that
-		// N outlets already covered is a stronger candidate (D30). The
-		// boost is applied post-call so prompts stay fixture-stable.
-		if t.Ref-1 >= 0 && t.Ref-1 < len(triIdx) {
-			si := triIdx[t.Ref-1]
-			t.Score += signalBoost(stories[si])
-			scoreByRef[si+1] = struct {
+	var detScores []float64
+	var detReasons []string
+	if r.Deterministic {
+		detScores, detReasons = scoreStories(stories)
+		for i := range stories {
+			scoreByRef[i+1] = struct {
 				score  float64
 				reason string
-			}{t.Score, t.Reason}
-			r.DB.SetStoryTriage(ctx, stories[si].ID, t.Score, t.Reason)
+			}{detScores[i], detReasons[i]}
+			r.DB.SetStoryTriage(ctx, stories[i].ID, detScores[i], detReasons[i])
 		}
-		_ = i
+		r.emit("triage", map[string]int{"ranked": len(stories)})
+		r.record(ctx, pub.ID, issueID, "triage", "deterministic", start, llm.Response{})
+	} else {
+		var triage []struct {
+			Ref    int     `json:"ref"`
+			Score  float64 `json:"score"`
+			Reason string  `json:"reason"`
+		}
+		resp, err := r.call(ctx, r.TriageModel, "triage", map[string]any{
+			"Publication":   pub.Name,
+			"Audience":      pub.Audience,
+			"Language":      pub.Language,
+			"EditorialLine": pub.EditorialLine,
+			"Guide":         r.guide(ctx, pub.ID),
+			"Stories":       ts,
+		}, &triage)
+		if err != nil {
+			return nil, fmt.Errorf("triage: %w", err)
+		}
+		res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
+		r.emit("triage", map[string]int{"ranked": len(triage)})
+		r.record(ctx, pub.ID, issueID, "triage", r.TriageModel, start, resp)
+		for _, t := range triage {
+			// Daily Journal's outlet_count boosts the story: a signal that
+			// N outlets already covered is a stronger candidate (D30). The
+			// boost is applied post-call so prompts stay fixture-stable.
+			if t.Ref-1 >= 0 && t.Ref-1 < len(triIdx) {
+				si := triIdx[t.Ref-1]
+				t.Score += signalBoost(stories[si])
+				scoreByRef[si+1] = struct {
+					score  float64
+					reason string
+				}{t.Score, t.Reason}
+				r.DB.SetStoryTriage(ctx, stories[si].ID, t.Score, t.Reason)
+			}
+		}
 	}
 
 	// --- storylist ---
@@ -452,35 +477,46 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		sr := scoreByRef[i+1]
 		ss[i] = slStory{Ref: i + 1, Score: sr.score, Title: s.Title, Reason: sr.reason}
 	}
-	var picked struct {
-		Items []struct {
-			Refs    []int  `json:"refs"`
-			Title   string `json:"title"`
-			Theme   string `json:"theme"`
-			Why     string `json:"why"`
-			Section string `json:"section"`
-		} `json:"items"`
+	var picks []lineupPick
+	if r.Deterministic {
+		picks = pickLineup(stories, detScores, detReasons, pub.Sections)
+		res.Selected = len(picks)
+		r.emit("storylist", map[string]int{"selected": res.Selected})
+		r.record(ctx, pub.ID, issueID, "storylist", "deterministic", start, llm.Response{})
+	} else {
+		var picked struct {
+			Items []struct {
+				Refs    []int  `json:"refs"`
+				Title   string `json:"title"`
+				Theme   string `json:"theme"`
+				Why     string `json:"why"`
+				Section string `json:"section"`
+			} `json:"items"`
+		}
+		resp, err := r.call(ctx, r.TriageModel, "storylist", map[string]any{
+			"Publication":   pub.Name,
+			"Audience":      pub.Audience,
+			"Sections":      pub.Sections,
+			"EditorialLine": pub.EditorialLine,
+			"Guide":         r.guide(ctx, pub.ID),
+			"Stories":       ss,
+		}, &picked)
+		if err != nil {
+			return nil, fmt.Errorf("storylist: %w", err)
+		}
+		res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
+		res.Selected = len(picked.Items)
+		r.emit("storylist", map[string]int{"selected": res.Selected})
+		r.record(ctx, pub.ID, issueID, "storylist", r.TriageModel, start, resp)
+		for _, p := range picked.Items {
+			picks = append(picks, lineupPick{Refs: p.Refs, Title: p.Title, Why: p.Why, Section: p.Section})
+		}
 	}
-	resp, err = r.call(ctx, r.TriageModel, "storylist", map[string]any{
-		"Publication":   pub.Name,
-		"Audience":      pub.Audience,
-		"Sections":      pub.Sections,
-		"EditorialLine": pub.EditorialLine,
-		"Guide":         r.guide(ctx, pub.ID),
-		"Stories":       ss,
-	}, &picked)
-	if err != nil {
-		return nil, fmt.Errorf("storylist: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
-	res.Selected = len(picked.Items)
-	r.emit("storylist", map[string]int{"selected": res.Selected})
-	r.record(ctx, pub.ID, issueID, "storylist", r.TriageModel, start, resp)
 
 	// --- create issue items, merging same-event stories ---
 
 	entries := []entry{}
-	for idx, p := range picked.Items {
+	for idx, p := range picks {
 		if len(p.Refs) == 0 {
 			continue
 		}
@@ -550,21 +586,30 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		dItems[i].Ref = e.ref
 		dItems[i].Title = e.title
 	}
-	var dossiers []Dossier
-	resp, err = r.call(ctx, r.DraftModel, "dossier", map[string]any{
-		"Publication": pub.Name,
-		"Language":    pub.Language,
-		"Items":       dItems,
-	}, &dossiers)
-	if err != nil {
-		return nil, fmt.Errorf("dossier: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("dossier", map[string]int{"dossiers": len(dossiers)})
-	r.record(ctx, pub.ID, issueID, "dossier", r.DraftModel, start, resp)
 	dossierByRef := map[int]*Dossier{}
-	for i := range dossiers {
-		dossierByRef[dossiers[i].Ref] = &dossiers[i]
+	if r.Deterministic {
+		for _, e := range entries {
+			dossierByRef[e.ref] = synthDossier(e.ref, e.title,
+				"Ranked "+fmt.Sprintf("%.1f/10", e.score)+" by the deterministic pipeline.", e.sources)
+		}
+		r.emit("dossier", map[string]int{"dossiers": len(entries)})
+		r.record(ctx, pub.ID, issueID, "dossier", "deterministic", start, llm.Response{})
+	} else {
+		var dossiers []Dossier
+		resp, err := r.call(ctx, r.DraftModel, "dossier", map[string]any{
+			"Publication": pub.Name,
+			"Language":    pub.Language,
+			"Items":       dItems,
+		}, &dossiers)
+		if err != nil {
+			return nil, fmt.Errorf("dossier: %w", err)
+		}
+		res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
+		r.emit("dossier", map[string]int{"dossiers": len(dossiers)})
+		r.record(ctx, pub.ID, issueID, "dossier", r.DraftModel, start, resp)
+		for i := range dossiers {
+			dossierByRef[dossiers[i].Ref] = &dossiers[i]
+		}
 	}
 	for i, e := range entries {
 		d, ok := dossierByRef[e.ref]
@@ -609,34 +654,40 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		}
 		ddItems = append(ddItems, di)
 	}
-	var deep []struct {
-		Ref       int `json:"ref"`
-		DeepFacts []struct {
-			Text string `json:"text"`
-			Ref  int    `json:"ref"`
-		} `json:"deep_facts"`
-		ExtraUnknowns []string `json:"extra_unknowns"`
-	}
-	resp, err = r.call(ctx, r.DraftModel, "deepdive", map[string]any{
-		"Publication": pub.Name,
-		"Language":    pub.Language,
-		"Items":       ddItems,
-	}, &deep)
-	if err != nil {
-		return nil, fmt.Errorf("deepdive: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("deepdive", map[string]int{"items": len(ddItems)})
-	r.record(ctx, pub.ID, issueID, "deepdive", r.DraftModel, start, resp)
-	for _, dd := range deep {
-		d, ok := dossierByRef[dd.Ref]
-		if !ok {
-			continue
+	if r.Deterministic {
+		// No model call: dossiers keep their synthesized facts only.
+		r.emit("deepdive", map[string]int{"items": len(ddItems)})
+		r.record(ctx, pub.ID, issueID, "deepdive", "deterministic", start, llm.Response{})
+	} else {
+		var deep []struct {
+			Ref       int `json:"ref"`
+			DeepFacts []struct {
+				Text string `json:"text"`
+				Ref  int    `json:"ref"`
+			} `json:"deep_facts"`
+			ExtraUnknowns []string `json:"extra_unknowns"`
 		}
-		for _, f := range dd.DeepFacts {
-			d.DeepFacts = append(d.DeepFacts, DossierFact{Text: f.Text, Ref: f.Ref})
+		resp, err := r.call(ctx, r.DraftModel, "deepdive", map[string]any{
+			"Publication": pub.Name,
+			"Language":    pub.Language,
+			"Items":       ddItems,
+		}, &deep)
+		if err != nil {
+			return nil, fmt.Errorf("deepdive: %w", err)
 		}
-		d.Unknowns = append(d.Unknowns, dd.ExtraUnknowns...)
+		res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
+		r.emit("deepdive", map[string]int{"items": len(ddItems)})
+		r.record(ctx, pub.ID, issueID, "deepdive", r.DraftModel, start, resp)
+		for _, dd := range deep {
+			d, ok := dossierByRef[dd.Ref]
+			if !ok {
+				continue
+			}
+			for _, f := range dd.DeepFacts {
+				d.DeepFacts = append(d.DeepFacts, DossierFact{Text: f.Text, Ref: f.Ref})
+			}
+			d.Unknowns = append(d.Unknowns, dd.ExtraUnknowns...)
+		}
 	}
 	for _, e := range entries {
 		data, _ := json.Marshal(dossierByRef[e.ref])
@@ -798,49 +849,54 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 			Interpretation: d.Interpretation,
 		}
 	}
-	var drafted struct {
-		Entries []struct {
-			Ref      int    `json:"ref"`
-			Headline string `json:"headline"`
-			BodyMD   string `json:"body_md"`
-		} `json:"entries"`
-	}
-	resp, err := r.call(ctx, r.DraftModel, "draft", map[string]any{
-		"Publication": pub.Name,
-		"Audience":    pub.Audience,
-		"Language":    pub.Language,
-		"Tone":        pub.Tone,
-		"Items":       drItems,
-	}, &drafted)
-	if err != nil {
-		return nil, fmt.Errorf("draft: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("draft", map[string]int{"entries": len(drafted.Entries)})
-	r.record(ctx, pub.ID, issueID, "draft", r.DraftModel, start, resp)
 	draftByRef := map[int]struct {
 		headline, body string
 	}{}
-	for _, de := range drafted.Entries {
-		draftByRef[de.Ref] = struct {
-			headline, body string
-		}{de.Headline, de.BodyMD}
-	}
-	// Alternative items are never part of the canonical draft input, so
-	// they have no model-drafted body: synthesize one from the dossier
-	// (summary carries [n] citations, so it passes the citation rules).
-	for _, e := range entries {
-		if _, ok := draftByRef[e.ref]; !ok {
-			d := dossierByRef[e.ref]
-			body := strings.TrimSpace(d.Summary)
-			for _, f := range d.Facts {
-				if s := strings.TrimSpace(f.Text); s != "" && !strings.Contains(body, s) {
-					body += " " + ensureRefSuffix(s, f.Ref)
-				}
-			}
+	if r.Deterministic {
+		// Draftable skeleton: each entry's body is the dossier summary
+		// plus its facts, every claim carrying a [n] citation.
+		for _, e := range entries {
 			draftByRef[e.ref] = struct {
 				headline, body string
-			}{e.title, body}
+			}{e.title, synthBody(dossierByRef[e.ref])}
+		}
+		r.emit("draft", map[string]int{"entries": len(entries)})
+		r.record(ctx, pub.ID, issueID, "draft", "deterministic", start, llm.Response{})
+	} else {
+		var drafted struct {
+			Entries []struct {
+				Ref      int    `json:"ref"`
+				Headline string `json:"headline"`
+				BodyMD   string `json:"body_md"`
+			} `json:"entries"`
+		}
+		resp, err := r.call(ctx, r.DraftModel, "draft", map[string]any{
+			"Publication": pub.Name,
+			"Audience":    pub.Audience,
+			"Language":    pub.Language,
+			"Tone":        pub.Tone,
+			"Items":       drItems,
+		}, &drafted)
+		if err != nil {
+			return nil, fmt.Errorf("draft: %w", err)
+		}
+		res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
+		r.emit("draft", map[string]int{"entries": len(drafted.Entries)})
+		r.record(ctx, pub.ID, issueID, "draft", r.DraftModel, start, resp)
+		for _, de := range drafted.Entries {
+			draftByRef[de.Ref] = struct {
+				headline, body string
+			}{de.Headline, de.BodyMD}
+		}
+		// Alternative items are never part of the canonical draft input, so
+		// they have no model-drafted body: synthesize one from the dossier
+		// (summary carries [n] citations, so it passes the citation rules).
+		for _, e := range entries {
+			if _, ok := draftByRef[e.ref]; !ok {
+				draftByRef[e.ref] = struct {
+					headline, body string
+				}{e.title, synthBody(dossierByRef[e.ref])}
+			}
 		}
 	}
 
@@ -908,16 +964,22 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		Verdict string `json:"verdict"`
 		Note    string `json:"note"`
 	}
-	resp, err = r.call(ctx, r.TriageModel, "citecheck", map[string]any{
-		"Publication": pub.Name,
-		"Sentences":   cs,
-		"Items":       ci,
-	}, &checks)
-	if err != nil {
-		return nil, fmt.Errorf("citecheck: %w", err)
+	if r.Deterministic {
+		// Deterministic citation checks only (no model call): the rules
+		// below flag uncited sentences and citation-free entries.
+		r.record(ctx, pub.ID, issueID, "citecheck", "deterministic", start, llm.Response{})
+	} else {
+		resp, err := r.call(ctx, r.TriageModel, "citecheck", map[string]any{
+			"Publication": pub.Name,
+			"Sentences":   cs,
+			"Items":       ci,
+		}, &checks)
+		if err != nil {
+			return nil, fmt.Errorf("citecheck: %w", err)
+		}
+		res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
+		r.record(ctx, pub.ID, issueID, "citecheck", r.TriageModel, start, resp)
 	}
-	res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
-	r.record(ctx, pub.ID, issueID, "citecheck", r.TriageModel, start, resp)
 
 	sentByID := map[int]sentRec{}
 	for _, s := range sents {
@@ -1309,6 +1371,10 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 // mode asks the model; demo mode falls back to a deterministic dossier
 // synthesized from the story's items when no replay fixture exists.
 func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication, cand *store.Story, ref int) *Dossier {
+	interpretation := "Picked by the editor as an alternative to the previous item."
+	if r.Deterministic {
+		return synthDossier(ref, cand.Title, interpretation, cand.Items)
+	}
 	type dSrc struct {
 		Ref  int
 		URL  string
@@ -1337,29 +1403,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	_ = resp
 	// Synthetic dossier: every claim comes from a member item, so citations
 	// stay valid without a model call.
-	var facts []DossierFact
-	var summary string
-	for i, it := range cand.Items {
-		sents := SplitSentences(it.ContentText)
-		if len(sents) > 0 {
-			first := strings.TrimRight(strings.TrimSpace(sents[0]), ". ")
-			summary += first + fmt.Sprintf(" [%d]. ", i+1)
-		}
-		for _, s := range sents[1:] {
-			facts = append(facts, DossierFact{Text: strings.TrimSpace(s), Ref: i + 1})
-			if len(facts) >= 4 {
-				break
-			}
-		}
-	}
-	d := &Dossier{
-		Ref: ref, Title: cand.Title,
-		Summary:        strings.TrimSpace(summary),
-		Facts:          facts,
-		Interpretation: []string{"Picked by the editor as an alternative to the previous item."},
-	}
-	d.fillSources(cand.Items)
-	return d
+	return synthDossier(ref, cand.Title, interpretation, cand.Items)
 }
 
 func truncate(s string, n int) string {
@@ -1370,16 +1414,18 @@ func truncate(s string, n int) string {
 }
 
 // RunHeadless is the CLI entry: build a runner for the given mode and run it.
-// demo=true makes PhaseB use canonical replay input (see Runner.DemoMode).
-func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int, demo bool) (*Result, error) {
+// demo=true makes PhaseB use canonical replay input (see Runner.DemoMode);
+// det=true runs the deterministic no-model pipeline (KLOXUS_LLM_MODE=off).
+func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int, demo, det bool) (*Result, error) {
 	r := &Runner{
-		DB:           db,
-		LLM:          provider,
-		Fetcher:      fetcher,
-		TriageModel:  triageModel,
-		DraftModel:   draftModel,
-		MaxDeepDives: maxDeep,
-		DemoMode:     demo,
+		DB:            db,
+		LLM:           provider,
+		Fetcher:       fetcher,
+		TriageModel:   triageModel,
+		DraftModel:    draftModel,
+		MaxDeepDives:  maxDeep,
+		DemoMode:      demo,
+		Deterministic: det,
 	}
 	return r.Run(ctx, pub, outDir)
 }

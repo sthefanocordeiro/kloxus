@@ -33,6 +33,10 @@ type Config struct {
 	ModelTriage     string
 	ModelDraft      string
 	MaxDeepDives    int
+	// LLMMode gates every model call: "auto" (default) runs the normal
+	// pipeline; "off" runs the deterministic pipeline and any model call
+	// attempted fails loudly (llm.None is the configured provider).
+	LLMMode string
 	MasterKey       string
 	ResendAPIKey    string
 	FromAddress     string
@@ -69,6 +73,7 @@ func Load() (*Config, error) {
 		ModelTriage:     getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),
 		ModelDraft:      getenv("KLOXUS_MODEL_DRAFT", "claude-sonnet-5-5"),
 		MaxDeepDives:    getint("KLOXUS_MAX_DEEP_DIVES", 3),
+		LLMMode:         getenv("KLOXUS_LLM_MODE", "auto"),
 		MasterKey:       os.Getenv("KLOXUS_MASTER_KEY"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
@@ -82,6 +87,9 @@ func Load() (*Config, error) {
 	if cfg.Mode != "demo" && cfg.Mode != "real" {
 		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)
 	}
+	if cfg.LLMMode != "auto" && cfg.LLMMode != "off" {
+		return nil, fmt.Errorf("KLOXUS_LLM_MODE must be \"auto\" or \"off\", got %q", cfg.LLMMode)
+	}
 	// Real mode ingests by default; KLOXUS_INGEST=0/opt-out disables it.
 	// Demo mode stays fixture-only unless explicitly opted in.
 	cfg.IngestEnabled = cfg.Mode == "real"
@@ -92,6 +100,9 @@ func Load() (*Config, error) {
 		os.Getenv("KLOXUS_INGEST_DAILY_JOURNAL") == "true"
 	return cfg, nil
 }
+
+// LLMOff reports whether the deterministic no-model mode is on.
+func (c *Config) LLMOff() bool { return c.LLMMode == "off" }
 
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

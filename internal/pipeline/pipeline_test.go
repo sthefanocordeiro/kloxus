@@ -67,7 +67,7 @@ func TestRunHeadless(t *testing.T) {
 	})
 
 	outDir := t.TempDir()
-	res, err := RunHeadless(ctx, db, pub, outDir, fetcher, provider, "haiku", "sonnet", 3, false)
+	res, err := RunHeadless(ctx, db, pub, outDir, fetcher, provider, "haiku", "sonnet", 3, false, false)
 	if err != nil {
 		t.Fatalf("RunHeadless: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestReplaySecondPublicationOnReusedDB(t *testing.T) {
 	run := func(pub *store.Publication) *Result {
 		t.Helper()
 		res, err := RunHeadless(ctx, db, pub, t.TempDir(), fetcher, provider,
-			"claude-haiku-5-5", "claude-sonnet-5-5", 3, true)
+			"claude-haiku-5-5", "claude-sonnet-5-5", 3, true, false)
 		if err != nil {
 			t.Fatalf("RunHeadless(%s): %v", pub.Slug, err)
 		}
