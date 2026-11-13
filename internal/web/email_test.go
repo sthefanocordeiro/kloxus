@@ -158,9 +158,12 @@ func claimWorkspace(t *testing.T, srv *web.Server, db *store.DB, email string) {
 		t.Fatalf("claim = %d %s", rr.Code, rr.Body.String()[:300])
 	}
 	tok := claimToken(t, db)
-	rr = apiCall(t, srv, "GET", "/claim?t="+tok, nil)
+	if rr = apiCall(t, srv, "GET", "/claim?t="+tok, nil); rr.Code != 200 {
+		t.Fatalf("GET /claim = %d, want 200 confirm page", rr.Code)
+	}
+	rr = apiCall(t, srv, "POST", "/claim?t="+tok, nil)
 	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("GET /claim = %d, want 303", rr.Code)
+		t.Fatalf("POST /claim = %d, want 303", rr.Code)
 	}
 }
 
@@ -258,10 +261,14 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 		t.Fatalf("test send to other = %d, want 400", rr.Code)
 	}
 
-	// the same claim link cannot be spent twice
+	// the same claim link cannot be spent twice — the spent token fails
+	// both the confirm page and the confirm POST
 	tok := claimToken(t, db)
 	if rr := apiCall(t, srv, "GET", "/claim?t="+tok, nil); rr.Code != 400 {
 		t.Fatalf("reused claim link = %d, want 400", rr.Code)
+	}
+	if rr := apiCall(t, srv, "POST", "/claim?t="+tok, nil); rr.Code != 400 {
+		t.Fatalf("reused claim POST = %d, want 400", rr.Code)
 	}
 }
 
@@ -287,17 +294,21 @@ func TestClaimLinkCanonicalAndSlashTolerant(t *testing.T) {
 		t.Fatalf("claim link did not use the public URL: %+v", msgs)
 	}
 
-	// a stray trailing slash on the emailed link spends the token
-	// exactly like the bare path — previously this 404'd in the SPA
+	// a stray trailing slash on the emailed link lands the confirm page
+	// exactly like the bare path — previously this 404'd in the SPA —
+	// and the POST on it spends the token
 	tok := claimToken(t, db)
-	if rr := apiCall(t, srv, "GET", "/claim/?t="+tok, nil); rr.Code != http.StatusSeeOther {
-		t.Fatalf("GET /claim/?t= = %d, want 303", rr.Code)
+	if rr := apiCall(t, srv, "GET", "/claim/?t="+tok, nil); rr.Code != 200 {
+		t.Fatalf("GET /claim/?t= = %d, want 200 confirm page", rr.Code)
+	}
+	if rr := apiCall(t, srv, "POST", "/claim/?t="+tok, nil); rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST /claim/?t= = %d, want 303", rr.Code)
 	}
 	if ws := apiJSON(t, apiCall(t, srv, "GET", "/api/v1/workspace", nil)); ws["claimed"] != true {
 		t.Fatalf("workspace not claimed through the slash link: %v", ws)
 	}
 	// single-use still holds on the slash variant
-	if rr := apiCall(t, srv, "GET", "/claim/?t="+tok, nil); rr.Code != 400 {
+	if rr := apiCall(t, srv, "POST", "/claim/?t="+tok, nil); rr.Code != 400 {
 		t.Fatalf("reused slash claim link = %d, want 400", rr.Code)
 	}
 
@@ -347,6 +358,44 @@ func TestClaimLinkCanonicalAndSlashTolerant(t *testing.T) {
 	}
 	if rd, _ := db.ReaderByEmail(ctx, pub.ID, "oneclick@x.dev"); rd == nil || !rd.Unsubscribed {
 		t.Fatal("reader not unsubscribed through the slash link")
+	}
+}
+
+// TestClaimLinkSurvivesPrefetch reproduces the follow-on KLOX-27
+// report: mail scanners GET every link in a message before the user
+// clicks, so opening the emailed link must not spend the token — only
+// the page's explicit confirm POST does. Previously every scanned link
+// arrived already used ("always expired" on the first real click).
+func TestClaimLinkSurvivesPrefetch(t *testing.T) {
+	fake := &fakeSender{}
+	deps, db, _, _ := liveDeps(t, fake, nil)
+	srv := web.New(deps)
+
+	rr := apiCall(t, srv, "POST", "/api/v1/workspace/claim", map[string]string{"email": "prefetch@x.dev"})
+	if rr.Code != 200 {
+		t.Fatalf("claim = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	tok := claimToken(t, db)
+
+	// a scanner's GETs render the confirm page but never spend the link
+	for i := 0; i < 2; i++ {
+		rr := apiCall(t, srv, "GET", "/claim?t="+tok, nil)
+		if rr.Code != 200 || !strings.Contains(rr.Body.String(), "Confirm") {
+			t.Fatalf("prefetch GET /claim = %d %q", rr.Code, rr.Body.String()[:200])
+		}
+	}
+
+	// the user's own click confirms via POST — the link still works once
+	rr = apiCall(t, srv, "POST", "/claim?t="+tok, nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("POST /claim after prefetch = %d, want 303", rr.Code)
+	}
+	if ws := apiJSON(t, apiCall(t, srv, "GET", "/api/v1/workspace", nil)); ws["claimed"] != true {
+		t.Fatalf("workspace not claimed after prefetch + confirm: %v", ws)
+	}
+	// single-use still holds after the real claim
+	if rr := apiCall(t, srv, "POST", "/claim?t="+tok, nil); rr.Code != 400 {
+		t.Fatalf("reused claim POST = %d, want 400", rr.Code)
 	}
 }
 
@@ -903,9 +952,14 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 		t.Fatal("claim email carried no token")
 	}
 
-	// visitor B's browser opens the link — no cookie at all: the claim
-	// signs THAT browser into A's workspace.
+	// visitor B's browser opens the link — no cookie at all: the confirm
+	// page shows, and its explicit POST signs THAT browser into A's
+	// workspace.
 	rr = serve("GET", "/claim?t="+tok, "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("claim page = %d, want 200", rr.Code)
+	}
+	rr = serve("POST", "/claim?t="+tok, "", nil)
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("claim confirm = %d, want 303", rr.Code)
 	}

@@ -78,11 +78,13 @@ new address.
 `outbox_fallback` (the provider failed; the mail is a ledger copy).
 A send refused by the daily caps answers `sent:false` + `refused`.
 
-### `GET /claim?t={token}` — not JSON
-Spends the magic link: must be unexpired and unused (`400` page
-otherwise — the link is single-use). The workspace becomes owned by the
-link's email and the browser that opened it is signed in via the
-workspace cookie — whichever browser that is. Redirects to `/`.
+### `GET /claim?t={token}` → `POST /claim?t={token}` — not JSON
+The emailed link is two-step so mail-scanner prefetches can't spend it:
+`GET` only validates the token and renders a confirm page (`400` page
+when the link is invalid, spent or expired); the page's explicit `POST`
+spends it — must still be unexpired and unused. The workspace becomes
+owned by the link's email and the browser that confirmed is signed in
+via the workspace cookie — whichever browser that is. Redirects to `/`.
 
 Emailed links are built on `KLOXUS_PUBLIC_URL` when configured, not the
 request host — the app may answer on throwaway verification hosts, but

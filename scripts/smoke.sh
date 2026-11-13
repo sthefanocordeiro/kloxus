@@ -181,7 +181,11 @@ if [ "$SEND" = "409" ] && [ "$(jget error.code)" = "unclaimed_workspace" ]; then
 		const m = (d.body_md || "").match(/\/claim\?t=[A-Za-z0-9_-]+/);
 		console.log(m ? m[0] : "");' "$RESP")"
 	[ -n "$CLAIM" ] || die "claim link not found in the outbox email"
-	[ "$(req GET "$CLAIM")" = "303" ] || die "claim confirm failed: $(cat "$RESP")"
+	# Two-step claim: the emailed link lands a confirm page (a scanner's
+	# prefetch must not spend the token); its explicit POST claims.
+	[ "$(req GET "$CLAIM")" = "200" ] || die "claim page failed: $(cat "$RESP")"
+	grep -q 'Confirm claim' "$RESP" || die "claim page is not the confirm form"
+	[ "$(req POST "$CLAIM")" = "303" ] || die "claim confirm failed: $(cat "$RESP")"
 	say "workspace claimed via magic link"
 	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
 		|| die "send after claim: $(cat "$RESP")"
