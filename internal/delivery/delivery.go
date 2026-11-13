@@ -29,6 +29,11 @@ type Outbox struct {
 	Ctx   context.Context
 }
 
+// sendTimeout caps an outbox write when the caller's ctx has no
+// deadline (the scheduler passes its root ctx) — a dead pooled conn
+// can't wedge the calling worker.
+const sendTimeout = 5 * time.Minute
+
 // Send implements Mailer.
 func (o Outbox) Send(subject, bodyMD, bodyHTML string, to []string) (string, error) {
 	kind := o.Kind
@@ -39,6 +44,8 @@ func (o Outbox) Send(subject, bodyMD, bodyHTML string, to []string) (string, err
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
 	id, err := o.DB.SaveOutboxEmail(ctx, kind, strings.Join(to, ", "), subject, bodyMD, bodyHTML)
 	if err != nil {
 		return "", err
