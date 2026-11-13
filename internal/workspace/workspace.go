@@ -371,7 +371,7 @@ func (m *Manager) Get(ctx context.Context, id string) (*Workspace, error) {
 			}
 		}
 	}
-	m.touch(id)
+	m.touch(ctx, id)
 	return ws, nil
 }
 
@@ -415,8 +415,10 @@ func (m *Manager) Reset(ctx context.Context, ws *Workspace) error {
 }
 
 // touch refreshes the workspace row's last_seen_at (throttled) so the
-// cleanup sweep keeps workspaces that are in use.
-func (m *Manager) touch(id string) {
+// cleanup sweep keeps workspaces that are in use. The caller's ctx is
+// capped at 30s so a dead pooled connection can't park the caller's
+// goroutine.
+func (m *Manager) touch(ctx context.Context, id string) {
 	m.mu.Lock()
 	last, seen := m.lastSeen[id]
 	if seen && time.Since(last) < touchInterval {
@@ -425,7 +427,7 @@ func (m *Manager) touch(id string) {
 	}
 	m.lastSeen[id] = time.Now()
 	m.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := m.pool.TouchWorkspace(ctx, id); err != nil {
 		slog.Warn("workspace touch failed", "ws", id, "err", err)

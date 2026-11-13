@@ -121,27 +121,25 @@ func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *s
 	return db.db.QueryRowContext(ctx, query, args...)
 }
 
-// migrateLock serializes schema application across every process
-// sharing this database — parallel `go test` binaries and app replicas
-// would otherwise apply a new migration concurrently.
-const migrateLock = 735113
+// migrateLockKey serializes migrate() across every session — concurrent
+// Open calls (parallel test packages, a second Fly machine booting)
+// would otherwise both see a version unapplied and run the same DDL
+// twice (duplicate pg_proc/pg_type entries).
+const migrateLockKey int64 = 0x6b6c6f787573
 
 func (p *Pool) migrate() error {
-	ctx := context.Background()
-	conn, err := p.db.Conn(ctx)
+	// The advisory lock is session-scoped, so hold it on a dedicated conn;
+	// the migrations themselves may run on other pooled conns.
+	lockConn, err := p.db.Conn(context.Background())
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrateLock); err != nil {
+	defer lockConn.Close()
+	if _, err := lockConn.ExecContext(context.Background(), `SELECT pg_advisory_lock($1)`, migrateLockKey); err != nil {
 		return err
 	}
-	defer func() {
-		unlockCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock($1)`, migrateLock)
-	}()
-	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+	defer lockConn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrateLockKey)
+	if _, err := p.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
 		applied_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS'))
 	);`); err != nil {
@@ -160,7 +158,7 @@ func (p *Pool) migrate() error {
 	sort.Strings(names)
 	for _, name := range names {
 		var applied int
-		if err := conn.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations WHERE version = $1`, name).Scan(&applied); err != nil {
+		if err := p.db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = $1`, name).Scan(&applied); err != nil {
 			return err
 		}
 		if applied > 0 {
@@ -170,20 +168,21 @@ func (p *Pool) migrate() error {
 		if err != nil {
 			return err
 		}
-		if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
+		tx, err := p.db.Begin()
+		if err != nil {
 			return err
 		}
 		for _, stmt := range splitStatements(string(body)) {
-			if _, err := conn.ExecContext(ctx, stmt); err != nil {
-				conn.ExecContext(ctx, "ROLLBACK")
+			if _, err := tx.Exec(stmt); err != nil {
+				tx.Rollback()
 				return fmt.Errorf("migration %s: %w", name, err)
 			}
 		}
-		if _, err := conn.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, name); err != nil {
-			conn.ExecContext(ctx, "ROLLBACK")
+		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, name); err != nil {
+			tx.Rollback()
 			return err
 		}
-		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		if err := tx.Commit(); err != nil {
 			return err
 		}
 	}
