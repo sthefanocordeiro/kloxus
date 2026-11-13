@@ -27,6 +27,12 @@ type Deps struct {
 	Fetcher sources.Fetcher
 	LLM     llm.Provider
 	Monitor sources.MonitorProvider
+	// RunTimeout bounds one pipeline run (collect or draft). Zero uses
+	// defaultRunTimeout; tests set it short to exercise the deadline.
+	RunTimeout time.Duration
+	// JobTimeout bounds one scheduled job's execution. Zero uses
+	// defaultJobTimeout.
+	JobTimeout time.Duration
 	// Seed re-creates the example publication inside a database; used for
 	// workspace resets and the hosted template.
 	Seed func(ctx context.Context, db *store.DB) error
@@ -134,15 +140,6 @@ func New(d Deps) *Server {
 // turns that into an error instead. The run-events SSE stream is exempt:
 // its lifetime is a run's, not a request's.
 const reqTimeout = 3 * time.Minute
-
-// runTimeout bounds a pipeline worker goroutine the way reqTimeout
-// bounds a request. statement_timeout cannot deliver its error over a
-// dead socket, so a dropped pooled conn would otherwise wedge the
-// worker forever — the run never reports Done, the publication's run
-// slot stays locked, and the checked-out conn leaks. On expiry the run
-// fails and the slot frees. Sized well above real run durations (the
-// hosted e2e journeys run ~2–3 min).
-const runTimeout = 15 * time.Minute
 
 // dispatchTimeout bounds one scheduler dispatch cycle — the claim plus
 // every job it runs serially — so a dead conn can't wedge the single

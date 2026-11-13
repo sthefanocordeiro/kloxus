@@ -121,7 +121,24 @@ func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *s
 	return db.db.QueryRowContext(ctx, query, args...)
 }
 
+// migrateLockKey serializes migrate() across every session — concurrent
+// Open calls (parallel test packages, a second Fly machine booting)
+// would otherwise both see a version unapplied and run the same DDL
+// twice (duplicate pg_proc/pg_type entries).
+const migrateLockKey int64 = 0x6b6c6f787573
+
 func (p *Pool) migrate() error {
+	// The advisory lock is session-scoped, so hold it on a dedicated conn;
+	// the migrations themselves may run on other pooled conns.
+	lockConn, err := p.db.Conn(context.Background())
+	if err != nil {
+		return err
+	}
+	defer lockConn.Close()
+	if _, err := lockConn.ExecContext(context.Background(), `SELECT pg_advisory_lock($1)`, migrateLockKey); err != nil {
+		return err
+	}
+	defer lockConn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrateLockKey)
 	if _, err := p.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
 		applied_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS'))
