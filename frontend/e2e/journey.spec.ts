@@ -143,7 +143,8 @@ async function clearFlags(page: Page) {
   // stale locator block the loop (it must exit on the all-clear, not
   // wait for a button that will never come back).
   const remove = page.getByRole("button", { name: "Remove", disabled: false });
-  for (let i = 0; i < 40; i++) {
+  // real drafts flag far more sentences than the fixture's handful
+  for (let i = 0; i < 300; i++) {
     if ((await remove.count()) === 0) break;
     try {
       await remove.first().click({ timeout: 10_000 });
