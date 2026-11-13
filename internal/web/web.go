@@ -141,6 +141,11 @@ func New(d Deps) *Server {
 // its lifetime is a run's, not a request's.
 const reqTimeout = 3 * time.Minute
 
+// dispatchTimeout bounds one scheduler dispatch cycle — the claim plus
+// every job it runs serially — so a dead conn can't wedge the single
+// dispatcher goroutine for good.
+const dispatchTimeout = 10 * time.Minute
+
 // ServeHTTP resolves the request workspace (cookie in hosted mode), caps
 // request bodies, assigns a request id, then dispatches.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

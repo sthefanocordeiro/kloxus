@@ -14,12 +14,14 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
 
-// defaultRunTimeout bounds a collect or draft run's work. Hosted runs
-// finish in a few minutes; 15 leaves headroom without letting a worker
-// parked on a dead pooled connection — where statement_timeout's error
-// can never arrive — hold the publication's run slot, a pool connection
-// and the activity read-lock forever. On expiry the run is marked failed
-// and the publication can start another.
+// defaultRunTimeout bounds a collect or draft run's work the way
+// reqTimeout bounds a request. statement_timeout cannot deliver its
+// error over a dead socket, so a dropped pooled conn would otherwise
+// wedge the worker forever — the run never reports Done, the
+// publication's run slot stays locked, and the checked-out conn leaks.
+// On expiry the run is marked failed and the slot frees. Sized well
+// above real run durations (the hosted e2e journeys run ~2–3 min);
+// Deps.RunTimeout overrides it in tests.
 const defaultRunTimeout = 15 * time.Minute
 
 func (s *Server) runTimeout() time.Duration {

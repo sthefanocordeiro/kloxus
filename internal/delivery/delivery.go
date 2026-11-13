@@ -15,9 +15,6 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
-// sendTimeout bounds a send whose caller gave no context.
-const sendTimeout = 2 * time.Minute
-
 // Mailer delivers an issue to readers.
 type Mailer interface {
 	Send(subject, bodyMD, bodyHTML string, to []string) (string, error)
@@ -32,6 +29,11 @@ type Outbox struct {
 	Ctx   context.Context
 }
 
+// sendTimeout caps an outbox write when the caller's ctx has no
+// deadline (the scheduler passes its root ctx) — a dead pooled conn
+// can't wedge the calling worker.
+const sendTimeout = 5 * time.Minute
+
 // Send implements Mailer.
 func (o Outbox) Send(subject, bodyMD, bodyHTML string, to []string) (string, error) {
 	kind := o.Kind
@@ -40,13 +42,10 @@ func (o Outbox) Send(subject, bodyMD, bodyHTML string, to []string) (string, err
 	}
 	ctx := o.Ctx
 	if ctx == nil {
-		// Callers normally scope the send to a request or job ctx; the
-		// fallback must still be bounded — an unbounded write can park on
-		// a dead pooled connection forever.
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.Background(), sendTimeout)
-		defer cancel()
+		ctx = context.Background()
 	}
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
 	id, err := o.DB.SaveOutboxEmail(ctx, kind, strings.Join(to, ", "), subject, bodyMD, bodyHTML)
 	if err != nil {
 		return "", err
