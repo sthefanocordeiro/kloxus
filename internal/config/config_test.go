@@ -86,6 +86,29 @@ EMPTY=
 	}
 }
 
+func TestLLMMode(t *testing.T) {
+	t.Setenv("KLOXUS_LLM_MODE", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLMMode != "auto" || cfg.LLMOff() {
+		t.Fatalf("default LLMMode = %q, want auto", cfg.LLMMode)
+	}
+	t.Setenv("KLOXUS_LLM_MODE", "off")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load(off): %v", err)
+	}
+	if !cfg.LLMOff() {
+		t.Fatal("LLMOff() = false with KLOXUS_LLM_MODE=off")
+	}
+	t.Setenv("KLOXUS_LLM_MODE", "cheap")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected validation error for KLOXUS_LLM_MODE=cheap")
+	}
+}
+
 func TestSlugify(t *testing.T) {
 	for in, want := range map[string]string{
 		"Futuro Próximo":  "futuro-proximo",
