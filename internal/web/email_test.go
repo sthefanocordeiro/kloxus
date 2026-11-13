@@ -265,6 +265,91 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	}
 }
 
+// TestClaimLinkCanonicalAndSlashTolerant reproduces KLOX-27: an
+// emailed link must point at the configured public origin — not at
+// whatever host the request happened to arrive on — and a stray
+// trailing slash on it must reach the handler instead of falling
+// through to the SPA's 404.
+func TestClaimLinkCanonicalAndSlashTolerant(t *testing.T) {
+	fake := &fakeSender{}
+	deps, db, pub, _ := liveDeps(t, fake, func(c *config.Config) {
+		c.PublicURL = "https://kloxus.fly.dev/"
+	})
+	srv := web.New(deps)
+	ctx := context.Background()
+
+	rr := apiCall(t, srv, "POST", "/api/v1/workspace/claim", map[string]string{"email": "link@x.dev"})
+	if rr.Code != 200 {
+		t.Fatalf("claim = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	msgs := fake.messages()
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "https://kloxus.fly.dev/claim?t=") {
+		t.Fatalf("claim link did not use the public URL: %+v", msgs)
+	}
+
+	// a stray trailing slash on the emailed link spends the token
+	// exactly like the bare path — previously this 404'd in the SPA
+	tok := claimToken(t, db)
+	if rr := apiCall(t, srv, "GET", "/claim/?t="+tok, nil); rr.Code != http.StatusSeeOther {
+		t.Fatalf("GET /claim/?t= = %d, want 303", rr.Code)
+	}
+	if ws := apiJSON(t, apiCall(t, srv, "GET", "/api/v1/workspace", nil)); ws["claimed"] != true {
+		t.Fatalf("workspace not claimed through the slash link: %v", ws)
+	}
+	// single-use still holds on the slash variant
+	if rr := apiCall(t, srv, "GET", "/claim/?t="+tok, nil); rr.Code != 400 {
+		t.Fatalf("reused slash claim link = %d, want 400", rr.Code)
+	}
+
+	// the reader confirm link is canonical too, and slash-tolerant
+	rr = apiCall(t, srv, "POST", "/api/v1/p/"+pub.Slug+"/subscribe", map[string]string{"email": "r@x.dev"})
+	if rr.Code != 200 {
+		t.Fatalf("subscribe = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	mails, _ := db.OutboxEmails(ctx)
+	var confirmURL string
+	for _, m := range mails {
+		if m.Kind != "reader_confirm" {
+			continue
+		}
+		full, _ := db.GetMail(ctx, m.ID)
+		if !strings.Contains(full.BodyMD, "https://kloxus.fly.dev/confirm-sub?") {
+			t.Fatalf("confirm link did not use the public URL: %s", full.BodyMD)
+		}
+		if mm := confirmLinkRe.FindString(full.BodyMD); mm != "" {
+			confirmURL = mm
+		}
+	}
+	if confirmURL == "" {
+		t.Fatal("no confirm link found")
+	}
+	slashURL := strings.Replace(confirmURL, "/confirm-sub", "/confirm-sub/", 1)
+	if rr := apiCall(t, srv, "GET", slashURL, nil); rr.Code != http.StatusSeeOther {
+		t.Fatalf("GET /confirm-sub/ = %d, want 303", rr.Code)
+	}
+	if rd, _ := db.ReaderByEmail(ctx, pub.ID, "r@x.dev"); rd == nil || !rd.Confirmed {
+		t.Fatal("reader not confirmed through the slash link")
+	}
+
+	// RFC 8058 one-click unsubscribe survives a stray slash as well
+	rid, err := db.UpsertReader(ctx, pub.ID, "oneclick@x.dev", "")
+	if err != nil {
+		t.Fatalf("UpsertReader: %v", err)
+	}
+	unsubPath := fmt.Sprintf("/unsub/?pub=%d&r=%d&t=%s",
+		pub.ID, rid, deps.WS.MAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid)))
+	req := httptest.NewRequest("POST", unsubPath, strings.NewReader("List-Unsubscribe=One-Click"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr2 := httptest.NewRecorder()
+	srv.ServeHTTP(rr2, req)
+	if rr2.Code != 200 {
+		t.Fatalf("POST /unsub/ = %d %s", rr2.Code, rr2.Body.String()[:200])
+	}
+	if rd, _ := db.ReaderByEmail(ctx, pub.ID, "oneclick@x.dev"); rd == nil || !rd.Unsubscribed {
+		t.Fatal("reader not unsubscribed through the slash link")
+	}
+}
+
 // TestClaimLinkExpiryAndClaimRateLimit: an expired token is rejected,
 // and minting stays bounded per workspace per hour.
 func TestClaimLinkExpiryAndClaimRateLimit(t *testing.T) {
