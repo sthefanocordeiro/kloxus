@@ -6,7 +6,8 @@ import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dos
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
-import { Badge, Button, Card, KDialog, KPopover } from "../ui";
+import { Badge, Button, Card } from "../ui";
+import { KDialog, KPopover } from "../ui-overlays";
 
 // --- SSE step rail: real counts per finished step, never percentages ---
 
