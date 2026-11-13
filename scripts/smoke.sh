@@ -126,15 +126,20 @@ say "issue $IID collected"
 DRID="$(jget run.id)"; [ -n "$DRID" ] || die "no draft run id"
 wait_run "$DRID" "draft"
 
-# --- 9. resolve every flagged sentence ------------------------------------
-for i in $(seq 1 30); do
+# --- 9. resolve every flagged or uncited sentence --------------------------
+# Real drafts flag far more sentences than the fixture's handful and can
+# leave fact sentences uncited — both block readiness the same way an
+# editor would resolve them: remove the sentence. Cap stays a loop guard.
+for i in $(seq 1 300); do
 	[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
 	SIDVER="$(node -e '
 		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).document;
 		for (const s of d.sections)
 			for (const it of s.items)
 				for (const sn of it.sentences)
-					if (sn.flag) { console.log(sn.id + "|" + d.version); process.exit(0); }
+					if (sn.flag || (sn.kind === "fact" && !(sn.citations && sn.citations.length))) {
+						console.log(sn.id + "|" + d.version); process.exit(0);
+					}
 		console.log("");' "$RESP")"
 	[ -z "$SIDVER" ] && break
 	SID="${SIDVER%%|*}"; VER="${SIDVER##*|}"
