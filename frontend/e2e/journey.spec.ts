@@ -123,13 +123,25 @@ async function boardOps(page: Page, isPhone: boolean) {
 
 async function clearFlags(page: Page) {
   // flagged sentences offer Edit / Mark as interpretation / Remove —
-  // Remove is deterministic for the demo fixture
-  const remove = page.getByRole("button", { name: "Remove" });
-  for (let i = 0; i < 20; i++) {
+  // Remove is deterministic for the demo fixture. Removed sentences
+  // linger briefly as disabled node views until the document refetch
+  // rebuilds the editor, so click only enabled buttons and never let a
+  // stale locator block the loop (it must exit on the all-clear, not
+  // wait for a button that will never come back).
+  const remove = page.getByRole("button", { name: "Remove", disabled: false });
+  for (let i = 0; i < 40; i++) {
     if ((await remove.count()) === 0) break;
-    await remove.first().click();
+    try {
+      await remove.first().click({ timeout: 10_000 });
+    } catch {
+      // the node detached mid-click — re-poll
+    }
     await page.waitForTimeout(800);
   }
+  // every Remove — disabled zombie node views included — must be gone so
+  // the last removal has settled and the editor rebuilt before the next
+  // step; a pending DELETE would race the first commentary save (409).
+  await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(0, { timeout: 30_000 });
 }
 
 async function typeCommentary(page: Page) {
@@ -167,9 +179,11 @@ async function approveIssue(page: Page) {
     .getByRole("dialog")
     .filter({ has: page.getByRole("button", { name: "Cancel" }) });
   // the Approve & send dialog defaults to "Nobody (test only)" — the
-  // confirm approves without sending to readers
+  // confirm approves without sending to readers. Item rows already carry
+  // "approved" chips, so assert on the post-approval Send control, not on
+  // matching text — the approval round-trip can lag behind the click.
   await dialog.getByRole("button", { name: "Approve & send" }).click();
-  await expect(page.getByText("approved", { exact: false }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible({ timeout: 30000 });
 }
 
 async function scheduleAndHold(page: Page) {
@@ -185,9 +199,15 @@ async function scheduleAndHold(page: Page) {
   // the scheduled issue locks; the header chip shows the queued time
   const scheduled = page.getByRole("button", { name: /Scheduled/ });
   await expect(scheduled).toBeVisible({ timeout: 15000 });
-  // Hold unlocks back to draft — re-approval is required before sending
+  // Hold unlocks back to draft — re-approval is required before sending.
+  // Gate on the hold response itself: the re-approve POST races the hold
+  // on a remote DB and reads status=scheduled → read_only 409.
   await scheduled.click();
+  const held = page.waitForResponse(
+    (r) => r.url().endsWith("/hold") && r.status() === 200,
+  );
   await page.getByRole("button", { name: "Hold" }).click();
+  await held;
   await expect(page.getByRole("button", { name: "Approve issue" }).first()).toBeVisible({ timeout: 15000 });
 }
 
