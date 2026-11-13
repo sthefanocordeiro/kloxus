@@ -161,10 +161,35 @@ say "commentary saved"
 [ "$(jget ready)" = "true" ] || die "issue not ready: $(jget checks)"
 [ "$(req POST "/api/v1/issues/$IID/approve")" = "200" ] || die "approve: $(cat "$RESP")"
 say "issue approved"
-[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
-	|| die "send: $(cat "$RESP")"
+SEND="$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')"
+if [ "$SEND" = "409" ] && [ "$(jget error.code)" = "unclaimed_workspace" ]; then
+	# Live delivery: sends need a claimed workspace. The claim link lands
+	# in the creator inbox — and in the workspace outbox, where smoke can
+	# complete the magic-link round trip headlessly.
+	say "workspace unclaimed — claiming by magic link"
+	[ "$(req POST /api/v1/workspace/claim '{"email":"smoke@kloxus.dev"}')" = "200" ] \
+		|| die "claim: $(cat "$RESP")"
+	[ "$(req GET "/api/v1/publications/$PUB/outbox")" = "200" ] || die "outbox list failed"
+	EID="$(node -e '
+		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+		const m = d.emails.find(e => e.kind === "magic_link");
+		console.log(m ? m.id : "");' "$RESP")"
+	[ -n "$EID" ] || die "no magic-link email in the outbox"
+	[ "$(req GET "/api/v1/outbox/$EID")" = "200" ] || die "outbox email fetch failed"
+	CLAIM="$(node -e '
+		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).email;
+		const m = (d.body_md || "").match(/\/claim\?t=[A-Za-z0-9_-]+/);
+		console.log(m ? m[0] : "");' "$RESP")"
+	[ -n "$CLAIM" ] || die "claim link not found in the outbox email"
+	[ "$(req GET "$CLAIM")" = "303" ] || die "claim confirm failed: $(cat "$RESP")"
+	say "workspace claimed via magic link"
+	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
+		|| die "send after claim: $(cat "$RESP")"
+elif [ "$SEND" != "200" ]; then
+	die "send: $(cat "$RESP")"
+fi
 [ "$(jget issue.status)" = "sent" ] || die "issue not marked sent"
-say "issue sent to readers (demo outbox)"
+say "issue sent to readers"
 
 # --- 12. reader page --------------------------------------------------------
 [ "$(req GET "/api/v1/issues/$IID/after")" = "200" ] || die "after failed"

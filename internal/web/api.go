@@ -383,9 +383,15 @@ func pendingDecisions(r *http.Request, issueID int64) int {
 
 func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws := reqWS(r)
+	owner := s.workspaceOwner(r.Context(), db(r))
+	mail := "outbox"
+	if s.liveMail() {
+		mail = "live"
+	}
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
 		"llm_mode": s.d.Cfg.LLMMode,
+		"claimed":  owner != "", "owner_email": owner, "mail": mail,
 	})
 }
 
@@ -2246,23 +2252,81 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	to := []string{"readers@kloxus.demo"}
-	kind := "issue"
-	if in.Audience == "test" {
-		addr := strings.TrimSpace(in.To)
-		if addr == "" {
-			addr = demoReaderEmail
+	if !s.liveMail() {
+		// Outbox/demo mode: one recorded message, no claim gate.
+		to := []string{"readers@kloxus.demo"}
+		kind := "issue"
+		if in.Audience == "test" {
+			addr := strings.TrimSpace(in.To)
+			if addr == "" {
+				addr = demoReaderEmail
+			}
+			to = []string{addr}
+			kind = "test"
 		}
-		to = []string{addr}
-		kind = "test"
+		emailID, err := s.sendIssueMail(r.Context(), db(r), reqWS(r).ID, iss, pub, to, kind, s.publicBase(r))
+		if apiDBErr(w, r, err, "send") {
+			return
+		}
+		if kind == "issue" {
+			if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
+				return
+			}
+			if fresh, _ := db(r).GetIssue(r.Context(), iss.ID); fresh != nil {
+				iss = fresh
+			}
+		}
+		apiJSON(w, 200, map[string]any{
+			"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
+			"to": to, "subject": iss.Subject, "delivery": "outbox",
+		})
+		return
 	}
-	emailID, err := s.sendIssueMail(r.Context(), db(r), reqWS(r).ID, iss, pub, to, kind, requestBase(r))
+
+	// Live delivery (D33): the workspace must be claimed; test sends go
+	// to the claimed address only; reader sends go to confirmed readers.
+	ctx := r.Context()
+	wdb := db(r)
+	owner := s.workspaceOwner(ctx, wdb)
+	if owner == "" {
+		apiErr(w, 409, "unclaimed_workspace",
+			"claim the workspace before sending — verify the creator email in workspace settings")
+		return
+	}
+	kind := "issue"
+	var readers []store.Reader
+	if in.Audience == "test" {
+		kind = "test"
+		if addr := strings.TrimSpace(in.To); addr != "" && !strings.EqualFold(addr, owner) {
+			apiErr(w, 400, "validation", "test sends go to the claimed address only")
+			return
+		}
+	} else {
+		var err error
+		readers, err = wdb.ConfirmedReaders(ctx, iss.PublicationID)
+		if apiDBErr(w, r, err, "readers") {
+			return
+		}
+	}
+	// An explicit Idempotency-Key namespaces the per-recipient keys, so a
+	// retried request can't mail the same reader twice.
+	idemNS := ""
+	if k := strings.TrimSpace(r.Header.Get("Idempotency-Key")); k != "" {
+		idemNS = "h/" + k
+	}
+	sum, err := s.sendIssueLive(ctx, wdb, reqWS(r).ID, iss, pub, kind, owner, s.publicBase(r), idemNS, readers)
 	if apiDBErr(w, r, err, "send") {
 		return
 	}
-	if kind == "issue" {
-		// a test send only records the outbox email — the issue stays
-		// approved so it can still go to readers
+	if kind == "test" && len(sum.Refused) > 0 {
+		apiErr(w, 429, "send_refused", "test send refused: "+strings.Join(sum.Refused, "; "))
+		return
+	}
+	// A test send only records the mail — the issue stays approved so
+	// it can still go to readers. A readers send marks it sent only
+	// when something left the app: an all-refused or empty send keeps
+	// it approved so it can go out once deliverable.
+	if kind == "issue" && sum.Sent+sum.Fallback+sum.Deduped > 0 {
 		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
 			return
 		}
@@ -2270,10 +2334,27 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 			iss = fresh
 		}
 	}
-	apiJSON(w, 200, map[string]any{
-		"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
-		"to": to, "subject": iss.Subject,
-	})
+	deliv := "none"
+	switch {
+	case sum.Sent > 0 && sum.Fallback > 0:
+		deliv = "mixed"
+	case sum.Sent > 0:
+		deliv = "resend"
+	case sum.Fallback > 0:
+		deliv = "outbox_fallback"
+	}
+	resp := map[string]any{
+		"issue": s.issueSummary(r, iss), "outbox_email_id": sum.FirstID, "audience": in.Audience,
+		"to": sum.To, "subject": iss.Subject, "delivery": deliv,
+		"sent": sum.Sent, "refused": sum.Refused, "deduped": sum.Deduped,
+	}
+	if sum.Fallback > 0 {
+		resp["fallback"] = true
+	}
+	if kind == "issue" && sum.Sent+sum.Fallback+sum.Deduped == 0 {
+		resp["warnings"] = []string{"nothing was delivered — the issue stayed approved and can be sent again"}
+	}
+	apiJSON(w, 200, resp)
 }
 
 // apiHold unschedules a queued issue: the spec's Hold returns a
@@ -2311,12 +2392,12 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
 		return
 	}
-	md := delivery.ReaderBody(iss, pub, requestBase(r))
+	md := delivery.ReaderBody(iss, pub, s.publicBase(r))
 	switch r.URL.Query().Get("fmt") {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=issue-%d.html", iss.Number))
-		w.Write([]byte(delivery.RenderHTML(iss.Subject, md, requestBase(r))))
+		w.Write([]byte(delivery.RenderHTML(iss.Subject, md, s.publicBase(r))))
 	default:
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=issue-%d.md", iss.Number))
@@ -2353,7 +2434,7 @@ func (s *Server) apiPreview(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "surface must be email | web | phone")
 		return
 	}
-	md := delivery.ReaderBody(iss, pub, requestBase(r))
+	md := delivery.ReaderBody(iss, pub, s.publicBase(r))
 	gated := false
 	if reader == "non-subscriber" {
 		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
@@ -2405,11 +2486,13 @@ func (s *Server) apiReader(w http.ResponseWriter, r *http.Request) {
 	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
 	subs, _ := db(r).SubscriberCount(r.Context(), pub.ID)
 	readers, _ := db(r).ReaderCount(r.Context(), pub.ID)
+	confirmed, _ := db(r).ConfirmedReaderCount(r.Context(), pub.ID)
 	resp := map[string]any{
 		"reader":      map[string]string{"email": demoReaderEmail, "name": demoReaderName},
 		"subscribed":  active,
 		"subscribers": subs,
 		"readers":     readers,
+		"confirmed":   confirmed,
 	}
 	if iss, err := db(r).LatestFinishedIssue(r.Context(), pub.ID); err == nil {
 		resp["issue"] = s.issueSummary(r, iss)
@@ -2434,10 +2517,10 @@ func (s *Server) apiPaywallSimulate(w http.ResponseWriter, r *http.Request) {
 	// Demo mode delivers the magic link through the workspace outbox; the
 	// sealed token lets it open in any browser. It opens the latest
 	// finished issue on the reader-facing page.
-	link := requestBase(r) + "/p/" + pub.Slug + "/latest?key=" + token + s.tokQ(r)
+	link := s.publicBase(r) + "/p/" + pub.Slug + "/latest?key=" + token + s.tokQ(r)
 	if iss, err := db(r).LatestPublicIssue(ctx, pub.ID); err == nil {
 		link = fmt.Sprintf("%s/p/%s/%d?key=%s%s",
-			requestBase(r), pub.Slug, iss.Number, token, s.tokQ(r))
+			s.publicBase(r), pub.Slug, iss.Number, token, s.tokQ(r))
 	}
 	htmlBody := fmt.Sprintf(
 		`<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:38em;margin:2em auto">`+
@@ -2550,7 +2633,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	forceFree := r.URL.Query().Get("view") == "free"
 	unlocked := active && !forceFree
-	md := delivery.ReaderBody(iss, pub, requestBase(r))
+	md := delivery.ReaderBody(iss, pub, s.publicBase(r))
 	if !unlocked {
 		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
 	}
@@ -2584,7 +2667,7 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 	rawReasons, _ := db(r).IssueRejectionReasons(r.Context(), iss.ID)
 	learned := editorial.RulesFrom(rawReasons)
 	version, _, _ := db(r).LatestGuide(r.Context(), pub.ID)
-	publicURL := fmt.Sprintf("%s/p/%s/%d", requestBase(r), pub.Slug, iss.Number)
+	publicURL := fmt.Sprintf("%s/p/%s/%d", s.publicBase(r), pub.Slug, iss.Number)
 	if tok := s.readerToken(r); tok != "" {
 		publicURL += "?tok=" + url.QueryEscape(tok)
 	}

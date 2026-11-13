@@ -21,6 +21,22 @@ check's grace period. Secrets (Anthropic, Resend, Firecrawl, AbacatePay,
 `KLOXUS_PUBLIC_URL`) are set on the app with `fly secrets set` — never in
 the file, the repo or a PR.
 
+### Email (Resend)
+
+- `RESEND_API_KEY` (sending-only, scoped to `kloxus-ai.trendfi.com.br`)
+  flips mail to live mode; without it every send stays in the outbox.
+- `KLOXUS_FROM_ADDRESS` is the full sender —
+  `Kloxus <news@kloxus-ai.trendfi.com.br>` — a display name is required.
+- `RESEND_WEBHOOK_SECRET` verifies the Svix signature on
+  `POST /webhooks/resend`, which feeds delivered/bounced/complained into
+  the send ledger and the global suppression list. Point the Resend
+  webhook at `https://kloxus.fly.dev/webhooks/resend` and subscribe to
+  those three events; the Resend key cannot query delivery status, so
+  without the webhook every send stalls at `sent` and bounces keep
+  mailing dead addresses.
+- `KLOXUS_EMAIL_DAILY_CAP` (80) and `KLOXUS_EMAIL_WS_DAILY_CAP` (25)
+  are env-tunable; the ledger in Postgres makes them survive restarts.
+
 ## Postgres (Supabase)
 
 All app data lives in one Supabase Postgres database reached through

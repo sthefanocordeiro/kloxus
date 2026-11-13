@@ -7,6 +7,7 @@ package web
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -103,8 +104,53 @@ func (s *Server) sendScheduledIssue(ctx context.Context, pool *store.Pool, j sto
 	if base == "" {
 		base = fmt.Sprintf("http://localhost:%d", s.d.Cfg.Port)
 	}
-	if _, err := s.sendIssueMail(ctx, wdb, j.WorkspaceID, iss, pub, []string{"readers@kloxus.demo"}, "issue", base); err != nil {
+	if !s.liveMail() {
+		if _, err := s.sendIssueMail(ctx, wdb, j.WorkspaceID, iss, pub, []string{"readers@kloxus.demo"}, "issue", base); err != nil {
+			return err
+		}
+		return wdb.SetIssueStatus(ctx, iss.ID, "sent")
+	}
+
+	// Live send: an unclaimed workspace can't mail — put the issue back
+	// to approved so the creator can claim and send it themselves.
+	owner, _, err := pool.WorkspaceOwner(ctx, j.WorkspaceID)
+	if err != nil {
 		return err
+	}
+	if owner == "" {
+		wdb.RecordDecision(ctx, iss.PublicationID, 0, "send", "scheduled send skipped: workspace is not claimed")
+		return wdb.SetIssueStatus(ctx, iss.ID, "approved")
+	}
+	// Global cap already spent: queue the send for the next UTC day
+	// instead of refusing per-recipient and marking a non-delivery sent.
+	if n, err := pool.SendsTodayAll(ctx, today()); err != nil {
+		return err
+	} else if n >= s.d.Cfg.EmailDailyCap {
+		next := time.Now().UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+		if _, err := wdb.EnqueueJob(ctx, j.Kind, j.RefID, json.RawMessage(j.PayloadJSON), next); err != nil {
+			return err
+		}
+		wdb.RecordDecision(ctx, iss.PublicationID, 0, "send",
+			fmt.Sprintf("scheduled send deferred to %s: global daily email cap reached", next.Format(time.RFC3339)))
+		return nil
+	}
+	readers, err := wdb.ConfirmedReaders(ctx, iss.PublicationID)
+	if err != nil {
+		return err
+	}
+	sum, err := s.sendIssueLive(ctx, wdb, j.WorkspaceID, iss, pub, "issue", owner, base, "", readers)
+	if err != nil {
+		return err
+	}
+	if len(sum.Refused) > 0 {
+		wdb.RecordDecision(ctx, iss.PublicationID, 0, "send",
+			fmt.Sprintf("scheduled send partially refused (%d): %s", len(sum.Refused), strings.Join(sum.Refused, "; ")))
+	}
+	// Nothing left the app (empty or all-refused send): return the
+	// issue to approved so the creator can send it once deliverable.
+	if sum.Sent+sum.Fallback+sum.Deduped == 0 {
+		wdb.RecordDecision(ctx, iss.PublicationID, 0, "send", "scheduled send delivered nothing — issue returned to approved")
+		return wdb.SetIssueStatus(ctx, iss.ID, "approved")
 	}
 	return wdb.SetIssueStatus(ctx, iss.ID, "sent")
 }

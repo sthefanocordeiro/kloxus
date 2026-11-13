@@ -20,6 +20,7 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
@@ -206,6 +207,12 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 			Secret:     cfg.WebhookSecret,
 		}
 	}
+	var mailer delivery.Sender
+	if cfg.ResendAPIKey != "" {
+		// A configured key means real mail: claim gate + confirmed
+		// readers + caps all switch on. Empty key keeps outbox mode.
+		mailer = delivery.NewResend(cfg.ResendAPIKey, cfg.FromAddress)
+	}
 	var wsm *workspace.Manager
 	var err error
 	if cfg.DataDir != "" {
@@ -225,7 +232,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	}
 	srv := web.New(web.Deps{
 		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider,
-		Monitor: monitor, Seed: seed,
+		Monitor: monitor, Mailer: mailer, Seed: seed,
 	})
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)

@@ -588,6 +588,8 @@ function ApproveBar({
     queryFn: () => api.reader(issue.publication_id),
     enabled: audience === "readers",
   });
+  const wsQ = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
+  const liveUnclaimed = wsQ.data?.mail === "live" && !wsQ.data?.claimed;
   const pub = pubQ.data?.publication;
   const atOK = when !== "schedule" || new Date(at).getTime() > Date.now();
   // the dialog approves first, then sends per the chosen audience —
@@ -672,6 +674,9 @@ function ApproveBar({
             )}
           </fieldset>
         )}
+        {audience === "readers" && liveUnclaimed && (
+          <p className="mb-3 text-xs text-danger">{t.claim.hint}</p>
+        )}
         <dl className="mb-4 space-y-1 border-t border-line pt-3 text-xs text-muted">
           <div className="flex justify-between">
             <dt>{t.send.version}</dt>
@@ -688,7 +693,13 @@ function ApproveBar({
           {audience === "readers" && (
             <div className="flex justify-between">
               <dt>{t.send.recipients}</dt>
-              <dd>{readerQ.data ? t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0) : "…"}</dd>
+              <dd>
+                {readerQ.data
+                  ? wsQ.data?.mail === "live"
+                    ? t.send.readerCount(readerQ.data.confirmed ?? 0, readerQ.data.subscribers ?? 0)
+                    : t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0)
+                  : "…"}
+              </dd>
             </div>
           )}
           <div className="flex justify-between">
@@ -725,10 +736,12 @@ function SendRow({ issue, onDone, onToast }: {
     queryKey: ["publication", issue.publication_id],
     queryFn: () => api.publication(issue.publication_id),
   });
+  const wsQ = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
   const readerQ = useQuery({
     queryKey: ["reader", issue.publication_id],
     queryFn: () => api.reader(issue.publication_id),
   });
+  const unclaimed = wsQ.data?.mail === "live" && !wsQ.data?.claimed;
   const sendMut = useMutation({
     mutationFn: ({ aud, when }: { aud: "test" | "readers"; when: "now" | "schedule" }) =>
       api.send(issue.id, aud, when, undefined,
@@ -736,13 +749,22 @@ function SendRow({ issue, onDone, onToast }: {
     onSuccess: (r, { aud }) => {
       setConfirmSend(null);
       // a test send lands in the outbox — say where it went
-      if (r.to?.length) onToast(aud === "test" ? t.send.testSentTo(r.to.join(", ")) : t.send.sentTo(r.to.join(", ")));
+      if (r.fallback) onToast(t.send.fallbackNote);
+      else if (r.to?.length) onToast(aud === "test" ? t.send.testSentTo(r.to.join(", ")) : t.send.sentTo(r.to.join(", ")));
+      if (r.refused?.length) onToast(t.send.refusedNote(r.refused.length));
+      if (r.warnings?.length) onToast(r.warnings[0]);
       onDone();
     },
   });
   const pub = pubQ.data?.publication;
+  const recipients = readerQ.data
+    ? wsQ.data?.mail === "live"
+      ? t.send.readerCount(readerQ.data.confirmed ?? 0, readerQ.data.subscribers ?? 0)
+      : t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0)
+    : "…";
   return (
     <div className="mt-2 space-y-2">
+      {unclaimed && <p className="text-xs text-muted">{t.claim.hint}</p>}
       <div className="flex gap-2">
         <Button size="sm" variant="outline" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "test", when: "now" })}>
           <Send size={12} /> {t.send.test}
@@ -779,7 +801,7 @@ function SendRow({ issue, onDone, onToast }: {
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.recipients}</dt>
-            <dd>{readerQ.data ? t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0) : "…"}</dd>
+            <dd>{recipients}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.sender}</dt>

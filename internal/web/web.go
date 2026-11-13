@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
@@ -27,6 +28,10 @@ type Deps struct {
 	Fetcher sources.Fetcher
 	LLM     llm.Provider
 	Monitor sources.MonitorProvider
+	// Mailer transports real email when configured (Resend in
+	// production, a fake in tests). Nil means outbox-only mode: every
+	// send is recorded in the workspace outbox and nothing leaves.
+	Mailer delivery.Sender
 	// RunTimeout bounds one pipeline run (collect or draft). Zero uses
 	// defaultRunTimeout; tests set it short to exercise the deadline.
 	RunTimeout time.Duration
@@ -64,6 +69,17 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /a/{id}", s.articlePage)
 	m.HandleFunc("GET /outbox/{id}/eml", s.outboxEML)
 	m.HandleFunc("POST /webhooks/firecrawl", s.firecrawlWebhook)
+	m.HandleFunc("POST /webhooks/resend", s.resendWebhook)
+	// Claim and opt-in links open in any browser — they carry their own
+	// proof (token/MAC) and must not mint a visitor workspace first.
+	// The trailing-slash twins keep a stray slash on an emailed link
+	// from falling through to the SPA 404 (KLOX-27), same as /sample/a.
+	m.HandleFunc("GET /claim", s.claimConfirm)
+	m.HandleFunc("GET /claim/", s.claimConfirm)
+	m.HandleFunc("GET /confirm-sub", s.confirmSub)
+	m.HandleFunc("GET /confirm-sub/", s.confirmSub)
+	m.HandleFunc("POST /unsub", s.unsubOneClick) // RFC 8058 one-click
+	m.HandleFunc("POST /unsub/", s.unsubOneClick)
 
 	// Old /app/* URLs forward to the same paths at the root; anything
 	// else GETable falls through to the SPA.
@@ -74,6 +90,8 @@ func New(d Deps) *Server {
 	// JSON API (v2 contract — see docs/api.md). Same workspace cookie,
 	// rate limits and isolation as the public routes.
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
+	m.HandleFunc("POST /api/v1/workspace/claim", s.apiClaimStart)
+	m.HandleFunc("POST /api/v1/p/{slug}/subscribe", s.apiSubscribe)
 	m.HandleFunc("GET /api/v1/sample", s.apiSample)
 	m.HandleFunc("GET /api/v1/proposal", s.apiProposal)
 	m.HandleFunc("POST /api/v1/publications", s.apiPublicationCreate)
@@ -164,9 +182,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mux.ServeHTTP(w, r)
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/webhooks/") {
-		// Webhooks carry provider auth, not a visitor cookie — resolving
-		// would mint a junk workspace per call and trip the create limit.
+	if strings.HasPrefix(r.URL.Path, "/webhooks/") ||
+		r.URL.Path == "/claim" || strings.HasPrefix(r.URL.Path, "/claim/") ||
+		r.URL.Path == "/confirm-sub" || strings.HasPrefix(r.URL.Path, "/confirm-sub/") ||
+		(r.Method == http.MethodPost && (r.URL.Path == "/unsub" || strings.HasPrefix(r.URL.Path, "/unsub/"))) {
+		// Webhooks carry provider auth and emailed links their own token
+		// — resolving would mint a junk workspace per call and trip the
+		// create limit.
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		s.mux.ServeHTTP(w, r)
 		return
@@ -214,7 +236,20 @@ func reqWS(r *http.Request) *workspace.Workspace {
 // db returns the request's workspace database.
 func db(r *http.Request) *store.DB { return reqWS(r).DB }
 
-// requestBase is the absolute origin used for links in exports/emails.
+// publicBase is the absolute origin for links that leave the app —
+// emails, exports, published-issue URLs. A configured public URL wins
+// over the request's own host: the app may answer on throwaway
+// verification hosts, but mail has to point at the canonical
+// deployment (KLOX-27). Without one the request origin is the base.
+func (s *Server) publicBase(r *http.Request) string {
+	if u := strings.TrimRight(s.d.Cfg.PublicURL, "/"); u != "" {
+		return u
+	}
+	return requestBase(r)
+}
+
+// requestBase is the absolute origin the request itself arrived on —
+// the fallback for publicBase when no public URL is configured.
 func requestBase(r *http.Request) string {
 	proto := r.Header.Get("X-Forwarded-Proto")
 	if proto == "" {

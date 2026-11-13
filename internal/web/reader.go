@@ -16,16 +16,24 @@ import (
 const demoReaderEmail = "demo@reader.test"
 const demoReaderName = "Demo Reader"
 
-// sendIssueMail builds the reader-facing issue email honoring the
-// paywall (non-subscribers get the teaser, paying readers the full
-// issue; every message carries an unsubscribe link) and records it in
-// the workspace outbox. It takes the workspace handle explicitly so the
-// scheduler can send outside a request.
+// sendIssueMail is the outbox-mode send: one recorded message to the
+// given addresses (demo semantics — the demo reader's subscription
+// decides the gating). Live sends go through issueMessage + sendMail.
 func (s *Server) sendIssueMail(ctx context.Context, wdb *store.DB, wsID string, iss *store.Issue, pub *store.Publication, to []string, kind, base string) (string, error) {
 	cpub, _ := s.canonicalPub(pub, nil)
 	md := delivery.ReaderBody(iss, cpub, base)
 	rid, _ := wdb.UpsertReader(ctx, pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := wdb.HasActiveSubscription(ctx, rid)
+	msg := s.issueMessage(ctx, wdb, wsID, iss, pub, cpub, rid, demoReaderEmail, active, kind, base, md, "")
+	mailer := delivery.Outbox{DB: wdb, Kind: kind, Ctx: ctx}
+	return mailer.Send(msg.Subject, msg.Text, msg.HTML, to)
+}
+
+// issueMessage renders one recipient's issue email: gated or full body
+// by subscription, their signed unsubscribe link in the footer and in
+// the RFC 8058 headers, and the idempotency key that makes resends
+// safe. tok carries the caller-supplied idempotency namespace.
+func (s *Server) issueMessage(ctx context.Context, wdb *store.DB, wsID string, iss *store.Issue, pub, cpub *store.Publication, rid int64, email string, active bool, kind, base, md, idemNS string) *delivery.Message {
 	tokQ := ""
 	if s.d.WS.Hosted() {
 		tokQ = "&tok=" + url.QueryEscape(s.d.WS.PublicToken(wsID))
@@ -46,8 +54,80 @@ func (s *Server) sendIssueMail(ctx context.Context, wdb *store.DB, wsID string, 
 	} else {
 		md += fmt.Sprintf("\n\n---\n*[cancelar assinatura](%s)*", unsub)
 	}
-	mailer := delivery.Outbox{DB: wdb, Kind: kind, Ctx: ctx}
-	return mailer.Send(iss.Subject, md, delivery.RenderHTML(iss.Subject, md, base), to)
+	idem := fmt.Sprintf("%s/%d/r%d", kind, iss.ID, rid)
+	if idemNS != "" {
+		idem = idemNS + "/" + idem
+	}
+	return &delivery.Message{
+		To:      []string{email},
+		Subject: iss.Subject,
+		Text:    md,
+		HTML:    delivery.RenderHTML(iss.Subject, md, base),
+		Kind:    kind,
+		Headers: map[string]string{
+			"List-Unsubscribe":      "<" + unsub + ">",
+			"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+		},
+		IdemKey: idem,
+	}
+}
+
+// mailResult aggregate for one issue send across its recipients.
+type sendSummary struct {
+	To       []string
+	Sent     int
+	Refused  []string
+	Fallback int
+	Deduped  int
+	FirstID  int64
+}
+
+// sendIssueLive delivers the issue to real recipients under the D33
+// rules: claimed workspace, confirmed addresses only, persisted caps,
+// idempotent retries, outbox fallback on provider failure.
+func (s *Server) sendIssueLive(ctx context.Context, wdb *store.DB, wsID string, iss *store.Issue, pub *store.Publication, kind, owner, base, idemNS string, readers []store.Reader) (*sendSummary, error) {
+	cpub, _ := s.canonicalPub(pub, nil)
+	md := delivery.ReaderBody(iss, cpub, base)
+	sum := &sendSummary{}
+	send := func(rid int64, email string, active bool) error {
+		msg := s.issueMessage(ctx, wdb, wsID, iss, pub, cpub, rid, email, active, kind, base, md, idemNS)
+		res, err := s.sendMail(ctx, wdb, msg)
+		if err != nil {
+			return err
+		}
+		sum.To = append(sum.To, email)
+		if res.Mail != nil && sum.FirstID == 0 {
+			sum.FirstID = res.Mail.ID
+		}
+		switch {
+		case res.Refused != "":
+			sum.Refused = append(sum.Refused, email+": "+res.Refused)
+		case res.Deduped:
+			sum.Deduped++
+		case res.Fallback:
+			sum.Fallback++
+		case res.Sent():
+			sum.Sent++
+		}
+		return nil
+	}
+	if kind == "test" {
+		// Test sends go to the claimed creator address only — the owner
+		// is a verified recipient and sees the full issue.
+		rid, err := wdb.UpsertReader(ctx, pub.ID, owner, "")
+		if err != nil {
+			return nil, err
+		}
+		_ = wdb.MarkReaderConfirmed(ctx, rid)
+		return sum, send(rid, owner, true)
+	}
+	for _, rd := range readers {
+		active, _ := wdb.HasActiveSubscription(ctx, rd.ID)
+		if err := send(rd.ID, rd.Email, active); err != nil {
+			return sum, err
+		}
+	}
+	return sum, nil
 }
 
 // gateSections gates a paid section like a real paywall: the section
