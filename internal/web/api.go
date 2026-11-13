@@ -20,12 +20,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
+	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -380,8 +382,14 @@ func pendingDecisions(r *http.Request, issueID int64) int {
 
 func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws := reqWS(r)
+	owner := s.workspaceOwner(r.Context(), db(r))
+	mail := "outbox"
+	if s.liveMail() {
+		mail = "live"
+	}
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
+		"claimed": owner != "", "owner_email": owner, "mail": mail,
 	})
 }
 
@@ -1574,6 +1582,16 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
+		// Same panic guard as prepare runs (review F5).
+		defer func() {
+			if p := recover(); p != nil {
+				st.mu.Lock()
+				defer st.mu.Unlock()
+				st.st.Done = true
+				st.st.Err = fmt.Sprintf("pipeline panic: %v", p)
+				slog.Error("draft run panicked", "issue", iss.ID, "panic", p, "rid", st.st.RunID)
+			}
+		}()
 		runner := &pipeline.Runner{
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
@@ -1590,7 +1608,9 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 				st.mu.Unlock()
 			},
 		}
-		res, err := runner.RunPhaseB(context.Background(), pub, iss.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), s.runTimeout())
+		defer cancel()
+		res, err := runner.RunPhaseB(ctx, pub, iss.ID)
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		st.st.Done = true
@@ -2225,23 +2245,79 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	to := []string{"readers@kloxus.demo"}
-	kind := "issue"
-	if in.Audience == "test" {
-		addr := strings.TrimSpace(in.To)
-		if addr == "" {
-			addr = demoReaderEmail
+	if !s.liveMail() {
+		// Outbox/demo mode: one recorded message, no claim gate.
+		to := []string{"readers@kloxus.demo"}
+		kind := "issue"
+		if in.Audience == "test" {
+			addr := strings.TrimSpace(in.To)
+			if addr == "" {
+				addr = demoReaderEmail
+			}
+			to = []string{addr}
+			kind = "test"
 		}
-		to = []string{addr}
-		kind = "test"
+		emailID, err := s.sendIssueMail(r.Context(), db(r), reqWS(r).ID, iss, pub, to, kind, requestBase(r))
+		if apiDBErr(w, r, err, "send") {
+			return
+		}
+		if kind == "issue" {
+			if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
+				return
+			}
+			if fresh, _ := db(r).GetIssue(r.Context(), iss.ID); fresh != nil {
+				iss = fresh
+			}
+		}
+		apiJSON(w, 200, map[string]any{
+			"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
+			"to": to, "subject": iss.Subject, "delivery": "outbox",
+		})
+		return
 	}
-	emailID, err := s.sendIssueMail(r, iss, pub, to, kind)
+
+	// Live delivery (D33): the workspace must be claimed; test sends go
+	// to the claimed address only; reader sends go to confirmed readers.
+	ctx := r.Context()
+	wdb := db(r)
+	owner := s.workspaceOwner(ctx, wdb)
+	if owner == "" {
+		apiErr(w, 409, "unclaimed_workspace",
+			"claim the workspace before sending — verify the creator email in workspace settings")
+		return
+	}
+	kind := "issue"
+	var readers []store.Reader
+	if in.Audience == "test" {
+		kind = "test"
+		if addr := strings.TrimSpace(in.To); addr != "" && !strings.EqualFold(addr, owner) {
+			apiErr(w, 400, "validation", "test sends go to the claimed address only")
+			return
+		}
+	} else {
+		var err error
+		readers, err = wdb.ConfirmedReaders(ctx, iss.PublicationID)
+		if apiDBErr(w, r, err, "readers") {
+			return
+		}
+	}
+	// An explicit Idempotency-Key namespaces the per-recipient keys, so a
+	// retried request can't mail the same reader twice.
+	idemNS := ""
+	if k := strings.TrimSpace(r.Header.Get("Idempotency-Key")); k != "" {
+		idemNS = "h/" + k
+	}
+	sum, err := s.sendIssueLive(ctx, wdb, reqWS(r).ID, iss, pub, kind, owner, requestBase(r), idemNS, readers)
 	if apiDBErr(w, r, err, "send") {
 		return
 	}
+	if kind == "test" && len(sum.Refused) > 0 {
+		apiErr(w, 429, "send_refused", "test send refused: "+strings.Join(sum.Refused, "; "))
+		return
+	}
 	if kind == "issue" {
-		// a test send only records the outbox email — the issue stays
-		// approved so it can still go to readers
+		// a test send only records the mail — the issue stays approved
+		// so it can still go to readers
 		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
 			return
 		}
@@ -2249,10 +2325,27 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 			iss = fresh
 		}
 	}
-	apiJSON(w, 200, map[string]any{
-		"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
-		"to": to, "subject": iss.Subject,
-	})
+	deliv := "none"
+	switch {
+	case sum.Sent > 0 && sum.Fallback > 0:
+		deliv = "mixed"
+	case sum.Sent > 0:
+		deliv = "resend"
+	case sum.Fallback > 0:
+		deliv = "outbox_fallback"
+	}
+	resp := map[string]any{
+		"issue": s.issueSummary(r, iss), "outbox_email_id": sum.FirstID, "audience": in.Audience,
+		"to": sum.To, "subject": iss.Subject, "delivery": deliv,
+		"sent": sum.Sent, "refused": sum.Refused, "deduped": sum.Deduped,
+	}
+	if sum.Fallback > 0 {
+		resp["fallback"] = true
+	}
+	if kind == "issue" && len(sum.To) == 0 {
+		resp["warnings"] = []string{"no confirmed readers — the issue was marked sent with nothing delivered"}
+	}
+	apiJSON(w, 200, resp)
 }
 
 // apiHold unschedules a queued issue: the spec's Hold returns a
@@ -2384,11 +2477,13 @@ func (s *Server) apiReader(w http.ResponseWriter, r *http.Request) {
 	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
 	subs, _ := db(r).SubscriberCount(r.Context(), pub.ID)
 	readers, _ := db(r).ReaderCount(r.Context(), pub.ID)
+	confirmed, _ := db(r).ConfirmedReaderCount(r.Context(), pub.ID)
 	resp := map[string]any{
 		"reader":      map[string]string{"email": demoReaderEmail, "name": demoReaderName},
 		"subscribed":  active,
 		"subscribers": subs,
 		"readers":     readers,
+		"confirmed":   confirmed,
 	}
 	if iss, err := db(r).LatestFinishedIssue(r.Context(), pub.ID); err == nil {
 		resp["issue"] = s.issueSummary(r, iss)
@@ -2453,7 +2548,9 @@ func (s *Server) apiPaywallCancel(w http.ResponseWriter, r *http.Request) {
 // nothing in the URL. ?ws= is still honored for links already delivered.
 // The visitor's own session workspace is never touched.
 func (s *Server) withWS(r *http.Request) *http.Request {
-	if !s.d.WS.Hosted() {
+	// A workspace override is honored on read-only requests only — the
+	// raw ?ws= id must never mutate another visitor's state (review F2).
+	if !s.d.WS.Hosted() || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 		return r
 	}
 	wsid := r.URL.Query().Get("ws")
@@ -2735,4 +2832,94 @@ func (s *Server) editSupportedFor(r *http.Request, item *docItem, itemRef int64,
 		return false
 	}
 	return s.dossierSupports(r, d, itemRef, text)
+}
+
+var refRe = regexp.MustCompile(`\[\d+\]`)
+
+// dossierSupports is the citation check for one edited sentence: the
+// model verdict when available (real mode), otherwise the deterministic
+// overlap check against the dossier facts that carry the cited refs.
+func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef int64, text string) bool {
+	refs := map[int]bool{}
+	for _, m := range refRe.FindAllString(text, -1) {
+		n, _ := strconv.Atoi(strings.Trim(m, "[]"))
+		refs[n] = true
+	}
+	// model check first (real mode); demo misses fall to the local check
+	var checks []struct {
+		ID      int    `json:"id"`
+		Verdict string `json:"verdict"`
+	}
+	srcs := []map[string]any{}
+	for _, src := range d.Sources {
+		srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
+	}
+	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
+		"Publication": "",
+		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
+		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
+	})
+	if err == nil {
+		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
+			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
+		}); err == nil {
+			if json.Unmarshal([]byte(resp.Text), &checks) == nil && len(checks) > 0 {
+				return checks[0].Verdict == "ok"
+			}
+		}
+	}
+	// deterministic fallback: ≥60% of content words must appear in a
+	// fact (or the summary) attributed to one of the cited refs.
+	var grounded []string
+	for _, f := range append(append([]pipeline.DossierFact{}, d.Facts...), d.DeepFacts...) {
+		if refs[f.Ref] {
+			grounded = append(grounded, f.Text)
+		}
+	}
+	grounded = append(grounded, d.Summary)
+	corpus := strings.ToLower(strings.Join(grounded, " "))
+	plain := refRe.ReplaceAllString(text, "")
+	words := strings.FieldsFunc(strings.ToLower(plain), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	var content, hit int
+	for _, w := range words {
+		if len(w) < 3 {
+			continue
+		}
+		content++
+		if strings.Contains(corpus, w) {
+			hit++
+		}
+	}
+	return content > 0 && float64(hit)/float64(content) >= 0.6
+}
+
+// sourceURL returns the URL of a source owned by the publication in the
+// request path, guarding against cross-publication source ids.
+func (s *Server) sourceURL(r *http.Request, sid int64) (string, error) {
+	pub, err := s.pub(r)
+	if err != nil {
+		return "", err
+	}
+	var url string
+	err = db(r).QueryRowContext(r.Context(),
+		`SELECT url FROM sources WHERE workspace_id = $1 AND id = $2 AND publication_id = $3`,
+		db(r).Workspace(), sid, pub.ID).Scan(&url)
+	return url, err
+}
+
+// addedLines lists lines present in newer but absent from older.
+func addedLines(older, newer string) []string {
+	old := map[string]bool{}
+	for _, l := range strings.Split(older, "\n") {
+		old[strings.TrimSpace(l)] = true
+	}
+	var out []string
+	for _, l := range strings.Split(newer, "\n") {
+		if t := strings.TrimSpace(l); t != "" && !old[t] {
+			out = append(out, t)
+		}
+	}
+	return out
 }

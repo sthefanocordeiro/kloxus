@@ -57,8 +57,32 @@ conflict` and the response carries the fresh `document`.
 
 ### `GET /api/v1/workspace`
 ```json
-{"id": "local", "label": "local demo", "mode": "demo", "hosted": false}
+{"id": "local", "label": "local demo", "mode": "demo", "hosted": false,
+ "claimed": false, "owner_email": "", "mail": "outbox"}
 ```
+`mail` is `"live"` when Resend is configured, `"outbox"` otherwise.
+`claimed`/`owner_email` describe the workspace claim below.
+
+### `POST /api/v1/workspace/claim`
+`{"email": "creator@example.com"}` — starts the workspace claim: a
+single-use magic link (15 min) is mailed to the address; only the
+token's hash is stored. Rate-limited to five links per workspace per
+hour (`429 rate_limited`). On a claimed workspace this re-verifies the
+new address.
+```json
+{"sent": true, "email": "creator@example.com", "outbox_email_id": 7,
+ "delivery": "resend"}
+```
+`delivery` is `resend`, `outbox` (demo — the response then also carries
+`claim_url` so the link can be opened without an inbox), or
+`outbox_fallback` (the provider failed; the mail is a ledger copy).
+A send refused by the daily caps answers `sent:false` + `refused`.
+
+### `GET /claim?t={token}` — not JSON
+Spends the magic link: must be unexpired and unused (`400` page
+otherwise — the link is single-use). The workspace becomes owned by the
+link's email and the browser that opened it is signed in via the
+workspace cookie — whichever browser that is. Redirects to `/`.
 
 ## Publications
 
@@ -460,6 +484,28 @@ otherwise). In demo mode every send lands in the outbox.
 A scheduled send answers `{"issue": {…}, "scheduled": true,
 "scheduled_at": "2026-11-12T08:00:00Z"}`.
 
+**Live delivery** (`mail: "live"`): every rule below also holds for the
+scheduled dispatch.
+- Unclaimed workspaces answer `409 unclaimed_workspace` — claim first.
+- `"test"` mails the claimed creator address only; any other `"to"`
+  is rejected (`400`). The issue stays `approved`.
+- `"readers"` mails confirmed (double opt-in, not unsubscribed) readers
+  only. Addresses on the suppression list or sends over the daily caps
+  (global and per-workspace, counted from the outbox ledger so they
+  survive restarts) are refused and recorded — never dropped silently.
+- Per-recipient idempotency keys dedupe retries; an explicit
+  `Idempotency-Key` request header namespaces them, so a retried
+  request mails nobody twice.
+- A provider failure keeps the message as an outbox copy
+  (`"fallback": true`) so the creator can still see what went out.
+```json
+{"issue": {…}, "audience": "readers", "delivery": "resend",
+ "sent": 3, "refused": ["bounced@x.dev: address suppressed"],
+ "deduped": 1, "to": ["…"], "outbox_email_id": 9}
+```
+`delivery` is `resend`, `outbox_fallback`, `mixed`, or `none`. A
+`"test"` send refused outright answers `429 send_refused`.
+
 ### `POST /api/v1/issues/{id}/hold`
 Only valid on a `scheduled` issue. Returns it to `drafted`, clears the
 queued send time and drops the approval receipt (re-approval required —
@@ -498,7 +544,11 @@ presentation-only (the client styles it).
              "subject": "Futuro Próximo — issue 1",
              "created_at": "2026-11-11 12:00:00"}]}
 ```
-Kinds: `issue`, `test`, `magic_link`.
+Kinds: `issue`, `test`, `magic_link`, `reader_confirm`. In live mode the
+outbox doubles as the send ledger — every attempted message is a row
+with `status` (`queued`, `sent`, `delivered`, `bounced`, `complained`,
+`refused`, `fallback`), `provider` (`resend`/`outbox`) and
+`provider_id` for webhook correlation.
 
 ### `GET /api/v1/outbox/{id}` — full email incl. `body_md`/`body_html`.
 
@@ -539,12 +589,41 @@ unlocks the full body; `view=free` forces the gated teaser.
  "reader": {"name": "Demo Reader"}, "paid_sections": ["The big one"]}
 ```
 
+### `POST /api/v1/p/{slug}/subscribe`
+`{"email": "reader@example.com"}` — starts the double opt-in: a
+confirmation email is sent; the reader receives nothing until they
+confirm. A `reader_confirm` mail is deduped to one per reader per day.
+An already-confirmed address answers `{"sent": false,
+"already_confirmed": true}`; in demo mode the response carries
+`confirm_url` so the link can be opened without an inbox.
+
+### `GET /confirm-sub?pub={slug}&r={reader_id}&t={mac}&tok={tok}` — not JSON
+Lands the double opt-in: the signed MAC proves the inbox was reached;
+the reader is stamped `confirmed_at` and redirected to the publication
+page (`400` page on a forged or malformed link).
+
 ### `GET /api/v1/unsub?pub={id|slug}&r={reader_id}&t={token}&tok={tok}`
 One-click unsubscribe behind the signed link in every issue email;
 forged tokens get `403`.
 ```json
 {"unsubscribed": true}
 ```
+
+### `POST /unsub?pub={slug}&r={reader_id}&t={mac}&tok={tok}` — not JSON
+RFC 8058 one-click unsubscribe: issue emails carry
+`List-Unsubscribe`/`List-Unsubscribe-Post` headers pointing here, so
+mail clients unsubscribe with no page load (`200` empty, `403` forged).
+
+## Inbound webhooks
+
+### `POST /webhooks/resend`
+Resend delivery events (`email.delivered`, `email.bounced`,
+`email.complained`). The Svix signature is verified
+(`svix-id`/`svix-timestamp`/`svix-signature`, 5-minute skew) — forged
+requests get `401`. `delivered` marks the ledger row; `bounced` and
+`complained` mark it, suppress the address globally (no workspace ever
+mails it again) and unsubscribe every matching reader. Unknown event
+types or unknown email ids answer `202` without work.
 
 ## Editorial guide
 

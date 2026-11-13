@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -15,13 +16,17 @@ import (
 
 // Config holds process-level settings sourced from env and .env.
 type Config struct {
-	Mode   string // demo | real
-	Port   int
-	DBPath string
-	OutDir string
-	// DataDir, when set, enables the hosted multi-workspace demo: one
-	// SQLite file per visitor under <DataDir>/workspaces plus a seeded
-	// template rebuilt at boot.
+	Mode string // demo | real
+	Port int
+	// DatabaseURL is the Postgres connection string (DATABASE_URL) —
+	// the Supabase direct or session-pooler address in production, a
+	// local Postgres in development.
+	DatabaseURL string
+	OutDir      string
+	// DataDir, when set, enables hosted multi-workspace mode: one
+	// workspace row per visitor in the shared database, addressed by a
+	// signed cookie. The directory itself only persists the cookie
+	// signing secret.
 	DataDir      string
 	CookieSecret string
 
@@ -36,6 +41,13 @@ type Config struct {
 	AbacatePayKey   string
 	PublicURL       string
 	WebhookSecret   string
+	// ResendWebhookSecret verifies Svix signatures on /webhooks/resend.
+	ResendWebhookSecret string
+	// EmailDailyCap bounds real sends across all workspaces per UTC day
+	// (Resend free tier is 100/day); EmailWorkspaceDailyCap bounds one
+	// workspace. Both are persisted in the outbox ledger.
+	EmailDailyCap          int
+	EmailWorkspaceDailyCap int
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
@@ -51,7 +63,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Mode:            getenv("KLOXUS_MODE", "demo"),
 		Port:            getint("KLOXUS_PORT", 8080),
-		DBPath:          getenv("KLOXUS_DB_PATH", "kloxus.db"),
+		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		OutDir:          getenv("KLOXUS_OUT_DIR", "out"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		ModelTriage:     getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),
@@ -66,11 +78,34 @@ func Load() (*Config, error) {
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
 		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),
 		CookieSecret:    os.Getenv("KLOXUS_COOKIE_SECRET"),
+
+		ResendWebhookSecret:    os.Getenv("RESEND_WEBHOOK_SECRET"),
+		EmailDailyCap:          getint("KLOXUS_EMAIL_DAILY_CAP", 80),
+		EmailWorkspaceDailyCap: getint("KLOXUS_EMAIL_WS_DAILY_CAP", 25),
 	}
 	if cfg.Mode != "demo" && cfg.Mode != "real" {
 		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)
 	}
+	if cfg.ResendAPIKey != "" {
+		if err := ValidFromAddress(cfg.FromAddress); err != nil {
+			return nil, err
+		}
+	}
 	return cfg, nil
+}
+
+// ValidFromAddress requires the full "Name <local@domain>" form — a
+// bare domain or bare address is a config error that would surface only
+// when the first send is rejected (CTO note on KLOX-11).
+func ValidFromAddress(s string) error {
+	a, err := mail.ParseAddress(s)
+	if err != nil || a.Address == "" || !strings.Contains(a.Address, "@") {
+		return fmt.Errorf("KLOXUS_FROM_ADDRESS must be a full \"Name <local@domain>\" sender address, got %q", s)
+	}
+	if strings.TrimSpace(a.Name) == "" {
+		return fmt.Errorf("KLOXUS_FROM_ADDRESS must include a display name (\"Name <local@domain>\"), got %q", s)
+	}
+	return nil
 }
 
 func getenv(key, fallback string) string {

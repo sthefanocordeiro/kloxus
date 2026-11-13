@@ -1,5 +1,5 @@
-// Package store owns SQLite access: connection, embedded migrations,
-// and repositories.
+// Package store owns Postgres access: connection pool, embedded
+// migrations, and workspace-scoped repositories.
 package store
 
 import (
@@ -10,41 +10,138 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/migrations"
 )
 
-// DB wraps *sql.DB with Kloxus repositories.
-type DB struct{ *sql.DB }
+// tsLayout is the 'YYYY-MM-DD HH24:MI:SS' UTC shape every timestamp
+// column stores — the same strings the SQLite schema emitted. Lexical
+// comparison is chronological, so range filters stay simple text
+// comparisons.
+const tsLayout = "2006-01-02 15:04:05"
 
-// Open opens (creating if needed) the database at path and applies migrations.
-// WAL mode plus a busy timeout keep reads responsive while the pipeline
-// writes in the background (the run page is polled during a run).
-func Open(path string) (*DB, error) {
-	sdb, err := sql.Open("sqlite", path)
+// NowUTC returns the current time in the stored timestamp shape.
+func NowUTC() string { return TSUTC(time.Now()) }
+
+// TSUTC formats t in the stored timestamp shape.
+func TSUTC(t time.Time) string { return t.UTC().Format(tsLayout) }
+
+// Pool is the shared Postgres connection pool. Repository methods live
+// on DB, a workspace-scoped handle obtained from For.
+type Pool struct{ db *sql.DB }
+
+// Open connects to the Postgres database at url (DATABASE_URL) and
+// applies migrations. The exec query mode keeps the connection
+// compatible with both the Supabase direct endpoint and the poolers.
+func Open(url string) (*Pool, error) {
+	if strings.TrimSpace(url) == "" {
+		return nil, fmt.Errorf("DATABASE_URL is not set — point it at a Postgres database (local or Supabase)")
+	}
+	addParam := func(key, val string) {
+		if strings.Contains(url, key+"=") {
+			return
+		}
+		sep := "?"
+		if strings.Contains(url, "?") {
+			sep = "&"
+		}
+		url += sep + key + "=" + val
+	}
+	// statement_timeout (2 min) bounds every query server-side: a stuck
+	// statement errors out instead of pinning a connection — and its
+	// request — forever.
+	addParam("default_query_exec_mode", "exec")
+	addParam("statement_timeout", "120000")
+	sdb, err := sql.Open("pgx", url)
 	if err != nil {
 		return nil, err
 	}
-	sdb.SetMaxOpenConns(1)
-	db := &DB{sdb}
-	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 10000; PRAGMA foreign_keys = ON;`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("setting pragmas: %w", err)
-	}
-	if err := db.migrate(); err != nil {
-		db.Close()
+	sdb.SetMaxOpenConns(10)
+	// Supabase's pooler drops idle connections; bound lifetimes so a
+	// pooled handle never goes silently stale.
+	sdb.SetConnMaxLifetime(30 * time.Minute)
+	sdb.SetConnMaxIdleTime(5 * time.Minute)
+	p := &Pool{db: sdb}
+	if err := p.migrate(); err != nil {
+		p.Close()
 		return nil, err
 	}
-	return db, nil
+	return p, nil
 }
 
-func (db *DB) migrate() error {
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+// Close releases the pool.
+func (p *Pool) Close() error { return p.db.Close() }
+
+// Ping verifies the database answers.
+func (p *Pool) Ping() error { return p.db.Ping() }
+
+// For returns the repository handle scoped to workspace id. Every query
+// a DB method runs carries that workspace's id — no repo method can
+// read or write another tenant's rows.
+func (p *Pool) For(workspaceID string) *DB {
+	return &DB{db: p.db, ws: workspaceID}
+}
+
+// DB is a workspace-scoped repository. The ws field is the tenant
+// boundary: injected into every WHERE clause and INSERT it makes
+// cross-workspace access impossible at the store layer.
+type DB struct {
+	db *sql.DB
+	ws string
+}
+
+// Workspace returns the id this handle is scoped to.
+func (db *DB) Workspace() string { return db.ws }
+
+// Close is a no-op: a scoped handle borrows the pool and owns nothing.
+// Kept so workspace teardown code stays uniform.
+func (db *DB) Close() error { return nil }
+
+// Ping verifies the underlying pool answers.
+func (db *DB) Ping() error { return db.db.Ping() }
+
+// ExecContext runs a raw statement against the shared pool. Callers are
+// responsible for scoping tenant tables themselves; repo methods are
+// the safe path.
+func (db *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return db.db.ExecContext(ctx, query, args...)
+}
+
+// QueryContext runs a raw query against the shared pool.
+func (db *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return db.db.QueryContext(ctx, query, args...)
+}
+
+// QueryRowContext runs a raw query against the shared pool.
+func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return db.db.QueryRowContext(ctx, query, args...)
+}
+
+// migrateLockKey serializes migrate() across every session — concurrent
+// Open calls (parallel test packages, a second Fly machine booting)
+// would otherwise both see a version unapplied and run the same DDL
+// twice (duplicate pg_proc/pg_type entries).
+const migrateLockKey int64 = 0x6b6c6f787573
+
+func (p *Pool) migrate() error {
+	// The advisory lock is session-scoped, so hold it on a dedicated conn;
+	// the migrations themselves may run on other pooled conns.
+	lockConn, err := p.db.Conn(context.Background())
+	if err != nil {
+		return err
+	}
+	defer lockConn.Close()
+	if _, err := lockConn.ExecContext(context.Background(), `SELECT pg_advisory_lock($1)`, migrateLockKey); err != nil {
+		return err
+	}
+	defer lockConn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrateLockKey)
+	if _, err := p.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
-		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+		applied_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS'))
 	);`); err != nil {
 		return err
 	}
@@ -61,7 +158,7 @@ func (db *DB) migrate() error {
 	sort.Strings(names)
 	for _, name := range names {
 		var applied int
-		if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = ?`, name).Scan(&applied); err != nil {
+		if err := p.db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = $1`, name).Scan(&applied); err != nil {
 			return err
 		}
 		if applied > 0 {
@@ -71,15 +168,17 @@ func (db *DB) migrate() error {
 		if err != nil {
 			return err
 		}
-		tx, err := db.Begin()
+		tx, err := p.db.Begin()
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(string(body)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migration %s: %w", name, err)
+		for _, stmt := range splitStatements(string(body)) {
+			if _, err := tx.Exec(stmt); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migration %s: %w", name, err)
+			}
 		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
+		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, name); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -88,6 +187,56 @@ func (db *DB) migrate() error {
 		}
 	}
 	return nil
+}
+
+// splitStatements splits a migration file on top-level semicolons.
+// Dollar-quoted bodies (functions) are respected; line comments are
+// dropped so a chunk of pure comments is not sent as an empty query.
+func splitStatements(body string) []string {
+	var out []string
+	var b strings.Builder
+	inDollar := false
+	for i := 0; i < len(body); i++ {
+		if !inDollar && i+1 < len(body) && body[i] == '$' && body[i+1] == '$' {
+			inDollar = true
+			b.WriteString("$$")
+			i++
+			continue
+		}
+		if inDollar && i+1 < len(body) && body[i] == '$' && body[i+1] == '$' {
+			inDollar = false
+			b.WriteString("$$")
+			i++
+			continue
+		}
+		if !inDollar && body[i] == ';' {
+			if stmt := cleanStatement(b.String()); stmt != "" {
+				out = append(out, stmt)
+			}
+			b.Reset()
+			continue
+		}
+		b.WriteByte(body[i])
+	}
+	if stmt := cleanStatement(b.String()); stmt != "" {
+		out = append(out, stmt)
+	}
+	return out
+}
+
+// cleanStatement strips -- line comments and blank space; the result is
+// empty when the chunk carried only comments.
+func cleanStatement(s string) string {
+	var lines []string
+	for _, l := range strings.Split(s, "\n") {
+		if idx := strings.Index(l, "--"); idx >= 0 {
+			l = l[:idx]
+		}
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // Publication is a stored publication row with decoded JSON fields.
@@ -130,15 +279,16 @@ const publicationCols = `id, slug, name, language, topic, audience, editorial_li
 func (db *DB) GetPublication(ctx context.Context, ref string) (*Publication, error) {
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
 		return db.scanPublication(db.QueryRowContext(ctx,
-			`SELECT `+publicationCols+` FROM publications WHERE id = ?`, id))
+			`SELECT `+publicationCols+` FROM publications WHERE workspace_id = $1 AND id = $2`, db.ws, id))
 	}
 	return db.scanPublication(db.QueryRowContext(ctx,
-		`SELECT `+publicationCols+` FROM publications WHERE slug = ?`, ref))
+		`SELECT `+publicationCols+` FROM publications WHERE workspace_id = $1 AND slug = $2`, db.ws, ref))
 }
 
 // ListPublications returns all publications ordered by name.
 func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
-	rows, err := db.QueryContext(ctx, `SELECT `+publicationCols+` FROM publications ORDER BY name`)
+	rows, err := db.QueryContext(ctx,
+		`SELECT `+publicationCols+` FROM publications WHERE workspace_id = $1 ORDER BY name`, db.ws)
 	if err != nil {
 		return nil, err
 	}
@@ -164,11 +314,11 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 func (db *DB) HasCanonicalPublication(ctx context.Context) (bool, error) {
 	var n int
 	err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM publications WHERE custom = 0`).Scan(&n)
+		`SELECT count(*) FROM publications WHERE workspace_id = $1 AND NOT custom`, db.ws).Scan(&n)
 	return n > 0, err
 }
 
-// CreatePublication stores a creator-made publication (custom=1). Unlike
+// CreatePublication stores a creator-made publication (custom=true). Unlike
 // SeedPublication it does not attach sources — onboarding offers them on a
 // separate screen — and it slugifies the name into a unique slug.
 func (db *DB) CreatePublication(ctx context.Context, p *config.Publication) (int64, error) {
@@ -178,7 +328,7 @@ func (db *DB) CreatePublication(ctx context.Context, p *config.Publication) (int
 	for i := 2; ; i++ {
 		var n int
 		if err := db.QueryRowContext(ctx,
-			`SELECT count(*) FROM publications WHERE slug = ?`, slug).Scan(&n); err != nil {
+			`SELECT count(*) FROM publications WHERE workspace_id = $1 AND slug = $2`, db.ws, slug).Scan(&n); err != nil {
 			return 0, err
 		}
 		if n == 0 {
@@ -186,36 +336,35 @@ func (db *DB) CreatePublication(ctx context.Context, p *config.Publication) (int
 		}
 		slug = fmt.Sprintf("%s-%d", p.Slug, i)
 	}
-	res, err := db.ExecContext(ctx, `INSERT INTO publications
-		(slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure, custom)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`,
-		slug, p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine,
-		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := db.QueryRowContext(ctx, `INSERT INTO publications
+		(workspace_id, slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure, custom)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,TRUE)
+		RETURNING id`,
+		db.ws, slug, p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine,
+		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure).Scan(&id)
+	return id, err
 }
 
 // DeleteSource removes one source from a publication. Collected items go
 // with it — stories and past issues keep their own rows, only the raw
 // fetch links are dropped.
 func (db *DB) DeleteSource(ctx context.Context, pubID, sourceID int64) error {
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := db.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	for _, q := range []string{
-		`DELETE FROM story_items WHERE item_id IN (SELECT id FROM items WHERE source_id = ?)`,
-		`DELETE FROM items WHERE source_id = ?`,
+		`DELETE FROM story_items WHERE workspace_id = $1 AND item_id IN (SELECT id FROM items WHERE workspace_id = $1 AND source_id = $2)`,
+		`DELETE FROM items WHERE workspace_id = $1 AND source_id = $2`,
 	} {
-		if _, err := tx.ExecContext(ctx, q, sourceID); err != nil {
+		if _, err := tx.ExecContext(ctx, q, db.ws, sourceID); err != nil {
 			return err
 		}
 	}
 	res, err := tx.ExecContext(ctx,
-		`DELETE FROM sources WHERE id = ? AND publication_id = ?`, sourceID, pubID)
+		`DELETE FROM sources WHERE workspace_id = $1 AND id = $2 AND publication_id = $3`, db.ws, sourceID, pubID)
 	if err != nil {
 		return err
 	}
@@ -229,8 +378,8 @@ func (db *DB) DeleteSource(ctx context.Context, pubID, sourceID int64) error {
 func (db *DB) ItemsPerWeek(ctx context.Context, sourceID int64) (int, error) {
 	var n int
 	err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM items WHERE source_id = ? AND fetched_at > datetime('now','-7 days')`,
-		sourceID).Scan(&n)
+		`SELECT count(*) FROM items WHERE workspace_id = $1 AND source_id = $2 AND fetched_at > $3`,
+		db.ws, sourceID, TSUTC(time.Now().Add(-7*24*time.Hour))).Scan(&n)
 	return n, err
 }
 
@@ -240,22 +389,25 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 	var id int64
 	sections, _ := json.Marshal(p.Sections)
 	paywall, _ := json.Marshal(p.Paywall)
-	err := db.QueryRowContext(ctx, `SELECT id FROM publications WHERE slug = ?`, p.Slug).Scan(&id)
+	err := db.QueryRowContext(ctx,
+		`SELECT id FROM publications WHERE workspace_id = $1 AND slug = $2`, db.ws, p.Slug).Scan(&id)
 	if err == nil {
 		// Existing workspace: refresh publication config from the current
 		// template (paywall price, sections, etc.) while keeping the
 		// visitor's issues, decisions, sources and readers.
 		if _, err := db.ExecContext(ctx, `UPDATE publications SET
-			name=?, language=?, topic=?, audience=?, editorial_line=?, tone=?,
-			frequency=?, sections_json=?, paywall_json=?, ai_disclosure=? WHERE id=?`,
+			name=$1, language=$2, topic=$3, audience=$4, editorial_line=$5, tone=$6,
+			frequency=$7, sections_json=$8, paywall_json=$9, ai_disclosure=$10
+			WHERE workspace_id = $11 AND id = $12`,
 			p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine, p.Tone,
-			p.Frequency, string(sections), string(paywall), p.AIDisclosure, id); err != nil {
+			p.Frequency, string(sections), string(paywall), p.AIDisclosure, db.ws, id); err != nil {
 			return 0, err
 		}
 		for _, s := range p.Sources {
 			if _, err := db.ExecContext(ctx,
-				`INSERT OR IGNORE INTO sources (publication_id, type, url) VALUES (?,?,?)`,
-				id, s.Type, s.URL); err != nil {
+				`INSERT INTO sources (workspace_id, publication_id, type, url) VALUES ($1,$2,$3,$4)
+				 ON CONFLICT (publication_id, url) DO NOTHING`,
+				db.ws, id, s.Type, s.URL); err != nil {
 				return 0, err
 			}
 		}
@@ -264,21 +416,20 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 	if err != sql.ErrNoRows {
 		return 0, err
 	}
-	res, err := db.ExecContext(ctx, `INSERT INTO publications
-		(slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		p.Slug, p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine,
-		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure)
+	err = db.QueryRowContext(ctx, `INSERT INTO publications
+		(workspace_id, slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		RETURNING id`,
+		db.ws, p.Slug, p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine,
+		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure).Scan(&id)
 	if err != nil {
-		return 0, err
-	}
-	if id, err = res.LastInsertId(); err != nil {
 		return 0, err
 	}
 	for _, s := range p.Sources {
 		if _, err := db.ExecContext(ctx,
-			`INSERT OR IGNORE INTO sources (publication_id, type, url) VALUES (?,?,?)`,
-			id, s.Type, s.URL); err != nil {
+			`INSERT INTO sources (workspace_id, publication_id, type, url) VALUES ($1,$2,$3,$4)
+			 ON CONFLICT (publication_id, url) DO NOTHING`,
+			db.ws, id, s.Type, s.URL); err != nil {
 			return 0, err
 		}
 	}
@@ -300,7 +451,7 @@ const sourceCols = `id, name, type, url, last_fetch_at, last_status`
 // Sources lists a publication's sources.
 func (db *DB) Sources(ctx context.Context, pubID int64) ([]Source, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT `+sourceCols+` FROM sources WHERE publication_id = ? ORDER BY id`, pubID)
+		`SELECT `+sourceCols+` FROM sources WHERE workspace_id = $1 AND publication_id = $2 ORDER BY id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -335,8 +486,8 @@ func (db *DB) SourceNames(ctx context.Context, pubID int64) (map[int64]string, e
 // issue row existed) to the issue that followed them.
 func (db *DB) AttachRuns(ctx context.Context, pubID, issueID int64) error {
 	_, err := db.ExecContext(ctx,
-		`UPDATE runs SET issue_id = ? WHERE publication_id = ? AND issue_id IS NULL`,
-		issueID, pubID)
+		`UPDATE runs SET issue_id = $1 WHERE workspace_id = $2 AND publication_id = $3 AND issue_id IS NULL`,
+		issueID, db.ws, pubID)
 	return err
 }
 
@@ -344,26 +495,27 @@ func (db *DB) AttachRuns(ctx context.Context, pubID, issueID int64) error {
 func (db *DB) NextIssueNumber(ctx context.Context, pubID int64) (int, error) {
 	var n int
 	err := db.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(number), 0) + 1 FROM issues WHERE publication_id = ?`, pubID).Scan(&n)
+		`SELECT COALESCE(MAX(number), 0) + 1 FROM issues WHERE workspace_id = $1 AND publication_id = $2`,
+		db.ws, pubID).Scan(&n)
 	return n, err
 }
 
 // CreateIssue inserts an issue and returns its id.
 func (db *DB) CreateIssue(ctx context.Context, pubID int64, number int, subject, bodyMD string) (int64, error) {
-	res, err := db.ExecContext(ctx,
-		`INSERT INTO issues (publication_id, number, subject, body_md) VALUES (?,?,?,?)`,
-		pubID, number, subject, bodyMD)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := db.QueryRowContext(ctx,
+		`INSERT INTO issues (workspace_id, publication_id, number, subject, body_md) VALUES ($1,$2,$3,$4,$5)
+		 RETURNING id`,
+		db.ws, pubID, number, subject, bodyMD).Scan(&id)
+	return id, err
 }
 
 // IssueBody returns the stored markdown body of an issue.
 func (db *DB) IssueBody(ctx context.Context, pubID int64, number int) (string, error) {
 	var body string
 	err := db.QueryRowContext(ctx,
-		`SELECT body_md FROM issues WHERE publication_id = ? AND number = ?`, pubID, number).Scan(&body)
+		`SELECT body_md FROM issues WHERE workspace_id = $1 AND publication_id = $2 AND number = $3`,
+		db.ws, pubID, number).Scan(&body)
 	return body, err
 }
 
@@ -387,9 +539,9 @@ func (db *DB) RecordRun(ctx context.Context, r Run) error {
 		issueID = r.IssueID
 	}
 	_, err := db.ExecContext(ctx, `INSERT INTO runs
-		(publication_id, issue_id, step, model, input_tokens, output_tokens, cost_usd, duration_ms)
-		VALUES (?,?,?,?,?,?,?,?)`,
-		r.PublicationID, issueID, r.Step, r.Model, r.InputTokens, r.OutputTokens, r.CostUSD, r.DurationMS)
+		(workspace_id, publication_id, issue_id, step, model, input_tokens, output_tokens, cost_usd, duration_ms)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		db.ws, r.PublicationID, issueID, r.Step, r.Model, r.InputTokens, r.OutputTokens, r.CostUSD, r.DurationMS)
 	return err
 }
 
@@ -409,10 +561,10 @@ func (db *DB) CostReport(ctx context.Context, pubID int64, lastN int) ([]CostRow
 	rows, err := db.QueryContext(ctx, `
 		SELECT COALESCE(i.number, 0), r.step, r.model, r.input_tokens, r.output_tokens, r.cost_usd
 		FROM runs r LEFT JOIN issues i ON i.id = r.issue_id
-		WHERE r.publication_id = ?
-		  AND (i.number IN (SELECT number FROM issues WHERE publication_id = ? ORDER BY number DESC LIMIT ?)
+		WHERE r.workspace_id = $1 AND r.publication_id = $2
+		  AND (i.number IN (SELECT number FROM issues WHERE workspace_id = $1 AND publication_id = $2 ORDER BY number DESC LIMIT $3)
 		       OR r.issue_id IS NULL)
-		ORDER BY i.number DESC, r.id`, pubID, pubID, lastN)
+		ORDER BY i.number DESC, r.id`, db.ws, pubID, lastN)
 	if err != nil {
 		return nil, err
 	}
@@ -432,8 +584,8 @@ func (db *DB) CostReport(ctx context.Context, pubID int64, lastN int) ([]CostRow
 // Returns sql.ErrNoRows when none exists yet.
 func (db *DB) LatestGuide(ctx context.Context, pubID int64) (version int, content string, err error) {
 	err = db.QueryRowContext(ctx,
-		`SELECT version, content FROM editorial_guides WHERE publication_id = ? ORDER BY version DESC LIMIT 1`,
-		pubID).Scan(&version, &content)
+		`SELECT version, content FROM editorial_guides WHERE workspace_id = $1 AND publication_id = $2 ORDER BY version DESC LIMIT 1`,
+		db.ws, pubID).Scan(&version, &content)
 	return version, content, err
 }
 
@@ -443,8 +595,8 @@ func (db *DB) LatestGuides(ctx context.Context, pubID int64, n int) ([]struct {
 	Content string
 }, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT version, content FROM editorial_guides WHERE publication_id = ? ORDER BY version DESC LIMIT ?`,
-		pubID, n)
+		`SELECT version, content FROM editorial_guides WHERE workspace_id = $1 AND publication_id = $2 ORDER BY version DESC LIMIT $3`,
+		db.ws, pubID, n)
 	if err != nil {
 		return nil, err
 	}
