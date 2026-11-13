@@ -5,6 +5,17 @@ import { expect, test, type Page } from "@playwright/test";
 // w/ reason → add from the bench → move between sections → draft → fix
 // the flag → commentary → approve → schedule + hold → send → reader.
 
+type EditorWindow = Window & {
+  __ed?: {
+    state: {
+      selection: {
+        empty: boolean;
+        $from?: { node(n: number): { type?: { name?: string } } };
+      };
+    };
+  };
+};
+
 const issueCol = (page: Page) => page.locator('section[aria-label="This issue"]');
 const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
 const sectionBox = (page: Page, name: string) =>
@@ -133,7 +144,7 @@ async function typeCommentary(page: Page) {
     // (selectionchange) — typing ahead of it hits the stale selection.
     // Wait until the caret is a text cursor inside this commentary node.
     await page.waitForFunction(() => {
-      const s = (window as any).__ed?.state.selection;
+      const s = (window as EditorWindow).__ed?.state.selection;
       return !!s && s.empty && s.$from?.node(-1)?.type?.name === "commentary";
     }, null, { timeout: 15000 });
     await page.keyboard.type("My reading of this section, for the record.", { delay: 15 });

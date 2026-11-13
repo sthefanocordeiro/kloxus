@@ -24,3 +24,7 @@ frontend/test-results/
 .rec-data/
 frontend/recordings/
 .omc/
+
+# Multica agent runtime
+.multica/
+AGENTS.md
