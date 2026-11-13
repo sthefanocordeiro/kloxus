@@ -17,9 +17,52 @@ real app. Deploying the demo deliberately means saying so:
 volume, `gru`), `auto_stop_machines = "stop"` and `min_machines_running = 0`
 so it costs nothing while idle; a cold start answers `/healthz` inside the
 check's grace period. Secrets (Anthropic, Resend, Firecrawl, AbacatePay,
-Supabase, `KLOXUS_MASTER_KEY`, `KLOXUS_WEBHOOK_SECRET`,
+`DATABASE_URL`, `KLOXUS_MASTER_KEY`, `KLOXUS_WEBHOOK_SECRET`,
 `KLOXUS_PUBLIC_URL`) are set on the app with `fly secrets set` — never in
 the file, the repo or a PR.
+
+## Postgres (Supabase)
+
+All app data lives in one Supabase Postgres database reached through
+`DATABASE_URL`. The `/data` volume now only persists the cookie-signing
+secret, so losing it costs sessions, not data.
+
+- `DATABASE_URL` is the Supabase **session pooler** URI
+  (`postgresql://postgres.<ref>:<password>@aws-<n>-<region>.pooler.supabase.com:5432/postgres`).
+  The app applies its migrations on boot; no separate migrate step.
+- The app appends `default_query_exec_mode=exec` to the connection
+  string automatically — Supabase's transaction pooler does not support
+  the extended query protocol. Nothing to set by hand.
+- Idle workspaces (no request in ~21 days) are deleted by the in-app
+  sweeper to stay under Supabase's 500 MB free-tier cap.
+
+### Backups
+
+`.github/workflows/backup.yml` runs `pg_dump` nightly (06:00 UTC) and
+keeps the custom-format dump as a 30-day workflow artifact. It reads the
+`DATABASE_URL` repository secret — set it once in repo settings, same
+value as the Fly secret.
+
+### Restore
+
+```bash
+# download the artifact from the backup run you want, then:
+pg_restore --clean --if-exists --no-owner --no-privileges \
+  --dbname "$DATABASE_URL" kloxus-YYYYMMDD.dump
+```
+
+For a full rebuild on an empty database just run `pg_restore` without
+`--clean`; the app's next boot applies any newer migrations on top.
+Verify afterwards:
+
+```bash
+psql "$DATABASE_URL" -c 'select count(*) from workspaces; select count(*) from publications;'
+scripts/smoke.sh https://kloxus.fly.dev
+```
+
+`pg_dump`/`pg_restore` come from `postgresql-client` — use client ≥ the
+server's major version (Supabase is on Postgres 15+; client 17 works
+either direction).
 
 ## Deploy a branch
 
@@ -60,8 +103,9 @@ fly deploy -a kloxus --image registry.fly.io/kloxus:<previous-tag>
 scripts/smoke.sh https://kloxus.fly.dev
 ```
 
-Workspace data lives on the `kloxus_data` volume, so a rollback does not
-lose visitor workspaces.
+Workspace data lives in Postgres, so a rollback does not lose visitor
+workspaces (only schema-incompatible data would, so restore from a
+nightly dump if an old build cannot read the migrated schema).
 
 ## Ops notes
 

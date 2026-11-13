@@ -17,6 +17,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
@@ -119,7 +120,6 @@ func runPhaseA(t *testing.T, srv *web.Server, db *store.DB, pubID int64) int64 {
 // one does not affect the other.
 func TestWorkspaceIsolation(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
 	seed := func(ctx context.Context, sdb *store.DB) error {
 		data, _ := examples.FS.ReadFile("publications/futuro-proximo.yaml")
 		def, err := config.ParsePublication(data)
@@ -129,7 +129,7 @@ func TestWorkspaceIsolation(t *testing.T) {
 		_, err = sdb.SeedPublication(ctx, def)
 		return err
 	}
-	mgr, err := workspace.OpenHosted(ctx, dir, []byte("test-secret-key-32-bytes-padded-ok!"), seed)
+	mgr, err := workspace.OpenHosted(ctx, testdb.Pool(t), []byte("test-secret-key-32-bytes-padded-ok!"), seed)
 	if err != nil {
 		t.Fatalf("OpenHosted: %v", err)
 	}
@@ -274,7 +274,7 @@ outer0:
 	}
 	// supported edit resolves it (grounded in a dossier fact for [1])
 	if rr := apiCall(t, srv, "PATCH", sents+flaggedID, map[string]any{
-		"text": "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
+		"text":      "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
 		"citations": []int{1}, "version": ver}); rr.Code != 200 {
 		t.Fatalf("supported edit = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
@@ -482,7 +482,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 		_, err = sdb.SeedPublication(ctx, def)
 		return err
 	}
-	mgr, err := workspace.OpenHosted(ctx, t.TempDir(),
+	mgr, err := workspace.OpenHosted(ctx, testdb.Pool(t),
 		[]byte("test-secret-key-32-bytes-padded-ok!"), seed)
 	if err != nil {
 		t.Fatalf("OpenHosted: %v", err)

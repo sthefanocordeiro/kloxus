@@ -4,6 +4,7 @@ package web
 // through /api/v1/runs and /api/v1/runs/{id}/events.
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -51,6 +52,17 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 	go func() {
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
+		// A pipeline panic must fail this run, not take the process —
+		// and every other workspace — down with it (review F5).
+		defer func() {
+			if p := recover(); p != nil {
+				st.mu.Lock()
+				defer st.mu.Unlock()
+				st.st.Done = true
+				st.st.Err = fmt.Sprintf("pipeline panic: %v", p)
+				slog.Error("pipeline run panicked", "pub", pub.ID, "panic", p, "rid", st.st.RunID)
+			}
+		}()
 		runner := &pipeline.Runner{
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,

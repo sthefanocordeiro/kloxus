@@ -60,8 +60,10 @@ One issue and one PR per milestone; each milestone lists its exit test.
 
 ## R3 — Postgres on Supabase (Nov 14–17)
 
-- Port the store and migrations to Postgres; `workspace_id` on every tenant
-  table; drop the per-visitor SQLite files. Nightly `pg_dump`. (D28)
+- [x] Port the store and migrations to Postgres; `workspace_id` on every
+  tenant table; drop the per-visitor SQLite files. Jobs queue on
+  `FOR UPDATE SKIP LOCKED`; nightly `pg_dump` workflow; idle-workspace
+  deletion. (D28)
 
 **Exit:** full test suite green on Postgres by **Nov 17**. If not, fall back
 to SQLite + Litestream and move on.

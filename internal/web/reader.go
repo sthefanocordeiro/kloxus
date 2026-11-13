@@ -4,8 +4,8 @@ package web
 // the localized subscribers-only note. The reader page itself is React;
 // these helpers shape the Markdown the API returns and the mailer sends.
 import (
+	"context"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 
@@ -19,18 +19,22 @@ const demoReaderName = "Demo Reader"
 // sendIssueMail builds the reader-facing issue email honoring the
 // paywall (non-subscribers get the teaser, paying readers the full
 // issue; every message carries an unsubscribe link) and records it in
-// the workspace outbox.
-func (s *Server) sendIssueMail(r *http.Request, iss *store.Issue, pub *store.Publication, to []string, kind string) (string, error) {
-	base := requestBase(r)
+// the workspace outbox. It takes the workspace handle explicitly so the
+// scheduler can send outside a request.
+func (s *Server) sendIssueMail(ctx context.Context, wdb *store.DB, wsID string, iss *store.Issue, pub *store.Publication, to []string, kind, base string) (string, error) {
 	cpub, _ := s.canonicalPub(pub, nil)
 	md := delivery.ReaderBody(iss, cpub, base)
-	rid, _ := db(r).UpsertReader(r.Context(), pub.ID, demoReaderEmail, demoReaderName)
-	active, _ := db(r).HasActiveSubscription(r.Context(), rid)
+	rid, _ := wdb.UpsertReader(ctx, pub.ID, demoReaderEmail, demoReaderName)
+	active, _ := wdb.HasActiveSubscription(ctx, rid)
+	tokQ := ""
+	if s.d.WS.Hosted() {
+		tokQ = "&tok=" + url.QueryEscape(s.d.WS.PublicToken(wsID))
+	}
 	unsub := fmt.Sprintf("%s/unsub?pub=%d%s&r=%d&t=%s",
-		base, pub.ID, s.tokQ(r), rid, s.d.WS.MAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid)))
+		base, pub.ID, tokQ, rid, s.d.WS.MAC("unsub", fmt.Sprintf("%d:%d", pub.ID, rid)))
 	publicPage := fmt.Sprintf("%s/p/%s/%d", base, pub.Slug, iss.Number)
-	if tok := s.readerToken(r); tok != "" {
-		publicPage += "?tok=" + url.QueryEscape(tok)
+	if s.d.WS.Hosted() {
+		publicPage += "?tok=" + url.QueryEscape(s.d.WS.PublicToken(wsID))
 	}
 	if !active {
 		md = gateSections(md, cpub.Paywall.PaidSections, cpub.Language)
@@ -42,7 +46,7 @@ func (s *Server) sendIssueMail(r *http.Request, iss *store.Issue, pub *store.Pub
 	} else {
 		md += fmt.Sprintf("\n\n---\n*[cancelar assinatura](%s)*", unsub)
 	}
-	mailer := delivery.Outbox{DB: db(r), Kind: kind, Ctx: r.Context()}
+	mailer := delivery.Outbox{DB: wdb, Kind: kind, Ctx: ctx}
 	return mailer.Send(iss.Subject, md, delivery.RenderHTML(iss.Subject, md, base), to)
 }
 

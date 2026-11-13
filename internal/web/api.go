@@ -1576,6 +1576,16 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
+		// Same panic guard as prepare runs (review F5).
+		defer func() {
+			if p := recover(); p != nil {
+				st.mu.Lock()
+				defer st.mu.Unlock()
+				st.st.Done = true
+				st.st.Err = fmt.Sprintf("pipeline panic: %v", p)
+				slog.Error("draft run panicked", "issue", iss.ID, "panic", p, "rid", st.st.RunID)
+			}
+		}()
 		runner := &pipeline.Runner{
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
@@ -2237,7 +2247,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		to = []string{addr}
 		kind = "test"
 	}
-	emailID, err := s.sendIssueMail(r, iss, pub, to, kind)
+	emailID, err := s.sendIssueMail(r.Context(), db(r), reqWS(r).ID, iss, pub, to, kind, requestBase(r))
 	if apiDBErr(w, r, err, "send") {
 		return
 	}
@@ -2455,7 +2465,9 @@ func (s *Server) apiPaywallCancel(w http.ResponseWriter, r *http.Request) {
 // nothing in the URL. ?ws= is still honored for links already delivered.
 // The visitor's own session workspace is never touched.
 func (s *Server) withWS(r *http.Request) *http.Request {
-	if !s.d.WS.Hosted() {
+	// A workspace override is honored on read-only requests only — the
+	// raw ?ws= id must never mutate another visitor's state (review F2).
+	if !s.d.WS.Hosted() || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 		return r
 	}
 	wsid := r.URL.Query().Get("ws")
@@ -2809,7 +2821,8 @@ func (s *Server) sourceURL(r *http.Request, sid int64) (string, error) {
 	}
 	var url string
 	err = db(r).QueryRowContext(r.Context(),
-		`SELECT url FROM sources WHERE id = ? AND publication_id = ?`, sid, pub.ID).Scan(&url)
+		`SELECT url FROM sources WHERE workspace_id = $1 AND id = $2 AND publication_id = $3`,
+		db(r).Workspace(), sid, pub.ID).Scan(&url)
 	return url, err
 }
 

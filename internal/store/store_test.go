@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
-	"path/filepath"
+	"encoding/hex"
+	"os"
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -11,12 +13,40 @@ import (
 
 func open(t *testing.T) *DB {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	return openOn(t, openPool(t))
+}
+
+func openPool(t *testing.T) *Pool {
+	t.Helper()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set — Postgres tests skipped")
+	}
+	pool, err := Open(url)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	t.Cleanup(func() { pool.Close() })
+	return pool
+}
+
+func openOn(t *testing.T, pool *Pool) *DB {
+	t.Helper()
+	ctx := context.Background()
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	id := hex.EncodeToString(b)
+	if err := pool.CreateWorkspace(ctx, id); err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := pool.DeleteWorkspace(context.Background(), id); err != nil {
+			t.Errorf("DeleteWorkspace: %v", err)
+		}
+	})
+	return pool.For(id)
 }
 
 func testPub() *config.Publication {
@@ -37,7 +67,7 @@ func TestMigrateAndSeed(t *testing.T) {
 	ctx := context.Background()
 
 	var applied int
-	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&applied); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&applied); err != nil {
 		t.Fatalf("schema_migrations: %v", err)
 	}
 	if applied < 1 {
@@ -112,7 +142,8 @@ func TestSeedRefreshesConfig(t *testing.T) {
 	}
 	// visitor-added source survives the refresh
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO sources (publication_id, type, url) VALUES (?,?,?)`, id, "rss", "https://visitor.example/feed"); err != nil {
+		`INSERT INTO sources (workspace_id, publication_id, type, url) VALUES ($1,$2,$3,$4)`,
+		db.ws, id, "rss", "https://visitor.example/feed"); err != nil {
 		t.Fatalf("add source: %v", err)
 	}
 

@@ -29,10 +29,11 @@ type Item struct {
 func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawItem, canonical func(string) string) (int, error) {
 	added := 0
 	for _, r := range raw {
-		res, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO items
-			(source_id, external_id, url, canonical_url, title, author, published_at, content_text)
-			VALUES (?,?,?,?,?,?,?,?)`,
-			sourceID, r.ExternalID, r.URL, canonical(r.URL), r.Title, r.Author, r.PublishedAt, r.ContentText)
+		res, err := db.ExecContext(ctx, `INSERT INTO items
+			(workspace_id, source_id, external_id, url, canonical_url, title, author, published_at, content_text)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			ON CONFLICT (source_id, external_id) DO NOTHING`,
+			db.ws, sourceID, r.ExternalID, r.URL, canonical(r.URL), r.Title, r.Author, r.PublishedAt, r.ContentText)
 		if err != nil {
 			return added, err
 		}
@@ -49,7 +50,7 @@ func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, err
 		SELECT i.id, i.source_id, s.name, s.url, s.type, i.external_id, i.url,
 		       i.canonical_url, i.title, i.author, i.published_at, i.content_text
 		FROM items i JOIN sources s ON s.id = i.source_id
-		WHERE s.publication_id = ? ORDER BY i.id`, pubID)
+		WHERE i.workspace_id = $1 AND s.publication_id = $2 ORDER BY i.id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -74,13 +75,13 @@ func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, err
 func (db *DB) MarkSourceFetched(ctx context.Context, sourceID int64, name, status string) error {
 	if name != "" {
 		_, err := db.ExecContext(ctx,
-			`UPDATE sources SET last_fetch_at = datetime('now'), last_status = ?, name = ? WHERE id = ?`,
-			status, name, sourceID)
+			`UPDATE sources SET last_fetch_at = $1, last_status = $2, name = $3 WHERE workspace_id = $4 AND id = $5`,
+			NowUTC(), status, name, db.ws, sourceID)
 		return err
 	}
 	_, err := db.ExecContext(ctx,
-		`UPDATE sources SET last_fetch_at = datetime('now'), last_status = ? WHERE id = ?`,
-		status, sourceID)
+		`UPDATE sources SET last_fetch_at = $1, last_status = $2 WHERE workspace_id = $3 AND id = $4`,
+		NowUTC(), status, db.ws, sourceID)
 	return err
 }
 
@@ -91,7 +92,8 @@ func (db *DB) GetItem(ctx context.Context, id int64) (*Item, error) {
 	err := db.QueryRowContext(ctx, `
 		SELECT i.id, i.source_id, s.url, s.type, i.external_id, i.url,
 		       i.canonical_url, i.title, i.author, i.published_at, i.content_text, s.name
-		FROM items i JOIN sources s ON s.id = i.source_id WHERE i.id = ?`, id).
+		FROM items i JOIN sources s ON s.id = i.source_id
+		WHERE i.workspace_id = $1 AND i.id = $2`, db.ws, id).
 		Scan(&it.ID, &it.SourceID, &it.SourceURL, &it.SourceType,
 			&it.ExternalID, &it.URL, &canon, &it.Title, &it.Author, &it.PublishedAt, &it.ContentText, &sourceName)
 	if err != nil {
@@ -127,35 +129,33 @@ func (s Story) Outlets() []string {
 
 // ClearStories removes a publication's stories (for a fresh run).
 // Old issue_items keep a dangling story_id by design: their rendered
-// content lives in dossiers and the issue body, not in the stories table.
-// FK checks are suspended only for the duration of this delete.
+// content lives in dossiers and the issue body, not in the stories table
+// — which is why issue_items.story_id carries no foreign key.
 func (db *DB) ClearStories(ctx context.Context, pubID int64) error {
-	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
-		return err
-	}
-	defer db.Exec(`PRAGMA foreign_keys = ON`)
 	if _, err := db.ExecContext(ctx,
-		`DELETE FROM story_items WHERE story_id IN (SELECT id FROM stories WHERE publication_id = ?)`, pubID); err != nil {
+		`DELETE FROM story_items WHERE workspace_id = $1 AND story_id IN
+			(SELECT id FROM stories WHERE workspace_id = $1 AND publication_id = $2)`, db.ws, pubID); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `DELETE FROM stories WHERE publication_id = ?`, pubID)
+	_, err := db.ExecContext(ctx,
+		`DELETE FROM stories WHERE workspace_id = $1 AND publication_id = $2`, db.ws, pubID)
 	return err
 }
 
 // CreateStory inserts a story group.
 func (db *DB) CreateStory(ctx context.Context, pubID int64, title string, simhash int64) (int64, error) {
-	res, err := db.ExecContext(ctx,
-		`INSERT INTO stories (publication_id, title, simhash) VALUES (?,?,?)`, pubID, title, simhash)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := db.QueryRowContext(ctx,
+		`INSERT INTO stories (workspace_id, publication_id, title, simhash) VALUES ($1,$2,$3,$4) RETURNING id`,
+		db.ws, pubID, title, simhash).Scan(&id)
+	return id, err
 }
 
 // AddStoryItem links an item to a story.
 func (db *DB) AddStoryItem(ctx context.Context, storyID, itemID int64) error {
 	_, err := db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO story_items (story_id, item_id) VALUES (?,?)`, storyID, itemID)
+		`INSERT INTO story_items (workspace_id, story_id, item_id) VALUES ($1,$2,$3)
+		 ON CONFLICT (story_id, item_id) DO NOTHING`, db.ws, storyID, itemID)
 	return err
 }
 
@@ -163,8 +163,8 @@ func (db *DB) AddStoryItem(ctx context.Context, storyID, itemID int64) error {
 // candidates can be ranked after the run.
 func (db *DB) SetStoryTriage(ctx context.Context, storyID int64, score float64, reason string) error {
 	_, err := db.ExecContext(ctx,
-		`UPDATE stories SET triage_score = ?, triage_reason = ? WHERE id = ?`,
-		score, reason, storyID)
+		`UPDATE stories SET triage_score = $1, triage_reason = $2 WHERE workspace_id = $3 AND id = $4`,
+		score, reason, db.ws, storyID)
 	return err
 }
 
@@ -172,8 +172,9 @@ func (db *DB) SetStoryTriage(ctx context.Context, storyID int64, score float64, 
 func (db *DB) StoryWithItems(ctx context.Context, storyID int64) (*Story, error) {
 	var s Story
 	err := db.QueryRowContext(ctx,
-		`SELECT id, publication_id, title, COALESCE(triage_score,0), triage_reason FROM stories WHERE id = ?`,
-		storyID).Scan(&s.ID, &s.PublicationID, &s.Title, &s.TriageScore, &s.TriageReason)
+		`SELECT id, publication_id, title, COALESCE(triage_score,0), triage_reason FROM stories
+		 WHERE workspace_id = $1 AND id = $2`,
+		db.ws, storyID).Scan(&s.ID, &s.PublicationID, &s.Title, &s.TriageScore, &s.TriageReason)
 	if err != nil {
 		return nil, err
 	}
@@ -192,10 +193,10 @@ func (db *DB) BestAlternative(ctx context.Context, pubID, issueID int64) (*Story
 	var id int64
 	err := db.QueryRowContext(ctx, `
 		SELECT s.id FROM stories s
-		WHERE s.publication_id = ?
-		  AND s.id NOT IN (SELECT story_id FROM issue_items WHERE issue_id = ?)
+		WHERE s.workspace_id = $1 AND s.publication_id = $2
+		  AND s.id NOT IN (SELECT story_id FROM issue_items WHERE workspace_id = $1 AND issue_id = $3)
 		ORDER BY COALESCE(s.triage_score,0) DESC, s.id
-		LIMIT 1`, pubID, issueID).Scan(&id)
+		LIMIT 1`, db.ws, pubID, issueID).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +210,7 @@ func (db *DB) storyItems(ctx context.Context, storyID int64) ([]Item, error) {
 		FROM story_items si
 		JOIN items i ON i.id = si.item_id
 		JOIN sources s ON s.id = i.source_id
-		WHERE si.story_id = ? ORDER BY i.id`, storyID)
+		WHERE si.workspace_id = $1 AND si.story_id = $2 ORDER BY i.id`, db.ws, storyID)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +233,7 @@ func (db *DB) storyItems(ctx context.Context, storyID int64) ([]Item, error) {
 // StoriesWithItems loads all stories and their member items.
 func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, title FROM stories WHERE publication_id = ? ORDER BY id`, pubID)
+		`SELECT id, title FROM stories WHERE workspace_id = $1 AND publication_id = $2 ORDER BY id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -257,8 +258,9 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 		FROM story_items si
 		JOIN items i ON i.id = si.item_id
 		JOIN sources s ON s.id = i.source_id
-		WHERE si.story_id IN (SELECT id FROM stories WHERE publication_id = ?)
-		ORDER BY si.story_id, i.id`, pubID)
+		WHERE si.workspace_id = $1
+		  AND si.story_id IN (SELECT id FROM stories WHERE workspace_id = $1 AND publication_id = $2)
+		ORDER BY si.story_id, i.id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -285,13 +287,18 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 func (db *DB) MergeStories(ctx context.Context, primary int64, secondaries []int64) error {
 	for _, sec := range secondaries {
 		if _, err := db.ExecContext(ctx,
-			`UPDATE OR IGNORE story_items SET story_id = ? WHERE story_id = ?`, primary, sec); err != nil {
+			`UPDATE story_items si SET story_id = $1
+			 WHERE workspace_id = $2 AND story_id = $3
+			   AND NOT EXISTS (SELECT 1 FROM story_items x WHERE x.story_id = $1 AND x.item_id = si.item_id)`,
+			primary, db.ws, sec); err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx, `DELETE FROM story_items WHERE story_id = ?`, sec); err != nil {
+		if _, err := db.ExecContext(ctx,
+			`DELETE FROM story_items WHERE workspace_id = $1 AND story_id = $2`, db.ws, sec); err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx, `DELETE FROM stories WHERE id = ?`, sec); err != nil {
+		if _, err := db.ExecContext(ctx,
+			`DELETE FROM stories WHERE workspace_id = $1 AND id = $2`, db.ws, sec); err != nil {
 			return err
 		}
 	}
@@ -324,19 +331,19 @@ func (db *DB) CreateIssueItem(ctx context.Context, ii IssueItem) (int64, error) 
 	if ii.OrigSection == "" {
 		ii.OrigSection = ii.Section
 	}
-	res, err := db.ExecContext(ctx,
-		`INSERT INTO issue_items (issue_id, story_id, section, score, reason, status, origin, position, orig_section) VALUES (?,?,?,?,?,?,?,?,?)`,
-		ii.IssueID, ii.StoryID, ii.Section, ii.Score, ii.Reason, ii.Status, ii.Origin, ii.Position, ii.OrigSection)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := db.QueryRowContext(ctx,
+		`INSERT INTO issue_items (workspace_id, issue_id, story_id, section, score, reason, status, origin, position, orig_section)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+		db.ws, ii.IssueID, ii.StoryID, ii.Section, ii.Score, ii.Reason, ii.Status, ii.Origin, ii.Position, ii.OrigSection).Scan(&id)
+	return id, err
 }
 
 // IssueItems lists an issue's items ordered by score descending.
 func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section FROM issue_items WHERE issue_id = ? ORDER BY score DESC`, issueID)
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section
+		 FROM issue_items WHERE workspace_id = $1 AND issue_id = $2 ORDER BY score DESC`, db.ws, issueID)
 	if err != nil {
 		return nil, err
 	}
@@ -357,11 +364,13 @@ func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error
 func (db *DB) SetIssueItemPlacement(ctx context.Context, iiID int64, section string, position int, status string) error {
 	if status == "" {
 		_, err := db.ExecContext(ctx,
-			`UPDATE issue_items SET section = ?, position = ? WHERE id = ?`, section, position, iiID)
+			`UPDATE issue_items SET section = $1, position = $2 WHERE workspace_id = $3 AND id = $4`,
+			section, position, db.ws, iiID)
 		return err
 	}
 	_, err := db.ExecContext(ctx,
-		`UPDATE issue_items SET section = ?, position = ?, status = ? WHERE id = ?`, section, position, status, iiID)
+		`UPDATE issue_items SET section = $1, position = $2, status = $3 WHERE workspace_id = $4 AND id = $5`,
+		section, position, status, db.ws, iiID)
 	return err
 }
 
@@ -383,13 +392,13 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 		SELECT s.id, s.title, COALESCE(s.triage_score,0), COALESCE(s.triage_reason,''),
 		       (SELECT COUNT(*) FROM story_items si WHERE si.story_id = s.id)
 		FROM stories s
-		WHERE s.publication_id = ?
+		WHERE s.workspace_id = $1 AND s.publication_id = $2
 		  AND s.triage_score IS NOT NULL
 		  AND s.id NOT IN (
 		    SELECT ii.story_id FROM issue_items ii
 		    JOIN issues i ON i.id = ii.issue_id
-		    WHERE i.id != ? AND i.publication_id = s.publication_id)
-		ORDER BY COALESCE(s.triage_score,0) DESC, s.id`, pubID, issueID)
+		    WHERE ii.workspace_id = $1 AND i.id != $3 AND i.publication_id = s.publication_id)
+		ORDER BY COALESCE(s.triage_score,0) DESC, s.id`, db.ws, pubID, issueID)
 	if err != nil {
 		return nil, err
 	}
@@ -436,8 +445,8 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 // SaveDossier upserts the dossier JSON for an issue item.
 func (db *DB) SaveDossier(ctx context.Context, issueItemID int64, json string) error {
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO dossiers (issue_item_id, json) VALUES (?,?)
-		 ON CONFLICT(issue_item_id) DO UPDATE SET json = excluded.json`, issueItemID, json)
+		`INSERT INTO dossiers (workspace_id, issue_item_id, json) VALUES ($1,$2,$3)
+		 ON CONFLICT (issue_item_id) DO UPDATE SET json = excluded.json`, db.ws, issueItemID, json)
 	return err
 }
 
@@ -445,7 +454,7 @@ func (db *DB) SaveDossier(ctx context.Context, issueItemID int64, json string) e
 func (db *DB) Dossier(ctx context.Context, issueItemID int64) (string, error) {
 	var j string
 	err := db.QueryRowContext(ctx,
-		`SELECT json FROM dossiers WHERE issue_item_id = ?`, issueItemID).Scan(&j)
+		`SELECT json FROM dossiers WHERE workspace_id = $1 AND issue_item_id = $2`, db.ws, issueItemID).Scan(&j)
 	return j, err
 }
 
@@ -453,13 +462,14 @@ func (db *DB) Dossier(ctx context.Context, issueItemID int64) (string, error) {
 // invalidates any stored approval receipt.
 func (db *DB) UpdateIssue(ctx context.Context, issueID int64, status, bodyMD, flagsJSON string) error {
 	_, err := db.ExecContext(ctx,
-		`UPDATE issues SET status = ?, body_md = ?, flags_json = ? WHERE id = ?`,
-		status, bodyMD, flagsJSON, issueID)
+		`UPDATE issues SET status = $1, body_md = $2, flags_json = $3 WHERE workspace_id = $4 AND id = $5`,
+		status, bodyMD, flagsJSON, db.ws, issueID)
 	if err != nil {
 		return err
 	}
 	if status != "approved" {
-		_, err = db.ExecContext(ctx, `DELETE FROM approval_receipts WHERE issue_id = ?`, issueID)
+		_, err = db.ExecContext(ctx,
+			`DELETE FROM approval_receipts WHERE workspace_id = $1 AND issue_id = $2`, db.ws, issueID)
 	}
 	return err
 }
@@ -472,8 +482,8 @@ func (db *DB) RecordDecision(ctx context.Context, pubID int64, issueItemID int64
 		ii = issueItemID
 	}
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO decisions (publication_id, issue_item_id, kind, reason) VALUES (?,?,?,?)`,
-		pubID, ii, kind, reason)
+		`INSERT INTO decisions (workspace_id, publication_id, issue_item_id, kind, reason) VALUES ($1,$2,$3,$4,$5)`,
+		db.ws, pubID, ii, kind, reason)
 	return err
 }
 
@@ -481,8 +491,8 @@ func (db *DB) RecordDecision(ctx context.Context, pubID int64, issueItemID int64
 // (sql.ErrNoRows when none).
 func (db *DB) LatestDecision(ctx context.Context, issueItemID int64) (kind, reason string, err error) {
 	err = db.QueryRowContext(ctx,
-		`SELECT kind, reason FROM decisions WHERE issue_item_id = ? ORDER BY id DESC LIMIT 1`,
-		issueItemID).Scan(&kind, &reason)
+		`SELECT kind, reason FROM decisions WHERE workspace_id = $1 AND issue_item_id = $2 ORDER BY id DESC LIMIT 1`,
+		db.ws, issueItemID).Scan(&kind, &reason)
 	return kind, reason, err
 }
 
@@ -497,7 +507,8 @@ type Decision struct {
 // Decisions lists a publication's decisions, oldest first.
 func (db *DB) Decisions(ctx context.Context, pubID int64) ([]Decision, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT COALESCE(issue_item_id, 0), kind, reason, created_at FROM decisions WHERE publication_id = ? ORDER BY id`, pubID)
+		`SELECT COALESCE(issue_item_id, 0), kind, reason, created_at FROM decisions
+		 WHERE workspace_id = $1 AND publication_id = $2 ORDER BY id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -519,19 +530,21 @@ func (db *DB) SaveGuide(ctx context.Context, pubID int64, content string) (int, 
 	var curV int
 	var curC string
 	err := db.QueryRowContext(ctx,
-		`SELECT version, content FROM editorial_guides WHERE publication_id = ? ORDER BY version DESC LIMIT 1`, pubID).Scan(&curV, &curC)
+		`SELECT version, content FROM editorial_guides WHERE workspace_id = $1 AND publication_id = $2 ORDER BY version DESC LIMIT 1`,
+		db.ws, pubID).Scan(&curV, &curC)
 	if err == nil && strings.TrimSpace(curC) == strings.TrimSpace(content) {
 		return curV, nil
 	}
 	var version int
 	err = db.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(version), 0) + 1 FROM editorial_guides WHERE publication_id = ?`, pubID).Scan(&version)
+		`SELECT COALESCE(MAX(version), 0) + 1 FROM editorial_guides WHERE workspace_id = $1 AND publication_id = $2`,
+		db.ws, pubID).Scan(&version)
 	if err != nil {
 		return 0, err
 	}
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO editorial_guides (publication_id, version, content) VALUES (?,?,?)`,
-		pubID, version, content); err != nil {
+		`INSERT INTO editorial_guides (workspace_id, publication_id, version, content) VALUES ($1,$2,$3,$4)`,
+		db.ws, pubID, version, content); err != nil {
 		return 0, err
 	}
 	return version, nil

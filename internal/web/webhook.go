@@ -10,6 +10,7 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
+	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
 // firecrawlWebhook receives monitor.page events (real mode).
@@ -52,8 +53,21 @@ func (s *Server) firecrawlWebhook(w http.ResponseWriter, r *http.Request) {
 	if mid == "" {
 		mid = ev.Data.MonitorIDAlt
 	}
-	src, err := db(r).FindSourceByMonitor(r.Context(), mid)
-	if err != nil {
+	// The webhook carries no tenant cookie: the monitor id resolves the
+	// workspace in hosted mode (global lookup) and maps to the single
+	// local workspace otherwise.
+	var wdb *store.DB
+	srcID := int64(0)
+	if pool := s.d.WS.Pool(); pool != nil {
+		if ms, err := pool.FindSourceByMonitor(r.Context(), mid); err == nil {
+			wdb, srcID = pool.For(ms.WorkspaceID), ms.ID
+		}
+	} else if l := s.d.WS.Local(); l != nil {
+		if src, err := l.DB.FindSourceByMonitor(r.Context(), mid); err == nil {
+			wdb, srcID = l.DB, src.ID
+		}
+	}
+	if srcID == 0 {
 		slog.Warn("webhook: unknown monitor", "id", mid)
 		w.WriteHeader(202)
 		return
@@ -62,7 +76,7 @@ func (s *Server) firecrawlWebhook(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		title = ev.Data.URL
 	}
-	if _, err := db(r).SaveItems(r.Context(), src.ID, []sources.RawItem{{
+	if _, err := wdb.SaveItems(r.Context(), srcID, []sources.RawItem{{
 		ExternalID:  ev.Data.URL + "#" + ev.Data.Status,
 		URL:         ev.Data.URL,
 		Title:       title,
