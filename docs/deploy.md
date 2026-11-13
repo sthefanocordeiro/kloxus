@@ -1,59 +1,73 @@
-# Deploying the demo to Fly.io
+# Deploying to Fly.io
 
-The hosted demo runs the same `kloxus demo` binary as local mode, switched
-into multi-workspace mode by `KLOXUS_DATA_DIR`. One always-on machine, one
-volume, zero external services, zero secrets.
+Two apps exist, and the difference matters:
 
-## What's already configured
+| App | URL | Config | Role |
+| --- | --- | --- | --- |
+| `kloxus` | https://kloxus.fly.dev | `fly.toml` | **The real app.** Every PR deploys and is verified here (D35). |
+| `kloxus-demo` | https://kloxus-demo.fly.dev | `fly.demo.toml` | The fixture demo — the fallback URL for judges. **Untouched** by this routine: no deploys, no secret changes. |
 
-`fly.toml`:
+`fly.toml` points at `kloxus`, so a bare `fly deploy` can only ever hit the
+real app. Deploying the demo deliberately means saying so:
+`fly deploy -c fly.demo.toml`.
 
-- `KLOXUS_MODE=demo`, `KLOXUS_PORT=8080`
-- `KLOXUS_DATA_DIR=/data` — enables hosted mode: each visitor gets a signed
-  cookie and their own SQLite file under `/data/workspaces/`, cloned from a
-  seeded `template.db` built at boot
-- `KLOXUS_OUT_DIR=/data/out`
-- `[mounts]` `kloxus_data` → `/data` — workspace data survives deploys and
-  restarts
-- `auto_stop_machines = "off"`, `min_machines_running = 1` — the demo stays up
-- `[http_service.checks]` GET `/healthz` every 30s
+## The real app
 
-`Dockerfile` builds a static binary (`CGO_ENABLED=0`) and runs it as a
-non-root user with `/data` owned by that user.
+`fly.toml` sets hosted mode (`KLOXUS_DATA_DIR=/data` on the `kloxus_data`
+volume, `gru`), `auto_stop_machines = "stop"` and `min_machines_running = 0`
+so it costs nothing while idle; a cold start answers `/healthz` inside the
+check's grace period. Secrets (Anthropic, Resend, Firecrawl, AbacatePay,
+Supabase, `KLOXUS_MASTER_KEY`, `KLOXUS_WEBHOOK_SECRET`,
+`KLOXUS_PUBLIC_URL`) are set on the app with `fly secrets set` — never in
+the file, the repo or a PR.
 
-## First deploy
-
-```bash
-fly launch --name kloxus-demo --region gru --no-deploy   # or reuse fly.toml
-fly volumes create kloxus_data --region gru --size 1
-fly deploy
-fly status
-curl https://kloxus-demo.fly.dev/healthz                 # → ok
-```
-
-## Redeploy
+## Deploy a branch
 
 ```bash
-fly deploy
+scripts/deploy-fly.sh        # fly deploy + prints the release version
 ```
 
-The volume is preserved; existing visitor workspaces keep their data. Old
-workspaces are reaped by the cleanup loop (idle age cap) and open handles
-are LRU-evicted.
+Deploys are serialized: the branch under review is what is deployed.
+If two PRs are in flight, finish one round before deploying the next.
 
 ## Verify
 
-- `https://kloxus-demo.fly.dev/healthz` → `ok`
-- Open the site in two browsers (or normal + private window): each gets a
-  different `kloxus_ws` cookie and its own publication state; "Reset demo"
-  affects only that browser.
-- `fly logs` shows request ids, not cookies or URLs with user data.
+```bash
+scripts/smoke.sh https://kloxus.fly.dev            # health → SPA → sample → workspace → fixture run → reader page
+cd frontend && E2E_BASE_URL=https://kloxus.fly.dev npx playwright test
+```
+
+A PR is not done until both pass against the Fly URL, and its description
+carries the URL, the release version and both outputs.
+
+## Merge
+
+The PR merges to `main` only after the hosted verification above. The
+`deploy` workflow (`.github/workflows/deploy.yml`) then deploys `main` to
+`kloxus` and re-runs the smoke script in CI — it needs the `FLY_API_TOKEN`
+repository secret. Verify the run after merge:
+
+```bash
+fly status -a kloxus    # machine on the new image
+scripts/smoke.sh https://kloxus.fly.dev
+```
+
+## Roll back
+
+```bash
+fly releases -a kloxus                 # find the previous good image
+fly deploy -a kloxus --image registry.fly.io/kloxus:<previous-tag>
+scripts/smoke.sh https://kloxus.fly.dev
+```
+
+Workspace data lives on the `kloxus_data` volume, so a rollback does not
+lose visitor workspaces.
 
 ## Ops notes
 
+- `fly logs -a kloxus` shows request ids, not cookies or user data.
 - The cookie-signing secret is generated at `/data/cookie.secret` on first
-  boot (or set `KLOXUS_COOKIE_SECRET`). Losing it just invalidates existing
-  session cookies — visitors get fresh workspaces.
-- SQLite runs in WAL mode; runs and resets are serialized per workspace.
-- The demo never fetches visitor-entered URLs and never calls external
-  APIs; egress can be left unrestricted but nothing needs it.
+  boot (or set `KLOXUS_COOKIE_SECRET`). Losing it only invalidates session
+  cookies — visitors get fresh workspaces.
+- Free allowances: two small `shared-cpu-1x` 256 MB machines and two 1 GB
+  volumes across both apps stay inside Fly's free usage for a personal org.

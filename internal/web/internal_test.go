@@ -5,11 +5,18 @@ import (
 	"testing"
 )
 
-// TestRemoveSentenceDropsCitationMarker: removing a flagged sentence
+// TestRemoveInItemDropsCitationMarker: removing a flagged sentence
 // must take its trailing "[n]" too — no orphaned citation left behind.
-func TestRemoveSentenceDropsCitationMarker(t *testing.T) {
+func TestRemoveInItemDropsCitationMarker(t *testing.T) {
+	remove := func(body, sent string) string {
+		out, ok := removeInItem(body, &docItem{spanStart: 0, spanEnd: len(body)}, sent)
+		if !ok {
+			t.Fatalf("sentence not found in %q", body)
+		}
+		return out
+	}
 	body := "### H <!-- item 1 -->\n\nO custo segue três vezes o da banda larga urbana. [1] Outra afirmação sem fonte."
-	out := removeSentence(body, "O custo segue três vezes o da banda larga urbana. [1]")
+	out := remove(body, "O custo segue três vezes o da banda larga urbana. [1]")
 	if strings.Contains(out, "[1]") {
 		t.Fatalf("citation marker left behind: %q", out)
 	}
@@ -18,15 +25,15 @@ func TestRemoveSentenceDropsCitationMarker(t *testing.T) {
 	}
 
 	// flag recorded without the marker (period-then-citation form)
-	out = removeSentence(body, "O custo segue três vezes o da banda larga urbana.")
+	out = remove(body, "O custo segue três vezes o da banda larga urbana.")
 	if strings.Contains(out, "[1]") {
 		t.Fatalf("orphaned citation left behind: %q", out)
 	}
 
 	// the sentence's terminal punctuation goes with it — no ". ." stray
-	out = removeSentence("Duas pediram prazo maior [1]. Especialistas divergem.",
+	out = remove("Duas pediram prazo maior [1]. Especialistas divergem.",
 		"Duas pediram prazo maior [1]")
-	if strings.Contains(out, ". .") || !strings.HasPrefix(out, "Especialistas divergem.") {
+	if strings.Contains(out, ". .") || !strings.HasSuffix(out, "Especialistas divergem.") {
 		t.Fatalf("stray punctuation left behind: %q", out)
 	}
 }

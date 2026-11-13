@@ -20,12 +20,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
+	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -2735,4 +2737,93 @@ func (s *Server) editSupportedFor(r *http.Request, item *docItem, itemRef int64,
 		return false
 	}
 	return s.dossierSupports(r, d, itemRef, text)
+}
+
+var refRe = regexp.MustCompile(`\[\d+\]`)
+
+// dossierSupports is the citation check for one edited sentence: the
+// model verdict when available (real mode), otherwise the deterministic
+// overlap check against the dossier facts that carry the cited refs.
+func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef int64, text string) bool {
+	refs := map[int]bool{}
+	for _, m := range refRe.FindAllString(text, -1) {
+		n, _ := strconv.Atoi(strings.Trim(m, "[]"))
+		refs[n] = true
+	}
+	// model check first (real mode); demo misses fall to the local check
+	var checks []struct {
+		ID      int    `json:"id"`
+		Verdict string `json:"verdict"`
+	}
+	srcs := []map[string]any{}
+	for _, src := range d.Sources {
+		srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
+	}
+	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
+		"Publication": "",
+		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
+		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
+	})
+	if err == nil {
+		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
+			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
+		}); err == nil {
+			if json.Unmarshal([]byte(resp.Text), &checks) == nil && len(checks) > 0 {
+				return checks[0].Verdict == "ok"
+			}
+		}
+	}
+	// deterministic fallback: ≥60% of content words must appear in a
+	// fact (or the summary) attributed to one of the cited refs.
+	var grounded []string
+	for _, f := range append(append([]pipeline.DossierFact{}, d.Facts...), d.DeepFacts...) {
+		if refs[f.Ref] {
+			grounded = append(grounded, f.Text)
+		}
+	}
+	grounded = append(grounded, d.Summary)
+	corpus := strings.ToLower(strings.Join(grounded, " "))
+	plain := refRe.ReplaceAllString(text, "")
+	words := strings.FieldsFunc(strings.ToLower(plain), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	var content, hit int
+	for _, w := range words {
+		if len(w) < 3 {
+			continue
+		}
+		content++
+		if strings.Contains(corpus, w) {
+			hit++
+		}
+	}
+	return content > 0 && float64(hit)/float64(content) >= 0.6
+}
+
+// sourceURL returns the URL of a source owned by the publication in the
+// request path, guarding against cross-publication source ids.
+func (s *Server) sourceURL(r *http.Request, sid int64) (string, error) {
+	pub, err := s.pub(r)
+	if err != nil {
+		return "", err
+	}
+	var url string
+	err = db(r).QueryRowContext(r.Context(),
+		`SELECT url FROM sources WHERE id = ? AND publication_id = ?`, sid, pub.ID).Scan(&url)
+	return url, err
+}
+
+// addedLines lists lines present in newer but absent from older.
+func addedLines(older, newer string) []string {
+	old := map[string]bool{}
+	for _, l := range strings.Split(older, "\n") {
+		old[strings.TrimSpace(l)] = true
+	}
+	var out []string
+	for _, l := range strings.Split(newer, "\n") {
+		if t := strings.TrimSpace(l); t != "" && !old[t] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
