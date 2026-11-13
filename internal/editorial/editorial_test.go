@@ -2,7 +2,6 @@ package editorial
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -10,15 +9,12 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 )
 
 func setup(t *testing.T) (*store.DB, *store.Publication) {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.WS(t)
 	ctx := context.Background()
 	def := &config.Publication{
 		Slug: "p", Name: "Pub", EditorialLine: "regra editorial",
