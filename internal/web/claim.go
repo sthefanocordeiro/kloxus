@@ -101,13 +101,13 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "internal", "could not save the claim link")
 		return
 	}
-	link := requestBase(r) + "/claim?t=" + url.QueryEscape(token)
+	link := s.publicBase(r) + "/claim?t=" + url.QueryEscape(token)
 	md := fmt.Sprintf("Confirm this email to claim your Kloxus workspace.\n\n[Claim workspace](%s)\n\nThe link works once and expires in 15 minutes.", link)
 	res, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{email},
 		Subject: "Claim your Kloxus workspace",
 		Text:    md,
-		HTML:    delivery.RenderHTML("Claim your Kloxus workspace", md, requestBase(r)),
+		HTML:    delivery.RenderHTML("Claim your Kloxus workspace", md, s.publicBase(r)),
 		Kind:    "magic_link",
 		IdemKey: "claim/" + hash,
 	})
@@ -224,14 +224,14 @@ func (s *Server) apiSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := fmt.Sprintf("%s/confirm-sub?pub=%s&r=%d&t=%s%s",
-		requestBase(r), url.QueryEscape(pub.Slug), rid,
+		s.publicBase(r), url.QueryEscape(pub.Slug), rid,
 		s.d.WS.MAC("sub", fmt.Sprintf("%d:%d", pub.ID, rid)), tokSuffix(r))
 	md := fmt.Sprintf("Confirm you'd like to receive %s by email.\n\n[Confirm subscription](%s)\n\nIf you did not ask for this, ignore the email — nothing else will be sent.", pub.Name, link)
 	res, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{email},
 		Subject: pub.Name + " — confirm your subscription",
 		Text:    md,
-		HTML:    delivery.RenderHTML(pub.Name+" — confirm your subscription", md, requestBase(r)),
+		HTML:    delivery.RenderHTML(pub.Name+" — confirm your subscription", md, s.publicBase(r)),
 		Kind:    "reader_confirm",
 		IdemKey: fmt.Sprintf("confirm/%d/%s", rid, today()),
 	})

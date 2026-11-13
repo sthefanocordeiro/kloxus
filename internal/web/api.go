@@ -2257,7 +2257,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 			to = []string{addr}
 			kind = "test"
 		}
-		emailID, err := s.sendIssueMail(r.Context(), db(r), reqWS(r).ID, iss, pub, to, kind, requestBase(r))
+		emailID, err := s.sendIssueMail(r.Context(), db(r), reqWS(r).ID, iss, pub, to, kind, s.publicBase(r))
 		if apiDBErr(w, r, err, "send") {
 			return
 		}
@@ -2307,7 +2307,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	if k := strings.TrimSpace(r.Header.Get("Idempotency-Key")); k != "" {
 		idemNS = "h/" + k
 	}
-	sum, err := s.sendIssueLive(ctx, wdb, reqWS(r).ID, iss, pub, kind, owner, requestBase(r), idemNS, readers)
+	sum, err := s.sendIssueLive(ctx, wdb, reqWS(r).ID, iss, pub, kind, owner, s.publicBase(r), idemNS, readers)
 	if apiDBErr(w, r, err, "send") {
 		return
 	}
@@ -2383,12 +2383,12 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
 		return
 	}
-	md := delivery.ReaderBody(iss, pub, requestBase(r))
+	md := delivery.ReaderBody(iss, pub, s.publicBase(r))
 	switch r.URL.Query().Get("fmt") {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=issue-%d.html", iss.Number))
-		w.Write([]byte(delivery.RenderHTML(iss.Subject, md, requestBase(r))))
+		w.Write([]byte(delivery.RenderHTML(iss.Subject, md, s.publicBase(r))))
 	default:
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=issue-%d.md", iss.Number))
@@ -2425,7 +2425,7 @@ func (s *Server) apiPreview(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "surface must be email | web | phone")
 		return
 	}
-	md := delivery.ReaderBody(iss, pub, requestBase(r))
+	md := delivery.ReaderBody(iss, pub, s.publicBase(r))
 	gated := false
 	if reader == "non-subscriber" {
 		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
@@ -2508,10 +2508,10 @@ func (s *Server) apiPaywallSimulate(w http.ResponseWriter, r *http.Request) {
 	// Demo mode delivers the magic link through the workspace outbox; the
 	// sealed token lets it open in any browser. It opens the latest
 	// finished issue on the reader-facing page.
-	link := requestBase(r) + "/p/" + pub.Slug + "/latest?key=" + token + s.tokQ(r)
+	link := s.publicBase(r) + "/p/" + pub.Slug + "/latest?key=" + token + s.tokQ(r)
 	if iss, err := db(r).LatestPublicIssue(ctx, pub.ID); err == nil {
 		link = fmt.Sprintf("%s/p/%s/%d?key=%s%s",
-			requestBase(r), pub.Slug, iss.Number, token, s.tokQ(r))
+			s.publicBase(r), pub.Slug, iss.Number, token, s.tokQ(r))
 	}
 	htmlBody := fmt.Sprintf(
 		`<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:38em;margin:2em auto">`+
@@ -2624,7 +2624,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	forceFree := r.URL.Query().Get("view") == "free"
 	unlocked := active && !forceFree
-	md := delivery.ReaderBody(iss, pub, requestBase(r))
+	md := delivery.ReaderBody(iss, pub, s.publicBase(r))
 	if !unlocked {
 		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
 	}
@@ -2658,7 +2658,7 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 	rawReasons, _ := db(r).IssueRejectionReasons(r.Context(), iss.ID)
 	learned := editorial.RulesFrom(rawReasons)
 	version, _, _ := db(r).LatestGuide(r.Context(), pub.ID)
-	publicURL := fmt.Sprintf("%s/p/%s/%d", requestBase(r), pub.Slug, iss.Number)
+	publicURL := fmt.Sprintf("%s/p/%s/%d", s.publicBase(r), pub.Slug, iss.Number)
 	if tok := s.readerToken(r); tok != "" {
 		publicURL += "?tok=" + url.QueryEscape(tok)
 	}

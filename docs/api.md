@@ -84,6 +84,12 @@ otherwise — the link is single-use). The workspace becomes owned by the
 link's email and the browser that opened it is signed in via the
 workspace cookie — whichever browser that is. Redirects to `/`.
 
+Emailed links are built on `KLOXUS_PUBLIC_URL` when configured, not the
+request host — the app may answer on throwaway verification hosts, but
+mail must point at the canonical deployment. `GET /claim/`,
+`GET /confirm-sub/` and `POST /unsub/` (a stray trailing slash on the
+emailed link) resolve to the same handlers.
+
 ## Publications
 
 ### `GET /api/v1/sample` — the landing page's cited dossier
