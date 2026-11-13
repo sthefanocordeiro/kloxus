@@ -942,7 +942,12 @@ func (s *Server) apiRunEvents(w http.ResponseWriter, r *http.Request) {
 	sent := 0
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
+	// The server's 60s WriteTimeout would kill a stream held open by a
+	// long run — renew the deadline every tick so a live handler keeps
+	// its connection while a wedged one still dies.
+	rc := http.NewResponseController(w)
 	for {
+		_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		st.mu.Lock()
 		evs := append([]pipeline.StepEvent{}, st.events...)
 		done := st.st.Done

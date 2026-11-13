@@ -85,13 +85,16 @@ func TestRunBudgetRefusal(t *testing.T) {
 	}
 }
 
-// TestDailyCapRefusal: a ledger already at the cap blocks admission (D36).
+// TestDailyCapRefusal: a ledger already at the cap blocks admission
+// (D36). The seeded call is deliberately microscopic — llm_ledger is a
+// shared production-shaped table and every call row counts toward the
+// real global cap, so tests must leave almost nothing behind.
 func TestDailyCapRefusal(t *testing.T) {
 	srv, _, pub, g, pool := guardServer(t, func(d *web.Deps) {
 		d.Cfg.LLMDailyCap = 0.0001
 	})
 	g.DailyCapUSD = 0.0001
-	if err := pool.LLMCall(context.Background(), "other-ws", "claude-haiku-5-5", 1, 1, 1.00); err != nil {
+	if err := pool.LLMCall(context.Background(), "other-ws", "claude-haiku-5-5", 1, 1, 0.0002); err != nil {
 		t.Fatalf("seed spend: %v", err)
 	}
 	run := postRun(t, srv, pub.ID)
@@ -235,12 +238,13 @@ func TestBlockedRunSample(t *testing.T) {
 }
 
 // TestRunScopeTokenBudget: a provider wrapped in a tiny token budget is
-// cut mid-run with the token-budget reason — spend stays bounded.
+// cut mid-run with the token-budget reason — spend stays bounded. The
+// wrapping guard uses in-memory accounting so replay fixture costs never
+// reach the shared ledger (they are not real spend).
 func TestRunScopeTokenBudget(t *testing.T) {
-	pool := testdb.Pool(t)
 	srv, _, pub, g, _ := guardServer(t, func(d *web.Deps) {
 		// Wrap whatever provider the demo uses so calls run the guard.
-		d.LLM = &llm.Guard{Store: pool, TokensPerRun: 10, Inner: d.LLM}
+		d.LLM = &llm.Guard{TokensPerRun: 10, Inner: d.LLM}
 	})
 	g.RunsPerDay = 0
 	run := postRun(t, srv, pub.ID)
