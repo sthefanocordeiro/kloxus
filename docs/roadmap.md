@@ -16,6 +16,7 @@ the post-hackathon roadmap. The MVP is now **no-paid-AI**: ingestion +
 deterministic normalization + canonical-URL/exact-hash dedup + manual
 compose + delivery, with the spend kill switch live in prod.
 
+
 Constraints that still hold: nothing is sent without human approval, the AI
 never writes the commentary, every factual sentence carries a source, and
 publisher rules (robots, terms) are respected without workarounds. The fake
@@ -108,6 +109,7 @@ approved issue in a real inbox.
 the full loop (ingest → dedupe → manual compose → send) runs with zero
 Anthropic spend.
 
+
 ## R5 — Discovery and checkout (Nov 21–24)
 
 - **Discover a topic** — query expansion + Firecrawl Search + Daily Journal
@@ -147,6 +149,7 @@ The real pipeline and the landing page are never cut.
 - Parked MVP scope (D37): AI story grouping, AI analysis and generative
   drafting — return only behind the deployed kill switch with an
   owner-approved budget.
+
 
 ## Risks
 

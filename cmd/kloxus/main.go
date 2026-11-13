@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"runtime"
 	"strconv"
@@ -79,16 +80,24 @@ usage:
   kloxus record --publication <ref>           regenerate LLM fixtures (real mode)`)
 }
 
-func openDemoDB() (*config.Config, *store.DB, error) {
+// localWorkspace is the fixed workspace id for single-user (local) mode:
+// all CLI commands and the unhosted UI operate inside it.
+const localWorkspace = "local"
+
+func openDemoDB() (*config.Config, *store.Pool, *store.DB, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	db, err := store.Open(cfg.DBPath)
+	pool, err := store.Open(cfg.DatabaseURL)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return cfg, db, nil
+	if err := pool.EnsureWorkspace(context.Background(), localWorkspace); err != nil {
+		pool.Close()
+		return nil, nil, nil, err
+	}
+	return cfg, pool, pool.For(localWorkspace), nil
 }
 
 // seedExample loads the embedded example publication and seeds it.
@@ -112,20 +121,27 @@ func seedExample(ctx context.Context, db *store.DB) (*store.Publication, error) 
 // by demo-mode runs.
 func demoRuntime(cfg *config.Config) (sources.Fetcher, llm.Provider) {
 	fetcher := sources.FixtureFetcher{FS: examples.FS}
-	provider := llm.Replay{
+	if cfg.LLMOff() {
+		return fetcher, llm.None{}
+	}
+	return fetcher, llm.Replay{
 		FS:      examples.FS,
 		Dir:     "fixtures/llm",
 		DumpDir: cfg.OutDir + "/llm-dump",
 	}
-	return fetcher, provider
 }
 
 // modeRuntime picks the fetcher and model provider for the configured
 // mode: fixtures + replay in demo, live HTTP + Anthropic in real mode.
+// KLOXUS_LLM_MODE=off swaps the provider for llm.None (fail-loud stub),
+// which also frees real mode from requiring ANTHROPIC_API_KEY.
 func modeRuntime(cfg *config.Config) (sources.Fetcher, llm.Provider, error) {
 	if cfg.Mode == "demo" {
 		f, p := demoRuntime(cfg)
 		return f, p, nil
+	}
+	if cfg.LLMOff() {
+		return sources.LiveFetcher{}, llm.None{}, nil
 	}
 	if cfg.AnthropicAPIKey == "" {
 		return nil, nil, errors.New("real mode needs ANTHROPIC_API_KEY in .env or the environment")
@@ -151,11 +167,11 @@ func cmdDemo(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, db, err := openDemoDB()
+	cfg, pool, db, err := openDemoDB()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer pool.Close()
 	ctx := context.Background()
 	fetcher, provider := demoRuntime(cfg)
 	seed := func(ctx context.Context, sdb *store.DB) error {
@@ -165,13 +181,13 @@ func cmdDemo(args []string) error {
 	if !*headless {
 		// The UI starts from an empty workspace — onboarding creates the
 		// publication through the sample-proposal flow.
-		return serveUI(cfg, db, fetcher, provider, seed)
+		return serveUI(cfg, pool, db, fetcher, provider, seed)
 	}
 	pub, err := seedExample(ctx, db)
 	if err != nil {
 		return err
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, true)
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, true, cfg.LLMOff())
 	if err != nil {
 		return err
 	}
@@ -181,7 +197,7 @@ func cmdDemo(args []string) error {
 
 // serveUI starts the web UI: hosted multi-workspace mode when
 // KLOXUS_DATA_DIR is set (Fly.io), a single local workspace otherwise.
-func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, seed func(context.Context, *store.DB) error) error {
+func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, seed func(context.Context, *store.DB) error) error {
 	var monitor sources.MonitorProvider = sources.FakeMonitor{}
 	if cfg.Mode == "real" && cfg.FirecrawlAPIKey != "" {
 		monitor = sources.FirecrawlMonitor{
@@ -193,7 +209,14 @@ func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider
 	var wsm *workspace.Manager
 	var err error
 	if cfg.DataDir != "" {
-		wsm, err = workspace.OpenHosted(context.Background(), cfg.DataDir, []byte(cfg.CookieSecret), seed)
+		secret := []byte(cfg.CookieSecret)
+		if len(secret) == 0 {
+			secret, err = workspace.LoadOrCreateSecret(filepath.Join(cfg.DataDir, "cookie.secret"))
+			if err != nil {
+				return err
+			}
+		}
+		wsm, err = workspace.OpenHosted(context.Background(), pool, secret, seed)
 		if err != nil {
 			return err
 		}
@@ -204,6 +227,7 @@ func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider
 		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider,
 		Monitor: monitor, Seed: seed,
 	})
+	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)
 	go openBrowser(url)
@@ -252,11 +276,11 @@ func cmdRun(args []string) error {
 	if !*once {
 		return errors.New("only --once is supported until the scheduler lands")
 	}
-	cfg, db, err := openDemoDB()
+	cfg, pool, db, err := openDemoDB()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer pool.Close()
 	ctx := context.Background()
 	pub, err := db.GetPublication(ctx, *pubRef)
 	if err != nil {
@@ -266,7 +290,7 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.Mode == "demo")
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.Mode == "demo", cfg.LLMOff())
 	if err != nil {
 		return err
 	}
@@ -302,11 +326,11 @@ func cmdIssueExport(args []string) error {
 	if *format != "markdown" {
 		return fmt.Errorf("format %q is not implemented yet; use markdown", *format)
 	}
-	cfg, db, err := openDemoDB()
+	cfg, pool, db, err := openDemoDB()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer pool.Close()
 	ctx := context.Background()
 	pub, err := db.GetPublication(ctx, *pubRef)
 	if err != nil {
@@ -342,11 +366,11 @@ func cmdSources(args []string) error {
 	if *pubRef == "" {
 		return errors.New("--publication is required")
 	}
-	_, db, err := openDemoDB()
+	_, pool, db, err := openDemoDB()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer pool.Close()
 	ctx := context.Background()
 	pub, err := db.GetPublication(ctx, *pubRef)
 	if err != nil {
@@ -386,11 +410,11 @@ func cmdGuide(args []string) error {
 	if *pubRef == "" {
 		return errors.New("--publication is required")
 	}
-	_, db, err := openDemoDB()
+	_, pool, db, err := openDemoDB()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer pool.Close()
 	ctx := context.Background()
 	pub, err := db.GetPublication(ctx, *pubRef)
 	if err != nil {
@@ -417,11 +441,11 @@ func cmdGuideRebuild(args []string) error {
 	if *pubRef == "" {
 		return errors.New("--publication is required")
 	}
-	cfg, db, err := openDemoDB()
+	cfg, pool, db, err := openDemoDB()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer pool.Close()
 	ctx := context.Background()
 	pub, err := db.GetPublication(ctx, *pubRef)
 	if err != nil {
@@ -449,11 +473,11 @@ func cmdCosts(args []string) error {
 	if *pubRef == "" {
 		return errors.New("--publication is required")
 	}
-	_, db, err := openDemoDB()
+	_, pool, db, err := openDemoDB()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer pool.Close()
 	ctx := context.Background()
 	pub, err := db.GetPublication(ctx, *pubRef)
 	if err != nil {
@@ -505,11 +529,11 @@ func cmdRecord(args []string) error {
 	if *pubRef == "" {
 		return errors.New("--publication is required")
 	}
-	cfg, db, err := openDemoDB()
+	cfg, pool, db, err := openDemoDB()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer pool.Close()
 	if cfg.AnthropicAPIKey == "" {
 		return errors.New("record needs ANTHROPIC_API_KEY in .env or the environment")
 	}
@@ -523,7 +547,7 @@ func cmdRecord(args []string) error {
 		Inner: llm.Anthropic{APIKey: cfg.AnthropicAPIKey},
 		Dir:   *dir,
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, false)
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, false, cfg.LLMOff())
 	if err != nil {
 		return err
 	}

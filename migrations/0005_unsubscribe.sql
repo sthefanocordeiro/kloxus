@@ -1,1 +1,0 @@
-ALTER TABLE readers ADD COLUMN unsubscribed_at TEXT NOT NULL DEFAULT '';
