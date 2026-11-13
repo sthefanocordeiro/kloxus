@@ -46,8 +46,9 @@ func TestLLMLedgerRoundTrip(t *testing.T) {
 		t.Fatalf("LLMSpendSince: %v", err)
 	}
 	// The ledger is shared: other tests may add calls concurrently, so
-	// the delta is a lower bound, never an exact match.
-	if spend < beforeSpend+0.001 {
+	// the delta is a lower bound, never an exact match. SUM(numeric) →
+	// float64 loses a hair of precision, so allow a small epsilon.
+	if spend < beforeSpend+0.001-1e-9 {
 		t.Fatalf("spend=%f, want at least %f", spend, beforeSpend+0.001)
 	}
 }
