@@ -19,6 +19,9 @@ export default defineConfig({
   // hosted: 3 parallel workers — every test walks its own anonymous
   // workspace, so serialising just burns the deploy-lock window.
   workers: process.env.E2E_BASE_URL ? 3 : 1,
+  // tests share one file — without fullyParallel they stay serial no
+  // matter the worker count.
+  fullyParallel: !!process.env.E2E_BASE_URL,
   use: {
     baseURL,
     locale: "en-US",
