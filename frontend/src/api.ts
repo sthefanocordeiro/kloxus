@@ -4,6 +4,7 @@ export interface Workspace {
   label: string;
   mode: string;
   hosted: boolean;
+  llm_mode: string; // "auto" | "off" — off = deterministic pipeline, no AI calls
 }
 
 export interface Publication {
@@ -137,6 +138,7 @@ export interface CandidatesResponse {
   candidates: Candidate[];
   sections: BoardSection[];
   demo: boolean;
+  llm_mode: string;
 }
 
 export interface StoryItem {
