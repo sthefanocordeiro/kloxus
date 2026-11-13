@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -93,7 +94,7 @@ func TestMigrateAndSeed(t *testing.T) {
 	if pub.Name != "Test Pub" || len(pub.Sections) != 1 {
 		t.Fatalf("unexpected publication: %+v", pub)
 	}
-	byID, err := db.GetPublication(ctx, "1")
+	byID, err := db.GetPublication(ctx, strconv.FormatInt(id1, 10))
 	if err != nil || byID.Slug != "test-pub" {
 		t.Fatalf("GetPublication by id: %v %+v", err, byID)
 	}

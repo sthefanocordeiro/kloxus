@@ -585,7 +585,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 		t.Fatalf("reader link set the editor workspace cookie: %q", sc)
 	}
 	// editor API calls still resolve to visitor B's own (empty) workspace
-	if rr := serve("GET", "/api/v1/issues/1", cookieB, nil); rr.Code != 404 {
+	if rr := serve("GET", "/api/v1/issues/"+strconv.FormatInt(iid, 10), cookieB, nil); rr.Code != 404 {
 		t.Errorf("editor route leaked the linked workspace's issue: %d", rr.Code)
 	}
 

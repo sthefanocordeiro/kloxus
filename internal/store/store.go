@@ -41,13 +41,21 @@ func Open(url string) (*Pool, error) {
 	if strings.TrimSpace(url) == "" {
 		return nil, fmt.Errorf("DATABASE_URL is not set — point it at a Postgres database (local or Supabase)")
 	}
-	if !strings.Contains(url, "default_query_exec_mode") {
+	addParam := func(key, val string) {
+		if strings.Contains(url, key+"=") {
+			return
+		}
 		sep := "?"
 		if strings.Contains(url, "?") {
 			sep = "&"
 		}
-		url += sep + "default_query_exec_mode=exec"
+		url += sep + key + "=" + val
 	}
+	// statement_timeout (2 min) bounds every query server-side: a stuck
+	// statement errors out instead of pinning a connection — and its
+	// request — forever.
+	addParam("default_query_exec_mode", "exec")
+	addParam("statement_timeout", "120000")
 	sdb, err := sql.Open("pgx", url)
 	if err != nil {
 		return nil, err

@@ -20,5 +20,17 @@ jobs:
         run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      # flyctl returns as soon as the release swaps, but the new machine
+      # can take a few seconds to answer through the proxy — wait for a
+      # live healthz before smoking or the gate flakes on every deploy.
+      - name: wait for the new release to answer
+        run: |
+          for i in $(seq 1 36); do
+            body="$(curl -sS --connect-timeout 10 --max-time 15 https://kloxus.fly.dev/healthz || true)"
+            [ "$body" = "ok" ] && exit 0
+            sleep 5
+          done
+          echo "kloxus.fly.dev did not answer healthz within 3 minutes" >&2
+          exit 1
       - name: smoke check
         run: bash scripts/smoke.sh https://kloxus.fly.dev
