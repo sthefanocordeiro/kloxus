@@ -1,8 +1,9 @@
 name: backup
 
-# Nightly logical backup of the production Postgres (Supabase). The
-# dump is kept as a workflow artifact for 30 days; restore steps live
-# in docs/deploy.md.
+# Nightly logical backup of the production Postgres (Supabase). Only the
+# app's schema (public) is dumped — Supabase's managed schemas (auth,
+# storage, extensions, ...) are theirs to keep. The dump is kept as a
+# workflow artifact for 30 days; restore steps live in docs/deploy.md.
 on:
   schedule:
     - cron: "0 6 * * *" # 06:00 UTC = 03:00 BRT
@@ -11,6 +12,22 @@ on:
 jobs:
   pgdump:
     runs-on: ubuntu-latest
+    services:
+      # Scratch database the dump is restored into — proves the artifact
+      # is restorable, not just produced.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kloxus
+          POSTGRES_PASSWORD: kloxus
+          POSTGRES_DB: kloxus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kloxus -d kloxus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - name: install pg_dump
@@ -26,10 +43,22 @@ jobs:
           DBURL="${DATABASE_URL//&default_query_exec_mode=exec/}"
           DBURL="${DBURL//?default_query_exec_mode=exec/}"
           /usr/lib/postgresql/17/bin/pg_dump "$DBURL" \
-            --format=custom --no-owner --no-privileges \
+            --format=custom --no-owner --no-privileges --schema=public \
             --file="kloxus-$(date +%Y%m%d).dump"
       - uses: actions/upload-artifact@v4
         with:
           name: kloxus-pgdump-${{ github.run_number }}
           path: "kloxus-*.dump"
           retention-days: 30
+      # Restore drill: replay the dump into the scratch service and check
+      # the app schema landed. Without this the "restorable" criterion is
+      # only assumed.
+      - name: restore drill into scratch database
+        env:
+          SCRATCH_URL: postgres://kloxus:kloxus@localhost:5432/kloxus
+        run: |
+          /usr/lib/postgresql/17/bin/pg_restore --no-owner --no-privileges \
+            --dbname="$SCRATCH_URL" "kloxus-$(date +%Y%m%d).dump"
+          /usr/lib/postgresql/17/bin/psql "$SCRATCH_URL" -v ON_ERROR_STOP=1 \
+            -c 'SELECT count(*) AS migrations_applied FROM schema_migrations' \
+            -c 'SELECT count(*) AS workspaces FROM workspaces'

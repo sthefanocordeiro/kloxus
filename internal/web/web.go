@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
@@ -127,12 +128,25 @@ func New(d Deps) *Server {
 	return s
 }
 
+// reqTimeout bounds each request's work — chiefly its Postgres round
+// trips. A pooled connection the Supabase pooler silently dropped can
+// leave a handler waiting on a dead socket indefinitely; the deadline
+// turns that into an error instead. The run-events SSE stream is exempt:
+// its lifetime is a run's, not a request's.
+const reqTimeout = 3 * time.Minute
+
 // ServeHTTP resolves the request workspace (cookie in hosted mode), caps
 // request bodies, assigns a request id, then dispatches.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rid := newReqID()
 	w.Header().Set("X-Request-Id", rid)
 	r = r.WithContext(context.WithValue(r.Context(), ctxReqID, rid))
+
+	if !isEventStream(r) {
+		ctx, cancel := context.WithTimeout(r.Context(), reqTimeout)
+		defer cancel()
+		r = r.WithContext(ctx)
+	}
 
 	if r.URL.Path == "/healthz" ||
 		r.URL.Path == "/api/v1/sample" || strings.HasPrefix(r.URL.Path, "/sample/a") {
@@ -164,6 +178,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// isEventStream reports the SSE endpoint: GET /api/v1/runs/{id}/events
+// stays open for the life of a run, so the request deadline must not
+// apply.
+func isEventStream(r *http.Request) bool {
+	return r.Method == http.MethodGet &&
+		strings.HasPrefix(r.URL.Path, "/api/v1/runs/") &&
+		strings.HasSuffix(r.URL.Path, "/events")
 }
 
 func newReqID() string {
