@@ -1,4 +1,7 @@
-app = "kloxus-demo"
+# The real app — the target of every deploy in the PR routine (D35).
+# `fly deploy` reads this file, so an unqualified deploy can never hit
+# kloxus-demo. The demo keeps its own config in fly.demo.toml.
+app = "kloxus"
 primary_region = "gru"
 
 [build]
@@ -8,16 +11,17 @@ KLOXUS_MODE = "demo"
 KLOXUS_PORT = "8080"
 KLOXUS_DATA_DIR = "/data"
 KLOXUS_OUT_DIR = "/data/out"
+KLOXUS_PUBLIC_URL = "https://kloxus.fly.dev"
 
 [http_service]
 internal_port = 8080
 force_https = true
-auto_stop_machines = "off"
+auto_stop_machines = "stop"
 auto_start_machines = true
-min_machines_running = 1
+min_machines_running = 0
 
 [[http_service.checks]]
-grace_period = "10s"
+grace_period = "15s"
 interval = "30s"
 method = "GET"
 timeout = "5s"
@@ -26,3 +30,7 @@ path = "/healthz"
 [mounts]
 source = "kloxus_data"
 destination = "/data"
+
+[vm]
+size = "shared-cpu-1x"
+memory = "256mb"
