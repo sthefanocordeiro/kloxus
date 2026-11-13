@@ -389,6 +389,16 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     onError: (e) => showToast(errText(t, e)),
   });
 
+  // manual compose: same lineup becomes empty item slots — no model run
+  const composeMut = useMutation({
+    mutationFn: () => api.compose(issue.id),
+    onSuccess: () => {
+      qc.invalidateQueries();
+      onDrafted?.();
+    },
+    onError: (e) => showToast(errText(t, e)),
+  });
+
   if (!board || !candsQ.data) return <BoardSkeleton />;
   const sections = candsQ.data.sections;
   const total = sections.reduce((n, s) => n + board.sections[s.title].length, 0);
@@ -497,7 +507,15 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           <div className="sticky -top-4 z-10 -mx-4 -mt-4 mb-3 flex items-center gap-2 border-b border-line bg-paper px-4 pb-3 pt-4">
             <h2 className="text-sm font-semibold">{t.board.issue}</h2>
             <span className="flex-1" />
-            <Button variant="teal" size="sm" disabled={!draftReady || draftMut.isPending || !!draftRun} onClick={() => draftMut.mutate()}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!draftReady || composeMut.isPending || draftMut.isPending || !!draftRun}
+              onClick={() => composeMut.mutate()}
+            >
+              {composeMut.isPending ? t.board.composing : t.board.composeAction}
+            </Button>
+            <Button variant="teal" size="sm" disabled={!draftReady || draftMut.isPending || composeMut.isPending || !!draftRun} onClick={() => draftMut.mutate()}>
               {t.board.draftAction(total)}
             </Button>
           </div>

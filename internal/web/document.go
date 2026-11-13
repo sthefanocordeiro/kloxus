@@ -534,6 +534,11 @@ func insertInItem(body string, item *docItem, idx int, raw string) (string, bool
 		}
 	} else {
 		pos = len(seg)
+		// appending past the last sentence still belongs to the item's
+		// body — land before the sources block, not after it
+		if i := strings.LastIndex(seg, "**Sources:**"); i >= 0 {
+			pos = i
+		}
 	}
 	// raw is a block of whole lines; splice it in on line boundaries
 	head := seg[:pos]
@@ -543,7 +548,9 @@ func insertInItem(body string, item *docItem, idx int, raw string) (string, bool
 	if pos < len(seg) && !strings.HasSuffix(raw, "\n") {
 		raw += "\n"
 	}
-	return body[:item.spanStart] + head + raw + seg[pos:], true
+	// body[spanEnd:] carries the rest of the issue — next items and
+	// sections; dropping it here would silently truncate the document
+	return body[:item.spanStart] + head + raw + seg[pos:] + body[item.spanEnd:], true
 }
 
 // truncateStr shortens s to n runes for excerpts (rune-safe: never

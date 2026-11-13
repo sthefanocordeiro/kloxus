@@ -944,6 +944,7 @@ func (r *Runner) finish(ctx context.Context, res *Result, outDir string) (*Resul
 type Dossier struct {
 	Ref            int             `json:"ref"`
 	Title          string          `json:"title,omitempty"` // storylist-picked title, set at save time
+	Origin         string          `json:"origin,omitempty"` // "manual" when built without a model
 	Summary        string          `json:"summary"`
 	Facts          []DossierFact   `json:"facts"`
 	DeepFacts      []DossierFact   `json:"deep_facts,omitempty"`
@@ -1273,8 +1274,15 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 		}
 	}
 	_ = resp
-	// Synthetic dossier: every claim comes from a member item, so citations
-	// stay valid without a model call.
+	d := syntheticDossier(cand, ref)
+	d.Interpretation = []string{"Picked by the editor as an alternative to the previous item."}
+	return d
+}
+
+// syntheticDossier builds a dossier deterministically from a story's
+// member items — extractive only (the summary and facts are verbatim
+// source sentences), so every claim stays valid without a model call.
+func syntheticDossier(cand *store.Story, ref int) *Dossier {
 	var facts []DossierFact
 	var summary string
 	for i, it := range cand.Items {
@@ -1292,12 +1300,91 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	}
 	d := &Dossier{
 		Ref: ref, Title: cand.Title,
-		Summary:        strings.TrimSpace(summary),
-		Facts:          facts,
-		Interpretation: []string{"Picked by the editor as an alternative to the previous item."},
+		Summary: strings.TrimSpace(summary),
+		Facts:   facts,
 	}
 	d.fillSources(cand.Items)
 	return d
+}
+
+// ensureManualDossiers creates deterministic dossiers for lineup items
+// that lack one — the compose flow's version of ensureDossiers, except
+// it never calls the model.
+func (r *Runner) ensureManualDossiers(ctx context.Context, issueID int64) error {
+	iis, err := r.DB.IssueItems(ctx, issueID)
+	if err != nil {
+		return err
+	}
+	maxRef := 0
+	var missing []store.IssueItem
+	for _, ii := range iis {
+		if dj, err := r.DB.Dossier(ctx, ii.ID); err == nil {
+			var d Dossier
+			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
+				maxRef = d.Ref
+			}
+			continue
+		}
+		if ii.Status == "approved" || ii.Status == "pending" {
+			missing = append(missing, ii)
+		}
+	}
+	for _, ii := range missing {
+		cand, err := r.DB.StoryWithItems(ctx, ii.StoryID)
+		if err != nil {
+			return err
+		}
+		maxRef++
+		// Origin "manual" marks the dossier as editor-facing reference
+		// material: its sentences were never model-written, so edits on
+		// them use the deterministic citation check, not a model call.
+		d := syntheticDossier(cand, maxRef)
+		d.Origin = "manual"
+		data, _ := json.Marshal(d)
+		if err := r.DB.SaveDossier(ctx, ii.ID, string(data)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ComposeSkeleton writes the manual-compose issue body: the board's
+// lineup becomes section headings and empty item slots (headline +
+// source list, no body text) for the editor to fill. Items missing a
+// dossier get a deterministic one — the whole path is model-free.
+func (r *Runner) ComposeSkeleton(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
+	res := &Result{IssueID: issueID}
+	if err := r.ensureManualDossiers(ctx, issueID); err != nil {
+		return nil, err
+	}
+	entries, dossierByRef, err := r.loadEntries(ctx, issueID, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no approved items — approve at least one story before composing")
+	}
+	res.Selected = len(entries)
+	sort.SliceStable(entries, func(a, b int) bool { return entries[a].position < entries[b].position })
+	number := res.Number
+	if number == 0 {
+		if iss, err := r.DB.GetIssue(ctx, issueID); err == nil {
+			number = iss.Number
+		}
+	}
+	sectionOrder := []string{}
+	for _, s := range pub.Sections {
+		sectionOrder = append(sectionOrder, s.Title)
+	}
+	// empty draft map: assembleIssue emits headline + sources only
+	body := assembleIssue(pub, number, entries, map[int]struct {
+		headline, body string
+	}{}, dossierByRef, sectionOrder)
+	if err := r.DB.UpdateIssue(ctx, issueID, "drafted", body, "[]"); err != nil {
+		return nil, err
+	}
+	res.Number = number
+	return res, nil
 }
 
 func truncate(s string, n int) string {

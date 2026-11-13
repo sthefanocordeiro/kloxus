@@ -334,6 +334,33 @@ Starts Phase B as a `kind: "draft"` run (events via
 lineup item — an empty one → `blocked` with `section_empty` reasons.
 Lineup items still `pending` are promoted to `approved` at draft.
 
+### `POST /api/v1/issues/{id}/compose` → `200` `{"issue": {…}, "selected": N}`
+The model-free alternative to `draft`: the lineup becomes the issue
+document as **empty item slots** — section headings, item headlines and
+`Sources:` lists, no body text. Pending lineup items are promoted to
+`approved`, items missing a dossier get a deterministic one built from
+their collected articles (summary/facts are verbatim extractive, so
+excerpts and citations stay valid). Never calls the model.
+- Same lineup gate as `draft` (`blocked` with `section_empty` reasons).
+- `409 not_empty` when the document already holds sentences — compose
+  never overwrites written work.
+
+### `POST /api/v1/issues/{id}/items/{ref}/compose` — write an item body
+`{"text": "…", "citations": [1], "kind": "fact",
+"version": "9f1c04ab22dd77ee"}` → `{"coverage": {…}, "flags": 0,
+"version": "…", "added": N}`.
+- `text` is the display form — free of `[n]` markers. Multi-sentence
+  input is stored one sentence per line, each carrying every chosen
+  citation; `added` reports how many sentences landed.
+- `citations` must reference the item's sources (`invalid_citation`);
+  an empty list stores an uncited fact, which `uncited_sentences`
+  flags exactly like an AI-drafted one.
+- `kind: "interpretation"` stores an editor-attributed block (no
+  citation needed).
+- The text lands at the end of the item's body, before its `Sources:`
+  list. An `empty_items` readiness check blocks approval until every
+  item has content.
+
 ## The issue document
 
 ### `GET /api/v1/issues/{id}/document`

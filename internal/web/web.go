@@ -190,6 +190,8 @@ func New(d Deps) *Server {
 	m.HandleFunc("POST /api/v1/issues/{id}/items/{iid}/decisions", s.apiDecision)
 	m.HandleFunc("GET /api/v1/items/{iid}/dossier", s.apiDossier)
 	m.HandleFunc("POST /api/v1/issues/{id}/draft", s.apiDraft)
+	m.HandleFunc("POST /api/v1/issues/{id}/compose", s.apiCompose)
+	m.HandleFunc("POST /api/v1/issues/{id}/items/{ref}/compose", s.apiComposeSentence)
 	m.HandleFunc("GET /api/v1/issues/{id}/document", s.apiDocument)
 	m.HandleFunc("PATCH /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceEdit)
 	m.HandleFunc("DELETE /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceRemove)
@@ -1176,26 +1178,31 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef i
 		n, _ := strconv.Atoi(strings.Trim(m, "[]"))
 		refs[n] = true
 	}
-	// model check first (real mode); demo misses fall to the local check
-	var checks []struct {
-		ID      int    `json:"id"`
-		Verdict string `json:"verdict"`
-	}
-	srcs := []map[string]any{}
-	for _, src := range d.Sources {
-		srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
-	}
-	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
-		"Publication": "",
-		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
-		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
-	})
-	if err == nil {
-		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
-			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
-		}); err == nil {
-			if json.Unmarshal([]byte(resp.Text), &checks) == nil && len(checks) > 0 {
-				return checks[0].Verdict == "ok"
+	// model check first (real mode); demo misses fall to the local check.
+	// "manual" dossiers (deterministic compose) skip the model entirely —
+	// the manual-compose flow must work with zero model calls, and its
+	// sentences are editor-written, not model claims to re-verify.
+	if d.Origin != "manual" {
+		var checks []struct {
+			ID      int    `json:"id"`
+			Verdict string `json:"verdict"`
+		}
+		srcs := []map[string]any{}
+		for _, src := range d.Sources {
+			srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
+		}
+		user, err := pipeline.RenderPrompt("citecheck", map[string]any{
+			"Publication": "",
+			"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
+			"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
+		})
+		if err == nil {
+			if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
+				Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
+			}); err == nil {
+				if json.Unmarshal([]byte(resp.Text), &checks) == nil && len(checks) > 0 {
+					return checks[0].Verdict == "ok"
+				}
 			}
 		}
 	}
