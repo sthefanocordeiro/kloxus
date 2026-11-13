@@ -43,6 +43,33 @@ async function boardReady(page: Page) {
   await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60000 });
 }
 
+// A bench "+" add either lands the story in its suggested section — or,
+// when that section is full (deterministic ranking fills every slot),
+// opens the chooser: pick a section, and picking a full one turns the
+// same dialog into the swap picker ("…is full — pick a story to swap
+// out"). A direct add toasts "Added", a swap toasts "Moved".
+async function settleBenchAdd(page: Page) {
+  const chooser = page
+    .getByRole("dialog")
+    .filter({ has: page.getByRole("button", { name: "Close" }) });
+  const settled = page.getByText(/^(Added|Moved) “/);
+  await expect(chooser.or(settled)).toBeVisible({ timeout: 15000 });
+  if (!(await chooser.isVisible())) return;
+  // the dialog's ✕ Close sits outside the list; section rows show
+  // "n/cap" and full ones add "· full" — prefer a section with room
+  const picks = chooser.getByRole("button").filter({ hasNotText: "✕" });
+  const open = picks.filter({ hasNotText: "full" });
+  if ((await open.count()) > 0) {
+    await open.first().click();
+  } else {
+    // every section full: picking one opens the swap picker
+    await picks.first().click();
+    await expect(chooser.getByText(/pick a story to swap out/)).toBeVisible();
+    await picks.first().click();
+  }
+  await expect(settled).toBeVisible({ timeout: 15000 });
+}
+
 async function typeCommentary(page: Page) {
   const blocks = page.locator("[data-commentary]");
   await expect(blocks.first()).toBeVisible({ timeout: 30000 });
@@ -82,12 +109,7 @@ test("manual compose journey", async ({ page }) => {
   await wk.getByRole("button", { name: "Remove", exact: true }).first().click();
   await page.getByRole("button", { name: "just remove" }).click();
   await benchCol(page).getByRole("button", { name: "Add to issue", exact: true }).first().click();
-  const chooser = page.getByRole("dialog");
-  await page.waitForTimeout(400);
-  if (await chooser.isVisible()) {
-    await chooser.getByRole("button", { name: /Quick links/ }).click();
-  }
-  await expect(page.getByText(/Added/)).toBeVisible({ timeout: 15000 });
+  await settleBenchAdd(page);
 
   // manual compose: the lineup becomes empty slots — no draft run
   await page.getByRole("button", { name: "Write it myself" }).click();

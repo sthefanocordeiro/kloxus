@@ -69,6 +69,33 @@ async function boardReady(page: Page, isPhone: boolean) {
   await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60000 });
 }
 
+// A bench "+" add either lands the story in its suggested section — or,
+// when that section is full (deterministic ranking fills every slot),
+// opens the chooser: pick a section, and picking a full one turns the
+// same dialog into the swap picker ("…is full — pick a story to swap
+// out"). A direct add toasts "Added", a swap toasts "Moved".
+async function settleBenchAdd(page: Page) {
+  const chooser = page
+    .getByRole("dialog")
+    .filter({ has: page.getByRole("button", { name: "Close" }) });
+  const settled = page.getByText(/^(Added|Moved) “/);
+  await expect(chooser.or(settled)).toBeVisible({ timeout: 15000 });
+  if (!(await chooser.isVisible())) return;
+  // the dialog's ✕ Close sits outside the list; section rows show
+  // "n/cap" and full ones add "· full" — prefer a section with room
+  const picks = chooser.getByRole("button").filter({ hasNotText: "✕" });
+  const open = picks.filter({ hasNotText: "full" });
+  if ((await open.count()) > 0) {
+    await open.first().click();
+  } else {
+    // every section full: picking one opens the swap picker
+    await picks.first().click();
+    await expect(chooser.getByText(/pick a story to swap out/)).toBeVisible();
+    await picks.first().click();
+  }
+  await expect(settled).toBeVisible({ timeout: 15000 });
+}
+
 async function boardOps(page: Page, isPhone: boolean) {
   const off = await llmOff(page);
   const tabIssue = page.getByRole("button", { name: /This issue/ });
@@ -97,21 +124,24 @@ async function boardOps(page: Page, isPhone: boolean) {
   //    section opens the section chooser instead of failing.
   if (isPhone) await tabBench.click();
   await benchCol(page).getByRole("button", { name: "Add to issue", exact: true }).nth(1).click();
-  const chooser = page.getByRole("dialog");
-  await page.waitForTimeout(500);
-  if (await chooser.isVisible()) {
-    await chooser.getByRole("button", { name: /Quick links/ }).click();
-  }
-  await expect(page.getByText(/Added/)).toBeVisible({ timeout: 15000 });
+  await settleBenchAdd(page);
 
-  // 3) move a Worth-knowing story into Quick links via the move menu
+  // 3) move a Worth-knowing story into Quick links via the move menu —
+  //    deterministic ranking caps Quick links 5/5, so under llm off the
+  //    move opens the swap picker: pick the story that leaves. The move
+  //    popover stays open under the dialog, so scope by the prompt text.
   if (isPhone) await tabIssue.click();
   await sectionBox(page, "Worth knowing")
     .getByRole("button", { name: /Move to/ })
     .first()
     .click();
   await page.getByRole("button", { name: /Quick links/ }).click();
-  await expect(page.getByText(/Moved/)).toBeVisible({ timeout: 15000 });
+  if (off) {
+    const swap = page.getByRole("dialog").filter({ hasText: /pick a story to swap out/ });
+    await expect(swap).toBeVisible({ timeout: 15000 });
+    await swap.getByRole("button").filter({ hasNotText: "✕" }).first().click();
+  }
+  await expect(page.getByText(/^Moved “/)).toBeVisible({ timeout: 15000 });
 
   // 4) the lineup persists across a reload — the rejected story stays
   //    benched instead of snapping back into its section
