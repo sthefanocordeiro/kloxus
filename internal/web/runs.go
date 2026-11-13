@@ -7,11 +7,27 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
+
+// defaultRunTimeout bounds a collect or draft run's work. Hosted runs
+// finish in a few minutes; 15 leaves headroom without letting a worker
+// parked on a dead pooled connection — where statement_timeout's error
+// can never arrive — hold the publication's run slot, a pool connection
+// and the activity read-lock forever. On expiry the run is marked failed
+// and the publication can start another.
+const defaultRunTimeout = 15 * time.Minute
+
+func (s *Server) runTimeout() time.Duration {
+	if s.d.RunTimeout > 0 {
+		return s.d.RunTimeout
+	}
+	return defaultRunTimeout
+}
 
 // runState is the JSON payload served by /api/v1/runs/{id}.
 type runState struct {
@@ -84,7 +100,9 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 				st.mu.Unlock()
 			},
 		}
-		res, err := runner.RunPhaseA(context.Background(), pub)
+		ctx, cancel := context.WithTimeout(context.Background(), s.runTimeout())
+		defer cancel()
+		res, err := runner.RunPhaseA(ctx, pub)
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		st.st.Done = true

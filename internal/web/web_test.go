@@ -24,6 +24,12 @@ import (
 // collaborators. The whole test runs offline on replayed model calls.
 func demoServer(t *testing.T) (*web.Server, *store.DB, *store.Publication, *config.Config) {
 	t.Helper()
+	return demoServerOpt(t, nil)
+}
+
+// demoServerOpt is demoServer with a hook to adjust Deps before New.
+func demoServerOpt(t *testing.T, opt func(*web.Deps)) (*web.Server, *store.DB, *store.Publication, *config.Config) {
+	t.Helper()
 	ctx := context.Background()
 	base := t.TempDir()
 	cfg := &config.Config{
@@ -54,13 +60,17 @@ func demoServer(t *testing.T) (*web.Server, *store.DB, *store.Publication, *conf
 	}
 	pub := pubs[0]
 
-	srv := web.New(web.Deps{
+	deps := web.Deps{
 		WS: workspace.OpenLocal(db, seed), Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
 		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: filepath.Join(cfg.OutDir, "llm-dump")},
 		Monitor: sources.FakeMonitor{},
 		Seed:    seed,
-	})
+	}
+	if opt != nil {
+		opt(&deps)
+	}
+	srv := web.New(deps)
 	return srv, db, pub, cfg
 }
 

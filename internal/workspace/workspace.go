@@ -371,7 +371,7 @@ func (m *Manager) Get(ctx context.Context, id string) (*Workspace, error) {
 			}
 		}
 	}
-	m.touch(id)
+	m.touch(ctx, id)
 	return ws, nil
 }
 
@@ -415,8 +415,9 @@ func (m *Manager) Reset(ctx context.Context, ws *Workspace) error {
 }
 
 // touch refreshes the workspace row's last_seen_at (throttled) so the
-// cleanup sweep keeps workspaces that are in use.
-func (m *Manager) touch(id string) {
+// cleanup sweep keeps workspaces that are in use. It takes the caller's
+// ctx so a dead pooled connection can't park the caller's goroutine.
+func (m *Manager) touch(ctx context.Context, id string) {
 	m.mu.Lock()
 	last, seen := m.lastSeen[id]
 	if seen && time.Since(last) < touchInterval {
@@ -425,7 +426,7 @@ func (m *Manager) touch(id string) {
 	}
 	m.lastSeen[id] = time.Now()
 	m.mu.Unlock()
-	if err := m.pool.TouchWorkspace(context.Background(), id); err != nil {
+	if err := m.pool.TouchWorkspace(ctx, id); err != nil {
 		slog.Warn("workspace touch failed", "ws", id, "err", err)
 	}
 }
@@ -449,6 +450,9 @@ func (m *Manager) Close() {
 	m.pool.Close()
 }
 
+// cleanupTimeout bounds one idle-workspace sweep.
+const cleanupTimeout = 2 * time.Minute
+
 // cleanupLoop deletes abandoned workspaces and stale coordination
 // entries on a schedule — the Postgres replacement for the per-file
 // sweeper (D28).
@@ -460,7 +464,12 @@ func (m *Manager) cleanupLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.cleanup(ctx)
+			// Bound each sweep: the loop ctx lives for the process, so a
+			// delete parked on a dead pooled connection would stall the
+			// sweeper forever.
+			cctx, cancel := context.WithTimeout(ctx, cleanupTimeout)
+			m.cleanup(cctx)
+			cancel()
 		}
 	}
 }

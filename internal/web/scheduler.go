@@ -15,6 +15,16 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
+// defaultJobTimeout bounds one scheduled job (e.g. a scheduled send).
+const defaultJobTimeout = 5 * time.Minute
+
+func (s *Server) jobTimeout() time.Duration {
+	if s.d.JobTimeout > 0 {
+		return s.d.JobTimeout
+	}
+	return defaultJobTimeout
+}
+
 // RunScheduler claims and dispatches due jobs on a fixed interval until
 // ctx is cancelled. Idle-workspace deletion runs on the workspace
 // manager's own ticker.
@@ -41,7 +51,14 @@ func (s *Server) dispatchDue(ctx context.Context, pool *store.Pool) {
 		return
 	}
 	for _, j := range jobs {
-		if err := s.runJob(ctx, pool, j); err != nil {
+		// Bound each job: the scheduler ctx lives for the process, so a
+		// send parked on a dead pooled connection would stall the whole
+		// dispatch loop. Bookkeeping runs on the parent ctx so failure
+		// still records after the job ctx expires.
+		jctx, cancel := context.WithTimeout(ctx, s.jobTimeout())
+		err := s.runJob(jctx, pool, j)
+		cancel()
+		if err != nil {
 			slog.Warn("job failed", "id", j.ID, "kind", j.Kind, "ws", j.WorkspaceID, "err", err)
 			pool.FailJob(ctx, j.ID, err, 3)
 			continue

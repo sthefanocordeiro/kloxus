@@ -27,6 +27,12 @@ type Deps struct {
 	Fetcher sources.Fetcher
 	LLM     llm.Provider
 	Monitor sources.MonitorProvider
+	// RunTimeout bounds one pipeline run (collect or draft). Zero uses
+	// defaultRunTimeout; tests set it short to exercise the deadline.
+	RunTimeout time.Duration
+	// JobTimeout bounds one scheduled job's execution. Zero uses
+	// defaultJobTimeout.
+	JobTimeout time.Duration
 	// Seed re-creates the example publication inside a database; used for
 	// workspace resets and the hosted template.
 	Seed func(ctx context.Context, db *store.DB) error
