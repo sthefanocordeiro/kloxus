@@ -57,8 +57,12 @@ conflict` and the response carries the fresh `document`.
 
 ### `GET /api/v1/workspace`
 ```json
-{"id": "local", "label": "local demo", "mode": "demo", "hosted": false}
+{"id": "local", "label": "local demo", "mode": "demo", "hosted": false, "llm_mode": "auto"}
 ```
+
+`llm_mode` is `"off"` when `KLOXUS_LLM_MODE=off`: runs rank and draft
+deterministically with zero model calls, and AI-only endpoints (guide
+rebuild) answer `409 ai_disabled`.
 
 ## Publications
 

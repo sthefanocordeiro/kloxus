@@ -111,6 +111,9 @@ type Story struct {
 	Title         string
 	TriageScore   float64
 	TriageReason  string
+	// DedupeKey is the canonical URL shared by every member item; empty
+	// when the cluster merged on near-identical text (SimHash) alone.
+	DedupeKey     string
 	Items         []Item
 }
 
@@ -142,12 +145,13 @@ func (db *DB) ClearStories(ctx context.Context, pubID int64) error {
 	return err
 }
 
-// CreateStory inserts a story group.
-func (db *DB) CreateStory(ctx context.Context, pubID int64, title string, simhash int64) (int64, error) {
+// CreateStory inserts a story group. dedupeKey is the canonical URL the
+// cluster formed around, or "" for a text-similarity cluster.
+func (db *DB) CreateStory(ctx context.Context, pubID int64, title string, simhash int64, dedupeKey string) (int64, error) {
 	var id int64
 	err := db.QueryRowContext(ctx,
-		`INSERT INTO stories (workspace_id, publication_id, title, simhash) VALUES ($1,$2,$3,$4) RETURNING id`,
-		db.ws, pubID, title, simhash).Scan(&id)
+		`INSERT INTO stories (workspace_id, publication_id, title, simhash, dedupe_key) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		db.ws, pubID, title, simhash, dedupeKey).Scan(&id)
 	return id, err
 }
 
@@ -172,9 +176,9 @@ func (db *DB) SetStoryTriage(ctx context.Context, storyID int64, score float64, 
 func (db *DB) StoryWithItems(ctx context.Context, storyID int64) (*Story, error) {
 	var s Story
 	err := db.QueryRowContext(ctx,
-		`SELECT id, publication_id, title, COALESCE(triage_score,0), triage_reason FROM stories
+		`SELECT id, publication_id, title, COALESCE(triage_score,0), triage_reason, dedupe_key FROM stories
 		 WHERE workspace_id = $1 AND id = $2`,
-		db.ws, storyID).Scan(&s.ID, &s.PublicationID, &s.Title, &s.TriageScore, &s.TriageReason)
+		db.ws, storyID).Scan(&s.ID, &s.PublicationID, &s.Title, &s.TriageScore, &s.TriageReason, &s.DedupeKey)
 	if err != nil {
 		return nil, err
 	}
