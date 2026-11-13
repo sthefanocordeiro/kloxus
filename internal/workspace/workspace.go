@@ -1,10 +1,10 @@
-// Package workspace isolates hosted-demo visitors: each visitor gets a
-// signed cookie and their own SQLite database copied from a seeded
-// template. A reset only ever touches the visitor's own workspace.
+// Package workspace isolates hosted visitors: each visitor gets a
+// signed cookie and their own workspace row in the shared Postgres
+// database (D28). A reset only ever touches the visitor's own
+// workspace.
 package workspace
 
 import (
-	"container/list"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -19,7 +19,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -27,61 +27,54 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
-// CookieName is the workspace cookie sent to hosted-demo visitors.
+// CookieName is the workspace cookie sent to hosted visitors.
 const CookieName = "kloxus_ws"
 
-// Limits for the hosted demo: workspaces outlive the evaluation window,
-// handle count stays bounded, and creation is rate-limited per IP.
+// Limits for the hosted app: workspaces outlive the evaluation window
+// and creation is rate-limited per IP. There is no handle cache and no
+// count-based eviction — idle workspaces are deleted by age only.
 const (
-	defaultMaxOpen   = 64
-	defaultMaxCount  = 2000
 	defaultMaxAge    = 21 * 24 * time.Hour
 	createsPerHour   = 30
 	touchInterval    = time.Hour
 	cleanupInterval  = 10 * time.Minute
 	cookieMaxAgeDays = 30
+	entryIdle        = 24 * time.Hour
 )
 
-// Workspace is one visitor's demo environment: a private database plus
-// coordination for pipeline runs and resets.
+// Workspace is one visitor's environment: a workspace-scoped store
+// handle plus coordination for pipeline runs and resets.
 type Workspace struct {
 	ID    string
 	Label string
-	Dir   string
 	DB    *store.DB
 	// Activity is held for reading by pipeline runs and for writing by
 	// resets, so a reset cannot wipe data mid-run.
 	Activity sync.RWMutex
 	// Runs tracks in-flight/finished pipeline runs by publication id.
 	Runs sync.Map
-	// RunMu serializes pipeline starts: one run at a time per workspace.
-	RunMu sync.Mutex
 }
 
-// Manager resolves, creates, caches and reclaims workspaces.
+// Manager resolves, creates and reclaims workspaces against the shared
+// pool.
 type Manager struct {
-	dir      string // workspaces dir
-	template string // seeded template db copied on workspace creation
-	secret   []byte // cookie HMAC key
-	seed     func(ctx context.Context, db *store.DB) error
-	local    *Workspace // non-nil in single-workspace (local) mode
+	pool   *store.Pool
+	secret []byte // cookie HMAC key
+	seed   func(ctx context.Context, db *store.DB) error
+	local  *Workspace // non-nil in single-workspace (local) mode
 
-	maxOpen  int
-	maxCount int
-	maxAge   time.Duration
+	maxAge time.Duration
 
-	mu      sync.Mutex
-	lru     *list.List // *cacheEntry, front = most recent
-	entries map[string]*list.Element
+	mu       sync.Mutex
+	entries  map[string]*Workspace // shared per-id coordination objects
+	lastUse  map[string]time.Time
+	lastSeen map[string]time.Time // last last_seen_at write per id
 
 	createMu sync.Mutex
 	creates  map[string][]time.Time
 }
 
-type cacheEntry struct {
-	id string
-	ws *Workspace
-}
+var idRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // NewID returns a random 128-bit workspace id (hex).
 func NewID() string {
@@ -92,39 +85,31 @@ func NewID() string {
 	return hex.EncodeToString(b)
 }
 
-// OpenHosted creates a hosted-demo manager: workspaces under
-// <dataDir>/workspaces built from <dataDir>/template.db. The template is
-// rebuilt on every boot so it always matches the binary's migrations and
-// seed data. secret signs cookies; when empty a random key is generated
-// and persisted under dataDir so restarts keep existing sessions.
-func OpenHosted(ctx context.Context, dataDir string, secret []byte, seed func(context.Context, *store.DB) error) (*Manager, error) {
-	wsDir := filepath.Join(dataDir, "workspaces")
-	if err := os.MkdirAll(wsDir, 0o755); err != nil {
-		return nil, err
-	}
+// OpenHosted creates a hosted manager: workspaces are rows in the
+// shared database reached through pool. secret signs cookies — callers
+// persist it themselves when they want sessions to survive restarts
+// (see LoadOrCreateSecret).
+func OpenHosted(ctx context.Context, pool *store.Pool, secret []byte, seed func(context.Context, *store.DB) error) (*Manager, error) {
 	if len(secret) == 0 {
-		var err error
-		secret, err = loadOrCreateSecret(filepath.Join(dataDir, "cookie.secret"))
-		if err != nil {
+		secret = make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
 			return nil, err
 		}
 	}
 	m := &Manager{
-		dir: wsDir, template: filepath.Join(dataDir, "template.db"),
-		secret: secret, seed: seed,
-		maxOpen: defaultMaxOpen, maxCount: defaultMaxCount, maxAge: defaultMaxAge,
-		lru: list.New(), entries: map[string]*list.Element{},
-		creates: map[string][]time.Time{},
+		pool: pool, secret: secret, seed: seed,
+		maxAge:   defaultMaxAge,
+		entries:  map[string]*Workspace{},
+		lastUse:  map[string]time.Time{},
+		lastSeen: map[string]time.Time{},
+		creates:  map[string][]time.Time{},
 	}
-	if err := m.rebuildTemplate(ctx); err != nil {
-		return nil, err
-	}
-	go m.cleanupLoop()
+	go m.cleanupLoop(ctx)
 	return m, nil
 }
 
-// OpenLocal wraps a single database as a fixed workspace for local runs
-// (no cookies, one shared demo).
+// OpenLocal wraps a single scoped store as a fixed workspace for local
+// runs (no cookies, one shared demo).
 func OpenLocal(db *store.DB, seed func(context.Context, *store.DB) error) *Manager {
 	return &Manager{
 		local: &Workspace{ID: "local", Label: "local demo", DB: db},
@@ -132,7 +117,10 @@ func OpenLocal(db *store.DB, seed func(context.Context, *store.DB) error) *Manag
 	}
 }
 
-func loadOrCreateSecret(path string) ([]byte, error) {
+// LoadOrCreateSecret reads a hex 32-byte secret from path, generating
+// and persisting one when the file is missing or unreadable. Used to
+// keep session cookies valid across deploys on the Fly volume.
+func LoadOrCreateSecret(path string) ([]byte, error) {
 	if data, err := os.ReadFile(path); err == nil {
 		if s, err := hex.DecodeString(strings.TrimSpace(string(data))); err == nil && len(s) == 32 {
 			return s, nil
@@ -148,49 +136,23 @@ func loadOrCreateSecret(path string) ([]byte, error) {
 	return b, nil
 }
 
-// rebuildTemplate recreates the seeded template database at boot.
-// rebuildTemplate recreates the workspace template database at boot. The
-// template is schema-only — onboarding creates the publication — so every
-// visitor starts from an empty workspace and walks the create flow.
-func (m *Manager) rebuildTemplate(ctx context.Context) error {
-	for _, suf := range []string{"", "-wal", "-shm"} {
-		os.Remove(m.template + suf)
-	}
-	db, err := store.Open(m.template)
-	if err != nil {
-		return fmt.Errorf("template db: %w", err)
-	}
-	if err := db.Close(); err != nil {
-		return err
-	}
-	return nil
-}
-
 // Hosted reports whether the manager serves per-visitor workspaces.
 func (m *Manager) Hosted() bool { return m.local == nil }
 
 // Local returns the fixed workspace in local mode.
 func (m *Manager) Local() *Workspace { return m.local }
 
-// Healthy reports whether the hosted demo storage looks usable
-// (template present and workspaces dir writable).
+// Pool exposes the shared pool for global jobs (the scheduler).
+func (m *Manager) Pool() *store.Pool { return m.pool }
+
+// Healthy reports whether the database answers.
 func (m *Manager) Healthy() bool {
 	if m.local != nil {
 		return m.local.DB.Ping() == nil
 	}
-	if _, err := os.Stat(m.template); err != nil {
-		return false
-	}
-	probe, err := os.CreateTemp(m.dir, ".probe-*")
-	if err != nil {
-		return false
-	}
-	probe.Close()
-	os.Remove(probe.Name())
-	return true
+	return m.pool.Ping() == nil
 }
 
-// sign returns the cookie signature for a workspace id.
 // MAC returns a scoped HMAC token for value (unsubscribe links, etc.).
 func (m *Manager) MAC(scope, value string) string {
 	h := hmac.New(sha256.New, m.secret)
@@ -262,7 +224,7 @@ func (m *Manager) cookieID(r *http.Request) string {
 		return ""
 	}
 	id, sig, ok := strings.Cut(c.Value, ".")
-	if !ok || len(id) != 32 {
+	if !ok || !idRE.MatchString(id) {
 		return ""
 	}
 	if subtle.ConstantTimeCompare([]byte(sig), []byte(m.sign(id))) != 1 {
@@ -281,8 +243,13 @@ func (m *Manager) SetCookie(w http.ResponseWriter, r *http.Request, id string) {
 	})
 }
 
-// clientIP extracts the client address for rate limiting.
+// clientIP extracts the client address for rate limiting. On Fly the
+// platform-set Fly-Client-IP header wins — X-Forwarded-For is
+// client-controlled and must not drive the limit (review F3).
 func clientIP(r *http.Request) string {
+	if ip := strings.TrimSpace(r.Header.Get("Fly-Client-IP")); ip != "" {
+		return ip
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if i := strings.Index(xff, ","); i >= 0 {
 			return strings.TrimSpace(xff[:i])
@@ -297,6 +264,7 @@ func clientIP(r *http.Request) string {
 }
 
 // allowCreate rate-limits workspace creation per IP (sliding window).
+// Idle IP entries are pruned so the map stays bounded (review F3).
 func (m *Manager) allowCreate(ip string) bool {
 	m.createMu.Lock()
 	defer m.createMu.Unlock()
@@ -307,11 +275,26 @@ func (m *Manager) allowCreate(ip string) bool {
 			keep = append(keep, t)
 		}
 	}
-	m.creates[ip] = keep
 	if len(keep) >= createsPerHour {
+		m.creates[ip] = keep
 		return false
 	}
-	m.creates[ip] = append(m.creates[ip], time.Now())
+	m.creates[ip] = append(keep, time.Now())
+	if len(m.creates) > 4096 {
+		for k, ts := range m.creates {
+			fresh := ts[:0]
+			for _, t := range ts {
+				if t.After(cutoff) {
+					fresh = append(fresh, t)
+				}
+			}
+			if len(fresh) == 0 {
+				delete(m.creates, k)
+			} else {
+				m.creates[k] = fresh
+			}
+		}
+	}
 	return true
 }
 
@@ -355,7 +338,9 @@ func (m *Manager) New(w http.ResponseWriter, r *http.Request) (*Workspace, error
 	return ws, nil
 }
 
-// Get opens (or returns the cached) workspace by id.
+// Get returns the workspace for an id — the shared coordination object
+// so runs, resets and the activity lock agree across requests. Ids are
+// validated before any lookup (review F1).
 func (m *Manager) Get(ctx context.Context, id string) (*Workspace, error) {
 	if m.local != nil {
 		if id == m.local.ID {
@@ -363,62 +348,51 @@ func (m *Manager) Get(ctx context.Context, id string) (*Workspace, error) {
 		}
 		return nil, fmt.Errorf("unknown workspace %q", id)
 	}
-	m.mu.Lock()
-	if el, ok := m.entries[id]; ok {
-		m.lru.MoveToFront(el)
-		ws := el.Value.(*cacheEntry).ws
-		m.mu.Unlock()
-		m.touch(id)
-		return ws, nil
+	if !idRE.MatchString(id) {
+		return nil, fmt.Errorf("invalid workspace id %q", id)
 	}
-	m.mu.Unlock()
-
-	path := filepath.Join(m.dir, id+".db")
-	if _, err := os.Stat(path); err != nil {
+	if ok, err := m.pool.WorkspaceExists(ctx, id); err != nil {
+		return nil, err
+	} else if !ok {
 		return nil, fmt.Errorf("workspace %s not found", id)
 	}
-	db, err := store.Open(path) // applies any pending migrations
-	if err != nil {
-		return nil, err
-	}
+	ws := m.entry(id)
 	// Refresh canonical publication config from the current template so
 	// sessions created before a deploy pick up fixture changes (price,
 	// sections…). Only workspaces with a template-seeded (non-custom)
 	// publication get the refresh — creator-made publications keep their
 	// edited blocks, and empty workspaces stay empty.
 	if m.seed != nil {
-		if has, herr := db.HasCanonicalPublication(ctx); herr != nil {
+		if has, herr := ws.DB.HasCanonicalPublication(ctx); herr != nil {
 			slog.Warn("workspace reseed check failed", "ws", id, "err", herr)
 		} else if has {
-			if err := m.seed(ctx, db); err != nil {
+			if err := m.seed(ctx, ws.DB); err != nil {
 				slog.Warn("workspace reseed failed", "ws", id, "err", err)
 			}
 		}
-	}
-	ws := &Workspace{ID: id, Label: labelOf(id), Dir: m.dir, DB: db}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.entries[id] = m.lru.PushFront(&cacheEntry{id: id, ws: ws})
-	for m.lru.Len() > m.maxOpen {
-		back := m.lru.Back()
-		if back == nil {
-			break
-		}
-		e := back.Value.(*cacheEntry)
-		e.ws.DB.Close()
-		delete(m.entries, e.id)
-		m.lru.Remove(back)
 	}
 	m.touch(id)
 	return ws, nil
 }
 
-// Create copies the template database into a new workspace.
+// entry returns the shared Workspace for id, creating it on first use.
+func (m *Manager) entry(id string) *Workspace {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ws, ok := m.entries[id]; ok {
+		m.lastUse[id] = time.Now()
+		return ws
+	}
+	ws := &Workspace{ID: id, Label: labelOf(id), DB: m.pool.For(id)}
+	m.entries[id] = ws
+	m.lastUse[id] = time.Now()
+	return ws
+}
+
+// Create inserts a workspace row and returns the new workspace.
 func (m *Manager) Create(ctx context.Context) (*Workspace, error) {
 	id := NewID()
-	dst := filepath.Join(m.dir, id+".db")
-	if err := copyFile(m.template, dst); err != nil {
+	if err := m.pool.CreateWorkspace(ctx, id); err != nil {
 		return nil, err
 	}
 	return m.Get(ctx, id)
@@ -440,110 +414,75 @@ func (m *Manager) Reset(ctx context.Context, ws *Workspace) error {
 	return nil
 }
 
-// touch refreshes the workspace file mtime (throttled) so the cleanup
-// loop sees the workspace as in use.
+// touch refreshes the workspace row's last_seen_at (throttled) so the
+// cleanup sweep keeps workspaces that are in use.
 func (m *Manager) touch(id string) {
-	path := filepath.Join(m.dir, id+".db")
-	if st, err := os.Stat(path); err == nil && time.Since(st.ModTime()) > touchInterval {
-		now := time.Now()
-		os.Chtimes(path, now, now)
+	m.mu.Lock()
+	last, seen := m.lastSeen[id]
+	if seen && time.Since(last) < touchInterval {
+		m.mu.Unlock()
+		return
+	}
+	m.lastSeen[id] = time.Now()
+	m.mu.Unlock()
+	if err := m.pool.TouchWorkspace(context.Background(), id); err != nil {
+		slog.Warn("workspace touch failed", "ws", id, "err", err)
 	}
 }
 
-// CloseWorkspace drops a workspace's cached handle without deleting data.
+// CloseWorkspace drops the shared coordination object for an id; the
+// workspace row itself is untouched.
 func (m *Manager) CloseWorkspace(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if el, ok := m.entries[id]; ok {
-		el.Value.(*cacheEntry).ws.DB.Close()
-		delete(m.entries, id)
-		m.lru.Remove(el)
-	}
+	delete(m.entries, id)
+	delete(m.lastUse, id)
+	delete(m.lastSeen, id)
 }
 
-// Close releases every open workspace handle (local mode: the single one).
+// Close releases the pool (local mode: nothing else to release).
 func (m *Manager) Close() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.local != nil {
 		m.local.DB.Close()
 		return
 	}
-	for id, el := range m.entries {
-		el.Value.(*cacheEntry).ws.DB.Close()
-		delete(m.entries, id)
-		m.lru.Remove(el)
-	}
+	m.pool.Close()
 }
 
-// cleanupLoop deletes abandoned workspaces and enforces the count cap.
-func (m *Manager) cleanupLoop() {
+// cleanupLoop deletes abandoned workspaces and stale coordination
+// entries on a schedule — the Postgres replacement for the per-file
+// sweeper (D28).
+func (m *Manager) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		m.cleanup()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.cleanup(ctx)
+		}
 	}
 }
 
-func (m *Manager) cleanup() {
-	ents, err := os.ReadDir(m.dir)
-	if err != nil {
-		return
+func (m *Manager) cleanup(ctx context.Context) {
+	cutoff := time.Now().Add(-m.maxAge)
+	if n, err := m.pool.DeleteIdleWorkspaces(ctx, store.TSUTC(cutoff)); err != nil {
+		slog.Warn("workspace cleanup failed", "err", err)
+	} else if n > 0 {
+		slog.Info("deleted idle workspaces", "count", n)
 	}
-	type cand struct {
-		path  string
-		mtime time.Time
-	}
-	var files []cand
-	for _, e := range ents {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".db") {
-			continue
+	// Sweep coordination objects for ids nobody has resolved in a day —
+	// deleted workspaces' entries die here too.
+	m.mu.Lock()
+	for id, t := range m.lastUse {
+		if time.Since(t) > entryIdle {
+			delete(m.entries, id)
+			delete(m.lastUse, id)
+			delete(m.lastSeen, id)
 		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		files = append(files, cand{filepath.Join(m.dir, name), info.ModTime()})
 	}
-	inUse := func(path string) bool {
-		id := strings.TrimSuffix(filepath.Base(path), ".db")
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		_, ok := m.entries[id]
-		return ok
-	}
-	remove := func(path string) {
-		os.Remove(path)
-		os.Remove(path + "-wal")
-		os.Remove(path + "-shm")
-	}
-	// age out abandoned workspaces
-	var live []cand
-	for _, f := range files {
-		if time.Since(f.mtime) > m.maxAge && !inUse(f.path) {
-			remove(f.path)
-			continue
-		}
-		live = append(live, f)
-	}
-	// enforce the count cap, evicting least recently used first
-	for len(live) > m.maxCount {
-		oldest := -1
-		for i, f := range live {
-			if inUse(f.path) {
-				continue
-			}
-			if oldest < 0 || f.mtime.Before(live[oldest].mtime) {
-				oldest = i
-			}
-		}
-		if oldest < 0 {
-			break
-		}
-		remove(live[oldest].path)
-		live = append(live[:oldest], live[oldest+1:]...)
-	}
+	m.mu.Unlock()
 }
 
 func labelOf(id string) string {
@@ -551,16 +490,4 @@ func labelOf(id string) string {
 		return "demo session " + id[:4] + "…"
 	}
 	return "demo session " + id
-}
-
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	tmp := dst + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, dst)
 }

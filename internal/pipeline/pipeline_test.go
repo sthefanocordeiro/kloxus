@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 )
 
 const testFeed = `<?xml version="1.0"?>
@@ -37,11 +37,7 @@ var canned = map[string]string{
 
 func TestRunHeadless(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	defer db.Close()
+	db := testdb.WS(t)
 
 	def := &config.Publication{
 		Slug: "p", Name: "Pub", Language: "pt-BR",
@@ -91,12 +87,12 @@ func TestRunHeadless(t *testing.T) {
 		}
 	}
 	var runs int
-	db.QueryRow(`SELECT count(*) FROM runs WHERE publication_id = ?`, pub.ID).Scan(&runs)
+	db.QueryRowContext(ctx, `SELECT count(*) FROM runs WHERE publication_id = $1`, pub.ID).Scan(&runs)
 	if runs != len(Steps) {
 		t.Errorf("runs = %d, want %d", runs, len(Steps))
 	}
 	var status string
-	db.QueryRow(`SELECT status FROM issues WHERE id = ?`, res.IssueID).Scan(&status)
+	db.QueryRowContext(ctx, `SELECT status FROM issues WHERE id = $1`, res.IssueID).Scan(&status)
 	if status != "drafted" {
 		t.Errorf("issue status = %q", status)
 	}
@@ -104,7 +100,7 @@ func TestRunHeadless(t *testing.T) {
 		t.Errorf("deepdive prompt contains stored dossier title")
 	}
 	var dossierJSON string
-	db.QueryRow(`SELECT d.json FROM dossiers d JOIN issue_items ii ON ii.id = d.issue_item_id WHERE ii.issue_id = ?`, res.IssueID).Scan(&dossierJSON)
+	db.QueryRowContext(ctx, `SELECT d.json FROM dossiers d JOIN issue_items ii ON ii.id = d.issue_item_id WHERE ii.issue_id = $1`, res.IssueID).Scan(&dossierJSON)
 	if !strings.Contains(dossierJSON, `"title":"Consulta do regulador"`) {
 		t.Errorf("stored dossier lost picked title: %s", dossierJSON)
 	}
@@ -112,11 +108,7 @@ func TestRunHeadless(t *testing.T) {
 
 func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	defer db.Close()
+	db := testdb.WS(t)
 
 	def := &config.Publication{
 		Slug: "p", Name: "Pub", Language: "pt-BR",
@@ -280,11 +272,7 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 // downstream draft/citecheck keys) miss on every reused database.
 func TestReplaySecondPublicationOnReusedDB(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	defer db.Close()
+	db := testdb.WS(t)
 
 	data, err := examples.FS.ReadFile("publications/futuro-proximo.yaml")
 	if err != nil {
@@ -340,11 +328,11 @@ func TestReplaySecondPublicationOnReusedDB(t *testing.T) {
 		t.Fatalf("GetPublication 2: %v", err)
 	}
 	var maxID1, minID2 int64
-	db.QueryRow(`SELECT COALESCE(MAX(i.id),0) FROM items i
-		JOIN sources s ON s.id = i.source_id WHERE s.publication_id = ?`, pub1.ID).Scan(&maxID1)
+	db.QueryRowContext(ctx, `SELECT COALESCE(MAX(i.id),0) FROM items i
+		JOIN sources s ON s.id = i.source_id WHERE s.publication_id = $1`, pub1.ID).Scan(&maxID1)
 	res2 := run(pub2)
-	db.QueryRow(`SELECT COALESCE(MIN(i.id),0) FROM items i
-		JOIN sources s ON s.id = i.source_id WHERE s.publication_id = ?`, pub2.ID).Scan(&minID2)
+	db.QueryRowContext(ctx, `SELECT COALESCE(MIN(i.id),0) FROM items i
+		JOIN sources s ON s.id = i.source_id WHERE s.publication_id = $1`, pub2.ID).Scan(&minID2)
 	if maxID1 == 0 || minID2 <= maxID1 {
 		t.Fatalf("expected shifted item ids for the second publication (max pub1=%d, min pub2=%d)", maxID1, minID2)
 	}
@@ -377,8 +365,8 @@ func TestReplaySecondPublicationOnReusedDB(t *testing.T) {
 	for _, m := range links {
 		id, _ := strconv.ParseInt(m[1], 10, 64)
 		var owner int64
-		err := db.QueryRow(`SELECT s.publication_id FROM items i
-			JOIN sources s ON s.id = i.source_id WHERE i.id = ?`, id).Scan(&owner)
+		err := db.QueryRowContext(ctx, `SELECT s.publication_id FROM items i
+			JOIN sources s ON s.id = i.source_id WHERE i.id = $1`, id).Scan(&owner)
 		if err != nil {
 			t.Fatalf("source link /a/%d resolves to no item: %v", id, err)
 		}
@@ -389,8 +377,8 @@ func TestReplaySecondPublicationOnReusedDB(t *testing.T) {
 
 	// The stored dossier keeps the row ids the links depend on.
 	var dossierJSON string
-	if err := db.QueryRow(`SELECT d.json FROM dossiers d
-		JOIN issue_items ii ON ii.id = d.issue_item_id WHERE ii.issue_id = ? LIMIT 1`,
+	if err := db.QueryRowContext(ctx, `SELECT d.json FROM dossiers d
+		JOIN issue_items ii ON ii.id = d.issue_item_id WHERE ii.issue_id = $1 LIMIT 1`,
 		res2.IssueID).Scan(&dossierJSON); err != nil {
 		t.Fatalf("reading dossier: %v", err)
 	}

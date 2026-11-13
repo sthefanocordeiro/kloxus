@@ -15,6 +15,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
@@ -27,14 +28,10 @@ func demoServer(t *testing.T) (*web.Server, *store.DB, *store.Publication, *conf
 	base := t.TempDir()
 	cfg := &config.Config{
 		Mode: "demo", Port: 8080,
-		DBPath: filepath.Join(base, "kloxus.db"), OutDir: filepath.Join(base, "out"),
+		OutDir:      filepath.Join(base, "out"),
 		ModelTriage: "claude-haiku-5-5", ModelDraft: "claude-sonnet-5-5", MaxDeepDives: 3,
 	}
-	db, err := store.Open(cfg.DBPath)
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.WS(t)
 
 	seed := func(ctx context.Context, sdb *store.DB) error {
 		data, err := examples.FS.ReadFile("publications/futuro-proximo.yaml")

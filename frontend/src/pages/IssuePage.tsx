@@ -192,8 +192,15 @@ export function IssuePage() {
           setSaved("saved");
           qc.invalidateQueries({ queryKey: ["readiness", issueID] });
         } catch (e) {
+          // re-queue so a later drain retries instead of dropping the
+          // typed text — a conflict carries the fresh document, so once
+          // resync lands the new version the retry can save it.
+          dirtyCommentary.current.set(section, text);
           setSaved("");
           resync(e);
+          if (e instanceof ApiRequestError && e.document) {
+            setTimeout(() => drainSaves(), 1000);
+          }
           return;
         }
       }

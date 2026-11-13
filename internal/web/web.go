@@ -139,6 +139,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mux.ServeHTTP(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/webhooks/") {
+		// Webhooks carry provider auth, not a visitor cookie — resolving
+		// would mint a junk workspace per call and trip the create limit.
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		s.mux.ServeHTTP(w, r)
+		return
+	}
 	ws, err := s.d.WS.Resolve(w, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusTooManyRequests)

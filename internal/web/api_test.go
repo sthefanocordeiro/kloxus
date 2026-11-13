@@ -92,7 +92,9 @@ func apiGet(t *testing.T, srv *web.Server, path string) map[string]any {
 // waitRun polls a run until it is done or failed.
 func waitRun(t *testing.T, srv *web.Server, runID string) map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	// A fixture run issues hundreds of queries; against a remote
+	// Postgres each one is a network round-trip, so allow ample time.
+	deadline := time.Now().Add(3 * time.Minute)
 	for {
 		v := apiGet(t, srv, "/api/v1/runs/"+runID)
 		run := v["run"].(map[string]any)
