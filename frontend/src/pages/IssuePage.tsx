@@ -19,7 +19,8 @@ function localInput(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-import { Badge, Button, KDialog, KPopover } from "../ui";
+import { Badge, Button } from "../ui";
+import { KDialog, KPopover } from "../ui-overlays";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
 import { BoardSkeleton, BuildBoard, StepRail } from "./Board";
 
@@ -191,8 +192,15 @@ export function IssuePage() {
           setSaved("saved");
           qc.invalidateQueries({ queryKey: ["readiness", issueID] });
         } catch (e) {
+          // re-queue so a later drain retries instead of dropping the
+          // typed text — a conflict carries the fresh document, so once
+          // resync lands the new version the retry can save it.
+          dirtyCommentary.current.set(section, text);
           setSaved("");
           resync(e);
+          if (e instanceof ApiRequestError && e.document) {
+            setTimeout(() => drainSaves(), 1000);
+          }
           return;
         }
       }
