@@ -95,7 +95,9 @@ async function boardOps(page: Page, isPhone: boolean) {
     await chooser.getByRole("button", { name: /Quick links/ }).click();
   }
   await pickSwapIfShown(page);
-  await expect(page.getByText(/Added/)).toBeVisible({ timeout: 15000 });
+  // a straight add toasts "Added"; going through the swap path toasts
+  // "Moved" — both mean the bench story landed in the issue
+  await expect(page.getByText(/Added|Moved/)).toBeVisible({ timeout: 15000 });
 
   // 3) move a Worth-knowing story into Quick links via the move menu
   if (isPhone) await tabIssue.click();
