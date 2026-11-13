@@ -15,13 +15,17 @@ import (
 
 // Config holds process-level settings sourced from env and .env.
 type Config struct {
-	Mode   string // demo | real
-	Port   int
-	DBPath string
-	OutDir string
-	// DataDir, when set, enables the hosted multi-workspace demo: one
-	// SQLite file per visitor under <DataDir>/workspaces plus a seeded
-	// template rebuilt at boot.
+	Mode string // demo | real
+	Port int
+	// DatabaseURL is the Postgres connection string (DATABASE_URL) —
+	// the Supabase direct or session-pooler address in production, a
+	// local Postgres in development.
+	DatabaseURL string
+	OutDir      string
+	// DataDir, when set, enables hosted multi-workspace mode: one
+	// workspace row per visitor in the shared database, addressed by a
+	// signed cookie. The directory itself only persists the cookie
+	// signing secret.
 	DataDir      string
 	CookieSecret string
 
@@ -51,7 +55,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Mode:            getenv("KLOXUS_MODE", "demo"),
 		Port:            getint("KLOXUS_PORT", 8080),
-		DBPath:          getenv("KLOXUS_DB_PATH", "kloxus.db"),
+		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		OutDir:          getenv("KLOXUS_OUT_DIR", "out"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		ModelTriage:     getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),

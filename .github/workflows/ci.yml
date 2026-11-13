@@ -7,10 +7,42 @@ on:
 
 jobs:
   test:
+    runs-on: ubuntu-latest
+    services:
+      # Store tests run against real Postgres — no SQLite anywhere.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kloxus
+          POSTGRES_PASSWORD: kloxus
+          POSTGRES_DB: kloxus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kloxus -d kloxus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://kloxus:kloxus@localhost:5432/kloxus?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - run: go vet ./...
+      - run: go test -timeout 20m ./...
+      - name: headless demo
+        run: |
+          go run ./cmd/kloxus demo --headless
+          test -f out/issue-1.md
+
+  build:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -19,9 +51,28 @@ jobs:
           go-version: stable
           cache: true
       - run: go vet ./...
-      - run: go test ./...
-      - name: headless demo
-        shell: bash
+      - run: go build ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run typecheck
+        working-directory: frontend
+      - run: npm run lint
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - name: appdist is built and keeps its placeholder
         run: |
-          go run ./cmd/kloxus demo --headless
-          test -f out/issue-1.md
+          test -f internal/web/appdist/index.html
+          test -f internal/web/appdist/.keep

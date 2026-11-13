@@ -88,9 +88,12 @@ function SentenceView({ node }: NodeViewProps) {
 
   const run = async (fn: () => Promise<boolean>) => {
     setBusy(true);
-    await fn();
-    setBusy(false);
-    setEditing(false);
+    try {
+      await fn();
+    } finally {
+      setBusy(false);
+      setEditing(false);
+    }
   };
 
   const saveEdit = async () => {

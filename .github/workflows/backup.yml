@@ -1,0 +1,77 @@
+name: backup
+
+# Nightly logical backup of the production Postgres (Supabase). Only the
+# app's schema (public) is dumped — Supabase's managed schemas (auth,
+# storage, extensions, ...) are theirs to keep. The dump is kept as a
+# workflow artifact for 30 days; restore steps live in docs/deploy.md.
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC = 03:00 BRT
+  workflow_dispatch:
+
+jobs:
+  pgdump:
+    runs-on: ubuntu-latest
+    services:
+      # Scratch database the dump is restored into — proves the artifact
+      # is restorable, not just produced.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kloxus
+          POSTGRES_PASSWORD: kloxus
+          POSTGRES_DB: kloxus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kloxus -d kloxus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      # pg_dump must be >= the server major, so pull the latest client
+      # from the PGDG repo — ubuntu's archive lags Supabase's Postgres.
+      - name: install pg_dump
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+      - name: pg_dump
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # The app may append pgx-only params to DATABASE_URL
+          # (default_query_exec_mode) — libpq rejects them, strip first.
+          DBURL="${DATABASE_URL//&default_query_exec_mode=exec/}"
+          DBURL="${DBURL//?default_query_exec_mode=exec/}"
+          /usr/lib/postgresql/17/bin/pg_dump "$DBURL" \
+            --format=custom --no-owner --no-privileges --schema=public \
+            --file="kloxus-$(date +%Y%m%d).dump"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kloxus-pgdump-${{ github.run_number }}
+          path: "kloxus-*.dump"
+          retention-days: 30
+      # Restore drill: replay the dump into the scratch service and check
+      # the app schema landed. Without this the "restorable" criterion is
+      # only assumed. Two restore errors are benign deltas between
+      # Supabase's Postgres and a vanilla one — its transaction_timeout
+      # GUC and CREATE SCHEMA public; anything else fails the drill.
+      - name: restore drill into scratch database
+        env:
+          SCRATCH_URL: postgres://kloxus:kloxus@localhost:5432/kloxus
+        run: |
+          /usr/lib/postgresql/17/bin/pg_restore --no-owner --no-privileges \
+            --dbname="$SCRATCH_URL" "kloxus-$(date +%Y%m%d).dump" 2>&1 | tee restore.log || true
+          if grep "ERROR" restore.log | grep -vE 'unrecognized configuration parameter "transaction_timeout"|schema "public" already exists'; then
+            echo "unexpected restore errors" >&2
+            exit 1
+          fi
+          /usr/lib/postgresql/17/bin/psql "$SCRATCH_URL" -v ON_ERROR_STOP=1 \
+            -c 'SELECT count(*) AS migrations_applied FROM schema_migrations' \
+            -c 'SELECT count(*) AS workspaces FROM workspaces'

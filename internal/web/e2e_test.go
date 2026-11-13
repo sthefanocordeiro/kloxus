@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -19,6 +17,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
@@ -63,13 +62,13 @@ func TestExportAndSendGatedBeforeApproval(t *testing.T) {
 	srv, db, pub, _ := demoServer(t)
 	ctx := context.Background()
 	issueID := runPhaseA(t, srv, db, pub.ID)
-	issueURL := "/issue/" + strconv.FormatInt(issueID, 10)
+	issueURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10)
 
-	if rr := call(t, srv, "GET", issueURL+"/export?fmt=markdown", nil); rr.Code == 200 {
-		t.Fatal("export before approval should not return 200")
+	if rr := apiCall(t, srv, "GET", issueURL+"/export?fmt=markdown", nil); rr.Code != http.StatusConflict {
+		t.Fatalf("export before approval = %d, want 409", rr.Code)
 	}
-	if rr := call(t, srv, "POST", issueURL+"/send", nil); rr.Code == 200 {
-		t.Fatal("send before approval should not return 200")
+	if rr := apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "readers"}); rr.Code != http.StatusConflict {
+		t.Fatalf("send before approval = %d, want 409", rr.Code)
 	}
 	iss, _ := db.GetIssue(ctx, issueID)
 	if iss.Status == "approved" || iss.Status == "sent" {
@@ -77,59 +76,50 @@ func TestExportAndSendGatedBeforeApproval(t *testing.T) {
 	}
 }
 
-// TestRejectRequiresReason verifies rejection validation.
+// TestRejectRequiresReason verifies rejection validation: a reason-less
+// reject is refused and the item stays pending.
 func TestRejectRequiresReason(t *testing.T) {
 	srv, db, pub, _ := demoServer(t)
 	ctx := context.Background()
 	issueID := runPhaseA(t, srv, db, pub.ID)
 	iis, _ := db.IssueItems(ctx, issueID)
-	issueURL := "/issue/" + strconv.FormatInt(issueID, 10)
+	issueURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10)
 
-	call(t, srv, "POST", issueURL+"/item/"+strconv.FormatInt(iis[0].ID, 10)+"/decision",
-		url.Values{"kind": {"reject"}, "reason": {""}})
+	rr := apiCall(t, srv, "POST", issueURL+"/items/"+strconv.FormatInt(iis[0].ID, 10)+"/decisions",
+		map[string]string{"kind": "reject"})
+	if c := apiErrCode(t, rr); c != "reason_required" {
+		t.Fatalf("reject without reason: code = %q, want reason_required", c)
+	}
 	ii, _ := db.GetIssueItem(ctx, iis[0].ID)
 	if ii.Status != "pending" {
 		t.Fatalf("reject without reason changed status to %q", ii.Status)
 	}
 }
 
-// runPhaseA triggers a run and waits for the run status to report done.
+// runPhaseA triggers a run and waits for it to report done.
 func runPhaseA(t *testing.T, srv *web.Server, db *store.DB, pubID int64) int64 {
 	t.Helper()
-	if rr := call(t, srv, "POST", "/pub/"+strconv.FormatInt(pubID, 10)+"/run", nil); rr.Code != http.StatusSeeOther {
+	rr := apiCall(t, srv, "POST", "/api/v1/publications/"+strconv.FormatInt(pubID, 10)+"/runs", nil)
+	if rr.Code != http.StatusAccepted {
 		t.Fatalf("POST run = %d", rr.Code)
 	}
-	var st struct {
-		Done    bool   `json:"done"`
-		IssueID int64  `json:"issue_id"`
-		Err     string `json:"error"`
-		Step    string `json:"step"`
+	runID := apiJSON(t, rr)["run"].(map[string]any)["id"].(string)
+	run := waitRun(t, srv, runID)
+	if run["status"] != "done" {
+		t.Fatalf("run failed: %v", run["error"])
 	}
-	statusURL := "/pub/" + strconv.FormatInt(pubID, 10) + "/run/status"
-	for deadline := 0; deadline < 400; deadline++ {
-		rr := call(t, srv, "GET", statusURL, nil)
-		if err := json.Unmarshal(rr.Body.Bytes(), &st); err == nil && st.Done {
-			if st.Err != "" {
-				t.Fatalf("run failed: %s", st.Err)
-			}
-			// When done, status reports the last step of the list so the
-			// run page marks every step (incl. draft/citecheck) complete.
-			if st.Step != pipeline.Steps[len(pipeline.Steps)-1] {
-				t.Fatalf("done run reports step %q, want %q", st.Step, pipeline.Steps[len(pipeline.Steps)-1])
-			}
-			return st.IssueID
-		}
-		time.Sleep(50 * time.Millisecond)
+	// When done, the run reports the last step of the list so the run
+	// screen marks every step (incl. draft/citecheck) complete.
+	if run["step"] != pipeline.Steps[len(pipeline.Steps)-1] {
+		t.Fatalf("done run reports step %q, want %q", run["step"], pipeline.Steps[len(pipeline.Steps)-1])
 	}
-	t.Fatal("run did not finish")
-	return 0
+	return int64(run["issue_id"].(float64))
 }
 
 // TestWorkspaceIsolation: two visitors get separate databases; resetting
 // one does not affect the other.
 func TestWorkspaceIsolation(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
 	seed := func(ctx context.Context, sdb *store.DB) error {
 		data, _ := examples.FS.ReadFile("publications/futuro-proximo.yaml")
 		def, err := config.ParsePublication(data)
@@ -139,7 +129,7 @@ func TestWorkspaceIsolation(t *testing.T) {
 		_, err = sdb.SeedPublication(ctx, def)
 		return err
 	}
-	mgr, err := workspace.OpenHosted(ctx, dir, []byte("test-secret-key-32-bytes-padded-ok!"), seed)
+	mgr, err := workspace.OpenHosted(ctx, testdb.Pool(t), []byte("test-secret-key-32-bytes-padded-ok!"), seed)
 	if err != nil {
 		t.Fatalf("OpenHosted: %v", err)
 	}
@@ -216,40 +206,66 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 	ctx := context.Background()
 	srv, db, pub, _ := demoServer(t)
 	issueID := runPhaseA(t, srv, db, pub.ID)
-	issueURL := "/issue/" + strconv.FormatInt(issueID, 10)
+	issueURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10)
 	iis, _ := db.IssueItems(ctx, issueID)
 
-	post := func(path string, v url.Values) *httptest.ResponseRecorder {
-		return call(t, srv, "POST", path, v)
+	decide := func(iid int64, kind, reason string) *httptest.ResponseRecorder {
+		body := map[string]string{"kind": kind}
+		if reason != "" {
+			body["reason"] = reason
+		}
+		return apiCall(t, srv, "POST",
+			issueURL+"/items/"+strconv.FormatInt(iid, 10)+"/decisions", body)
 	}
 	// reject one, approve the rest — exercises undo as well
-	post(issueURL+"/item/"+strconv.FormatInt(iis[1].ID, 10)+"/decision",
-		url.Values{"kind": {"reject"}, "reason": {"off the line"}})
+	decide(iis[1].ID, "reject", "off the line")
 	// undo the rejection, then reject again for real
-	post(issueURL+"/item/"+strconv.FormatInt(iis[1].ID, 10)+"/decision",
-		url.Values{"kind": {"undo"}})
+	decide(iis[1].ID, "undo", "")
 	if ii, _ := db.GetIssueItem(ctx, iis[1].ID); ii.Status != "pending" {
 		t.Fatalf("undo rejection: status = %q, want pending", ii.Status)
 	}
-	post(issueURL+"/item/"+strconv.FormatInt(iis[1].ID, 10)+"/decision",
-		url.Values{"kind": {"reject"}, "reason": {"off the line"}})
+	decide(iis[1].ID, "reject", "off the line")
 	for _, ii := range iis {
 		if ii.ID != iis[1].ID {
-			post(issueURL+"/item/"+strconv.FormatInt(ii.ID, 10)+"/decision", url.Values{"kind": {"approve"}})
+			decide(ii.ID, "approve", "")
 		}
 	}
 	for i := 0; i < 2; i++ {
-		if rr := post(issueURL+"/draft", nil); rr.Code != http.StatusSeeOther {
+		rr := apiCall(t, srv, "POST", issueURL+"/draft", nil)
+		if rr.Code != http.StatusAccepted {
 			t.Fatalf("draft #%d = %d", i, rr.Code)
 		}
+		waitRun(t, srv, apiJSON(t, rr)["run"].(map[string]any)["id"].(string))
 	}
 	iss, _ := db.GetIssue(ctx, issueID)
 	if len(iss.Flags) == 0 {
 		t.Fatal("expected citation flags")
 	}
+	// the first flagged sentence's document id
+	doc := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	var flaggedID, flaggedText string
+	var flaggedCits []any
+outer0:
+	for _, s := range doc["sections"].([]any) {
+		for _, i := range s.(map[string]any)["items"].([]any) {
+			for _, sn := range i.(map[string]any)["sentences"].([]any) {
+				if sn.(map[string]any)["flag"] != nil {
+					flaggedID = sn.(map[string]any)["id"].(string)
+					flaggedText = sn.(map[string]any)["text"].(string)
+					flaggedCits = sn.(map[string]any)["citations"].([]any)
+					break outer0
+				}
+			}
+		}
+	}
+	if flaggedID == "" {
+		t.Fatal("no flagged sentence in the document")
+	}
+	ver := doc["version"].(string)
+	sents := issueURL + "/sentences/"
 	// unchanged edit keeps the flag
-	if rr := post(issueURL+"/flag/0/edit", url.Values{
-		"text": {iss.Flags[0].Sentence}}); rr.Code == http.StatusSeeOther {
+	if rr := apiCall(t, srv, "PATCH", sents+flaggedID,
+		map[string]any{"text": flaggedText, "citations": flaggedCits, "version": ver}); apiErrCode(t, rr) != "unchanged" {
 		t.Fatal("unchanged edit should be refused")
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
@@ -257,9 +273,10 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 		t.Fatal("unchanged edit cleared the flag")
 	}
 	// supported edit resolves it (grounded in a dossier fact for [1])
-	if rr := post(issueURL+"/flag/0/edit", url.Values{
-		"text": {"Comentários podem ser enviados até 15 de dezembro pelo portal do órgão [1]"}}); rr.Code != http.StatusSeeOther {
-		t.Fatalf("supported edit = %d", rr.Code)
+	if rr := apiCall(t, srv, "PATCH", sents+flaggedID, map[string]any{
+		"text":      "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
+		"citations": []int{1}, "version": ver}); rr.Code != 200 {
+		t.Fatalf("supported edit = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
 	if len(iss.Flags) != 0 {
@@ -267,24 +284,51 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 	}
 	// resolve any remaining flags by removal
 	for len(iss.Flags) > 0 {
-		post(issueURL+"/flag/0/remove", nil)
+		doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+		next := ""
+	outer:
+		for _, s := range doc["sections"].([]any) {
+			for _, i := range s.(map[string]any)["items"].([]any) {
+				for _, sn := range i.(map[string]any)["sentences"].([]any) {
+					if sn.(map[string]any)["flag"] != nil {
+						next = sn.(map[string]any)["id"].(string)
+						break outer
+					}
+				}
+			}
+		}
+		if next == "" {
+			t.Fatalf("flags remain (%d) but no flagged sentence found", len(iss.Flags))
+		}
+		if rr := apiCall(t, srv, "DELETE", sents+next,
+			map[string]any{"version": doc["version"].(string)}); rr.Code != 200 {
+			t.Fatalf("remove flag %s = %d", next, rr.Code)
+		}
 		iss, _ = db.GetIssue(ctx, issueID)
 	}
-	post(issueURL+"/commentary", url.Values{"section": {"The big one"}, "text": {"Minha análise."}})
-	if rr := post(issueURL+"/approve", nil); rr.Code != http.StatusSeeOther {
-		t.Fatalf("approve = %d", rr.Code)
+	commentary := func(text string) *httptest.ResponseRecorder {
+		ver := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)["version"].(string)
+		return apiCall(t, srv, "PUT", issueURL+"/commentary",
+			map[string]string{"section": "The big one", "text": text, "version": ver})
+	}
+	if rr := commentary("Minha análise."); rr.Code != 200 {
+		t.Fatalf("commentary = %d", rr.Code)
+	}
+	if rr := apiCall(t, srv, "POST", issueURL+"/approve", nil); rr.Code != 200 {
+		t.Fatalf("approve = %d %s", rr.Code, rr.Body.String()[:300])
 	}
 	// editing an approved issue reverts it to drafted
-	post(issueURL+"/commentary", url.Values{"section": {"The big one"}, "text": {"Minha análise v2."}})
+	if rr := commentary("Minha análise v2."); rr.Code != 200 {
+		t.Fatalf("commentary after approve = %d", rr.Code)
+	}
 	iss, _ = db.GetIssue(ctx, issueID)
 	if iss.Status != "drafted" {
 		t.Fatalf("edit after approve: status = %q, want drafted", iss.Status)
 	}
-	post(issueURL+"/approve", nil)
+	apiCall(t, srv, "POST", issueURL+"/approve", nil)
 	// send — demo reader is not subscribed → teaser + unsubscribe
-	rr := post(issueURL+"/send", nil)
-	if !strings.Contains(rr.Body.String(), "Issue sent") {
-		t.Fatalf("send = %d", rr.Code)
+	if rr := apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "readers"}); rr.Code != 200 {
+		t.Fatalf("send = %d %s", rr.Code, rr.Body.String()[:300])
 	}
 	emails, _ := db.OutboxEmails(ctx)
 	var issueMail *store.OutboxEmail
@@ -316,10 +360,10 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 	apiPath := "/api/v1/unsub?" + strings.SplitN(m, "?", 2)[1]
 	// a forged token is refused
 	bad := regexp.MustCompile(`t=[^\s)]+`).ReplaceAllString(apiPath, "t=forged")
-	if rr := call(t, srv, "GET", bad, nil); rr.Code != http.StatusForbidden {
+	if rr := apiCall(t, srv, "GET", bad, nil); rr.Code != http.StatusForbidden {
 		t.Errorf("forged unsubscribe token = %d, want 403", rr.Code)
 	}
-	rr = call(t, srv, "GET", apiPath, nil)
+	rr := apiCall(t, srv, "GET", apiPath, nil)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"unsubscribed":true`) {
 		t.Fatalf("unsubscribe = %d / %q", rr.Code, rr.Body.String()[:120])
 	}
@@ -327,73 +371,16 @@ func TestFlagEditRecheckSentReadOnlyAndEmail(t *testing.T) {
 		t.Error("unsubscribe not recorded on the reader")
 	}
 	// sent issue is read-only
-	if rr := post(issueURL+"/commentary", url.Values{"section": {"The big one"}, "text": {"v3"}}); rr.Code == 200 {
-		if !strings.Contains(rr.Body.String(), "read-only") {
-			t.Fatal("commentary on sent issue should be refused")
-		}
+	if rr := apiCall(t, srv, "PUT", issueURL+"/commentary",
+		map[string]string{"section": "The big one", "text": "v3"}); apiErrCode(t, rr) != "read_only" {
+		t.Fatal("commentary on sent issue should be refused")
 	}
 	// .eml has standard headers + encoded subject
-	raw := call(t, srv, "GET", fmt.Sprintf("/outbox/%d/eml", issueMail.ID), nil)
+	raw := apiCall(t, srv, "GET", fmt.Sprintf("/outbox/%d/eml", issueMail.ID), nil)
 	for _, h := range []string{"From:", "MIME-Version: 1.0", "Date: ", "=?utf-8?", "=?UTF-8?"} {
 		if !strings.Contains(raw.Body.String(), h) && h != "=?UTF-8?" {
 			t.Errorf(".eml missing %q", h)
 		}
-	}
-}
-
-// TestInPlaceDecisionCard: fetch decisions must return the re-rendered
-// card (fresh status, reason, buttons) — and validation errors must not
-// strip the card of its actions.
-func TestInPlaceDecisionCard(t *testing.T) {
-	srv, db, pub, _ := demoServer(t)
-	ctx := context.Background()
-	issueID := runPhaseA(t, srv, db, pub.ID)
-	iis, _ := db.IssueItems(ctx, issueID)
-	path := "/issue/" + strconv.FormatInt(issueID, 10) +
-		"/item/" + strconv.FormatInt(iis[0].ID, 10) + "/decision"
-
-	fetch := func(v url.Values) string {
-		req := httptest.NewRequest("POST", path, strings.NewReader(v.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.Header.Set("X-Requested-With", "fetch")
-		rr := httptest.NewRecorder()
-		srv.ServeHTTP(rr, req)
-		return rr.Body.String()
-	}
-
-	// reject with empty reason: error shown, buttons preserved, still pending
-	body := fetch(url.Values{"kind": {"reject"}, "reason": {""}})
-	if !strings.Contains(body, "rejection needs a reason") {
-		t.Error("empty-reason fetch: card should show the validation error")
-	}
-	if !strings.Contains(body, `value="approve"`) {
-		t.Error("empty-reason fetch: card lost its buttons")
-	}
-	if strings.Contains(body, ">rejected<") {
-		t.Error("empty-reason fetch: card claims rejected status")
-	}
-
-	// reject with reason: card re-renders rejected, shows reason + undo
-	body = fetch(url.Values{"kind": {"reject"}, "reason": {"off the line"}})
-	for _, want := range []string{">rejected<", "off the line", `value="undo"`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("rejected card missing %q", want)
-		}
-	}
-	if strings.Contains(body, `value="approve"`) {
-		t.Error("rejected card still shows approve button")
-	}
-
-	// undo returns the card to pending with actions back
-	body = fetch(url.Values{"kind": {"undo"}})
-	if !strings.Contains(body, ">pending<") || !strings.Contains(body, `value="approve"`) {
-		t.Error("undo fetch: card should be pending with buttons restored")
-	}
-
-	// approve renders the approved badge in place
-	body = fetch(url.Values{"kind": {"approve"}})
-	if !strings.Contains(body, ">approved<") {
-		t.Error("approve fetch: card should show approved status")
 	}
 }
 
@@ -402,24 +389,28 @@ func TestInPlaceDecisionCard(t *testing.T) {
 func TestGuideFromRejectionsOnly(t *testing.T) {
 	srv, db, pub, _ := demoServer(t)
 	ctx := context.Background()
-	pubURL := "/pub/" + strconv.FormatInt(pub.ID, 10)
+	rebuildURL := "/api/v1/publications/" + strconv.FormatInt(pub.ID, 10) + "/guide/rebuild"
 
 	// no decisions yet → rebuild refuses instead of writing an empty guide
-	if rr := call(t, srv, "POST", pubURL+"/guide/rebuild", nil); rr.Code != http.StatusConflict {
+	if rr := apiCall(t, srv, "POST", rebuildURL, nil); rr.Code != http.StatusConflict {
 		t.Fatalf("rebuild with no decisions = %d, want 409", rr.Code)
 	}
 
 	issueID := runPhaseA(t, srv, db, pub.ID)
-	issueURL := "/issue/" + strconv.FormatInt(issueID, 10)
+	issueURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10)
 	iis, _ := db.IssueItems(ctx, issueID)
-	decide := func(iid int64, v url.Values) {
-		call(t, srv, "POST", issueURL+"/item/"+strconv.FormatInt(iid, 10)+"/decision", v)
+	decide := func(iid int64, kind, reason string) {
+		body := map[string]string{"kind": kind}
+		if reason != "" {
+			body["reason"] = reason
+		}
+		apiCall(t, srv, "POST", issueURL+"/items/"+strconv.FormatInt(iid, 10)+"/decisions", body)
 	}
 	// an approve decision must not feed the guide
-	decide(iis[0].ID, url.Values{"kind": {"approve"}})
-	decide(iis[1].ID, url.Values{"kind": {"reject"}, "reason": {"fora da minha linha editorial."}})
+	decide(iis[0].ID, "approve", "")
+	decide(iis[1].ID, "reject", "fora da minha linha editorial.")
 
-	if rr := call(t, srv, "POST", pubURL+"/guide/rebuild", nil); rr.Code != http.StatusSeeOther {
+	if rr := apiCall(t, srv, "POST", rebuildURL, nil); rr.Code != 200 {
 		t.Fatalf("rebuild = %d", rr.Code)
 	}
 	_, content, err := db.LatestGuide(ctx, pub.ID)
@@ -433,20 +424,20 @@ func TestGuideFromRejectionsOnly(t *testing.T) {
 		t.Errorf("guide contains approval-derived rule:\n%s", content)
 	}
 	// rebuild again → reason deduplicated, not appended twice
-	call(t, srv, "POST", pubURL+"/guide/rebuild", nil)
+	apiCall(t, srv, "POST", rebuildURL, nil)
 	_, again, _ := db.LatestGuide(ctx, pub.ID)
 	if strings.Count(again, "linha editorial") > 1 {
 		t.Errorf("rebuild duplicated the rule:\n%s", again)
 	}
 
 	// three wordings of the same objection merge into a single rule
-	decide(iis[2].ID, url.Values{"kind": {"reject"}, "reason": {"ainda em comissão"}})
-	decide(iis[3].ID, url.Values{"kind": {"reject"}, "reason": {"matéria ainda em comissão"}})
-	decide(iis[4].ID, url.Values{"kind": {"reject"}, "reason": {"ainda em comissão, aguardando plenário"}})
+	decide(iis[2].ID, "reject", "ainda em comissão")
+	decide(iis[3].ID, "reject", "matéria ainda em comissão")
+	decide(iis[4].ID, "reject", "ainda em comissão, aguardando plenário")
 	// loosely-worded variants of the same theme merge too
-	decide(iis[5].ID, url.Values{"kind": {"reject"}, "reason": {"Projeto ainda em comissão, sem efeito prático para o leitor agora"}})
-	decide(iis[6].ID, url.Values{"kind": {"reject"}, "reason": {"Ainda em comissão; nada muda para o leitor por enquanto"}})
-	call(t, srv, "POST", pubURL+"/guide/rebuild", nil)
+	decide(iis[5].ID, "reject", "Projeto ainda em comissão, sem efeito prático para o leitor agora")
+	decide(iis[6].ID, "reject", "Ainda em comissão; nada muda para o leitor por enquanto")
+	apiCall(t, srv, "POST", rebuildURL, nil)
 	_, content, _ = db.LatestGuide(ctx, pub.ID)
 	if n := strings.Count(content, "comissão"); n != 1 {
 		t.Errorf("near-duplicate reasons not merged — %d comissão lines:\n%s", n, content)
@@ -458,8 +449,8 @@ func TestGuideFromRejectionsOnly(t *testing.T) {
 	}
 
 	// undoing the "linha editorial" rejection removes its rule
-	decide(iis[1].ID, url.Values{"kind": {"undo"}})
-	call(t, srv, "POST", pubURL+"/guide/rebuild", nil)
+	decide(iis[1].ID, "undo", "")
+	apiCall(t, srv, "POST", rebuildURL, nil)
 	_, content, _ = db.LatestGuide(ctx, pub.ID)
 	if strings.Contains(content, "linha editorial") {
 		t.Errorf("undone rejection still in guide:\n%s", content)
@@ -470,15 +461,16 @@ func TestGuideFromRejectionsOnly(t *testing.T) {
 
 	// rebuilding with no changes must not mint a new version
 	ver, _, _ := db.LatestGuide(ctx, pub.ID)
-	call(t, srv, "POST", pubURL+"/guide/rebuild", nil)
+	apiCall(t, srv, "POST", rebuildURL, nil)
 	ver2, _, _ := db.LatestGuide(ctx, pub.ID)
 	if ver2 != ver {
 		t.Errorf("no-change rebuild minted version %d (was %d)", ver2, ver)
 	}
 }
 
-// TestMagicLinkCarriesWorkspace: the magic link embeds the workspace id so
-// it opens the issue in any browser — not just the session that minted it.
+// TestMagicLinkCarriesWorkspace: the magic link embeds a sealed workspace
+// token so it opens the issue in any browser — not just the session that
+// minted it. The link targets the reader page, which calls /api/v1/p.
 func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	ctx := context.Background()
 	seed := func(ctx context.Context, sdb *store.DB) error {
@@ -490,7 +482,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 		_, err = sdb.SeedPublication(ctx, def)
 		return err
 	}
-	mgr, err := workspace.OpenHosted(ctx, t.TempDir(),
+	mgr, err := workspace.OpenHosted(ctx, testdb.Pool(t),
 		[]byte("test-secret-key-32-bytes-padded-ok!"), seed)
 	if err != nil {
 		t.Fatalf("OpenHosted: %v", err)
@@ -504,15 +496,16 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 		Seed:    seed,
 	})
 
-	serve := func(method, path, cookie string, form url.Values) *httptest.ResponseRecorder {
-		var body *strings.Reader
-		if form == nil {
-			body = strings.NewReader("")
+	serve := func(method, path, cookie string, body any) *httptest.ResponseRecorder {
+		var reader *strings.Reader
+		if body == nil {
+			reader = strings.NewReader("")
 		} else {
-			body = strings.NewReader(form.Encode())
+			b, _ := json.Marshal(body)
+			reader = strings.NewReader(string(b))
 		}
-		req := httptest.NewRequest(method, path, body)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req := httptest.NewRequest(method, path, reader)
+		req.Header.Set("Content-Type", "application/json")
 		if cookie != "" {
 			req.Header.Set("Cookie", cookie)
 		}
@@ -543,67 +536,57 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	if err := wsA.DB.UpdateIssue(ctx, iid, "sent", body, "[]"); err != nil {
 		t.Fatalf("UpdateIssue: %v", err)
 	}
-	pubURL := "/pub/" + strconv.FormatInt(pub.ID, 10)
-	if rr := serve("POST", pubURL+"/paywall/simulate", cookieA, nil); rr.Code != http.StatusSeeOther {
-		t.Fatalf("paywall/simulate = %d", rr.Code)
+	pubAPI := "/api/v1/p/" + pub.Slug + "/1"
+
+	// before any subscription: cross-workspace access resolves wsA's
+	// issue but a missing or bad key keeps it gated — no paid body
+	rr := serve("GET", pubAPI+"?ws="+wsA.ID, "", nil)
+	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
+		t.Error("ws param without a key opened the paid body")
 	}
-	emails, _ := wsA.DB.OutboxEmails(ctx)
-	var link string
-	for _, e := range emails {
-		if e.Kind == "magic_link" {
-			full, _ := wsA.DB.GetOutboxEmail(ctx, e.ID)
-			m := regexp.MustCompile(`key=([^&"']+)&(?:amp;)?tok=([^"']+)`).FindStringSubmatch(full.BodyHTML)
-			if m != nil {
-				link = fmt.Sprintf("%s/reader?key=%s&tok=%s", pubURL, m[1], m[2])
-			}
-		}
-	}
-	if link == "" {
-		t.Fatal("magic-link email does not carry key + tok parameters")
+	rr = serve("GET", pubAPI+"?key=deadbeef&ws="+wsA.ID, "", nil)
+	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
+		t.Error("ws param with a bad key opened the paid body")
 	}
 
-	// visitor B (no cookie): the ws parameter lands them in wsA's issue
-	rr := serve("GET", link, "", nil)
+	// simulate the payment: the demo reader gets a key+tok magic link
+	rr = serve("POST", "/api/v1/publications/"+strconv.FormatInt(pub.ID, 10)+"/paywall/simulate", cookieA, nil)
+	var link string
+	if v := apiJSON(t, rr); rr.Code == 200 {
+		link, _ = v["magic_link"].(string)
+	}
+	if link == "" {
+		t.Fatalf("paywall simulate returned no magic link (%d)", rr.Code)
+	}
+	// the magic link targets the reader page; the page calls the API
+	apiLink := strings.Replace(link, "/p/", "/api/v1/p/", 1)
+
+	// visitor B (no cookie): the tok parameter lands them in wsA's issue
+	rr = serve("GET", apiLink, "", nil)
 	if !strings.Contains(rr.Body.String(), "Conteúdo completo") {
 		t.Fatalf("magic link cross-browser: got %d / %q", rr.Code, rr.Body.String()[:200])
 	}
-	// sanity: the same link minus ws opens the visitor's own (empty)
+	// sanity: the same link minus tok opens the visitor's own (empty)
 	// workspace — the sent content must not render
-	rr = serve("GET", strings.SplitN(link, "&tok=", 2)[0], "", nil)
+	rr = serve("GET", strings.SplitN(apiLink, "&tok=", 2)[0], "", nil)
 	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
-		t.Error("link without ws leaked content into another workspace")
-	}
-	// ws alone (no valid key) must not open the other workspace either
-	rr = serve("GET", pubURL+"/reader?key=deadbeef&ws="+wsA.ID, "", nil)
-	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
-		t.Error("ws param with a bad key opened the other workspace")
+		t.Error("link without tok leaked content into another workspace")
 	}
 
 	// SECURITY: the reader link must never hijack the visitor's editor
 	// session — opening it from another browser leaves that browser's
 	// workspace cookie (and every editor route) untouched.
 	cookieB := strings.SplitN(serve("GET", "/", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
-	rr = serve("GET", link, cookieB, nil)
+	rr = serve("GET", apiLink, cookieB, nil)
 	if !strings.Contains(rr.Body.String(), "Conteúdo completo") {
 		t.Fatalf("magic link with own session: got %d", rr.Code)
 	}
 	if sc := rr.Header().Get("Set-Cookie"); strings.Contains(sc, wsA.ID) {
 		t.Fatalf("reader link set the editor workspace cookie: %q", sc)
 	}
-	// editor routes still resolve to visitor B's own (empty) workspace
-	rr = serve("GET", "/issue/1", cookieB, nil)
-	if strings.Contains(rr.Body.String(), "Conteúdo completo") {
-		t.Error("editor route leaked the linked workspace's issue")
-	}
-	// reader-facing pages carry no editor navigation
-	rrReader := serve("GET", link, cookieB, nil)
-	for _, nav := range []string{">Sources<", ">Run<", ">Guide<", ">Costs<", ">Outbox<", ">Settings<"} {
-		if strings.Contains(rrReader.Body.String(), nav) {
-			t.Errorf("reader page shows editor nav link %q", nav)
-		}
-	}
-	if strings.Contains(rrReader.Body.String(), "/paywall") {
-		t.Error("keyed reader page links back to the editor paywall")
+	// editor API calls still resolve to visitor B's own (empty) workspace
+	if rr := serve("GET", "/api/v1/issues/"+strconv.FormatInt(iid, 10), cookieB, nil); rr.Code != 404 {
+		t.Errorf("editor route leaked the linked workspace's issue: %d", rr.Code)
 	}
 
 	// after the reader unsubscribes the same magic link still opens —
@@ -616,7 +599,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	if err := wsA.DB.UnsubscribeReader(ctx, rid); err != nil {
 		t.Fatalf("UnsubscribeReader: %v", err)
 	}
-	rr = serve("GET", link, "", nil)
+	rr = serve("GET", apiLink, "", nil)
 	if rr.Code != 200 {
 		t.Fatalf("magic link after unsubscribe = %d, want 200", rr.Code)
 	}

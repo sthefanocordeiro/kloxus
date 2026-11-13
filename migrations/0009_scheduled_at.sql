@@ -1,1 +1,0 @@
-ALTER TABLE issues ADD COLUMN scheduled_at TEXT NOT NULL DEFAULT '';
