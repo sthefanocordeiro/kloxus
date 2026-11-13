@@ -5,7 +5,7 @@ link, **hosted demo URL (must stay up through evaluation)**, and a
 **≤3-minute video** (no login, English). Design decisions live in
 [decisions.md](decisions.md); product context in the root README.
 
-**Direction changed on 2026-11-12 (D27–D34):** we ship a hosted real app —
+**Direction changed on 2026-11-12 (D27–D36):** we ship a hosted real app —
 real sources, real model calls, real email, Postgres — instead of the
 zero-setup fixture demo. Judges are not required to run anything locally.
 
@@ -71,9 +71,9 @@ to SQLite + Litestream and move on.
 - **Source catalog and global ingestion** — seeded catalog with policy,
   scheduler, conditional GET, robots re-check, shared `items`, fetch log;
   Daily Journal as a signal source. (D29, D31)
-- **LLM guards and second provider** — run budgets, daily cap, kill switch,
-  retries, fallback to the recorded sample; OpenAI-compatible provider.
-  (D32)
+- **LLM guards** — run budgets, daily cap, kill switch, retries, fallback to
+  the recorded sample; Anthropic only (`claude-haiku-5-5` triage,
+  `claude-sonnet-5-5` drafting). (D32, D36)
 - **Resend and workspace claim** — magic-link confirmation, caps, real
   delivery of approved issues. (D33)
 
@@ -125,8 +125,10 @@ The real pipeline and the landing page are never cut.
   provider, Resend, Firecrawl, Daily Journal). Each has a fake or a recorded
   fallback; the fixture demo stays up as the fallback URL.
 - **LLM spend and quality.** Anonymous visitors trigger real calls; caps and
-  the kill switch are mandatory. The zero-cost provider must pass the
-  quality gate in D32 or we stay on Anthropic with a tighter cap.
+  the kill switch are mandatory. D36 fixed the provider to Anthropic on a
+  prepaid USD 20 balance — the second, OpenAI-compatible provider and the
+  zero-cost-provider option from D32 are dropped; there is no cheaper
+  fallback if quality slips.
 - **Free tiers.** Supabase pauses after one idle week (the scheduler keeps
   it awake) and has no backups (nightly dump). Resend allows 100 emails a
   day.
