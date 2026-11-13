@@ -555,7 +555,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	for _, e := range sorted {
 		d := *dossierByRef[e.ref]
 		d.Title = ""
-		dj, _ := json.Marshal(d)
+		dj := d.promptJSON()
 		di := ddItem{Ref: e.ref, Title: e.title, Dossier: string(dj)}
 		for j, it := range e.sources {
 			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
@@ -972,6 +972,21 @@ type DossierSource struct {
 	URL    string `json:"url"` // canonical (fictional) article URL
 	ItemID int64  `json:"item_id,omitempty"`
 	Name   string `json:"name,omitempty"` // outlet name
+}
+
+// promptJSON marshals the dossier for embedding in a prompt: the same
+// shape as the stored JSON minus database-local item ids, so replay keys
+// stay stable when items land on different rows (reused databases,
+// second publications, shared Postgres ids).
+func (d *Dossier) promptJSON() []byte {
+	c := *d
+	c.Sources = make([]DossierSource, len(d.Sources))
+	for i, s := range d.Sources {
+		s.ItemID = 0
+		c.Sources[i] = s
+	}
+	data, _ := json.Marshal(c)
+	return data
 }
 
 // fillSources rebuilds the source list from member items so [n] refs in

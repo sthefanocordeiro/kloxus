@@ -35,9 +35,8 @@ func (s *Server) appLegacyRedirect(w http.ResponseWriter, r *http.Request) {
 
 // appPage serves the SPA from the site root: real files get served
 // (hashed assets immutable), everything else falls back to index.html
-// so client-side routes like /issues/3 work on refresh. Paths claimed
-// by the classic interface and the API are registered before the
-// catch-all, so they still win.
+// so client-side routes like /issues/3 work on refresh. The API and the
+// public routes are registered before the catch-all, so they still win.
 func (s *Server) appPage(w http.ResponseWriter, r *http.Request) {
 	dist := appDist()
 	if dist == nil {

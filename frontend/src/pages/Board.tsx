@@ -6,7 +6,8 @@ import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dos
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
-import { Badge, Button, Card, KDialog, KPopover } from "../ui";
+import { Badge, Button, Card } from "../ui";
+import { KDialog, KPopover } from "../ui-overlays";
 
 // --- SSE step rail: real counts per finished step, never percentages ---
 
@@ -15,6 +16,11 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
   const [events, setEvents] = useState<RunEvent[]>([]);
   const eventsRef = useRef<RunEvent[]>([]);
   const doneRef = useRef(false);
+  // onDone is an inline prop (new identity every render) — keep it in a
+  // ref so the SSE effect only keys on runID instead of reconnecting on
+  // every parent render.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
   useEffect(() => {
     const es = new EventSource(`/api/v1/runs/${runID}/events`);
     es.addEventListener("step", (e) => {
@@ -27,11 +33,11 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
       if (doneRef.current) return;
       doneRef.current = true;
       const run = JSON.parse((e as MessageEvent).data);
-      onDone(run, eventsRef.current);
+      onDoneRef.current(run, eventsRef.current);
     });
     es.onerror = () => es.close();
     return () => es.close();
-  }, [runID, onDone]);
+  }, [runID]);
 
   const doneSteps = new Set(events.map((e) => e.step));
   const running = steps.find((s) => !doneSteps.has(s)); // first unfinished step ticks

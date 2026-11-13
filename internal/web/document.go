@@ -234,31 +234,6 @@ func removeInItem(body string, item *docItem, raw string) (string, bool) {
 	return body[:item.spanStart] + newSeg + body[item.spanEnd:], true
 }
 
-// docItemSpan returns the byte span of one item's block inside the body
-// (from its ### heading to the next ### or ## line), so removals can be
-// scoped to the item that owns the sentence.
-func docItemSpan(body string, ref int64) (int, int) {
-	pos, start := 0, -1
-	for _, line := range strings.Split(body, "\n") {
-		t := strings.TrimSpace(line)
-		if docItemRe.MatchString(t) || docSectionRe.MatchString(t) {
-			if start >= 0 {
-				return start, pos
-			}
-			if m := docItemRe.FindStringSubmatch(t); m != nil {
-				if n, _ := strconv.Atoi(m[2]); int64(n) == ref {
-					start = pos
-				}
-			}
-		}
-		pos += len(line) + 1
-	}
-	if start < 0 {
-		return 0, len(body)
-	}
-	return start, len(body)
-}
-
 // bestEvidence returns the dossier fact carrying ref that best matches
 // the sentence's wording (the passage that supports it); the article's
 // opening when no fact matches.

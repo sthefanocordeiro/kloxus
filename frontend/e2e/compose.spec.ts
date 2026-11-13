@@ -5,6 +5,17 @@ import { expect, test, type Page } from "@playwright/test";
 // hand with cited sources → approve → dry send. No draft run, no model
 // step anywhere in the flow.
 
+type EditorWindow = Window & {
+  __ed?: {
+    state: {
+      selection: {
+        empty: boolean;
+        $from?: { node(n: number): { type?: { name?: string } } };
+      };
+    };
+  };
+};
+
 const issueCol = (page: Page) => page.locator('section[aria-label="This issue"]');
 const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
 const sectionBox = (page: Page, name: string) =>
@@ -40,7 +51,7 @@ async function typeCommentary(page: Page) {
     const editable = blocks.nth(i).locator("[data-node-view-content]");
     await editable.click();
     await page.waitForFunction(() => {
-      const s = (window as any).__ed?.state.selection;
+      const s = (window as EditorWindow).__ed?.state.selection;
       return !!s && s.empty && s.$from?.node(-1)?.type?.name === "commentary";
     }, null, { timeout: 15000 });
     await page.keyboard.type("My reading of this section, for the record.", { delay: 15 });

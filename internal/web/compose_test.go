@@ -9,18 +9,13 @@ import (
 	"context"
 	"fmt"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/sthefanocordeiro/kloxus/examples"
-	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
-	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
-	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
 
 // countingLLM counts Complete calls so the test can prove the manual
@@ -47,47 +42,12 @@ func (c *countingLLM) count() int {
 // composeServer is demoServer with a counting LLM provider.
 func composeServer(t *testing.T) (*web.Server, *store.DB, *store.Publication, *countingLLM) {
 	t.Helper()
-	ctx := context.Background()
-	base := t.TempDir()
-	cfg := &config.Config{
-		Mode: "demo", Port: 8080,
-		DBPath: filepath.Join(base, "kloxus.db"), OutDir: filepath.Join(base, "out"),
-		ModelTriage: "claude-haiku-5-5", ModelDraft: "claude-sonnet-5-5", MaxDeepDives: 3,
-	}
-	db, err := store.Open(cfg.DBPath)
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	seed := func(ctx context.Context, sdb *store.DB) error {
-		data, err := examples.FS.ReadFile("publications/futuro-proximo.yaml")
-		if err != nil {
-			return err
-		}
-		def, err := config.ParsePublication(data)
-		if err != nil {
-			return err
-		}
-		_, err = sdb.SeedPublication(ctx, def)
-		return err
-	}
-	if err := seed(ctx, db); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	pubs, err := db.ListPublications(ctx)
-	if err != nil || len(pubs) == 0 {
-		t.Fatalf("ListPublications: %v", err)
-	}
-	counter := &countingLLM{inner: llm.Replay{FS: examples.FS, Dir: "fixtures/llm",
-		DumpDir: filepath.Join(cfg.OutDir, "llm-dump")}}
-	srv := web.New(web.Deps{
-		WS: workspace.OpenLocal(db, seed), Cfg: cfg,
-		Fetcher: sources.FixtureFetcher{FS: examples.FS},
-		LLM:     counter,
-		Monitor: sources.FakeMonitor{},
-		Seed:    seed,
+	counter := &countingLLM{}
+	srv, db, pub, _ := demoServerOpt(t, func(d *web.Deps) {
+		counter.inner = d.LLM
+		d.LLM = counter
 	})
-	return srv, db, pubs[0], counter
+	return srv, db, pub, counter
 }
 
 // docItems flattens a document response into its items.
