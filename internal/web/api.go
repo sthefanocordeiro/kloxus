@@ -1602,7 +1602,9 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 				st.mu.Unlock()
 			},
 		}
-		res, err := runner.RunPhaseB(context.Background(), pub, iss.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+		defer cancel()
+		res, err := runner.RunPhaseB(ctx, pub, iss.ID)
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		st.st.Done = true

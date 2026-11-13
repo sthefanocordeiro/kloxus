@@ -26,7 +26,11 @@ func (s *Server) RunScheduler(ctx context.Context, pool *store.Pool, interval ti
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.dispatchDue(ctx, pool)
+			// Bound each cycle: a dead conn in the claim or a job must
+			// not wedge the only dispatcher goroutine for good.
+			dctx, cancel := context.WithTimeout(ctx, dispatchTimeout)
+			s.dispatchDue(dctx, pool)
+			cancel()
 		}
 	}
 }

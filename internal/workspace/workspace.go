@@ -425,7 +425,9 @@ func (m *Manager) touch(id string) {
 	}
 	m.lastSeen[id] = time.Now()
 	m.mu.Unlock()
-	if err := m.pool.TouchWorkspace(context.Background(), id); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := m.pool.TouchWorkspace(ctx, id); err != nil {
 		slog.Warn("workspace touch failed", "ws", id, "err", err)
 	}
 }
@@ -460,7 +462,11 @@ func (m *Manager) cleanupLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.cleanup(ctx)
+			// Bound one sweep — a dead conn in DeleteIdleWorkspaces
+			// would otherwise wedge the cleanup loop for good.
+			cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			m.cleanup(cctx)
+			cancel()
 		}
 	}
 }

@@ -135,6 +135,20 @@ func New(d Deps) *Server {
 // its lifetime is a run's, not a request's.
 const reqTimeout = 3 * time.Minute
 
+// runTimeout bounds a pipeline worker goroutine the way reqTimeout
+// bounds a request. statement_timeout cannot deliver its error over a
+// dead socket, so a dropped pooled conn would otherwise wedge the
+// worker forever — the run never reports Done, the publication's run
+// slot stays locked, and the checked-out conn leaks. On expiry the run
+// fails and the slot frees. Sized well above real run durations (the
+// hosted e2e journeys run ~2–3 min).
+const runTimeout = 15 * time.Minute
+
+// dispatchTimeout bounds one scheduler dispatch cycle — the claim plus
+// every job it runs serially — so a dead conn can't wedge the single
+// dispatcher goroutine for good.
+const dispatchTimeout = 10 * time.Minute
+
 // ServeHTTP resolves the request workspace (cookie in hosted mode), caps
 // request bodies, assigns a request id, then dispatches.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
