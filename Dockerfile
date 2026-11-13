@@ -16,7 +16,9 @@ COPY --from=frontend /src/internal/web/appdist ./internal/web/appdist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kloxus ./cmd/kloxus
 
 FROM debian:bookworm-slim
-RUN useradd --system --uid 10001 --create-home kloxus \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& useradd --system --uid 10001 --create-home kloxus \
 	&& mkdir -p /data \
 	&& chown -R kloxus:kloxus /data
 USER kloxus
