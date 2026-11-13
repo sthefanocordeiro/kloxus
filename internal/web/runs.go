@@ -63,8 +63,13 @@ func (st *runProgress) blockRun(b *llm.BlockedError) {
 // admitRun applies the spend guards before a pipeline run launches
 // (D32/D36). A bookkeeping failure logs and admits — the guards degrade
 // rather than wedge the product on a ledger hiccup.
+//
+// Deterministic mode (KLOXUS_LLM_MODE=off) is exempt: the run makes no
+// model calls, so AI admission — kill switch, budgets, the run-start
+// ledger charge — does not apply to it. The guard still exists for the
+// admin surface and keeps wrapping any real provider.
 func (s *Server) admitRun(ctx context.Context, wsID string) *llm.BlockedError {
-	if s.d.Guard == nil {
+	if s.d.Guard == nil || s.d.Cfg.LLMOff() {
 		return nil
 	}
 	err := s.d.Guard.AdmitRun(ctx, wsID)
@@ -143,8 +148,8 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		runner := &pipeline.Runner{
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
-			MaxDeepDives: s.d.Cfg.MaxDeepDives,
-			DemoMode:     s.d.Cfg.Mode == "demo",
+			MaxDeepDives:  s.d.Cfg.MaxDeepDives,
+			DemoMode:      s.d.Cfg.Mode == "demo",
 			Deterministic: s.d.Cfg.LLMOff(),
 			OnStep: func(step string) {
 				st.mu.Lock()
@@ -188,7 +193,9 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		st.mu.Unlock()
 		// A nothing-new run made no model calls — the daily budget
 		// counts real runs only, so refund its start (D36).
-		if res.NoNewItems && s.d.Guard != nil {
+		// Deterministic runs were never charged, so there is nothing
+		// to refund — undoing would drop a real run's ledger row.
+		if res.NoNewItems && s.d.Guard != nil && !s.d.Cfg.LLMOff() {
 			s.d.Guard.UndoRunStart(ctx, wsp.ID)
 		}
 	}()
