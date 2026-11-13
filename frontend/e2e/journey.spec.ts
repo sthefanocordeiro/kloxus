@@ -21,6 +21,20 @@ const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
 
+// KLOXUS_LLM_MODE=off runs the whole pipeline deterministically — zero
+// model calls, so AI artifacts (the guide rebuild behind "Rule learned")
+// cannot appear. The workspace endpoint reports the mode; a server that
+// predates the flag returns no field and behaves like "auto".
+async function llmOff(page: Page) {
+  const res = await page.request.get("/api/v1/workspace");
+  if (!res.ok()) return false;
+  const body = (await res.json()) as {
+    llm_mode?: string;
+    workspace?: { llm_mode?: string };
+  };
+  return (body.workspace ?? body).llm_mode === "off";
+}
+
 // The workspace starts empty — every journey walks onboarding first:
 // landing → /new → /pub/:id/sources → confirm → first run → board.
 async function onboard(page: Page) {
@@ -56,16 +70,26 @@ async function boardReady(page: Page, isPhone: boolean) {
 }
 
 async function boardOps(page: Page, isPhone: boolean) {
+  const off = await llmOff(page);
   const tabIssue = page.getByRole("button", { name: /This issue/ });
   const tabBench = page.getByRole("button", { name: /^Pautas/ });
   if (isPhone) await tabIssue.click();
 
-  // 1) remove a Worth-knowing story giving a reason — the guide learns
+  // 1) remove a Worth-knowing story giving a reason — with a model the
+  //    guide learns a rule; under llm off the rebuild is an AI action and
+  //    is skipped, so the toast reports the removal and the bench badge
+  //    marks the deterministic run (attached-asserted: the bench column
+  //    is hidden behind its tab on phone)
   const wk = sectionBox(page, "Worth knowing");
   const removedTitle = (await wk.locator("p.font-doc").first().textContent())!.trim();
   await wk.getByRole("button", { name: "Remove", exact: true }).first().click();
   await page.getByRole("button", { name: "not for my audience" }).click();
-  await expect(page.getByText(/Rule learned/)).toBeVisible({ timeout: 15000 });
+  if (off) {
+    await expect(page.getByText(/^Removed “/)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/AI off — deterministic ranking/)).toHaveCount(1);
+  } else {
+    await expect(page.getByText(/Rule learned/)).toBeVisible({ timeout: 15000 });
+  }
 
   // 2) add a story from the bench with the "+" button (nth(1): the just-
   //    removed story re-ranks first on the bench — pick a different one
