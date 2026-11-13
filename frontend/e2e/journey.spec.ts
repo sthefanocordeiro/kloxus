@@ -93,6 +93,12 @@ async function boardOps(page: Page, isPhone: boolean) {
     .first()
     .click();
   await page.getByRole("button", { name: /Quick links/ }).click();
+  // a full target section asks which story to swap out — pick the first
+  const swap = page.getByRole("dialog");
+  await page.waitForTimeout(500);
+  if (await swap.getByText(/pick a story to swap out/).isVisible()) {
+    await swap.getByRole("button").first().click();
+  }
   await expect(page.getByText(/Moved/)).toBeVisible({ timeout: 15000 });
 
   // 4) the lineup persists across a reload — the rejected story stays
