@@ -42,8 +42,8 @@ async function onboard(page: Page) {
   await expect(page.locator("ul li a").first()).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Confirm \d+ sources & collect/ }).click();
   // the first real-mode run collects, dedupes and triages live feeds —
-  // minutes, not the fixture's seconds
-  await page.waitForURL(/\/issues\/\d+/, { timeout: 600000 });
+  // ~10-13 min hosted, seconds against fixtures
+  await page.waitForURL(/\/issues\/\d+/, { timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
 }
 
 async function boardReady(page: Page, isPhone: boolean) {
