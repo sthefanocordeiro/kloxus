@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -48,6 +49,10 @@ func AsBlocked(err error) (*BlockedError, bool) {
 // back to in-memory counters (tests, embedded runs).
 type SpendStore interface {
 	LLMRunStart(ctx context.Context, ws string) error
+	// LLMRunUndo drops one recorded run start — the budget counts real
+	// runs, so a run that collected nothing and made no model calls is
+	// refunded.
+	LLMRunUndo(ctx context.Context, ws string) error
 	LLMCall(ctx context.Context, ws, model string, in, out int, cost float64) error
 	// Timestamps travel in the schema's TEXT UTC shape
 	// ('YYYY-MM-DD HH24:MI:SS') — same convention as store.RequeueStaleJobs.
@@ -239,6 +244,25 @@ func (g *Guard) AdmitRun(ctx context.Context, ws string) error {
 		g.mu.Unlock()
 	}
 	return nil
+}
+
+// UndoRunStart refunds one admitted run start: a run that collected no
+// new items made no model calls, and the per-workspace budget counts
+// real runs only (D36). Which stored row goes does not matter — the
+// count is what the budget reads.
+func (g *Guard) UndoRunStart(ctx context.Context, ws string) {
+	if g.Store != nil {
+		if err := g.Store.LLMRunUndo(ctx, ws); err != nil {
+			slog.Warn("run-start refund failed", "ws", ws, "err", err)
+		}
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	k := "runs:" + g.dayKey() + ":" + ws
+	if g.mem[k] > 0 {
+		g.mem[k]--
+	}
 }
 
 // Complete implements Provider: guards, then forwards to Inner and

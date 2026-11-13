@@ -186,6 +186,11 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		st.st.IssueID = res.IssueID
 		st.st.Step = pipeline.Steps[len(pipeline.Steps)-1] // report the final step, not the last one ticked
 		st.mu.Unlock()
+		// A nothing-new run made no model calls — the daily budget
+		// counts real runs only, so refund its start (D36).
+		if res.NoNewItems && s.d.Guard != nil {
+			s.d.Guard.UndoRunStart(ctx, wsp.ID)
+		}
 	}()
 	return st
 }

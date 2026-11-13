@@ -14,6 +14,17 @@ func (p *Pool) LLMRunStart(ctx context.Context, ws string) error {
 	return err
 }
 
+// LLMRunUndo drops the workspace's newest recorded run start — a run
+// that collected nothing made no model calls, so the budget refunds it.
+func (p *Pool) LLMRunUndo(ctx context.Context, ws string) error {
+	_, err := p.db.ExecContext(ctx,
+		`DELETE FROM llm_ledger WHERE id = (
+			SELECT id FROM llm_ledger
+			WHERE workspace_id = $1 AND kind = 'run_start'
+			ORDER BY id DESC LIMIT 1)`, ws)
+	return err
+}
+
 // LLMCall records one real model call's usage and dollar cost.
 func (p *Pool) LLMCall(ctx context.Context, ws, model string, in, out int, cost float64) error {
 	_, err := p.db.ExecContext(ctx,

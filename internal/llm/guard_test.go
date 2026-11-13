@@ -34,6 +34,18 @@ func (m *memSpend) LLMRunStart(_ context.Context, ws string) error {
 	return nil
 }
 
+func (m *memSpend) LLMRunUndo(_ context.Context, ws string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := len(m.runs) - 1; i >= 0; i-- {
+		if m.runs[i].ws == ws {
+			m.runs = append(m.runs[:i], m.runs[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
 func (m *memSpend) LLMCall(_ context.Context, ws, model string, in, out int, cost float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -112,6 +124,12 @@ func TestGuardWorkspaceRunBudget(t *testing.T) {
 	// a different workspace keeps its own budget
 	if err := g.AdmitRun(ctx, "ws2"); err != nil {
 		t.Fatalf("ws2 admit: %v", err)
+	}
+	// A refunded start frees the budget again (nothing-new runs make no
+	// model calls and must not count — D36).
+	g.UndoRunStart(ctx, "ws1")
+	if err := g.AdmitRun(ctx, "ws1"); err != nil {
+		t.Fatalf("admit after refund: %v", err)
 	}
 }
 
