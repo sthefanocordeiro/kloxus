@@ -40,6 +40,14 @@ type Config struct {
 	AbacatePayKey   string
 	PublicURL       string
 	WebhookSecret   string
+
+	// Ingest governs the global source scheduler (D29). IngestEnabled
+	// starts the poll loop (real mode defaults it on, demo off).
+	// DailyJournal gates the Daily Journal signal source separately —
+	// it flips without a deploy and stays off until the operator's
+	// written permission is confirmed (D31).
+	IngestEnabled bool
+	DailyJournal  bool
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
@@ -74,6 +82,14 @@ func Load() (*Config, error) {
 	if cfg.Mode != "demo" && cfg.Mode != "real" {
 		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)
 	}
+	// Real mode ingests by default; KLOXUS_INGEST=0/opt-out disables it.
+	// Demo mode stays fixture-only unless explicitly opted in.
+	cfg.IngestEnabled = cfg.Mode == "real"
+	if v := os.Getenv("KLOXUS_INGEST"); v != "" {
+		cfg.IngestEnabled = v == "1" || v == "true" || v == "yes"
+	}
+	cfg.DailyJournal = os.Getenv("KLOXUS_INGEST_DAILY_JOURNAL") == "1" ||
+		os.Getenv("KLOXUS_INGEST_DAILY_JOURNAL") == "true"
 	return cfg, nil
 }
 

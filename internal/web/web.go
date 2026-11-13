@@ -27,6 +27,9 @@ type Deps struct {
 	Fetcher sources.Fetcher
 	LLM     llm.Provider
 	Monitor sources.MonitorProvider
+	// Pool reaches the global tables (source_catalog, shared items,
+	// fetch_log) that live outside any workspace.
+	Pool *store.Pool
 	// Seed re-creates the example publication inside a database; used for
 	// workspace resets and the hosted template.
 	Seed func(ctx context.Context, db *store.DB) error
@@ -122,6 +125,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/outbox/{id}", s.apiOutboxEmail)
 	m.HandleFunc("POST /api/v1/demo/reset", s.apiDemoReset)
 	m.HandleFunc("POST /api/v1/demo/new", s.apiDemoNew)
+	m.HandleFunc("GET /api/v1/admin/ingestion", s.apiAdminIngestion)
 	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
 		m.HandleFunc(method+" /api/v1/", s.apiNotFound)
 	}

@@ -52,8 +52,11 @@ jget() {
 
 # wait_run <run-id> <label> — polls until the run finishes
 wait_run() {
+	# The real app fetches live feeds and calls the model — a run takes
+	# minutes, not the fixture's seconds. 400×2 s ≈ 13 min, inside the
+	# server's own 15-minute run bound.
 	local rid="$1" label="$2" i st
-	for i in $(seq 1 150); do
+	for i in $(seq 1 400); do
 		[ "$(req GET "/api/v1/runs/$rid")" = "200" ] || die "$label: run status request failed"
 		st="$(jget run.status)"
 		case "$st" in
@@ -63,7 +66,7 @@ wait_run() {
 			*) die "$label: unknown run status '$st'" ;;
 		esac
 	done
-	die "$label run did not finish in 5 minutes"
+	die "$label run did not finish in 13 minutes"
 }
 
 # --- 1. health -----------------------------------------------------------

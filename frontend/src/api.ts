@@ -314,6 +314,29 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   return data as T;
 }
 
+// The real-mode catalog splits into offered rows (launch/signal —
+// pickable) and unavailable rows (hold/blocked — shown with a reason).
+export interface CatalogOffer {
+  type: string;
+  url: string;
+  name?: string;
+  items_per_week?: number;
+  policy?: string;
+  kind?: string;
+  suspended?: boolean;
+  note?: string;
+}
+export interface CatalogUnavailable {
+  name: string;
+  url: string;
+  policy: string;
+  note?: string;
+}
+export interface SourceCatalog {
+  offered: CatalogOffer[];
+  unavailable: CatalogUnavailable[];
+}
+
 export const api = {
   workspace: () => request<{ workspace: Workspace }>("GET", "/api/v1/workspace").then((r) => r.workspace ?? (r as unknown as Workspace)),
   publications: () => request<{ publications: Publication[] }>("GET", "/api/v1/publications").then((r) => r.publications),
@@ -395,8 +418,8 @@ export const api = {
   sources: (pubID: number | string) =>
     request<{ sources: SourceRow[] }>("GET", `/api/v1/publications/${pubID}/sources`).then((r) => r.sources),
   sourceCatalog: (pubID: number | string) =>
-    request<{ offered: { type: string; url: string; name?: string; items_per_week?: number }[] }>(
-      "GET", `/api/v1/publications/${pubID}/sources/catalog`).then((r) => r.offered),
+    request<{ offered: CatalogOffer[]; unavailable?: CatalogUnavailable[] }>(
+      "GET", `/api/v1/publications/${pubID}/sources/catalog`),
   sourcePreview: (pubID: number | string, type: string, url: string) =>
     request<{ items: PreviewItem[]; note?: string }>(
       "GET", `/api/v1/publications/${pubID}/sources/preview?type=${type}&url=${encodeURIComponent(url)}`),

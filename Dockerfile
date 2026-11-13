@@ -22,6 +22,8 @@ RUN useradd --system --uid 10001 --create-home kloxus \
 USER kloxus
 WORKDIR /app
 COPY --from=build /out/kloxus /app/kloxus
+# KLOXUS_MODE is a build-time default only — fly.toml overrides it per
+# app (kloxus runs real, kloxus-demo stays on fixtures).
 ENV KLOXUS_MODE=demo \
 	KLOXUS_PORT=8080 \
 	KLOXUS_DATA_DIR=/data \
@@ -29,4 +31,4 @@ ENV KLOXUS_MODE=demo \
 	KLOXUS_NO_BROWSER=1
 EXPOSE 8080
 VOLUME ["/data"]
-ENTRYPOINT ["/app/kloxus", "demo"]
+ENTRYPOINT ["/app/kloxus", "serve"]

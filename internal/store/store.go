@@ -121,8 +121,27 @@ func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *s
 	return db.db.QueryRowContext(ctx, query, args...)
 }
 
+// migrateLock serializes schema application across every process
+// sharing this database — parallel `go test` binaries and app replicas
+// would otherwise apply a new migration concurrently.
+const migrateLock = 735113
+
 func (p *Pool) migrate() error {
-	if _, err := p.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+	ctx := context.Background()
+	conn, err := p.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrateLock); err != nil {
+		return err
+	}
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock($1)`, migrateLock)
+	}()
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
 		applied_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS'))
 	);`); err != nil {
@@ -141,7 +160,7 @@ func (p *Pool) migrate() error {
 	sort.Strings(names)
 	for _, name := range names {
 		var applied int
-		if err := p.db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = $1`, name).Scan(&applied); err != nil {
+		if err := conn.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations WHERE version = $1`, name).Scan(&applied); err != nil {
 			return err
 		}
 		if applied > 0 {
@@ -151,21 +170,20 @@ func (p *Pool) migrate() error {
 		if err != nil {
 			return err
 		}
-		tx, err := p.db.Begin()
-		if err != nil {
+		if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
 			return err
 		}
 		for _, stmt := range splitStatements(string(body)) {
-			if _, err := tx.Exec(stmt); err != nil {
-				tx.Rollback()
+			if _, err := conn.ExecContext(ctx, stmt); err != nil {
+				conn.ExecContext(ctx, "ROLLBACK")
 				return fmt.Errorf("migration %s: %w", name, err)
 			}
 		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, name); err != nil {
-			tx.Rollback()
+		if _, err := conn.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, name); err != nil {
+			conn.ExecContext(ctx, "ROLLBACK")
 			return err
 		}
-		if err := tx.Commit(); err != nil {
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 			return err
 		}
 	}
@@ -358,10 +376,15 @@ func (db *DB) DeleteSource(ctx context.Context, pubID, sourceID int64) error {
 }
 
 // ItemsPerWeek counts items collected from a source in the last 7 days.
+// Catalog-bound sources count the shared items their catalog row pulled.
 func (db *DB) ItemsPerWeek(ctx context.Context, sourceID int64) (int, error) {
 	var n int
-	err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM items WHERE workspace_id = $1 AND source_id = $2 AND fetched_at > $3`,
+	err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM items i
+		WHERE i.fetched_at > $3 AND (
+			(i.workspace_id = $1 AND i.source_id = $2)
+			OR i.catalog_id = (SELECT catalog_id FROM sources
+			                   WHERE workspace_id = $1 AND id = $2 AND catalog_id IS NOT NULL))`,
 		db.ws, sourceID, TSUTC(time.Now().Add(-7*24*time.Hour))).Scan(&n)
 	return n, err
 }
@@ -419,22 +442,27 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 	return id, nil
 }
 
-// Source is a stored source row.
+// Source is a stored source row. CatalogID links the row to the global
+// catalog pick it mirrors (0 for fixture/custom sources).
 type Source struct {
 	ID          int64
 	Name        string
 	Type        string
 	URL         string
+	CatalogID   int64
+	Policy      string // catalog policy: launch | signal | hold | blocked
 	LastFetchAt sql.NullString
 	LastStatus  sql.NullString
 }
 
-const sourceCols = `id, name, type, url, last_fetch_at, last_status`
+const sourceCols = `s.id, s.name, s.type, s.url, s.catalog_id,
+	COALESCE(c.policy, ''), s.last_fetch_at, s.last_status`
 
 // Sources lists a publication's sources.
 func (db *DB) Sources(ctx context.Context, pubID int64) ([]Source, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT `+sourceCols+` FROM sources WHERE workspace_id = $1 AND publication_id = $2 ORDER BY id`, db.ws, pubID)
+		`SELECT `+sourceCols+` FROM sources s LEFT JOIN source_catalog c ON c.id = s.catalog_id
+		 WHERE s.workspace_id = $1 AND s.publication_id = $2 ORDER BY s.id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -442,9 +470,11 @@ func (db *DB) Sources(ctx context.Context, pubID int64) ([]Source, error) {
 	var out []Source
 	for rows.Next() {
 		var s Source
-		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &s.URL, &s.LastFetchAt, &s.LastStatus); err != nil {
+		var catalogID sql.NullInt64
+		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &s.URL, &catalogID, &s.Policy, &s.LastFetchAt, &s.LastStatus); err != nil {
 			return nil, err
 		}
+		s.CatalogID = catalogID.Int64
 		out = append(out, s)
 	}
 	return out, rows.Err()

@@ -41,7 +41,9 @@ async function onboard(page: Page) {
   await page.getByRole("button", { name: "Latest items", exact: true }).first().click();
   await expect(page.locator("ul li a").first()).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Confirm \d+ sources & collect/ }).click();
-  await page.waitForURL(/\/issues\/\d+/, { timeout: 180000 });
+  // the first real-mode run collects, dedupes and triages live feeds —
+  // minutes, not the fixture's seconds
+  await page.waitForURL(/\/issues\/\d+/, { timeout: 600000 });
 }
 
 async function boardReady(page: Page, isPhone: boolean) {
@@ -98,7 +100,7 @@ async function boardOps(page: Page, isPhone: boolean) {
 
   // 5) draft — the step rail runs, then the editor lands
   await page.getByRole("button", { name: /Draft the issue/ }).click();
-  await expect(page.locator("[data-sid]").first()).toBeVisible({ timeout: 120000 });
+  await expect(page.locator("[data-sid]").first()).toBeVisible({ timeout: 600000 });
 
   // 6) the document is sealed: clicking a section or item heading and
   //    typing must not create free text anywhere — the schema only
@@ -274,12 +276,19 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   await onboard(page);
   await boardReady(page, false);
 
-  // fixture exhausted: a second prepare must say so on the board,
-  // not fail silently
+  // a second prepare must answer on the board, not fail silently. The
+  // fixture always exhausts to "Nothing new"; on the real app a feed
+  // poll may have brought fresh items since the first issue — then a
+  // live collection run is the equally correct outcome.
   await page.goto("/");
   await page.getByRole("link", { name: /Continue to/ }).click();
   await page.getByRole("button", { name: "Prepare next issue" }).click();
-  await expect(page.getByText(/Nothing new/)).toBeVisible({ timeout: 120000 });
+  await expect(
+    page
+      .getByText(/Nothing new/)
+      .or(page.getByText(/Preparing the issue/))
+      .or(page.getByRole("heading", { name: "This issue" })),
+  ).toBeVisible({ timeout: 600000 });
 
   // reset wipes the workspace — the visitor walks onboarding again and
   // the fixture sources collect a fresh issue
