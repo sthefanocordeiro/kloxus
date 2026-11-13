@@ -329,13 +329,14 @@ type apiItem struct {
 	Origin    string   `json:"origin"`
 	Title     string   `json:"title"`
 	Outlets   []string `json:"outlets"`
+	Signals   []string `json:"signals,omitempty"`
 	RejectWhy string   `json:"reject_reason,omitempty"`
 }
 
 func (s *Server) apiCardFor(r *http.Request, ii store.IssueItem) apiItem {
 	ctx := r.Context()
 	title, _ := db(r).StoryTitle(ctx, ii.StoryID)
-	var names []string
+	var names, signals []string
 	if story, err := db(r).StoryWithItems(ctx, ii.StoryID); err == nil {
 		seen := map[string]bool{}
 		for _, it := range story.Items {
@@ -347,12 +348,15 @@ func (s *Server) apiCardFor(r *http.Request, ii store.IssueItem) apiItem {
 				seen[n] = true
 				names = append(names, n)
 			}
+			if it.Signal() {
+				signals = append(signals, "via "+n)
+			}
 		}
 	}
 	card := apiItem{
 		ID: ii.ID, IssueID: ii.IssueID, StoryID: ii.StoryID, Section: ii.Section,
 		Score: ii.Score, Reason: ii.Reason, Status: ii.Status, Origin: ii.Origin,
-		Title: title, Outlets: names,
+		Title: title, Outlets: names, Signals: signals,
 	}
 	if card.Outlets == nil {
 		card.Outlets = []string{}
@@ -422,6 +426,8 @@ type apiSourceRow struct {
 	Type         string         `json:"type"`
 	URL          string         `json:"url"`
 	CanonicalURL string         `json:"canonical_url"`
+	CatalogID    int64          `json:"catalog_id,omitempty"`
+	Policy       string         `json:"policy,omitempty"`
 	LastFetchAt  *string        `json:"last_fetch_at"`
 	LastStatus   *string        `json:"last_status"`
 	ItemsPerWeek int            `json:"items_per_week"`
@@ -438,6 +444,7 @@ func (s *Server) sourceRow(r *http.Request, src store.Source) apiSourceRow {
 	row := apiSourceRow{
 		ID: src.ID, Name: src.Name, Type: src.Type, URL: src.URL,
 		CanonicalURL: dedupe.Canonical(src.URL),
+		CatalogID:    src.CatalogID, Policy: src.Policy,
 	}
 	if src.LastFetchAt.Valid {
 		row.LastFetchAt = &src.LastFetchAt.String
@@ -482,6 +489,10 @@ func (s *Server) apiSourceAdd(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	if rawURL == "" || (typ != "rss" && typ != "page") {
 		apiErr(w, 400, "validation", "type rss|page and url are required")
+		return
+	}
+	if s.d.Cfg.Mode != "demo" && s.d.Pool != nil {
+		s.realSourceAdd(w, r, pub, rawURL, in.Name)
 		return
 	}
 	note := ""
@@ -550,11 +561,18 @@ func (s *Server) apiSourceDelete(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{"ok": true})
 }
 
-// apiSourceCatalog lists the sample fixture sources not yet added — the
-// "offered" sources the sources screen proposes in demo mode.
+// apiSourceCatalog lists the sources a publication can pick. Demo mode
+// offers the sample fixture sources; real mode serves the global
+// catalog — launch/signal entries as picks, hold/blocked entries as
+// unavailable rows with their reason (D29/D31: the UI must show why a
+// known outlet is absent).
 func (s *Server) apiSourceCatalog(w http.ResponseWriter, r *http.Request) {
 	pub, err := s.apiPub(r)
 	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	if s.d.Cfg.Mode != "demo" && s.d.Pool != nil {
+		s.apiRealCatalog(w, r, pub)
 		return
 	}
 	def, err := s.sampleDef()
@@ -596,6 +614,14 @@ func (s *Server) apiSourcePreview(w http.ResponseWriter, r *http.Request) {
 	typ, rawURL := r.URL.Query().Get("type"), strings.TrimSpace(r.URL.Query().Get("url"))
 	if rawURL == "" || (typ != "rss" && typ != "page") {
 		apiErr(w, 400, "validation", "type rss|page and url are required")
+		return
+	}
+	if s.d.Cfg.Mode != "demo" && s.d.Pool != nil {
+		if s.realCatalogPreview(w, r, rawURL) {
+			return
+		}
+		apiErr(w, 400, "catalog_only",
+			"that source is not in the catalog — pick from the listed sources")
 		return
 	}
 	if !strings.HasPrefix(rawURL, "fixtures/") && s.d.Cfg.Mode == "demo" {
@@ -645,6 +671,10 @@ func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
 	decoded, err := apiDecode(r, &in)
 	if err != nil {
 		apiErr(w, 400, "validation", "invalid JSON body")
+		return
+	}
+	if s.d.Cfg.Mode != "demo" && s.d.Pool != nil {
+		s.realSourceConfirm(w, r, pub, in.Include, decoded)
 		return
 	}
 	if s.d.Cfg.Mode == "demo" {
@@ -1237,11 +1267,21 @@ func (s *Server) apiStory(w http.ResponseWriter, r *http.Request) {
 			seen[n] = true
 			outlets = append(outlets, n)
 		}
-		items = append(items, map[string]any{
+		row := map[string]any{
 			"id": it.ID, "title": it.Title, "url": "/a/" + fmt.Sprint(it.ID),
 			"outlet": n, "published_at": it.PublishedAt,
 			"snippet": truncateStr(it.ContentText, 400),
-		})
+		}
+		if it.Signal() {
+			// Link-level signal: shown as "via <source>" with its link —
+			// never as citation evidence (D30).
+			row["signal"] = true
+			row["via"] = n
+			if it.Meta.DJURL != "" {
+				row["via_url"] = it.Meta.DJURL
+			}
+		}
+		items = append(items, row)
 	}
 	apiJSON(w, 200, map[string]any{
 		"story": map[string]any{

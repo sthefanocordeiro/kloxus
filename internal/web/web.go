@@ -27,6 +27,9 @@ type Deps struct {
 	Fetcher sources.Fetcher
 	LLM     llm.Provider
 	Monitor sources.MonitorProvider
+	// Pool reaches the global tables (source_catalog, shared items,
+	// fetch_log) that live outside any workspace.
+	Pool *store.Pool
 	// RunTimeout bounds one pipeline run (collect or draft). Zero uses
 	// defaultRunTimeout; tests set it short to exercise the deadline.
 	RunTimeout time.Duration
@@ -128,6 +131,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/outbox/{id}", s.apiOutboxEmail)
 	m.HandleFunc("POST /api/v1/demo/reset", s.apiDemoReset)
 	m.HandleFunc("POST /api/v1/demo/new", s.apiDemoNew)
+	m.HandleFunc("GET /api/v1/admin/ingestion", s.apiAdminIngestion)
 	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
 		m.HandleFunc(method+" /api/v1/", s.apiNotFound)
 	}

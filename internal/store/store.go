@@ -375,10 +375,15 @@ func (db *DB) DeleteSource(ctx context.Context, pubID, sourceID int64) error {
 }
 
 // ItemsPerWeek counts items collected from a source in the last 7 days.
+// Catalog-bound sources count the shared items their catalog row pulled.
 func (db *DB) ItemsPerWeek(ctx context.Context, sourceID int64) (int, error) {
 	var n int
-	err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM items WHERE workspace_id = $1 AND source_id = $2 AND fetched_at > $3`,
+	err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM items i
+		WHERE i.fetched_at > $3 AND (
+			(i.workspace_id = $1 AND i.source_id = $2)
+			OR i.catalog_id = (SELECT catalog_id FROM sources
+			                   WHERE workspace_id = $1 AND id = $2 AND catalog_id IS NOT NULL))`,
 		db.ws, sourceID, TSUTC(time.Now().Add(-7*24*time.Hour))).Scan(&n)
 	return n, err
 }
@@ -436,22 +441,27 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 	return id, nil
 }
 
-// Source is a stored source row.
+// Source is a stored source row. CatalogID links the row to the global
+// catalog pick it mirrors (0 for fixture/custom sources).
 type Source struct {
 	ID          int64
 	Name        string
 	Type        string
 	URL         string
+	CatalogID   int64
+	Policy      string // catalog policy: launch | signal | hold | blocked
 	LastFetchAt sql.NullString
 	LastStatus  sql.NullString
 }
 
-const sourceCols = `id, name, type, url, last_fetch_at, last_status`
+const sourceCols = `s.id, s.name, s.type, s.url, s.catalog_id,
+	COALESCE(c.policy, ''), s.last_fetch_at, s.last_status`
 
 // Sources lists a publication's sources.
 func (db *DB) Sources(ctx context.Context, pubID int64) ([]Source, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT `+sourceCols+` FROM sources WHERE workspace_id = $1 AND publication_id = $2 ORDER BY id`, db.ws, pubID)
+		`SELECT `+sourceCols+` FROM sources s LEFT JOIN source_catalog c ON c.id = s.catalog_id
+		 WHERE s.workspace_id = $1 AND s.publication_id = $2 ORDER BY s.id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -459,9 +469,11 @@ func (db *DB) Sources(ctx context.Context, pubID int64) ([]Source, error) {
 	var out []Source
 	for rows.Next() {
 		var s Source
-		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &s.URL, &s.LastFetchAt, &s.LastStatus); err != nil {
+		var catalogID sql.NullInt64
+		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &s.URL, &catalogID, &s.Policy, &s.LastFetchAt, &s.LastStatus); err != nil {
 			return nil, err
 		}
+		s.CatalogID = catalogID.Int64
 		out = append(out, s)
 	}
 	return out, rows.Err()

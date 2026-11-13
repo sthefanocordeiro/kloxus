@@ -1,9 +1,13 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet } from "react-router-dom";
+import { api } from "./api";
 import { useT, type Lang } from "./i18n";
 
 // The chrome around every screen: brand, language switch.
 export function AppShell() {
   const { t, lang, setLang } = useT();
+  const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, retry: false, staleTime: Infinity });
+  const demo = ws.data?.mode === "demo";
   return (
     <div className="h-dvh flex flex-col">
       <header className="border-b border-line bg-paper-raised">
@@ -11,7 +15,7 @@ export function AppShell() {
           <Link to="/" className="font-doc text-lg font-semibold tracking-tight">
             {t.appName}
           </Link>
-          <span className="text-xs text-muted">demo</span>
+          {demo && <span className="text-xs text-muted">demo</span>}
           <div className="ml-auto flex items-center gap-1 text-xs">
             {(["en", "pt"] as Lang[]).map((l) => (
               <button

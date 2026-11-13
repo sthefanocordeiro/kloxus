@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,6 +22,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
+	"github.com/sthefanocordeiro/kloxus/internal/ingest"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
@@ -50,6 +52,8 @@ func main() {
 		err = cmdGuide(os.Args[2:])
 	case "costs":
 		err = cmdCosts(os.Args[2:])
+	case "ingest":
+		err = cmdIngest(os.Args[2:])
 	case "record":
 		err = cmdRecord(os.Args[2:])
 	case "-h", "--help", "help":
@@ -77,6 +81,8 @@ usage:
   kloxus sources check --publication <ref>
   kloxus guide show --publication <ref>
   kloxus costs --publication <ref> [--last n]
+  kloxus ingest [--daemon] [--daily-journal]  poll the source catalog once (or on its schedule)
+  kloxus ingest status                      show the global fetch log
   kloxus record --publication <ref>           regenerate LLM fixtures (real mode)`)
 }
 
@@ -225,9 +231,15 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	}
 	srv := web.New(web.Deps{
 		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider,
-		Monitor: monitor, Seed: seed,
+		Monitor: monitor, Seed: seed, Pool: pool,
 	})
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
+	if cfg.IngestEnabled {
+		// The global feed scheduler — feeds fetch once for every
+		// workspace (D29). Daily Journal stays behind its own flag.
+		sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, cfg.DailyJournal, log.Default())
+		go sched.Run(context.Background())
+	}
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)
 	go openBrowser(url)
@@ -260,7 +272,28 @@ func openBrowser(url string) {
 }
 
 func cmdServe(args []string) error {
-	return errors.New("real-mode UI is not implemented yet (milestones 3–4)")
+	// serve is the deployed entrypoint: it picks the runtime from
+	// KLOXUS_MODE — fixtures+replay in demo, live HTTP+Anthropic in
+	// real. demo stays as the explicit local/e2e command.
+	cfg, pool, db, err := openDemoDB()
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	fetcher, provider, err := modeRuntime(cfg)
+	if err != nil {
+		return err
+	}
+	// Real mode has no fixture template to refresh — the reseed hook
+	// stays nil so hosted workspaces keep only creator-made content.
+	var seed func(context.Context, *store.DB) error
+	if cfg.Mode == "demo" {
+		seed = func(ctx context.Context, sdb *store.DB) error {
+			_, err := seedExample(ctx, sdb)
+			return err
+		}
+	}
+	return serveUI(cfg, pool, db, fetcher, provider, seed)
 }
 
 func cmdRun(args []string) error {
@@ -553,5 +586,66 @@ func cmdRecord(args []string) error {
 	}
 	printResult(res)
 	fmt.Println("recorded fixtures to", *dir)
+	return nil
+}
+
+// cmdIngest runs the global source scheduler (`ingest`, `--daemon`) or
+// prints the fetch log (`ingest status`) — the manual live-run and the
+// operator's status surface for the source catalog.
+func cmdIngest(args []string) error {
+	if len(args) > 0 && args[0] == "status" {
+		return cmdIngestStatus()
+	}
+	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
+	daemon := fs.Bool("daemon", false, "keep polling on each source's schedule")
+	dj := fs.Bool("daily-journal", false, "also poll the Daily Journal signal source")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, pool, _, err := openDemoDB()
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	ctx := context.Background()
+	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, cfg.DailyJournal || *dj, log.Default())
+	if *daemon {
+		fmt.Println("ingest scheduler running (Ctrl+C to stop)")
+		sched.Run(ctx)
+		return nil
+	}
+	sched.PollOnce(ctx)
+	fmt.Println("poll complete — `kloxus ingest status` shows the fetch log")
+	return nil
+}
+
+func cmdIngestStatus() error {
+	_, pool, _, err := openDemoDB()
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	ctx := context.Background()
+	cat, err := pool.Catalog(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range cat {
+		cs := &cat[i]
+		fetchable := ""
+		if !cs.Fetchable() {
+			fetchable = " [never fetched]"
+		} else if cs.Suspended {
+			fetchable = " [suspended: " + cs.SuspendReason + "]"
+		}
+		n, _ := pool.CatalogItemsCount(ctx, cs.ID)
+		fmt.Printf("%-14s %-8s %-28s items=%-4d last=%s %s%s\n",
+			cs.Slug, cs.Policy, cs.Name, n, cs.LastFetchAt, cs.LastStatus, fetchable)
+		logs, _ := pool.FetchLog(ctx, cs.ID, 3)
+		for _, l := range logs {
+			fmt.Printf("    %-22s %-12s http=%-3d items=%-3d new=%-3d %s\n",
+				l.FetchedAt, l.Status, l.HTTPStatus, l.Items, l.NewItems, l.Detail)
+		}
+	}
 	return nil
 }
