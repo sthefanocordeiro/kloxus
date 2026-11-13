@@ -143,7 +143,9 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 	if err != nil {
 		return llm.Response{}, err
 	}
-	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: 8192}
+	// 32k: real feeds produce far larger JSON replies than the fixtures —
+	// an 8k cap truncates mid-JSON (dossier on ~20 real stories already did).
+	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: 32768}
 	resp, err := r.LLM.Complete(ctx, req)
 	if err != nil {
 		return resp, err
