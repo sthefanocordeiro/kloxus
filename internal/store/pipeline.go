@@ -237,7 +237,8 @@ func (db *DB) storyItems(ctx context.Context, storyID int64) ([]Item, error) {
 // StoriesWithItems loads all stories and their member items.
 func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, title FROM stories WHERE workspace_id = $1 AND publication_id = $2 ORDER BY id`, db.ws, pubID)
+		`SELECT id, title, COALESCE(triage_score,0), COALESCE(triage_reason,''), dedupe_key
+		 FROM stories WHERE workspace_id = $1 AND publication_id = $2 ORDER BY id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +247,7 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 	var out []Story
 	for rows.Next() {
 		var s Story
-		if err := rows.Scan(&s.ID, &s.Title); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.TriageScore, &s.TriageReason, &s.DedupeKey); err != nil {
 			return nil, err
 		}
 		s.PublicationID = pubID
