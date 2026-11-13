@@ -69,6 +69,13 @@ func tokSuffix(r *http.Request) string {
 
 // --- claim ---
 
+// hashToken digests a magic-link token for storage: the live token
+// travels only in the email, the DB keeps its SHA-256 hex.
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 // apiClaimStart mints a magic link and mails it to the creator.
 func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -95,7 +102,7 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
-	hash := hex.EncodeToString(sha256.New().Sum([]byte(token)))
+	hash := hashToken(token)
 	if err := wdb.SaveMagicLink(ctx, hash, email,
 		store.TSUTC(time.Now().Add(magicLinkTTL))); err != nil {
 		apiErr(w, 500, "internal", "could not save the claim link")
@@ -139,7 +146,7 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 // then the workspace becomes owned and the cookie signs this browser in.
 func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("t")
-	hash := hex.EncodeToString(sha256.New().Sum([]byte(token)))
+	hash := hashToken(token)
 	now := store.NowUTC()
 	var wsID, email string
 	if pool := s.d.WS.Pool(); pool != nil {

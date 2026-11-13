@@ -57,7 +57,7 @@ conflict` and the response carries the fresh `document`.
 
 ### `GET /api/v1/workspace`
 ```json
-{"id": "local", "label": "local demo", "mode": "demo", "hosted": false,
+{"id": "local", "label": "local demo", "mode": "demo", "hosted": false, "llm_mode": "auto",
  "claimed": false, "owner_email": "", "mail": "outbox"}
 ```
 `mail` is `"live"` when Resend is configured, `"outbox"` otherwise.
@@ -89,6 +89,10 @@ request host — the app may answer on throwaway verification hosts, but
 mail must point at the canonical deployment. `GET /claim/`,
 `GET /confirm-sub/` and `POST /unsub/` (a stray trailing slash on the
 emailed link) resolve to the same handlers.
+
+`llm_mode` is `"off"` when `KLOXUS_LLM_MODE=off`: runs rank and draft
+deterministically with zero model calls, and AI-only endpoints (guide
+rebuild) answer `409 ai_disabled`.
 
 ## Publications
 
@@ -499,6 +503,10 @@ scheduled dispatch.
   only. Addresses on the suppression list or sends over the daily caps
   (global and per-workspace, counted from the outbox ledger so they
   survive restarts) are refused and recorded — never dropped silently.
+  A send where nothing leaves the app (no confirmed readers, or every
+  recipient refused) keeps the issue `approved` so it can be sent
+  again once deliverable; the response carries `delivery:"none"` and
+  a `warnings` entry.
 - Per-recipient idempotency keys dedupe retries; an explicit
   `Idempotency-Key` request header namespaces them, so a retried
   request mails nobody twice.

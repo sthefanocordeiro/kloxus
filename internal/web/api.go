@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -389,7 +390,8 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
-		"claimed": owner != "", "owner_email": owner, "mail": mail,
+		"llm_mode": s.d.Cfg.LLMMode,
+		"claimed":  owner != "", "owner_email": owner, "mail": mail,
 	})
 }
 
@@ -1036,6 +1038,7 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 		"candidates": out,
 		"sections":   sectionViews(pub),
 		"demo":       s.d.Cfg.Mode == "demo",
+		"llm_mode":   s.d.Cfg.LLMMode,
 	})
 }
 
@@ -1369,7 +1372,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		runner := &pipeline.Runner{
 			DB: db(r), LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
-			DemoMode: s.d.Cfg.Mode == "demo",
+			DemoMode: s.d.Cfg.Mode == "demo", Deterministic: s.d.Cfg.LLMOff(),
 		}
 		newII, err := runner.SubstituteAlternative(ctx, pub, iss, ii)
 		if err == sql.ErrNoRows {
@@ -1398,6 +1401,9 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 func (s *Server) guideAfterRebuild(w http.ResponseWriter, r *http.Request, pub *store.Publication) any {
 	prevV, prevC, _ := db(r).LatestGuide(r.Context(), pub.ID)
 	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
+	if errors.Is(err, llm.ErrDisabled) {
+		return nil // deterministic mode: guide rebuild is an AI action — skip
+	}
 	if err != nil {
 		return nil
 	}
@@ -1597,6 +1603,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			MaxDeepDives: s.d.Cfg.MaxDeepDives,
 			DemoMode:     s.d.Cfg.Mode == "demo",
+			Deterministic: s.d.Cfg.LLMOff(),
 			OnStep: func(step string) {
 				st.mu.Lock()
 				st.st.Step = step
@@ -2315,9 +2322,11 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 429, "send_refused", "test send refused: "+strings.Join(sum.Refused, "; "))
 		return
 	}
-	if kind == "issue" {
-		// a test send only records the mail — the issue stays approved
-		// so it can still go to readers
+	// A test send only records the mail — the issue stays approved so
+	// it can still go to readers. A readers send marks it sent only
+	// when something left the app: an all-refused or empty send keeps
+	// it approved so it can go out once deliverable.
+	if kind == "issue" && sum.Sent+sum.Fallback+sum.Deduped > 0 {
 		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
 			return
 		}
@@ -2342,8 +2351,8 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	if sum.Fallback > 0 {
 		resp["fallback"] = true
 	}
-	if kind == "issue" && len(sum.To) == 0 {
-		resp["warnings"] = []string{"no confirmed readers — the issue was marked sent with nothing delivered"}
+	if kind == "issue" && sum.Sent+sum.Fallback+sum.Deduped == 0 {
+		resp["warnings"] = []string{"nothing was delivered — the issue stayed approved and can be sent again"}
 	}
 	apiJSON(w, 200, resp)
 }
@@ -2749,7 +2758,17 @@ func (s *Server) apiGuideRebuild(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
+	if s.d.Cfg.LLMOff() {
+		// Guide rebuild is an AI action — blocked outright in
+		// deterministic mode, never reaching the provider.
+		apiErr(w, 409, "ai_disabled", "guide rebuild needs a model — model calls are disabled (KLOXUS_LLM_MODE=off)")
+		return
+	}
 	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
+	if errors.Is(err, llm.ErrDisabled) {
+		apiErr(w, 409, "ai_disabled", "guide rebuild needs a model — model calls are disabled (KLOXUS_LLM_MODE=off)")
+		return
+	}
 	if err != nil {
 		apiErr(w, 409, "conflict", err.Error())
 		return
@@ -2859,7 +2878,7 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef i
 		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
 		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
 	})
-	if err == nil {
+	if err == nil && !s.d.Cfg.LLMOff() {
 		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
 			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
 		}); err == nil {

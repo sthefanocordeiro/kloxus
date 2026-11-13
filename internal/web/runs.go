@@ -86,6 +86,7 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			MaxDeepDives: s.d.Cfg.MaxDeepDives,
 			DemoMode:     s.d.Cfg.Mode == "demo",
+			Deterministic: s.d.Cfg.LLMOff(),
 			OnStep: func(step string) {
 				st.mu.Lock()
 				st.st.Step = step
