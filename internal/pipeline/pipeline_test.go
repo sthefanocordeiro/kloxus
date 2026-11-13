@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 )
 
 const testFeed = `<?xml version="1.0"?>
@@ -34,11 +37,7 @@ var canned = map[string]string{
 
 func TestRunHeadless(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	defer db.Close()
+	db := testdb.WS(t)
 
 	def := &config.Publication{
 		Slug: "p", Name: "Pub", Language: "pt-BR",
@@ -88,12 +87,12 @@ func TestRunHeadless(t *testing.T) {
 		}
 	}
 	var runs int
-	db.QueryRow(`SELECT count(*) FROM runs WHERE publication_id = ?`, pub.ID).Scan(&runs)
+	db.QueryRowContext(ctx, `SELECT count(*) FROM runs WHERE publication_id = $1`, pub.ID).Scan(&runs)
 	if runs != len(Steps) {
 		t.Errorf("runs = %d, want %d", runs, len(Steps))
 	}
 	var status string
-	db.QueryRow(`SELECT status FROM issues WHERE id = ?`, res.IssueID).Scan(&status)
+	db.QueryRowContext(ctx, `SELECT status FROM issues WHERE id = $1`, res.IssueID).Scan(&status)
 	if status != "drafted" {
 		t.Errorf("issue status = %q", status)
 	}
@@ -101,7 +100,7 @@ func TestRunHeadless(t *testing.T) {
 		t.Errorf("deepdive prompt contains stored dossier title")
 	}
 	var dossierJSON string
-	db.QueryRow(`SELECT d.json FROM dossiers d JOIN issue_items ii ON ii.id = d.issue_item_id WHERE ii.issue_id = ?`, res.IssueID).Scan(&dossierJSON)
+	db.QueryRowContext(ctx, `SELECT d.json FROM dossiers d JOIN issue_items ii ON ii.id = d.issue_item_id WHERE ii.issue_id = $1`, res.IssueID).Scan(&dossierJSON)
 	if !strings.Contains(dossierJSON, `"title":"Consulta do regulador"`) {
 		t.Errorf("stored dossier lost picked title: %s", dossierJSON)
 	}
@@ -109,11 +108,7 @@ func TestRunHeadless(t *testing.T) {
 
 func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	defer db.Close()
+	db := testdb.WS(t)
 
 	def := &config.Publication{
 		Slug: "p", Name: "Pub", Language: "pt-BR",
@@ -267,6 +262,128 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	}
 	if len(iss.Flags) != 1 || iss.Flags[0].Item != 2 || iss.Flags[0].Note != "active item" {
 		t.Fatalf("flags = %+v, want only active item flag", iss.Flags)
+	}
+}
+
+// TestReplaySecondPublicationOnReusedDB reproduces KLOX-15: a second
+// publication on the same database re-collects the same feeds into new
+// item rows, so row ids shift. Dossier JSON embedded in prompts must not
+// carry those database-local ids, or the deepdive replay key (and the
+// downstream draft/citecheck keys) miss on every reused database.
+func TestReplaySecondPublicationOnReusedDB(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.WS(t)
+
+	data, err := examples.FS.ReadFile("publications/futuro-proximo.yaml")
+	if err != nil {
+		t.Fatalf("reading example publication: %v", err)
+	}
+	def, err := config.ParsePublication(data)
+	if err != nil {
+		t.Fatalf("ParsePublication: %v", err)
+	}
+
+	fetcher := sources.FixtureFetcher{FS: examples.FS}
+	replay := llm.Replay{FS: examples.FS, Dir: "fixtures/llm"}
+	var deepPrompts []string
+	provider := llm.Func(func(ctx context.Context, req llm.Request) (llm.Response, error) {
+		if req.Template == "deepdive" {
+			deepPrompts = append(deepPrompts, req.User)
+		}
+		return replay.Complete(ctx, req)
+	})
+	run := func(pub *store.Publication) *Result {
+		t.Helper()
+		res, err := RunHeadless(ctx, db, pub, t.TempDir(), fetcher, provider,
+			"claude-haiku-5-5", "claude-sonnet-5-5", 3, true)
+		if err != nil {
+			t.Fatalf("RunHeadless(%s): %v", pub.Slug, err)
+		}
+		return res
+	}
+
+	if _, err := db.SeedPublication(ctx, def); err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	pub1, err := db.GetPublication(ctx, "futuro-proximo")
+	if err != nil {
+		t.Fatalf("GetPublication: %v", err)
+	}
+	res1 := run(pub1)
+	if res1.Selected == 0 {
+		t.Fatal("first run selected no items")
+	}
+
+	// Second publication: same prompt-relevant config, new slug. Its
+	// sources are new rows, so collect re-inserts every item under new
+	// ids — the reused-database condition that used to shift the
+	// deepdive replay key.
+	def2 := *def
+	def2.Slug = "futuro-proximo-2"
+	if _, err := db.SeedPublication(ctx, &def2); err != nil {
+		t.Fatalf("SeedPublication 2: %v", err)
+	}
+	pub2, err := db.GetPublication(ctx, "futuro-proximo-2")
+	if err != nil {
+		t.Fatalf("GetPublication 2: %v", err)
+	}
+	var maxID1, minID2 int64
+	db.QueryRowContext(ctx, `SELECT COALESCE(MAX(i.id),0) FROM items i
+		JOIN sources s ON s.id = i.source_id WHERE s.publication_id = $1`, pub1.ID).Scan(&maxID1)
+	res2 := run(pub2)
+	db.QueryRowContext(ctx, `SELECT COALESCE(MIN(i.id),0) FROM items i
+		JOIN sources s ON s.id = i.source_id WHERE s.publication_id = $1`, pub2.ID).Scan(&minID2)
+	if maxID1 == 0 || minID2 <= maxID1 {
+		t.Fatalf("expected shifted item ids for the second publication (max pub1=%d, min pub2=%d)", maxID1, minID2)
+	}
+	if len(deepPrompts) != 2 {
+		t.Fatalf("deepdive calls = %d, want 2", len(deepPrompts))
+	}
+	for i, p := range deepPrompts {
+		if strings.Contains(p, "item_id") {
+			t.Errorf("deepdive prompt %d contains database-local item_id", i+1)
+		}
+	}
+	if deepPrompts[0] != deepPrompts[1] {
+		t.Errorf("deepdive prompt differs between runs on the same feeds")
+	}
+
+	// The issue drafted: non-empty body with /a/{id} source links that
+	// resolve to the second publication's own item rows.
+	iss, err := db.GetIssue(ctx, res2.IssueID)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if strings.TrimSpace(iss.BodyMD) == "" {
+		t.Fatal("second run produced an empty draft")
+	}
+	linkRe := regexp.MustCompile(`/a/(\d+)`)
+	links := linkRe.FindAllStringSubmatch(iss.BodyMD, -1)
+	if len(links) == 0 {
+		t.Fatal("draft has no /a/{id} source links")
+	}
+	for _, m := range links {
+		id, _ := strconv.ParseInt(m[1], 10, 64)
+		var owner int64
+		err := db.QueryRowContext(ctx, `SELECT s.publication_id FROM items i
+			JOIN sources s ON s.id = i.source_id WHERE i.id = $1`, id).Scan(&owner)
+		if err != nil {
+			t.Fatalf("source link /a/%d resolves to no item: %v", id, err)
+		}
+		if owner != pub2.ID {
+			t.Errorf("source link /a/%d points at item of publication %d, want %d", id, owner, pub2.ID)
+		}
+	}
+
+	// The stored dossier keeps the row ids the links depend on.
+	var dossierJSON string
+	if err := db.QueryRowContext(ctx, `SELECT d.json FROM dossiers d
+		JOIN issue_items ii ON ii.id = d.issue_item_id WHERE ii.issue_id = $1 LIMIT 1`,
+		res2.IssueID).Scan(&dossierJSON); err != nil {
+		t.Fatalf("reading dossier: %v", err)
+	}
+	if !strings.Contains(dossierJSON, `"item_id"`) {
+		t.Errorf("stored dossier lost item_id: %s", dossierJSON[:200])
 	}
 }
 
