@@ -30,8 +30,15 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      # pg_dump must be >= the server major, so pull the latest client
+      # from the PGDG repo — ubuntu's archive lags Supabase's Postgres.
       - name: install pg_dump
         run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
       - name: pg_dump
@@ -52,13 +59,19 @@ jobs:
           retention-days: 30
       # Restore drill: replay the dump into the scratch service and check
       # the app schema landed. Without this the "restorable" criterion is
-      # only assumed.
+      # only assumed. Two restore errors are benign deltas between
+      # Supabase's Postgres and a vanilla one — its transaction_timeout
+      # GUC and CREATE SCHEMA public; anything else fails the drill.
       - name: restore drill into scratch database
         env:
           SCRATCH_URL: postgres://kloxus:kloxus@localhost:5432/kloxus
         run: |
           /usr/lib/postgresql/17/bin/pg_restore --no-owner --no-privileges \
-            --dbname="$SCRATCH_URL" "kloxus-$(date +%Y%m%d).dump"
+            --dbname="$SCRATCH_URL" "kloxus-$(date +%Y%m%d).dump" 2>&1 | tee restore.log || true
+          if grep "ERROR" restore.log | grep -vE 'unrecognized configuration parameter "transaction_timeout"|schema "public" already exists'; then
+            echo "unexpected restore errors" >&2
+            exit 1
+          fi
           /usr/lib/postgresql/17/bin/psql "$SCRATCH_URL" -v ON_ERROR_STOP=1 \
             -c 'SELECT count(*) AS migrations_applied FROM schema_migrations' \
             -c 'SELECT count(*) AS workspaces FROM workspaces'
