@@ -27,7 +27,7 @@ async function onboard(page: Page) {
   await page.goto("/");
   // the landing renders the cited sample dossier before any workspace
   await expect(page.getByText(/dossier from the sample issue/i)).toBeVisible({ timeout: 15000 });
-  await page.getByRole("link", { name: /Create your newsletter/ }).click();
+  await page.getByRole("button", { name: /Get started without login/ }).first().click();
   await page.waitForURL(/\/new/);
 
   // the sample proposal pre-fills the five editable blocks
@@ -265,7 +265,7 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   // the fixture sources collect a fresh issue
   await page.goto("/publications");
   await page.getByRole("button", { name: "Reset demo" }).click();
-  await expect(page.getByRole("link", { name: /Create your newsletter/ })).toBeVisible({
+  await expect(page.getByRole("button", { name: /Get started without login/ }).first()).toBeVisible({
     timeout: 15000,
   });
   await onboard(page);

@@ -25,6 +25,6 @@ frontend/test-results/
 frontend/recordings/
 .omc/
 
-# Multica agent runtime
+# agent runtime artifacts
 .multica/
-AGENTS.md
+/AGENTS.md
