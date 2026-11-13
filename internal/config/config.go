@@ -15,13 +15,17 @@ import (
 
 // Config holds process-level settings sourced from env and .env.
 type Config struct {
-	Mode   string // demo | real
-	Port   int
-	DBPath string
-	OutDir string
-	// DataDir, when set, enables the hosted multi-workspace demo: one
-	// SQLite file per visitor under <DataDir>/workspaces plus a seeded
-	// template rebuilt at boot.
+	Mode string // demo | real
+	Port int
+	// DatabaseURL is the Postgres connection string (DATABASE_URL) —
+	// the Supabase direct or session-pooler address in production, a
+	// local Postgres in development.
+	DatabaseURL string
+	OutDir      string
+	// DataDir, when set, enables hosted multi-workspace mode: one
+	// workspace row per visitor in the shared database, addressed by a
+	// signed cookie. The directory itself only persists the cookie
+	// signing secret.
 	DataDir      string
 	CookieSecret string
 
@@ -29,6 +33,18 @@ type Config struct {
 	ModelTriage     string
 	ModelDraft      string
 	MaxDeepDives    int
+	// LLMMode gates every model call: "auto" (default) runs the normal
+	// pipeline; "off" runs the deterministic pipeline and any model call
+	// attempted fails loudly (llm.None is the configured provider).
+	LLMMode string
+	// Spend guards (D32/D36): per-workspace daily run budget, per-run
+	// token budget, global daily dollar cap and the kill-switch env —
+	// all persisted in Postgres so restarts keep the counters.
+	RunsPerDay      int
+	TokensPerRun    int
+	LLMDailyCap     float64
+	LLMKillEnv      bool   // KLOXUS_LLM_KILL at boot; also checked live per call
+	AdminToken      string // bearer token for /api/v1/admin/*
 	MasterKey       string
 	ResendAPIKey    string
 	FromAddress     string
@@ -51,12 +67,18 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Mode:            getenv("KLOXUS_MODE", "demo"),
 		Port:            getint("KLOXUS_PORT", 8080),
-		DBPath:          getenv("KLOXUS_DB_PATH", "kloxus.db"),
+		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		OutDir:          getenv("KLOXUS_OUT_DIR", "out"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		ModelTriage:     getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),
 		ModelDraft:      getenv("KLOXUS_MODEL_DRAFT", "claude-sonnet-5-5"),
 		MaxDeepDives:    getint("KLOXUS_MAX_DEEP_DIVES", 3),
+		LLMMode:         getenv("KLOXUS_LLM_MODE", "auto"),
+		RunsPerDay:      getint("KLOXUS_RUNS_PER_DAY", 2),
+		TokensPerRun:    getint("KLOXUS_TOKENS_PER_RUN", 200000),
+		LLMDailyCap:     getfloat("KLOXUS_LLM_DAILY_CAP_USD", 1.00),
+		LLMKillEnv:      os.Getenv("KLOXUS_LLM_KILL") != "",
+		AdminToken:      os.Getenv("KLOXUS_ADMIN_TOKEN"),
 		MasterKey:       os.Getenv("KLOXUS_MASTER_KEY"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
@@ -70,8 +92,14 @@ func Load() (*Config, error) {
 	if cfg.Mode != "demo" && cfg.Mode != "real" {
 		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)
 	}
+	if cfg.LLMMode != "auto" && cfg.LLMMode != "off" {
+		return nil, fmt.Errorf("KLOXUS_LLM_MODE must be \"auto\" or \"off\", got %q", cfg.LLMMode)
+	}
 	return cfg, nil
 }
+
+// LLMOff reports whether the deterministic no-model mode is on.
+func (c *Config) LLMOff() bool { return c.LLMMode == "off" }
 
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -82,6 +110,13 @@ func getenv(key, fallback string) string {
 
 func getint(key string, fallback int) int {
 	if v, err := strconv.Atoi(os.Getenv(key)); err == nil {
+		return v
+	}
+	return fallback
+}
+
+func getfloat(key string, fallback float64) float64 {
+	if v, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil {
 		return v
 	}
 	return fallback

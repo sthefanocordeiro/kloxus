@@ -4,6 +4,7 @@ export interface Workspace {
   label: string;
   mode: string;
   hosted: boolean;
+  llm_mode: string; // "auto" | "off" — off = deterministic pipeline, no AI calls
 }
 
 export interface Publication {
@@ -137,6 +138,7 @@ export interface CandidatesResponse {
   candidates: Candidate[];
   sections: BoardSection[];
   demo: boolean;
+  llm_mode: string;
 }
 
 export interface StoryItem {
@@ -165,11 +167,14 @@ export interface LineupEntry {
 export interface Run {
   id: string;
   kind: "prepare" | "draft";
-  status: "running" | "done" | "failed";
+  status: "running" | "done" | "failed" | "blocked";
   step: string;
   issue_id?: number;
   no_new_items: boolean;
   error?: string;
+  blocked?: boolean;
+  blocked_reason?: string;
+  sample?: boolean;
   events: RunEvent[];
 }
 
@@ -301,9 +306,10 @@ export class ApiRequestError extends Error {
 // become ApiRequestError. Conflict responses may carry the fresh
 // document — callers use it to resync.
 export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const mutating = method !== "GET" && method !== "HEAD";
   const res = await fetch(path, {
     method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    headers: mutating ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const data = res.status === 204 ? {} : await res.json().catch(() => ({}));

@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -20,13 +21,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
+	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/realsample"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -382,6 +386,7 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws := reqWS(r)
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
+		"llm_mode": s.d.Cfg.LLMMode,
 	})
 }
 
@@ -670,12 +675,20 @@ func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiSample serves the landing page's cited dossier — workspace-free, so
-// the first screen doesn't create a demo workspace before Start.
+// the first screen doesn't create a demo workspace before Start. In real
+// mode it is the recorded real issue (also the fallback blocked runs
+// point at); demo keeps the fictional Valdória sample.
 func (s *Server) apiSample(w http.ResponseWriter, r *http.Request) {
-	data, err := examples.FS.ReadFile("landing/sample.json")
-	if err != nil {
-		apiErr(w, 500, "internal", "sample dossier unavailable")
-		return
+	var data []byte
+	var err error
+	if s.d.Cfg.Mode == "real" {
+		data = realsample.Sample()
+	}
+	if data == nil {
+		if data, err = examples.FS.ReadFile("landing/sample.json"); err != nil {
+			apiErr(w, 500, "internal", "sample dossier unavailable")
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Write(data)
@@ -827,14 +840,17 @@ func (s *Server) apiSourceCheck(w http.ResponseWriter, r *http.Request) {
 
 // apiRun is the run resource snapshot.
 type apiRun struct {
-	ID         string         `json:"id"`
-	Kind       string         `json:"kind"`
-	Status     string         `json:"status"` // running | done | failed
-	Step       string         `json:"step"`
-	IssueID    int64          `json:"issue_id,omitempty"`
-	NoNewItems bool           `json:"no_new_items"`
-	Error      string         `json:"error,omitempty"`
-	Events     []runEventView `json:"events"`
+	ID            string         `json:"id"`
+	Kind          string         `json:"kind"`
+	Status        string         `json:"status"` // running | done | failed | blocked
+	Step          string         `json:"step"`
+	IssueID       int64          `json:"issue_id,omitempty"`
+	NoNewItems    bool           `json:"no_new_items"`
+	Error         string         `json:"error,omitempty"`
+	Blocked       bool           `json:"blocked,omitempty"`
+	BlockedReason string         `json:"blocked_reason,omitempty"`
+	Sample        bool           `json:"sample,omitempty"`
+	Events        []runEventView `json:"events"`
 }
 
 type runEventView struct {
@@ -849,12 +865,16 @@ func runView(st *runProgress) apiRun {
 	v := apiRun{
 		ID: st.st.RunID, Kind: st.st.Kind, Step: st.st.Step,
 		IssueID: st.st.IssueID, NoNewItems: st.st.NoNewItems, Error: st.st.Err,
+		Blocked: st.st.Blocked, BlockedReason: st.st.BlockedReason, Sample: st.st.Sample,
 		Status: "running",
 	}
 	if st.st.Done {
 		v.Status = "done"
 		if st.st.Err != "" {
 			v.Status = "failed"
+		}
+		if st.st.Blocked {
+			v.Status = "blocked"
 		}
 	}
 	for i, ev := range st.events {
@@ -922,7 +942,12 @@ func (s *Server) apiRunEvents(w http.ResponseWriter, r *http.Request) {
 	sent := 0
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
+	// The server's 60s WriteTimeout would kill a stream held open by a
+	// long run — renew the deadline every tick so a live handler keeps
+	// its connection while a wedged one still dies.
+	rc := http.NewResponseController(w)
 	for {
+		_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		st.mu.Lock()
 		evs := append([]pipeline.StepEvent{}, st.events...)
 		done := st.st.Done
@@ -1028,6 +1053,7 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 		"candidates": out,
 		"sections":   sectionViews(pub),
 		"demo":       s.d.Cfg.Mode == "demo",
+		"llm_mode":   s.d.Cfg.LLMMode,
 	})
 }
 
@@ -1361,7 +1387,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		runner := &pipeline.Runner{
 			DB: db(r), LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
-			DemoMode: s.d.Cfg.Mode == "demo",
+			DemoMode: s.d.Cfg.Mode == "demo", Deterministic: s.d.Cfg.LLMOff(),
 		}
 		newII, err := runner.SubstituteAlternative(ctx, pub, iss, ii)
 		if err == sql.ErrNoRows {
@@ -1390,6 +1416,9 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 func (s *Server) guideAfterRebuild(w http.ResponseWriter, r *http.Request, pub *store.Publication) any {
 	prevV, prevC, _ := db(r).LatestGuide(r.Context(), pub.ID)
 	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
+	if errors.Is(err, llm.ErrDisabled) {
+		return nil // deterministic mode: guide rebuild is an AI action — skip
+	}
 	if err != nil {
 		return nil
 	}
@@ -1571,14 +1600,32 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		wsp.Runs.Store(key, st)
 	}
+	// Same spend-guard admission as prepare runs: a refusal comes back
+	// as a finished, blocked run with the message and recorded sample.
+	if b := s.admitRun(r.Context(), wsp.ID); b != nil {
+		st.blockRun(b)
+		apiJSON(w, 202, map[string]any{"run": runView(st)})
+		return
+	}
 	go func() {
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
+		// Same panic guard as prepare runs (review F5).
+		defer func() {
+			if p := recover(); p != nil {
+				st.mu.Lock()
+				defer st.mu.Unlock()
+				st.st.Done = true
+				st.st.Err = fmt.Sprintf("pipeline panic: %v", p)
+				slog.Error("draft run panicked", "issue", iss.ID, "panic", p, "rid", st.st.RunID)
+			}
+		}()
 		runner := &pipeline.Runner{
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			MaxDeepDives: s.d.Cfg.MaxDeepDives,
 			DemoMode:     s.d.Cfg.Mode == "demo",
+			Deterministic: s.d.Cfg.LLMOff(),
 			OnStep: func(step string) {
 				st.mu.Lock()
 				st.st.Step = step
@@ -1590,12 +1637,19 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 				st.mu.Unlock()
 			},
 		}
-		res, err := runner.RunPhaseB(context.Background(), pub, iss.ID)
+		ctx, cancel := context.WithTimeout(llm.WithRunScope(context.Background(), wsp.ID), s.runTimeout())
+		defer cancel()
+		res, err := runner.RunPhaseB(ctx, pub, iss.ID)
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		st.st.Done = true
 		if err != nil {
 			st.st.Err = err.Error()
+			if b, ok := llm.AsBlocked(err); ok {
+				st.st.Blocked = true
+				st.st.BlockedReason = string(b.Reason)
+				st.st.Sample = true
+			}
 			return
 		}
 		st.st.IssueID = res.IssueID
@@ -2235,7 +2289,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		to = []string{addr}
 		kind = "test"
 	}
-	emailID, err := s.sendIssueMail(r, iss, pub, to, kind)
+	emailID, err := s.sendIssueMail(r.Context(), db(r), reqWS(r).ID, iss, pub, to, kind, requestBase(r))
 	if apiDBErr(w, r, err, "send") {
 		return
 	}
@@ -2453,7 +2507,9 @@ func (s *Server) apiPaywallCancel(w http.ResponseWriter, r *http.Request) {
 // nothing in the URL. ?ws= is still honored for links already delivered.
 // The visitor's own session workspace is never touched.
 func (s *Server) withWS(r *http.Request) *http.Request {
-	if !s.d.WS.Hosted() {
+	// A workspace override is honored on read-only requests only — the
+	// raw ?ws= id must never mutate another visitor's state (review F2).
+	if !s.d.WS.Hosted() || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 		return r
 	}
 	wsid := r.URL.Query().Get("ws")
@@ -2652,7 +2708,17 @@ func (s *Server) apiGuideRebuild(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
+	if s.d.Cfg.LLMOff() {
+		// Guide rebuild is an AI action — blocked outright in
+		// deterministic mode, never reaching the provider.
+		apiErr(w, 409, "ai_disabled", "guide rebuild needs a model — model calls are disabled (KLOXUS_LLM_MODE=off)")
+		return
+	}
 	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
+	if errors.Is(err, llm.ErrDisabled) {
+		apiErr(w, 409, "ai_disabled", "guide rebuild needs a model — model calls are disabled (KLOXUS_LLM_MODE=off)")
+		return
+	}
 	if err != nil {
 		apiErr(w, 409, "conflict", err.Error())
 		return
@@ -2735,4 +2801,94 @@ func (s *Server) editSupportedFor(r *http.Request, item *docItem, itemRef int64,
 		return false
 	}
 	return s.dossierSupports(r, d, itemRef, text)
+}
+
+var refRe = regexp.MustCompile(`\[\d+\]`)
+
+// dossierSupports is the citation check for one edited sentence: the
+// model verdict when available (real mode), otherwise the deterministic
+// overlap check against the dossier facts that carry the cited refs.
+func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef int64, text string) bool {
+	refs := map[int]bool{}
+	for _, m := range refRe.FindAllString(text, -1) {
+		n, _ := strconv.Atoi(strings.Trim(m, "[]"))
+		refs[n] = true
+	}
+	// model check first (real mode); demo misses fall to the local check
+	var checks []struct {
+		ID      int    `json:"id"`
+		Verdict string `json:"verdict"`
+	}
+	srcs := []map[string]any{}
+	for _, src := range d.Sources {
+		srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
+	}
+	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
+		"Publication": "",
+		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
+		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
+	})
+	if err == nil && !s.d.Cfg.LLMOff() {
+		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
+			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
+		}); err == nil {
+			if json.Unmarshal([]byte(resp.Text), &checks) == nil && len(checks) > 0 {
+				return checks[0].Verdict == "ok"
+			}
+		}
+	}
+	// deterministic fallback: ≥60% of content words must appear in a
+	// fact (or the summary) attributed to one of the cited refs.
+	var grounded []string
+	for _, f := range append(append([]pipeline.DossierFact{}, d.Facts...), d.DeepFacts...) {
+		if refs[f.Ref] {
+			grounded = append(grounded, f.Text)
+		}
+	}
+	grounded = append(grounded, d.Summary)
+	corpus := strings.ToLower(strings.Join(grounded, " "))
+	plain := refRe.ReplaceAllString(text, "")
+	words := strings.FieldsFunc(strings.ToLower(plain), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	var content, hit int
+	for _, w := range words {
+		if len(w) < 3 {
+			continue
+		}
+		content++
+		if strings.Contains(corpus, w) {
+			hit++
+		}
+	}
+	return content > 0 && float64(hit)/float64(content) >= 0.6
+}
+
+// sourceURL returns the URL of a source owned by the publication in the
+// request path, guarding against cross-publication source ids.
+func (s *Server) sourceURL(r *http.Request, sid int64) (string, error) {
+	pub, err := s.pub(r)
+	if err != nil {
+		return "", err
+	}
+	var url string
+	err = db(r).QueryRowContext(r.Context(),
+		`SELECT url FROM sources WHERE workspace_id = $1 AND id = $2 AND publication_id = $3`,
+		db(r).Workspace(), sid, pub.ID).Scan(&url)
+	return url, err
+}
+
+// addedLines lists lines present in newer but absent from older.
+func addedLines(older, newer string) []string {
+	old := map[string]bool{}
+	for _, l := range strings.Split(older, "\n") {
+		old[strings.TrimSpace(l)] = true
+	}
+	var out []string
+	for _, l := range strings.Split(newer, "\n") {
+		if t := strings.TrimSpace(l); t != "" && !old[t] {
+			out = append(out, t)
+		}
+	}
+	return out
 }

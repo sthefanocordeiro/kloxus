@@ -2,19 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { GripVertical, Minus, Plus, Search } from "lucide-react";
-import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dossier, type IssueSummary, type LineupEntry, type RunEvent } from "../api";
+import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dossier, type IssueSummary, type LineupEntry, type Run, type RunEvent } from "../api";
 import { useT } from "../i18n";
+import { SampleCard } from "../components/SampleCard";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
-import { Badge, Button, Card, KDialog, KPopover } from "../ui";
+import { Badge, Button, Card } from "../ui";
+import { KDialog, KPopover } from "../ui-overlays";
 
 // --- SSE step rail: real counts per finished step, never percentages ---
 
-export function StepRail({ runID, steps, onDone }: { runID: string; steps: string[]; onDone: (run: { status: string; no_new_items?: boolean; error?: string }, events: RunEvent[]) => void }) {
+export function StepRail({ runID, steps, onDone }: { runID: string; steps: string[]; onDone: (run: Run, events: RunEvent[]) => void }) {
   const { t } = useT();
   const [events, setEvents] = useState<RunEvent[]>([]);
   const eventsRef = useRef<RunEvent[]>([]);
   const doneRef = useRef(false);
+  // onDone is an inline prop (new identity every render) — keep it in a
+  // ref so the SSE effect only keys on runID instead of reconnecting on
+  // every parent render.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
   useEffect(() => {
     const es = new EventSource(`/api/v1/runs/${runID}/events`);
     es.addEventListener("step", (e) => {
@@ -27,11 +34,11 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
       if (doneRef.current) return;
       doneRef.current = true;
       const run = JSON.parse((e as MessageEvent).data);
-      onDone(run, eventsRef.current);
+      onDoneRef.current(run, eventsRef.current);
     });
     es.onerror = () => es.close();
     return () => es.close();
-  }, [runID, onDone]);
+  }, [runID]);
 
   const doneSteps = new Set(events.map((e) => e.step));
   const running = steps.find((s) => !doneSteps.has(s)); // first unfinished step ticks
@@ -60,6 +67,27 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
         );
       })}
     </ol>
+  );
+}
+
+// BlockedCard is the guard-refused run view (D32): a clear creator-facing
+// message plus the recorded sample — never a bare error.
+export function BlockedCard({ message }: { message?: string }) {
+  const { t } = useT();
+  const sample = useQuery({ queryKey: ["sample"], queryFn: api.sample });
+  return (
+    <div className="mx-auto w-full max-w-md space-y-4 p-6">
+      <Card className="border-warn/50 p-5">
+        <p className="text-sm font-semibold">{t.run.blockedTitle}</p>
+        <p className="mt-1 text-sm text-muted">{message || t.run.blocked}</p>
+      </Card>
+      {sample.data && sample.data.dossiers.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs uppercase tracking-wide text-muted">{t.run.sampleCaption}</p>
+          <SampleCard d={sample.data.dossiers[0]} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -134,6 +162,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const [swapFor, setSwapFor] = useState<{ story: Candidate; section: string } | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [draftRun, setDraftRun] = useState<string | null>(null);
+  const [draftBlocked, setDraftBlocked] = useState<string | null>(null);
   const [boardTab, setBoardTab] = useState<"bench" | "issue">("bench");
 
   useEffect(() => {
@@ -404,12 +433,29 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           <StepRail
             runID={draftRun}
             steps={["dossier", "draft", "citecheck"]}
-            onDone={() => {
+            onDone={(run) => {
               setDraftRun(null);
+              if (run?.error) {
+                if (run.blocked || run.sample) setDraftBlocked(run.error);
+                else showToast(run.error);
+              }
               qc.invalidateQueries();
               onDrafted?.();
             }}
           />
+        </div>
+      )}
+
+      {draftBlocked && (
+        <div className="relative border-b border-line">
+          <button
+            className="absolute right-3 top-3 z-10 text-xs text-muted hover:text-ink"
+            onClick={() => setDraftBlocked(null)}
+            aria-label="dismiss"
+          >
+            ✕
+          </button>
+          <BlockedCard message={draftBlocked} />
         </div>
       )}
 
@@ -441,6 +487,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         >
           <div className="mb-3 flex items-center gap-2">
             <h2 className="text-sm font-semibold">{t.board.bench}</h2>
+            {candsQ.data?.llm_mode === "off" && <Badge tone="warn">{t.board.aiOff}</Badge>}
             <span className="flex-1" />
             <div className="relative">
               <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
@@ -646,7 +693,7 @@ export function RunLanding() {
   const { t } = useT();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const [done, setDone] = useState<{ no_new_items?: boolean; error?: string } | null>(null);
+  const [done, setDone] = useState<Run | null>(null);
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
   const reset = useMutation({
     mutationFn: api.demoReset,
@@ -678,7 +725,9 @@ export function RunLanding() {
         <h1 className="text-lg font-semibold">{t.board.title}</h1>
         <Badge tone="warn">{(t.status as Record<string, string>).reviewing ?? "reviewing"}</Badge>
       </header>
-      {done?.no_new_items || done?.error ? (
+      {done?.blocked ? (
+        <BlockedCard message={done.error} />
+      ) : done?.no_new_items || done?.error ? (
         <div className="flex flex-1 items-center justify-center p-8">
           <Card className="max-w-md p-6 text-center">
             <p className="text-sm">{done.error ? done.error : t.run.noNewItems}</p>

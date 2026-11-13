@@ -19,9 +19,10 @@ function localInput(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-import { Badge, Button, KDialog, KPopover } from "../ui";
+import { Badge, Button } from "../ui";
+import { KDialog, KPopover } from "../ui-overlays";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
-import { BoardSkeleton, BuildBoard, StepRail } from "./Board";
+import { BlockedCard, BoardSkeleton, BuildBoard, StepRail } from "./Board";
 
 // scroll the editor pane to a sentence/item element and flash it —
 // constrained to the pane so other panes don't move
@@ -34,8 +35,9 @@ function flashEl(docEl: HTMLElement | null, sel: string) {
   el.classList.add("flash");
 }
 
-// statuses before the draft exists — the build board owns them
-const BOARD_STATUSES = new Set(["draft", "reviewing", ""]);
+// statuses before the draft exists — the build board owns them; a
+// 'blocked' issue keeps whatever the interrupted run produced.
+const BOARD_STATUSES = new Set(["draft", "reviewing", "blocked", ""]);
 
 export function IssuePage() {
   const { id } = useParams();
@@ -46,6 +48,7 @@ export function IssuePage() {
   const runID = params.get("run");
   const [runDone, setRunDone] = useState(!runID);
   const [runSummary, setRunSummary] = useState<string | null>(null);
+  const [runBlocked, setRunBlocked] = useState<string | null>(null);
   const issueQ = useQuery({ queryKey: ["issue", issueID], queryFn: () => api.issue(issueID) });
   const itemsQ = useQuery({ queryKey: ["items", issueID], queryFn: () => api.issueItems(issueID) });
   const docQ = useQuery({ queryKey: ["document", issueID], queryFn: () => api.document(issueID) });
@@ -191,8 +194,15 @@ export function IssuePage() {
           setSaved("saved");
           qc.invalidateQueries({ queryKey: ["readiness", issueID] });
         } catch (e) {
+          // re-queue so a later drain retries instead of dropping the
+          // typed text — a conflict carries the fresh document, so once
+          // resync lands the new version the retry can save it.
+          dirtyCommentary.current.set(section, text);
           setSaved("");
           resync(e);
+          if (e instanceof ApiRequestError && e.document) {
+            setTimeout(() => drainSaves(), 1000);
+          }
           return;
         }
       }
@@ -413,7 +423,8 @@ export function IssuePage() {
                   qc.invalidateQueries({ queryKey: ["candidates", issueID] });
                   qc.invalidateQueries({ queryKey: ["issue", issueID] });
                   if (run.no_new_items) showToast(t.run.noNewItems);
-                  if (run.error) showToast(run.error);
+                  if (run.blocked || run.sample) setRunBlocked(run.error ?? null);
+                  else if (run.error) showToast(run.error);
                 }}
               />
             </div>
@@ -422,6 +433,18 @@ export function IssuePage() {
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
             {runSummary && <p className="border-b border-line px-4 py-1.5 text-xs text-muted">{runSummary}</p>}
+            {runBlocked && (
+              <div className="relative border-b border-line">
+                <button
+                  className="absolute right-3 top-3 z-10 text-xs text-muted hover:text-ink"
+                  onClick={() => setRunBlocked(null)}
+                  aria-label="dismiss"
+                >
+                  ✕
+                </button>
+                <BlockedCard message={runBlocked} />
+              </div>
+            )}
             <BuildBoard issue={issue} onDrafted={() => invalidate()} />
           </div>
         )
