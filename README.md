@@ -16,11 +16,13 @@ list, a source-backed dossier for each item, and a structured draft with
 slots for the creator's own commentary. The creator reviews, writes what
 only they can write, and sends.
 
-> **Project status: working HackBrazil demo.** Submitted to **HackBrazil
-> 2026**, track **Culture and Creative Economy**. The hosted demo runs the
-> same demo-mode binary you can run locally: fictional fixture sources,
-> replayed model calls, SQLite persistence, simulated email outbox and
-> paywall — deterministic and free to keep up.
+> **Project status: becoming the hosted real app.** Submitted to
+> **HackBrazil 2026**, track **Culture and Creative Economy**. The UI is a
+> single React app over `/api/v1`; the backend is moving to real providers
+> (Postgres, Resend, real feeds — `docs/decisions.md` D27–D34). Demo mode —
+> fictional fixture sources, replayed model calls, simulated email outbox
+> and paywall — stays as the test bed and deployed fallback
+> (`demo-fixture-v2` tag).
 
 ---
 
@@ -130,18 +132,23 @@ end to end:
 - **Citation flags:** each flagged sentence can be *removed* or *edited*; an edit is rechecked deterministically and must cite an existing `[n]` source or be marked interpretation. Every resolution is recorded in `decisions`.
 - **Gating:** export and send are refused before approval; approval is refused while required commentary is missing, flags are unresolved, or items are still pending.
 - **Output hygiene:** approved output contains no score/reason lines, no placeholders, no internal metadata, and exactly one link per source.
-- **Isolation:** each visitor gets a signed-cookie workspace with its own SQLite database; a reset affects only that workspace; workspaces expire via LRU/age cleanup and workspace creation is rate-limited.
+- **Isolation:** each visitor gets a signed-cookie workspace — a `workspace_id` tenant slice of the shared Postgres database; every query is workspace-scoped; a reset affects only that workspace; idle workspaces are deleted on schedule and workspace creation is rate-limited.
 - **Safety:** the hosted build is demo-only — visitor-added sources are stored but never fetched (no SSRF), and all fixture people, institutions and outlets are fictional on reserved `.example` domains served by the app itself.
 
 ## Running the project
 
-Requires only Go 1.25+:
+Requires Go 1.25+ and Node 20.19+ (Vite 7):
 
 ```bash
-go run ./cmd/kloxus demo            # seeded UI at http://localhost:8080
-go run ./cmd/kloxus demo --headless # pipeline only, writes ./out/issue-N.md
-go test ./...                        # full suite, fully offline
+(cd frontend && npm ci && npm run build)  # React app → internal/web/appdist, embedded by Go
+go run ./cmd/kloxus demo                  # UI at http://localhost:8080 (starts empty — walk onboarding)
+go run ./cmd/kloxus demo --headless       # pipeline only, writes ./out/issue-N.md
+go test ./...                             # full Go suite, fully offline
 ```
+
+Frontend iteration without rebuilding: `npm run dev` in `frontend/` (Vite
+dev server, proxies `/api` to :8080). Typecheck, lint and unit tests
+(`npm run typecheck|lint|test`) run in CI.
 
 Local mode runs a single shared workspace. Hosted (multi-workspace) mode is
 enabled by `KLOXUS_DATA_DIR` — see [docs/deploy.md](docs/deploy.md).
@@ -155,8 +162,8 @@ an HTTP health check. Step-by-step in [docs/deploy.md](docs/deploy.md).
 
 ## Implementation architecture
 
-Go + `html/template` + embedded SQLite (`modernc.org/sqlite`), one binary,
-no CDN. Packages:
+Go (`net/http`) + React 19 / TypeScript / Vite + Postgres on Supabase
+(`github.com/jackc/pgx`), one binary, no CDN. Packages:
 
 | Package | Role |
 | --- | --- |
@@ -166,9 +173,10 @@ no CDN. Packages:
 | `internal/llm` | `Provider` interface: `Anthropic` (real), `Replay` (recorded fixtures keyed by prompt hash), `Recorder` (writes fixtures) |
 | `internal/editorial` | rejection-reason → editorial-guide condensation (model call + deterministic fallback) |
 | `internal/delivery` | reader-facing body composition, Markdown→HTML renderer, DB-backed outbox with `.eml` export |
-| `internal/store` | SQLite repositories; embedded migrations under `migrations/` |
-| `internal/workspace` | per-visitor workspaces: signed cookie, per-workspace SQLite cloned from a seeded template, LRU cache, cleanup, create rate limit |
-| `internal/web` | `net/http` server-rendered UI (no JS framework, no CDN) |
+| `internal/store` | Postgres repositories (`pgx`), workspace-scoped; embedded migrations under `migrations/` |
+| `internal/workspace` | per-visitor workspaces: signed cookie, one `workspaces` row per visitor in shared Postgres, idle cleanup, create rate limit |
+| `internal/web` | `net/http`: JSON API under `/api/v1`, embedded React SPA, reader/paywall pages, unsubscribe, webhooks, outbox `.eml` |
+| `frontend/` | the only UI — React app built to `internal/web/appdist` and embedded with `go:embed` |
 | `examples/` | embedded demo data: fictional feeds/pages, replayed LLM fixtures, `futuro-proximo.yaml` publication |
 
 ## Estimated costs
