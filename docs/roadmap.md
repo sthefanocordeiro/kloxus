@@ -1,28 +1,29 @@
 # Kloxus — implementation roadmap
 
-Scope: the HackBrazil 2026 MVP. Submission deadline **Nov 30, 23:59** —
-repo link, **hosted demo URL (must stay up through evaluation)**, and a
+Scope: the HackBrazil 2026 submission. Deadline **Nov 30, 23:59** — repo
+link, **hosted demo URL (must stay up through evaluation)**, and a
 **≤3-minute video** (no login, English). Design decisions live in
 [decisions.md](decisions.md); product context in the root README.
 
-Key constraints (non-negotiable): zero setup locally
-(`go run ./cmd/kloxus demo` with only Go installed), no external database,
-no API keys in demo mode, no CDN, nothing sent without human approval, the
-AI never writes the commentary.
+**Direction changed on 2026-11-12 (D27–D34):** we ship a hosted real app —
+real sources, real model calls, real email, Postgres — instead of the
+zero-setup fixture demo. Judges are not required to run anything locally.
 
-One PR per milestone; each milestone lists its exit test.
+Constraints that still hold: nothing is sent without human approval, the AI
+never writes the commentary, every factual sentence carries a source, and
+publisher rules (robots, terms) are respected without workarounds. The fake
+providers stay as the test bed and as the runtime fallback.
+
+One issue and one PR per milestone; each milestone lists its exit test.
 
 ## Evaluation surfaces (per submission rules §7)
 
-Judges are not required to install or run anything. What they evaluate:
-
-1. **Hosted demo** — the demo-mode binary deployed to fly.io/VPS, seeded
-   with the example publication and replayed fixtures. Deterministic,
-   ~$0–5/mo, stays up into December. Nightly reset + in-UI "Reset demo".
-2. **Video** — ≤3 min, English, recorded by the owner against a shot-list
-   we provide; YouTube unlisted.
-3. **Code** — the repo itself; the zero-setup story is still the
-   engineering signal and the same artifact we deploy.
+1. **Hosted real app** — new Fly app + Supabase Postgres. Landing page with
+   the live cited sample, "Get started without login".
+2. **Fallback URL** — the tagged fixture demo stays deployed, in case a
+   real dependency fails during evaluation.
+3. **Video** — ≤3 min, English, recorded by the owner; YouTube unlisted.
+4. **Code** — the repo itself.
 
 ## Done
 
@@ -35,60 +36,63 @@ Judges are not required to install or run anything. What they evaluate:
   see `docs/devlog.md`)
 - [x] M6b prep: README run/deploy docs, `docs/submission.md`, tag-based
   binary release workflow, Dockerfile/fly.toml for the hosted demo.
+- [x] v2 M1–M5: `/api/v1`, React editor, approve & send, reader pages,
+  onboarding. (D21–D26)
 
-## M2 — Real pipeline on fixtures (Nov 10–19) → PR 2
+## R1 — One stack (Nov 13–14)
 
-The bulk of the work. Internal order:
+- Tag the current demo (`demo-fixture-v2`) and keep it deployed as the
+  fallback URL.
+- Delete the classic htmx UI; keep the reader page, webhooks and the fake
+  providers. Port the Go tests that go through classic handlers to
+  `/api/v1`. Add the frontend build and tests to CI (review F7). Fix the
+  README.
 
-1. **Fixture feeds** — 25–40 fictional original items across 4 fictional
-   outlets, deliberate duplicates (literal republishes + same-event
-   rewrites) and off-topic noise.
-2. **`internal/sources`** — fixture fetcher (RSS via gofeed, page via
-   `x/net/html`), canonical URL, robots.txt interface stub.
-3. **`internal/dedupe`** — canonical URL + SimHash near-duplicate
-   grouping into `stories`.
-4. **`internal/llm`** — provider interface; Anthropic client (needed now:
-   fixtures are produced from real calls — see D4); replay provider keyed
-   by hash(model, template, normalized input), failing loudly and dumping
-   the request on a missing key.
-5. **Pipeline steps** — triage (batched, structured JSON, retry once) →
-   storylist (5–10 items, themed, "why it matters") → dossier (summary,
-   facts `[n]`, quote, unknowns, labeled interpretation) → deepdive
-   (≤3 items; batched call in demo, tool loop in real mode) → draft
-   (sections + empty commentary slots) → citecheck (model maps sentences;
-   deterministic rule blocks unsourced facts).
-6. **Editorial guide** — regenerated from decisions; deterministic
-   append fallback in demo mode when no fixture matches.
-7. **Cost tracking** — tokens + cost in `runs`.
+**Exit:** no htmx route or template left; CI builds and tests Go and React.
 
-**Exit:** `demo --headless` produces a believable issue fully offline.
+## R2 — Landing page (Nov 13–16, parallel with R1)
 
-## M3 — Web UI (Nov 19–24) → PR 3
+- Home page inside the React app: what Kloxus is, how the loop works, the
+  cited sample as the centrepiece, sponsors used, "Get started without
+  login" into the existing anonymous workspace.
 
-- Server-rendered `html/template` + embedded htmx. All 11 pages:
-  publications, settings, sources (with `robots.txt` validation), run
-  with live progress, story-list review (approve/reject+reason/
-  alternative), dossier view, draft editor with flagged sentences,
-  send/export, paywall, editorial guide, costs.
-- `kloxus demo` starts the server, opens the browser.
-- Demo-only "Reset demo" button (also serves the hosted instance).
+**Exit:** a first-time visitor reaches a workspace in one click, EN + pt-BR.
 
-**Exit:** a judge completes the full loop — prepare, reject with reason,
-see guide update, approve, export — in under 5 minutes.
+## R3 — Postgres on Supabase (Nov 14–17)
 
-## M6a — Hosted demo (Nov 24–26)
+- Port the store and migrations to Postgres; `workspace_id` on every tenant
+  table; drop the per-visitor SQLite files. Nightly `pg_dump`. (D28)
 
-- `fly launch` (or VPS + systemd + Caddy): TLS, always-on, stable URL.
-- Nightly `kloxus.db` wipe + reseed; health endpoint; uptime check.
-- No secrets on the instance (demo mode has none).
+**Exit:** full test suite green on Postgres by **Nov 17**. If not, fall back
+to SQLite + Litestream and move on.
 
-## M6b — Release & docs (Nov 25–26)
+## R4 — Real data and real runs (Nov 17–21)
 
-- GoReleaser (or Actions matrix) binaries: Windows, macOS Intel + ARM,
-  Linux.
-- Rewrite README "Running the project" + architecture table; update
-  demo-page status; screenshots; `docs/submission.md` (EN+PT tagline and
-  description ready to paste).
+- **Source catalog and global ingestion** — seeded catalog with policy,
+  scheduler, conditional GET, robots re-check, shared `items`, fetch log;
+  Daily Journal as a signal source. (D29, D31)
+- **LLM guards and second provider** — run budgets, daily cap, kill switch,
+  retries, fallback to the recorded sample; OpenAI-compatible provider.
+  (D32)
+- **Resend and workspace claim** — magic-link confirmation, caps, real
+  delivery of approved issues. (D33)
+
+**Exit:** a new anonymous workspace picks catalog sources, runs a real
+issue from today's news, claims the workspace by email and receives the
+approved issue in a real inbox.
+
+## R5 — Discovery and checkout (Nov 21–24)
+
+- **Discover a topic** — query expansion + Firecrawl Search + Daily Journal
+  search, capped per workspace. (D30)
+- **AbacatePay test-mode checkout** for the paid section. (D34)
+
+**Exit:** typing a niche returns dated candidate stories with sources; a
+reader unlocks the paid section through a test-mode payment.
+
+## Freeze (Nov 25)
+
+Bug fixes only. Verify caps, kill switch and the fallback URL.
 
 ## Video (Nov 26–28) — owner-produced
 
@@ -100,32 +104,32 @@ see guide update, approve, export — in under 5 minutes.
 
 Submit early; the last version within the deadline counts.
 
-## M4a — Firecrawl monitor (Nov 24–26)
+## Cut order if we slip
 
-- `MonitorProvider` interface; simulated "monitored via Firecrawl" badge
-  + Check-now in demo; real `/v2/monitor` client, `monitor.page` webhook
-  receiver with secret verification, and polling fallback for localhost.
-- Page sources only (no crawl/website monitors). Decision D14.
+1. AbacatePay (keep the fake provider).
+2. Firecrawl monitoring (keep search and scrape only).
+3. Topic discovery.
 
-## M4 — Real mode / M5 — Paywall (post-deadline / if ahead)
-
-- M4: RSS/page fetching with `robots.txt` + `KloxusBot` UA + rate limits,
-  `go-readability`, Firecrawl optional, `record` command, Resend mailer.
-- M5: AbacatePay test mode, magic links, webhook verification +
-  polling fallback, AES-256-GCM key encryption.
-- The demo must remain complete without these.
+The real pipeline and the landing page are never cut.
 
 ## Post-hackathon — validation & SaaS path (Dec 2026+)
 
 - Pilot with up to 5 real publications; go/no-go (Feb 2027).
-- SaaS evolution (where Postgres/Supabase belongs): same binary deployed
-  centrally → per-tenant storage → Kloxus subscription billing.
+- SaaS evolution: Kloxus subscription billing, creator-owned AbacatePay
+  accounts (D8), semantic search (Exa or pgvector over our own items).
 
 ## Risks
 
-- **Fixture quality gates the demo.** Iterate prompts against the real
-  API before recording; thin fixtures make the demo look fake.
-- **Hosted demo availability.** Sleeping free tiers and Supabase
-  free-tier pauses can take it down mid-evaluation — avoided by D10.
-- **M2 scope creep.** If it slips past Nov 19, cut UI polish in M3,
-  never pipeline features.
+- **Schedule.** About 11–14 engineer-days of work in 13 calendar days.
+- **Five external dependencies during evaluation** (Supabase, the LLM
+  provider, Resend, Firecrawl, Daily Journal). Each has a fake or a recorded
+  fallback; the fixture demo stays up as the fallback URL.
+- **LLM spend and quality.** Anonymous visitors trigger real calls; caps and
+  the kill switch are mandatory. The zero-cost provider must pass the
+  quality gate in D32 or we stay on Anthropic with a tighter cap.
+- **Free tiers.** Supabase pauses after one idle week (the scheduler keeps
+  it awake) and has no backups (nightly dump). Resend allows 100 emails a
+  day.
+- **Publisher goodwill.** Four launch sources block AI crawlers by name; we
+  read their public feed and publish summaries with links. Ask each for an
+  explicit OK, and get Daily Journal's permission in writing.

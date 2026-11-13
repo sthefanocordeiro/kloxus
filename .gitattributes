@@ -1,0 +1,3 @@
+# Fixture inputs feed replay-key hashing (llm.Key); CRLF checkouts
+# change collected text and break demo mode on Windows.
+examples/** text eol=lf

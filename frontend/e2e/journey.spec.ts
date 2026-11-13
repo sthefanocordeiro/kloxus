@@ -5,6 +5,17 @@ import { expect, test, type Page } from "@playwright/test";
 // w/ reason → add from the bench → move between sections → draft → fix
 // the flag → commentary → approve → schedule + hold → send → reader.
 
+type EditorWindow = Window & {
+  __ed?: {
+    state: {
+      selection: {
+        empty: boolean;
+        $from?: { node(n: number): { type?: { name?: string } } };
+      };
+    };
+  };
+};
+
 const issueCol = (page: Page) => page.locator('section[aria-label="This issue"]');
 const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
 const sectionBox = (page: Page, name: string) =>
@@ -16,7 +27,7 @@ async function onboard(page: Page) {
   await page.goto("/");
   // the landing renders the cited sample dossier before any workspace
   await expect(page.getByText(/dossier from the sample issue/i)).toBeVisible({ timeout: 15000 });
-  await page.getByRole("link", { name: /Create your newsletter/ }).click();
+  await page.getByRole("button", { name: /Get started without login/ }).first().click();
   await page.waitForURL(/\/new/);
 
   // the sample proposal pre-fills the five editable blocks
@@ -133,7 +144,7 @@ async function typeCommentary(page: Page) {
     // (selectionchange) — typing ahead of it hits the stale selection.
     // Wait until the caret is a text cursor inside this commentary node.
     await page.waitForFunction(() => {
-      const s = (window as any).__ed?.state.selection;
+      const s = (window as EditorWindow).__ed?.state.selection;
       return !!s && s.empty && s.$from?.node(-1)?.type?.name === "commentary";
     }, null, { timeout: 15000 });
     await page.keyboard.type("My reading of this section, for the record.", { delay: 15 });
@@ -254,7 +265,7 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   // the fixture sources collect a fresh issue
   await page.goto("/publications");
   await page.getByRole("button", { name: "Reset demo" }).click();
-  await expect(page.getByRole("link", { name: /Create your newsletter/ })).toBeVisible({
+  await expect(page.getByRole("button", { name: /Get started without login/ }).first()).toBeVisible({
     timeout: 15000,
   });
   await onboard(page);
