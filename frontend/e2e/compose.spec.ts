@@ -26,7 +26,7 @@ const sectionBox = (page: Page, name: string) =>
 async function onboard(page: Page) {
   await page.goto("/");
   await expect(page.getByText(/dossier from the sample issue/i)).toBeVisible({ timeout: 15000 });
-  await page.getByRole("link", { name: /Create your newsletter/ }).click();
+  await page.getByRole("button", { name: /Get started without login/ }).first().click();
   await page.waitForURL(/\/new/);
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Create newsletter", exact: true }).click();
