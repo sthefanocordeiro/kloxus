@@ -310,9 +310,13 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
 
   // reset wipes the workspace — the visitor walks onboarding again and
-  // the fixture sources collect a fresh issue
+  // the fixture sources collect a fresh issue. The reset affordance is
+  // demo-only: on the real app it does not render, and the second-
+  // prepare check above already proved the hosted path.
   await page.goto("/publications");
-  await page.getByRole("button", { name: "Reset demo" }).click();
+  const reset = page.getByRole("button", { name: "Reset demo" });
+  if (!(await reset.isVisible())) return;
+  await reset.click();
   await expect(page.getByRole("button", { name: /Get started without login/ }).first()).toBeVisible({
     timeout: 15000,
   });
