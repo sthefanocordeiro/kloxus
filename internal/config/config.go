@@ -37,6 +37,14 @@ type Config struct {
 	// pipeline; "off" runs the deterministic pipeline and any model call
 	// attempted fails loudly (llm.None is the configured provider).
 	LLMMode string
+	// Spend guards (D32/D36): per-workspace daily run budget, per-run
+	// token budget, global daily dollar cap and the kill-switch env —
+	// all persisted in Postgres so restarts keep the counters.
+	RunsPerDay      int
+	TokensPerRun    int
+	LLMDailyCap     float64
+	LLMKillEnv      bool   // KLOXUS_LLM_KILL at boot; also checked live per call
+	AdminToken      string // bearer token for /api/v1/admin/*
 	MasterKey       string
 	ResendAPIKey    string
 	FromAddress     string
@@ -66,6 +74,11 @@ func Load() (*Config, error) {
 		ModelDraft:      getenv("KLOXUS_MODEL_DRAFT", "claude-sonnet-5-5"),
 		MaxDeepDives:    getint("KLOXUS_MAX_DEEP_DIVES", 3),
 		LLMMode:         getenv("KLOXUS_LLM_MODE", "auto"),
+		RunsPerDay:      getint("KLOXUS_RUNS_PER_DAY", 2),
+		TokensPerRun:    getint("KLOXUS_TOKENS_PER_RUN", 200000),
+		LLMDailyCap:     getfloat("KLOXUS_LLM_DAILY_CAP_USD", 1.00),
+		LLMKillEnv:      os.Getenv("KLOXUS_LLM_KILL") != "",
+		AdminToken:      os.Getenv("KLOXUS_ADMIN_TOKEN"),
 		MasterKey:       os.Getenv("KLOXUS_MASTER_KEY"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
@@ -97,6 +110,13 @@ func getenv(key, fallback string) string {
 
 func getint(key string, fallback int) int {
 	if v, err := strconv.Atoi(os.Getenv(key)); err == nil {
+		return v
+	}
+	return fallback
+}
+
+func getfloat(key string, fallback float64) float64 {
+	if v, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil {
 		return v
 	}
 	return fallback

@@ -30,6 +30,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/realsample"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -674,12 +675,20 @@ func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiSample serves the landing page's cited dossier — workspace-free, so
-// the first screen doesn't create a demo workspace before Start.
+// the first screen doesn't create a demo workspace before Start. In real
+// mode it is the recorded real issue (also the fallback blocked runs
+// point at); demo keeps the fictional Valdória sample.
 func (s *Server) apiSample(w http.ResponseWriter, r *http.Request) {
-	data, err := examples.FS.ReadFile("landing/sample.json")
-	if err != nil {
-		apiErr(w, 500, "internal", "sample dossier unavailable")
-		return
+	var data []byte
+	var err error
+	if s.d.Cfg.Mode == "real" {
+		data = realsample.Sample()
+	}
+	if data == nil {
+		if data, err = examples.FS.ReadFile("landing/sample.json"); err != nil {
+			apiErr(w, 500, "internal", "sample dossier unavailable")
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Write(data)
@@ -831,14 +840,17 @@ func (s *Server) apiSourceCheck(w http.ResponseWriter, r *http.Request) {
 
 // apiRun is the run resource snapshot.
 type apiRun struct {
-	ID         string         `json:"id"`
-	Kind       string         `json:"kind"`
-	Status     string         `json:"status"` // running | done | failed
-	Step       string         `json:"step"`
-	IssueID    int64          `json:"issue_id,omitempty"`
-	NoNewItems bool           `json:"no_new_items"`
-	Error      string         `json:"error,omitempty"`
-	Events     []runEventView `json:"events"`
+	ID            string         `json:"id"`
+	Kind          string         `json:"kind"`
+	Status        string         `json:"status"` // running | done | failed | blocked
+	Step          string         `json:"step"`
+	IssueID       int64          `json:"issue_id,omitempty"`
+	NoNewItems    bool           `json:"no_new_items"`
+	Error         string         `json:"error,omitempty"`
+	Blocked       bool           `json:"blocked,omitempty"`
+	BlockedReason string         `json:"blocked_reason,omitempty"`
+	Sample        bool           `json:"sample,omitempty"`
+	Events        []runEventView `json:"events"`
 }
 
 type runEventView struct {
@@ -853,12 +865,16 @@ func runView(st *runProgress) apiRun {
 	v := apiRun{
 		ID: st.st.RunID, Kind: st.st.Kind, Step: st.st.Step,
 		IssueID: st.st.IssueID, NoNewItems: st.st.NoNewItems, Error: st.st.Err,
+		Blocked: st.st.Blocked, BlockedReason: st.st.BlockedReason, Sample: st.st.Sample,
 		Status: "running",
 	}
 	if st.st.Done {
 		v.Status = "done"
 		if st.st.Err != "" {
 			v.Status = "failed"
+		}
+		if st.st.Blocked {
+			v.Status = "blocked"
 		}
 	}
 	for i, ev := range st.events {
@@ -926,7 +942,12 @@ func (s *Server) apiRunEvents(w http.ResponseWriter, r *http.Request) {
 	sent := 0
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
+	// The server's 60s WriteTimeout would kill a stream held open by a
+	// long run — renew the deadline every tick so a live handler keeps
+	// its connection while a wedged one still dies.
+	rc := http.NewResponseController(w)
 	for {
+		_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		st.mu.Lock()
 		evs := append([]pipeline.StepEvent{}, st.events...)
 		done := st.st.Done
@@ -1579,6 +1600,13 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		wsp.Runs.Store(key, st)
 	}
+	// Same spend-guard admission as prepare runs: a refusal comes back
+	// as a finished, blocked run with the message and recorded sample.
+	if b := s.admitRun(r.Context(), wsp.ID); b != nil {
+		st.blockRun(b)
+		apiJSON(w, 202, map[string]any{"run": runView(st)})
+		return
+	}
 	go func() {
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
@@ -1609,7 +1637,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 				st.mu.Unlock()
 			},
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), s.runTimeout())
+		ctx, cancel := context.WithTimeout(llm.WithRunScope(context.Background(), wsp.ID), s.runTimeout())
 		defer cancel()
 		res, err := runner.RunPhaseB(ctx, pub, iss.ID)
 		st.mu.Lock()
@@ -1617,6 +1645,11 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		st.st.Done = true
 		if err != nil {
 			st.st.Err = err.Error()
+			if b, ok := llm.AsBlocked(err); ok {
+				st.st.Blocked = true
+				st.st.BlockedReason = string(b.Reason)
+				st.st.Sample = true
+			}
 			return
 		}
 		st.st.IssueID = res.IssueID

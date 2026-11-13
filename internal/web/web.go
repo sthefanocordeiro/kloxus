@@ -26,6 +26,9 @@ type Deps struct {
 	Cfg     *config.Config
 	Fetcher sources.Fetcher
 	LLM     llm.Provider
+	// Guard enforces the LLM spend limits at run admission and backs the
+	// admin kill switch (D32/D36). Nil disables the guards (tests).
+	Guard   *llm.Guard
 	Monitor sources.MonitorProvider
 	// RunTimeout bounds one pipeline run (collect or draft). Zero uses
 	// defaultRunTimeout; tests set it short to exercise the deadline.
@@ -64,6 +67,8 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /a/{id}", s.articlePage)
 	m.HandleFunc("GET /outbox/{id}/eml", s.outboxEML)
 	m.HandleFunc("POST /webhooks/firecrawl", s.firecrawlWebhook)
+	m.HandleFunc("GET /api/v1/admin/llm", s.apiAdminLLM)
+	m.HandleFunc("POST /api/v1/admin/llm", s.apiAdminLLMSet)
 
 	// Old /app/* URLs forward to the same paths at the root; anything
 	// else GETable falls through to the SPA.
@@ -164,9 +169,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mux.ServeHTTP(w, r)
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/webhooks/") {
-		// Webhooks carry provider auth, not a visitor cookie — resolving
-		// would mint a junk workspace per call and trip the create limit.
+	if strings.HasPrefix(r.URL.Path, "/webhooks/") || strings.HasPrefix(r.URL.Path, "/api/v1/admin/") {
+		// Webhooks and admin calls carry their own auth, not a visitor
+		// cookie — resolving would mint a junk workspace per call and
+		// trip the create limit.
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		s.mux.ServeHTTP(w, r)
 		return
@@ -177,6 +183,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), ctxWS, ws))
+	// Interactive model calls (guide rebuilds, sentence checks) account
+	// to this workspace too — the run endpoints swap in a run scope.
+	r = r.WithContext(llm.WithWorkspace(r.Context(), ws.ID))
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if strings.HasPrefix(r.URL.Path, "/api/v1/") {

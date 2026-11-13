@@ -6,10 +6,13 @@ package sources
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,6 +50,18 @@ func (f FixtureFetcher) Fetch(_ context.Context, typ, url string) ([]RawItem, er
 	default:
 		return nil, fmt.Errorf("unknown source type %q", typ)
 	}
+}
+
+// CapturedFetcher answers a real source URL with its recorded capture
+// inside FS at feeds/<FeedFixtureName(type,url)>. Unlike rewriting a
+// definition's URLs to fixture paths, the real URL still reaches the
+// pipeline — outlets keep their real names in prompts, so replay keys
+// and model input match the original recorded run.
+type CapturedFetcher struct{ FS fs.FS }
+
+// Fetch implements Fetcher against the recorded captures.
+func (f CapturedFetcher) Fetch(ctx context.Context, typ, url string) ([]RawItem, error) {
+	return FixtureFetcher{FS: f.FS}.Fetch(ctx, typ, "feeds/"+FeedFixtureName(typ, url))
 }
 
 func (f FixtureFetcher) fetchRSS(url string) ([]RawItem, error) {
@@ -167,6 +182,22 @@ func pageTitle(doc *html.Node) string {
 // monitor and its webhook instead of this fetcher.
 type LiveFetcher struct {
 	HTTP *http.Client // defaults to a client with a 30s timeout
+	// DumpDir, when set, saves each fetched body under
+	// FeedFixtureName(typ, url) — `kloxus record --live` uses it to build
+	// replayable feed fixtures alongside the recorded LLM responses.
+	DumpDir string
+}
+
+// FeedFixtureName is the canonical fixture filename for a captured feed
+// or page: stable on the source URL so a publication definition keeps
+// pointing at the same capture across recordings.
+func FeedFixtureName(typ, url string) string {
+	ext := "html"
+	if typ == "rss" {
+		ext = "xml"
+	}
+	sum := sha1.Sum([]byte(url))
+	return fmt.Sprintf("%s-%x.%s", typ, sum[:5], ext)
 }
 
 func (f LiveFetcher) client() *http.Client {
@@ -198,10 +229,23 @@ func (f LiveFetcher) Fetch(ctx context.Context, typ, url string) ([]RawItem, err
 	if err != nil {
 		return nil, fmt.Errorf("reading %q: %w", url, err)
 	}
+	f.dump(typ, url, body)
 	if typ == "rss" {
 		return parseFeed(bytes.NewReader(body), url)
 	}
 	return parseIndexPage(bytes.NewReader(body), url)
+}
+
+// dump saves a fetched body as a fixture file under DumpDir. Failures
+// are non-fatal — capturing fixtures is auxiliary to fetching.
+func (f LiveFetcher) dump(typ, url string, body []byte) {
+	if f.DumpDir == "" {
+		return
+	}
+	if err := os.MkdirAll(f.DumpDir, 0o755); err != nil {
+		return
+	}
+	os.WriteFile(filepath.Join(f.DumpDir, FeedFixtureName(typ, url)), body, 0o644)
 }
 
 func parseEntry(n *html.Node) (RawItem, bool) {

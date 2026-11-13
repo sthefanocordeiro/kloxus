@@ -59,6 +59,7 @@ wait_run() {
 		case "$st" in
 			done)   say "$label run finished"; return 0 ;;
 			failed) die "$label run failed: $(jget run.error)" ;;
+			blocked) die "$label run blocked by spend guard ($(jget run.blocked_reason)): $(jget run.error)" ;;
 			running) sleep 2 ;;
 			*) die "$label: unknown run status '$st'" ;;
 		esac

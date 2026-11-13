@@ -1,0 +1,447 @@
+{
+  "date": "2026-11-13",
+  "dossiers": [
+    {
+      "deep_facts": [
+        {
+          "ref": 1,
+          "text": "O Tesouro identificou o incidente em 4 de novembro de 2026 e só o divulgou em 12 de novembro (quinta-feira), oito dias depois."
+        },
+        {
+          "ref": 1,
+          "text": "O e-Serviços é o portal usado para solicitar e acompanhar serviços oferecidos pelo Tesouro. Os dados expostos ali (nome, CPF e e-mail) vêm, portanto, de usuários desses serviços. As chaves PIX, por outro lado, são de beneficiários de pagamentos do governo federal, e estavam numa base de consultas analíticas internas."
+        }
+      ],
+      "facts": [
+        {
+          "ref": 1,
+          "text": "O incidente foi identificado em 4 de novembro de 2026 e atingiu duas bases de dados do Tesouro."
+        },
+        {
+          "ref": 1,
+          "text": "Na base do e-Serviços, foram acessados indevidamente nomes, CPFs e e-mails de aproximadamente 30 mil cadastros."
+        },
+        {
+          "ref": 1,
+          "text": "Uma base de consultas analíticas internas continha cerca de 4 mil chaves PIX de destinatários, e dados relacionados a pagamentos também foram acessados."
+        },
+        {
+          "ref": 1,
+          "text": "Segundo a Secretaria do Tesouro, não houve impacto financeiro."
+        }
+      ],
+      "interpretation": [
+        "O fato de a base interna de análise guardar chaves PIX sugere que bases de apoio, menos protegidas que os sistemas centrais, são alvos atraentes. O Tesouro ainda não detalhou o alcance real do acesso."
+      ],
+      "quote": {
+        "attribution": "",
+        "text": ""
+      },
+      "ref": 1,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/economia/noticia/2026/11/12/tesouro-nacional-incidente-seguranca.ghtml"
+        }
+      ],
+      "summary": "O Tesouro Nacional informou que um ataque hacker atingiu duas de suas bases de dados, com acesso indevido a cerca de 30 mil cadastros do portal e-Serviços e a cerca de 4 mil chaves PIX de beneficiários de pagamentos federais [1]. O órgão afirma que não houve impacto financeiro nem comprometimento de sistemas estruturantes [1].",
+      "title": "Ataque hacker ao Tesouro Nacional expõe dados de 30 mil cadastros e 4 mil chaves PIX",
+      "unknowns": [
+        "Quem está por trás do ataque e como o acesso foi obtido.",
+        "Quais dados de pagamentos, além das chaves PIX, foram acessados (o trecho disponível está incompleto).",
+        "Se os dados foram copiados, divulgados ou usados em fraudes.",
+        "Se os titulares afetados foram notificados.",
+        "Por que o Tesouro levou oito dias, entre a identificação em 4/11 e o comunicado em 12/11, para divulgar o caso, e se os titulares foram avisados nesse intervalo."
+      ]
+    },
+    {
+      "deep_facts": [
+        {
+          "ref": 1,
+          "text": "Códigos curtos são números de poucos dígitos que aparecem como remetentes de SMS, como \"29222\", no lugar de um número de celular completo. É esse tipo de remetente que será bloqueado se não estiver cadastrado."
+        },
+        {
+          "ref": 1,
+          "text": "O Ministério das Comunicações justifica as regras pelo aumento dos golpes e fraudes por SMS. A Anatel acompanhará a implementação, e as medidas deverão ser adotadas em até 90 dias, prazo que pode ser prorrogado."
+        }
+      ],
+      "facts": [
+        {
+          "ref": 1,
+          "text": "As regras foram publicadas em 4 de novembro de 2026 no Diário Oficial da União."
+        },
+        {
+          "ref": 1,
+          "text": "As medidas incluem um cadastro público para identificar as empresas responsáveis pelo envio de SMS e o bloqueio de mensagens de códigos curtos não cadastrados."
+        },
+        {
+          "ref": 1,
+          "text": "A Anatel acompanhará a implementação, que deve ocorrer em até 90 dias, com possibilidade de prorrogação."
+        }
+      ],
+      "interpretation": [
+        "A medida ataca a rastreabilidade dos remetentes, ponto fraco dos golpes por SMS. O resultado depende de fiscalização e do cumprimento do prazo pelas operadoras."
+      ],
+      "quote": {
+        "attribution": "",
+        "text": ""
+      },
+      "ref": 3,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/tecnologia/ciberseguranca/noticia/2026/11/04/governo-publica-novas-regras-para-combater-golpes-por-sms-veja-o-que-muda.ghtml"
+        }
+      ],
+      "summary": "O governo federal publicou no Diário Oficial novas regras contra golpes e fraudes por SMS [1]. Entre elas estão um cadastro público das empresas que enviam mensagens e o bloqueio de SMS vindos de códigos curtos não cadastrados [1].",
+      "title": "Governo publica novas regras contra golpes por SMS",
+      "unknowns": [
+        "Quais são as demais regras, que o texto disponível não detalha.",
+        "Se o prazo de 90 dias será prorrogado e quais sanções valerão para quem descumprir.",
+        "Qual será o efeito prático sobre o volume de golpes.",
+        "Quais são as \"outras regras\" que o g1 detalha à parte e que não constam do trecho disponível."
+      ]
+    },
+    {
+      "facts": [
+        {
+          "ref": 1,
+          "text": "Segundo a Trend Micro, o Brasil ficou em segundo lugar em dispositivos afetados, atrás da Malásia, e foram identificados aparelhos infectados em 170 países."
+        },
+        {
+          "ref": 1,
+          "text": "Segundo o Google, a fabricante chinesa Videostrong, de Shenzhen, instalou intencionalmente o programa nos equipamentos."
+        },
+        {
+          "ref": 1,
+          "text": "A fabricante lucrava vendendo a criminosos o acesso aos aparelhos infectados."
+        }
+      ],
+      "interpretation": [
+        "O caso indica risco na cadeia de fornecimento de aparelhos baratos, em que o malware chega ao consumidor antes mesmo da compra. A acusação de instalação intencional é do Google e ainda não foi respondida pela empresa."
+      ],
+      "quote": {
+        "attribution": "",
+        "text": ""
+      },
+      "ref": 4,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/tecnologia/noticia/2026/11/05/google-derruba-rede-com-1-milhao-de-aparelhos-infectados-incluindo-tv-boxes-brasil-e-o-2o-mais-afetado.ghtml"
+        }
+      ],
+      "summary": "Uma operação do Google com outras empresas de tecnologia desmantelou uma rede que controlava mais de 1,3 milhão de aparelhos infectados sem o conhecimento dos donos, em sua maioria TV boxes Android [1]. O malware XCPE já vinha instalado de fábrica, e o Brasil foi o segundo país mais afetado [1].",
+      "title": "Google derruba rede que controlava 1 milhão de TV boxes infectados",
+      "unknowns": [
+        "A manchete fala em 1 milhão de aparelhos e o texto em mais de 1,3 milhão; a contagem exata não está esclarecida.",
+        "Qual a posição da Videostrong sobre a acusação.",
+        "Quantos aparelhos brasileiros foram afetados e se continuam infectados após a derrubada da rede.",
+        "Que medidas os consumidores devem tomar."
+      ]
+    },
+    {
+      "facts": [
+        {
+          "ref": 1,
+          "text": "Em 6 de novembro, o Porto de Santos sofreu um ataque hacker e uma invasão à Caixa Vida e Previdência expôs dados de milhões de brasileiros."
+        },
+        {
+          "ref": 1,
+          "text": "Na França, mais de 500 supermercados foram invadidos, assim como uma empresa que presta serviços de banco de sangue ao governo."
+        },
+        {
+          "ref": 1,
+          "text": "A maior corretora de criptomoedas do mundo sofreu um roubo da ordem de R$ 6 bilhões em ativos digitais."
+        }
+      ],
+      "interpretation": [
+        "A concentração de incidentes em poucas semanas chama atenção, mas coincidência temporal não prova causa comum. A tese da IA como motor da onda precisa de dados verificáveis."
+      ],
+      "quote": {
+        "attribution": "",
+        "text": ""
+      },
+      "ref": 5,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/podcast/o-assunto/noticia/2026/11/13/a-epidemia-de-ataques-ciberneticos-e-os-riscos-para-a-seguranca-global-o-assunto-1845.ghtml"
+        }
+      ],
+      "summary": "Um episódio do podcast O Assunto discute a onda recente de ataques cibernéticos, que inclui o Porto de Santos e a Caixa Vida e Previdência, ambos atingidos em 6 de novembro, além de alvos na Europa [1]. Segundo o texto, especialistas apontam ferramentas de IA como a causa dessa escalada [1].",
+      "title": "A epidemia de ataques cibernéticos e os riscos para a segurança global",
+      "unknowns": [
+        "O impacto operacional do ataque ao Porto de Santos.",
+        "O número exato de pessoas afetadas na Caixa Vida e Previdência.",
+        "Se os ataques estão conectados ou se têm autoria comum.",
+        "Quais evidências sustentam a atribuição à IA, já que o texto cita apenas especialistas de forma genérica."
+      ]
+    },
+    {
+      "deep_facts": [
+        {
+          "ref": 1,
+          "text": "O FGC divulgou o caso em 5 de novembro de 2026 (quinta-feira). A entidade é uma associação privada, sem fins lucrativos, que funciona como um seguro para proteger o dinheiro de depositantes e investidores."
+        },
+        {
+          "ref": 1,
+          "text": "O FGC diz que a investigação segue com apoio de empresas especializadas para esclarecer a extensão do acesso. Ou seja, o alcance total do incidente ainda não está definido, mesmo com a afirmação de que todos os afetados foram notificados."
+        }
+      ],
+      "facts": [
+        {
+          "ref": 1,
+          "text": "Os dados acessados incluem nome, CPF, e-mail e data de nascimento de clientes."
+        },
+        {
+          "ref": 1,
+          "text": "O FGC não informou o número de afetados, mas afirmou que todos foram notificados."
+        },
+        {
+          "ref": 1,
+          "text": "A investigação continua com apoio de empresas especializadas, para apurar se houve cópia, divulgação ou uso indevido das informações."
+        }
+      ],
+      "interpretation": [
+        "Nome, CPF e data de nascimento bastam para tentativas de golpe com falsa identidade. Mesmo sem perda financeira declarada, o risco para os clientes persiste."
+      ],
+      "quote": {
+        "attribution": "Nota do FGC, citada pelo g1",
+        "text": "Também não foi identificada nenhuma perda financeira decorrente do evento"
+      },
+      "ref": 2,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/tecnologia/ciberseguranca/noticia/2026/11/05/fgc-sofre-invasao-que-da-acesso-a-nomes-cpfs.ghtml"
+        }
+      ],
+      "summary": "O Fundo Garantidor de Créditos (FGC) comunicou ter identificado um acesso não autorizado a dados pessoais de clientes [1]. A entidade diz que todos os afetados foram notificados e que não houve perda financeira, mas não revelou quantas pessoas foram atingidas [1].",
+      "title": "FGC sofre invasão que expõe CPFs e dados de clientes",
+      "unknowns": [
+        "Quantas pessoas foram afetadas (o g1 tentava obter o número).",
+        "Se os dados foram copiados ou divulgados.",
+        "Quem foi o autor da invasão e por qual via ela ocorreu.",
+        "Se os afetados são depositantes, investidores ou outro tipo de cliente do FGC, o que o trecho disponível não esclarece."
+      ]
+    },
+    {
+      "facts": [
+        {
+          "ref": 1,
+          "text": "As autoras da ação são a Associação Nacional de Jornais, a ABERT e a Associação Nacional de Editores de Revistas."
+        },
+        {
+          "ref": 1,
+          "text": "A Meta, dona de Facebook, Instagram, WhatsApp e Threads, exigia autorização para usar programas automatizados que acessassem, copiassem, armazenassem e analisassem reportagens, fotos e vídeos dos veículos."
+        },
+        {
+          "ref": 1,
+          "text": "A mudança nos termos comerciais tinha vigência prevista para 20 de novembro."
+        }
+      ],
+      "interpretation": [
+        "A decisão é provisória e coloca a disputa sobre o uso de conteúdo jornalístico no treinamento de IA em âmbito judicial. O mérito ainda será julgado."
+      ],
+      "quote": {
+        "attribution": "",
+        "text": ""
+      },
+      "ref": 8,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/sp/sao-paulo/noticia/2026/11/03/justica-proibe-meta-de-usar-conteudo-jornalistico-sem-autorizacao.ghtml"
+        }
+      ],
+      "summary": "A Justiça de São Paulo concedeu liminar a ANJ, ABERT e ANER contra a Meta, que passou a condicionar o uso de suas redes pelos veículos de comunicação à autorização de acesso irrestrito ao conteúdo deles para treinar IA [1]. A regra constava de alteração nos termos comerciais com vigência prevista para 20 de novembro [1].",
+      "title": "Justiça proíbe Meta de usar conteúdo jornalístico sem autorização",
+      "unknowns": [
+        "O que exatamente a Meta foi obrigada a fazer ou deixar de fazer (o trecho da decisão está incompleto).",
+        "Se a Meta vai recorrer e qual é a sua posição.",
+        "Se haverá multa em caso de descumprimento.",
+        "O que a liminar significa para a regra de 20 de novembro."
+      ]
+    },
+    {
+      "facts": [
+        {
+          "ref": 1,
+          "text": "O ataque ocorreu na segunda-feira (2) e afetou sistemas de supervisão e controle de câmaras frias em três unidades regionais."
+        },
+        {
+          "ref": 1,
+          "text": "Segundo o EFS, após um incidente de cibersegurança foram detectadas anomalias que alteraram os parâmetros de funcionamento dos equipamentos."
+        },
+        {
+          "ref": 1,
+          "text": "O caso foi revelado pelo semanário Le Canard Enchaîné, e as autoridades disseram não ter identificado impacto sanitário até quarta-feira (4)."
+        }
+      ],
+      "interpretation": [
+        "O alvo foi o controle de temperatura de estoques de sangue, e não apenas dados. Isso eleva o risco físico dos ataques, embora até agora não haja dano reportado."
+      ],
+      "quote": {
+        "attribution": "",
+        "text": ""
+      },
+      "ref": 10,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/tecnologia/noticia/2026/11/04/franca-investiga-ataque-cibernetico-contra-camaras-frias-de-banco-de-sangue.ghtml"
+        }
+      ],
+      "summary": "Um ataque cibernético atingiu uma prestadora de serviços de refrigeração que atende o Établissement Français du Sang (EFS), responsável pela coleta e distribuição de sangue na França [1]. Até 4 de novembro, as autoridades não haviam identificado nenhum impacto sanitário [1].",
+      "title": "França investiga ataque cibernético contra câmaras frias de banco de sangue",
+      "unknowns": [
+        "Quem foi o autor do ataque e qual era o objetivo.",
+        "Se houve perda de bolsas de sangue ou prejuízo ao abastecimento.",
+        "Quais unidades regionais foram afetadas, já que o trecho disponível não as nomeia.",
+        "Se o ataque se conecta a outros ocorridos na França."
+      ]
+    },
+    {
+      "facts": [
+        {
+          "ref": 1,
+          "text": "A empresa comunicou o incidente na segunda-feira (2) e suspendeu temporariamente saques e depósitos."
+        },
+        {
+          "ref": 1,
+          "text": "Segundo a corretora, no X, o incidente foi identificado e contido durante a madrugada."
+        },
+        {
+          "ref": 1,
+          "text": "A empresa afirmou que não houve prejuízo aos clientes nem vazamento de dados, mas não confirmou ao g1 se houve roubo ou movimentação não autorizada de ativos."
+        }
+      ],
+      "interpretation": [
+        "A suspensão de saques costuma ser medida de contenção, mas a empresa não explicou o motivo. A afirmação de que não houve prejuízo ainda não pode ser verificada de forma independente."
+      ],
+      "quote": {
+        "attribution": "",
+        "text": ""
+      },
+      "ref": 6,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/tecnologia/ciberseguranca/noticia/2026/11/02/mercado-bitcoin-incidente-seguranca.ghtml"
+        }
+      ],
+      "summary": "O Mercado Bitcoin informou ter registrado um incidente de segurança em 2 de novembro e suspendeu temporariamente saques e depósitos [1]. A corretora diz ter contido o problema e nega prejuízo a clientes e vazamento de dados, mas não confirmou se houve roubo [1].",
+      "title": "Mercado Bitcoin sofre ataque e suspende saques",
+      "unknowns": [
+        "Se houve roubo ou movimentação não autorizada de ativos.",
+        "A natureza do incidente e a causa.",
+        "Quando saques e depósitos serão normalizados.",
+        "Como a empresa sustenta a afirmação de que não houve prejuízo."
+      ]
+    },
+    {
+      "facts": [
+        {
+          "ref": 1,
+          "text": "A decisão foi tomada em 10 de novembro, por unanimidade, seguindo o voto do relator, ministro Marco Aurélio Bellizze."
+        },
+        {
+          "ref": 1,
+          "text": "Segundo a decisão, a Meta deixou de cumprir integralmente determinações para garantir isonomia na disputa presidencial e substituiu prazos fixados pelo TSE por prazos próprios."
+        },
+        {
+          "ref": 1,
+          "text": "O tribunal afirma que a empresa prestou informações de forma fracionada, em linguagem estrangeira e técnica, o que dificultou verificar as dificuldades técnicas alegadas."
+        }
+      ],
+      "interpretation": [
+        "A multa pune o descumprimento de ordens e a falta de transparência, não o resultado eleitoral. É um sinal do tribunal sobre a cooperação exigida das plataformas."
+      ],
+      "quote": {
+        "attribution": "",
+        "text": ""
+      },
+      "ref": 9,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/politica/noticia/2026/11/10/tse-meta-descumprir-decisao-sobre-eleicoes.ghtml"
+        }
+      ],
+      "summary": "O TSE decidiu por unanimidade multar a Meta em R$ 7,5 milhões por descumprir decisões da Corte durante as eleições [1]. A ação foi movida pela campanha de Lula, que aponta tratamento desigual na distribuição de conteúdo [1].",
+      "title": "TSE decide multar Meta em R$ 7,5 milhões",
+      "unknowns": [
+        "Se a Meta vai recorrer e como se manifestou.",
+        "Os detalhes do suposto tratamento desigual na distribuição de conteúdo, que o texto disponível não traz.",
+        "Se a Corte reconheceu efeito concreto sobre o resultado da eleição."
+      ]
+    },
+    {
+      "facts": [
+        {
+          "ref": 2,
+          "text": "Em 31 de outubro, a Binance anunciou ter coberto 90% das perdas, com dez criptomoedas, entre elas bitcoin e ether, totalmente repostas."
+        },
+        {
+          "ref": 2,
+          "text": "Os 10% restantes são de criptomoedas menos negociadas, o que dificulta compras grandes e pode atrasar a reposição."
+        },
+        {
+          "ref": 3,
+          "text": "A indenização por seguro depende da forma de armazenamento, do método de invasão e das condições do contrato; a regulamentação limitada e a volatilidade tornam as seguradoras cautelosas."
+        }
+      ],
+      "interpretation": [
+        "A cobertura com recursos próprios busca conter a perda de confiança dos clientes. A cobertura de 90% é uma declaração da própria empresa e ainda não foi confirmada por terceiros."
+      ],
+      "quote": {
+        "attribution": "Binance, em comunicado citado pelo g1",
+        "text": "Nosso compromisso permanece o mesmo: a Binance cobrirá integralmente o impacto financeiro dos fundos roubados neste incidente"
+      },
+      "ref": 7,
+      "sources": [
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 1,
+          "url": "https://g1.globo.com/tecnologia/noticia/2026/11/06/ue-exige-que-tiktok-modifique-os-feeds-personalizados-devido-aos-efeitos-nocivos.ghtml"
+        },
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 2,
+          "url": "https://g1.globo.com/tecnologia/ciberseguranca/noticia/2026/10/31/binance-diz-ter-coberto-90percent-das-perdas-apos-ataque-hacker-de-mais-de-us-6-bilhoes.ghtml"
+        },
+        {
+          "name": "g1 \u003e Tecnologia",
+          "ref": 3,
+          "url": "https://g1.globo.com/tecnologia/noticia/2026/10/30/ataque-hacker-de-us63-bi-a-binance-como-funciona-o-seguro-de-criptomoedas.ghtml"
+        }
+      ],
+      "summary": "A Binance, maior corretora de criptomoedas do mundo, foi alvo de um roubo de US$ 6,3 bilhões em ativos digitais [3]. A empresa diz já ter reposto 90% do valor com recursos próprios e promete cobrir 100% [2]. O caso reacendeu o debate sobre seguros para criptoativos [3].",
+      "title": "Hack de US$ 6,3 bilhões na Binance e a cobertura das perdas",
+      "unknowns": [
+        "Como a invasão ocorreu e quem foi o responsável.",
+        "Se os fundos roubados serão recuperados.",
+        "Quando a reposição de 100% será concluída.",
+        "Se a Binance tem seguro que cubra parte do prejuízo.",
+        "O primeiro link fornecido para este item trata de outro assunto (TikTok e a União Europeia) e não foi usado."
+      ]
+    }
+  ],
+  "how_it_works": [
+    "Cada frase factual carrega uma fonte — clique na referência para abrir o original.",
+    "O editor aprova cada edição antes do envio; nada sai sem aprovação explícita.",
+    "Frases sem fonte não chegam aos leitores."
+  ],
+  "issue_number": 1,
+  "publication": "Sinal Aberto"
+}

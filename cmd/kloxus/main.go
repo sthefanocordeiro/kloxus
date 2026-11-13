@@ -52,6 +52,8 @@ func main() {
 		err = cmdCosts(os.Args[2:])
 	case "record":
 		err = cmdRecord(os.Args[2:])
+	case "llm-check":
+		err = cmdLLMCheck(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -77,7 +79,11 @@ usage:
   kloxus sources check --publication <ref>
   kloxus guide show --publication <ref>
   kloxus costs --publication <ref> [--last n]
-  kloxus record --publication <ref>           regenerate LLM fixtures (real mode)`)
+  kloxus record --publication <ref> [--dir d]    regenerate LLM fixtures (real mode)
+  kloxus record --live --def <yaml> [--dump-feeds d] [--sample-out d] [--dir d]
+                                              record one real issue (feeds + LLM + sample export)
+  kloxus llm-check [--live | --publication <ref>] [--def yaml] [--out file]
+                                              quality gate: six model steps vs Anthropic`)
 }
 
 // localWorkspace is the fixed workspace id for single-user (local) mode:
@@ -85,6 +91,10 @@ usage:
 const localWorkspace = "local"
 
 func openDemoDB() (*config.Config, *store.Pool, *store.DB, error) {
+	return openDB(localWorkspace)
+}
+
+func openDB(wsName string) (*config.Config, *store.Pool, *store.DB, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, nil, nil, err
@@ -93,11 +103,11 @@ func openDemoDB() (*config.Config, *store.Pool, *store.DB, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if err := pool.EnsureWorkspace(context.Background(), localWorkspace); err != nil {
+	if err := pool.EnsureWorkspace(context.Background(), wsName); err != nil {
 		pool.Close()
 		return nil, nil, nil, err
 	}
-	return cfg, pool, pool.For(localWorkspace), nil
+	return cfg, pool, pool.For(wsName), nil
 }
 
 // seedExample loads the embedded example publication and seeds it.
@@ -131,22 +141,43 @@ func demoRuntime(cfg *config.Config) (sources.Fetcher, llm.Provider) {
 	}
 }
 
+// newGuard builds the spend guard over the durable ledger (D32/D36).
+// The boot env kill flag lands as the persisted switch too.
+func newGuard(cfg *config.Config, pool *store.Pool) *llm.Guard {
+	g := &llm.Guard{
+		Store:        pool,
+		RunsPerDay:   cfg.RunsPerDay,
+		TokensPerRun: int64(cfg.TokensPerRun),
+		DailyCapUSD:  cfg.LLMDailyCap,
+	}
+	g.LoadKill(context.Background())
+	if cfg.LLMKillEnv {
+		_ = g.SetKill(context.Background(), true)
+	}
+	return g
+}
+
 // modeRuntime picks the fetcher and model provider for the configured
 // mode: fixtures + replay in demo, live HTTP + Anthropic in real mode.
 // KLOXUS_LLM_MODE=off swaps the provider for llm.None (fail-loud stub),
 // which also frees real mode from requiring ANTHROPIC_API_KEY.
-func modeRuntime(cfg *config.Config) (sources.Fetcher, llm.Provider, error) {
+// The spend guard always exists (run admission, kill switch, admin
+// surface); in real mode it also wraps the provider so every real call
+// is retried, checked and ledgered.
+func modeRuntime(cfg *config.Config, pool *store.Pool) (sources.Fetcher, llm.Provider, *llm.Guard, error) {
+	guard := newGuard(cfg, pool)
 	if cfg.Mode == "demo" {
 		f, p := demoRuntime(cfg)
-		return f, p, nil
+		return f, p, guard, nil
 	}
 	if cfg.LLMOff() {
-		return sources.LiveFetcher{}, llm.None{}, nil
+		return sources.LiveFetcher{}, llm.None{}, guard, nil
 	}
 	if cfg.AnthropicAPIKey == "" {
-		return nil, nil, errors.New("real mode needs ANTHROPIC_API_KEY in .env or the environment")
+		return nil, nil, nil, errors.New("real mode needs ANTHROPIC_API_KEY in .env or the environment")
 	}
-	return sources.LiveFetcher{}, llm.Anthropic{APIKey: cfg.AnthropicAPIKey}, nil
+	guard.Inner = llm.Retrier{Inner: llm.Anthropic{APIKey: cfg.AnthropicAPIKey}}
+	return sources.LiveFetcher{}, guard, guard, nil
 }
 
 func printResult(res *pipeline.Result) {
@@ -181,7 +212,7 @@ func cmdDemo(args []string) error {
 	if !*headless {
 		// The UI starts from an empty workspace — onboarding creates the
 		// publication through the sample-proposal flow.
-		return serveUI(cfg, pool, db, fetcher, provider, seed)
+		return serveUI(cfg, pool, db, fetcher, provider, newGuard(cfg, pool), seed)
 	}
 	pub, err := seedExample(ctx, db)
 	if err != nil {
@@ -197,7 +228,7 @@ func cmdDemo(args []string) error {
 
 // serveUI starts the web UI: hosted multi-workspace mode when
 // KLOXUS_DATA_DIR is set (Fly.io), a single local workspace otherwise.
-func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, seed func(context.Context, *store.DB) error) error {
+func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, guard *llm.Guard, seed func(context.Context, *store.DB) error) error {
 	var monitor sources.MonitorProvider = sources.FakeMonitor{}
 	if cfg.Mode == "real" && cfg.FirecrawlAPIKey != "" {
 		monitor = sources.FirecrawlMonitor{
@@ -224,7 +255,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		wsm = workspace.OpenLocal(db, seed)
 	}
 	srv := web.New(web.Deps{
-		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider,
+		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider, Guard: guard,
 		Monitor: monitor, Seed: seed,
 	})
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
@@ -260,7 +291,20 @@ func openBrowser(url string) {
 }
 
 func cmdServe(args []string) error {
-	return errors.New("real-mode UI is not implemented yet (milestones 3–4)")
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, pool, db, err := openDemoDB()
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	fetcher, provider, guard, err := modeRuntime(cfg, pool)
+	if err != nil {
+		return err
+	}
+	return serveUI(cfg, pool, db, fetcher, provider, guard, nil)
 }
 
 func cmdRun(args []string) error {
@@ -286,7 +330,7 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	fetcher, provider, err := modeRuntime(cfg)
+	fetcher, provider, _, err := modeRuntime(cfg, pool)
 	if err != nil {
 		return err
 	}
@@ -451,7 +495,7 @@ func cmdGuideRebuild(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, provider, err := modeRuntime(cfg)
+	_, provider, _, err := modeRuntime(cfg, pool)
 	if err != nil {
 		return err
 	}
@@ -522,14 +566,16 @@ func cmdCosts(args []string) error {
 func cmdRecord(args []string) error {
 	fs := flag.NewFlagSet("record", flag.ContinueOnError)
 	pubRef := fs.String("publication", "", "publication id or slug")
+	defFile := fs.String("def", "", "publication definition YAML to seed before recording")
 	dir := fs.String("dir", "examples/fixtures/llm", "where to write recorded fixtures")
+	live := fs.Bool("live", false, "fetch real feeds over HTTP instead of fixtures")
+	dumpFeeds := fs.String("dump-feeds", "", "dir to save fetched feed bodies (replayable feed fixtures)")
+	sampleOut := fs.String("sample-out", "", "dir to export sample.json + issue.md into")
+	wsName := fs.String("workspace", localWorkspace, "workspace to run in (a fresh one re-sees all items)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *pubRef == "" {
-		return errors.New("--publication is required")
-	}
-	cfg, pool, db, err := openDemoDB()
+	cfg, pool, db, err := openDB(*wsName)
 	if err != nil {
 		return err
 	}
@@ -538,13 +584,40 @@ func cmdRecord(args []string) error {
 		return errors.New("record needs ANTHROPIC_API_KEY in .env or the environment")
 	}
 	ctx := context.Background()
-	pub, err := db.GetPublication(ctx, *pubRef)
-	if err != nil {
-		return err
+	var pub *store.Publication
+	if *defFile != "" {
+		data, err := os.ReadFile(*defFile)
+		if err != nil {
+			return err
+		}
+		def, err := config.ParsePublication(data)
+		if err != nil {
+			return err
+		}
+		id, err := db.SeedPublication(ctx, def)
+		if err != nil {
+			return err
+		}
+		pub, err = db.GetPublication(ctx, strconv.FormatInt(id, 10))
+		if err != nil {
+			return err
+		}
+	} else {
+		if *pubRef == "" {
+			return errors.New("--publication or --def is required")
+		}
+		var err error
+		pub, err = db.GetPublication(ctx, *pubRef)
+		if err != nil {
+			return err
+		}
 	}
-	fetcher := sources.FixtureFetcher{FS: examples.FS}
+	var fetcher sources.Fetcher = sources.FixtureFetcher{FS: examples.FS}
+	if *live {
+		fetcher = sources.LiveFetcher{DumpDir: *dumpFeeds}
+	}
 	provider := llm.Recorder{
-		Inner: llm.Anthropic{APIKey: cfg.AnthropicAPIKey},
+		Inner: llm.Retrier{Inner: llm.Anthropic{APIKey: cfg.AnthropicAPIKey}},
 		Dir:   *dir,
 	}
 	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, false, cfg.LLMOff())
@@ -553,5 +626,11 @@ func cmdRecord(args []string) error {
 	}
 	printResult(res)
 	fmt.Println("recorded fixtures to", *dir)
+	if *sampleOut != "" {
+		if err := exportSample(ctx, db, pub, res, *sampleOut); err != nil {
+			return fmt.Errorf("sample export: %w", err)
+		}
+		fmt.Println("exported sample to", *sampleOut)
+	}
 	return nil
 }
