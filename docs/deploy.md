@@ -66,12 +66,37 @@ either direction).
 
 ## Deploy a branch
 
+Deploys to `kloxus` are serialized by a **deploy lease** (KLOX-25, D38),
+not by convention. `scripts/deploy-fly.sh` refuses to run `flyctl deploy`
+without holding `refs/deploy-locks/kloxus` on origin — a compare-and-swap
+lock implemented with atomic `git push` / `--force-with-lease`, so no new
+infrastructure is needed and two agents can never both hold it.
+
 ```bash
-scripts/deploy-fly.sh        # fly deploy + prints the release version
+# One-shot deploy (acquire → deploy → release):
+scripts/deploy-fly.sh
+
+# Whole verify session (deploy + smoke + e2e under one lease):
+scripts/deploy-fly.sh acquire
+scripts/deploy-fly.sh          # renews our own lease, deploys
+scripts/smoke.sh https://kloxus.fly.dev
+scripts/deploy-fly.sh release
 ```
 
-Deploys are serialized: the branch under review is what is deployed.
-If two PRs are in flight, finish one round before deploying the next.
+- `status` prints the current holder; a held lease names its owner and age.
+- A stale lease (default TTL 45 min, `KLOXUS_DEPLOY_LEASE_TTL`) is taken
+  over atomically — a crashed run can never wedge the app.
+- Set `KLOXUS_DEPLOY_LEASE_OWNER` (defaults to `MULTICA_TASK_ID`) so
+  `status` shows who holds it.
+- Release overwrites the ref only via compare-and-swap, so a late release
+  can never steal a lease someone else has since taken.
+- The PM-scheduled release windows on the KLOX-26 ledger still decide
+  *when* a deploy may happen; the lease enforces that only one holder
+  deploys at a time *however* it was scheduled.
+
+If a verify session ends abnormally, the next acquirer either waits out
+the TTL or confirms the holder is gone and takes the stale lease — record
+the takeover in the deploy notes.
 
 ## Verify
 
@@ -85,10 +110,30 @@ carries the URL, the release version and both outputs.
 
 ## Merge
 
-The PR merges to `main` only after the hosted verification above. The
-`deploy` workflow (`.github/workflows/deploy.yml`) then deploys `main` to
+The PR merges to `main` only after the hosted verification above, with one
+narrow owner-approved exception (KLOX-25, 2026-11-13):
+
+**Low-risk merge-before-hosted-test.** A PR may merge after CTO exact-head
+approval, independent QA code/test clearance and required CI — *before* the
+hosted check — when the change is genuinely low-risk and non-destructive,
+and only if post-merge `main` hosted verification is scheduled immediately
+in the serialized window. Excluded (always keep pre-merge hosted
+acceptance): auth/magic links, payments, migrations or data operations,
+tenant/source-policy checks, secrets/security controls and spend-guard
+changes. Independent QA is still required, issues stay open until hosted
+results are recorded, and a failed post-merge check blocks promotion —
+it never back-dates acceptance onto the individual issue. When in doubt,
+keep the stricter gate.
+
+Review heads are frozen: new commits on a PR after a CTO approval or QA
+clearance invalidate it for the affected scope and require re-review of
+the new head.
+
+The `deploy` workflow (`.github/workflows/deploy.yml`) then deploys `main` to
 `kloxus` and re-runs the smoke script in CI — it needs the `FLY_API_TOKEN`
-repository secret. Verify the run after merge:
+repository secret. Post-merge CI deploys are serialized by the workflow's
+own `concurrency` group; the git-ref lease governs agent/manual deploys.
+Verify the run after merge:
 
 ```bash
 fly status -a kloxus    # machine on the new image
