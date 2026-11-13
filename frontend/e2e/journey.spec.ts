@@ -54,8 +54,7 @@ async function boardReady(page: Page, isPhone: boolean) {
       ? page.getByRole("button", { name: /This issue/ })
       : page.getByRole("heading", { name: "This issue" }),
     // hosted runs the real pipeline (~10 min); local fixtures land fast
-    { timeout: process.env.E2E_BASE_URL ? 840_000 : 120_000 },
-  ).toBeVisible();
+  ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 120_000 });
   await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60000 });
 }
 
