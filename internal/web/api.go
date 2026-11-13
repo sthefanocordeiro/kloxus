@@ -2315,9 +2315,11 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 429, "send_refused", "test send refused: "+strings.Join(sum.Refused, "; "))
 		return
 	}
-	if kind == "issue" {
-		// a test send only records the mail — the issue stays approved
-		// so it can still go to readers
+	// A test send only records the mail — the issue stays approved so
+	// it can still go to readers. A readers send marks it sent only
+	// when something left the app: an all-refused or empty send keeps
+	// it approved so it can go out once deliverable.
+	if kind == "issue" && sum.Sent+sum.Fallback+sum.Deduped > 0 {
 		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
 			return
 		}
@@ -2342,8 +2344,8 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	if sum.Fallback > 0 {
 		resp["fallback"] = true
 	}
-	if kind == "issue" && len(sum.To) == 0 {
-		resp["warnings"] = []string{"no confirmed readers — the issue was marked sent with nothing delivered"}
+	if kind == "issue" && sum.Sent+sum.Fallback+sum.Deduped == 0 {
+		resp["warnings"] = []string{"nothing was delivered — the issue stayed approved and can be sent again"}
 	}
 	apiJSON(w, 200, resp)
 }

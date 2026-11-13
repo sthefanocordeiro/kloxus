@@ -468,6 +468,49 @@ func TestFallbackToOutbox(t *testing.T) {
 	}
 }
 
+// TestAllRefusedSendStaysApproved: a readers send where every
+// recipient is refused delivers nothing, so the issue stays approved
+// and can be sent again once deliverable.
+func TestAllRefusedSendStaysApproved(t *testing.T) {
+	fake := &fakeSender{}
+	deps, db, pub, _ := liveDeps(t, fake, nil)
+	srv := web.New(deps)
+	// run-unique addresses: suppressions are global and persist across
+	// test runs on a shared database.
+	owner := fmt.Sprintf("refused-%d@hackbrazil.dev", time.Now().UnixNano())
+	reader := fmt.Sprintf("sup-%d@x.dev", time.Now().UnixNano())
+	claimWorkspace(t, srv, db, owner)
+	subscribeAndConfirm(t, srv, db, pub, reader)
+	ctx := context.Background()
+	if err := db.SuppressEmail(ctx, reader, "test"); err != nil {
+		t.Fatalf("SuppressEmail: %v", err)
+	}
+
+	issueID := approvedIssue(t, db, pub.ID, 1, "Edição 1")
+	rr := apiCall(t, srv, "POST", "/api/v1/issues/"+strconv.FormatInt(issueID, 10)+"/send",
+		map[string]string{"audience": "readers"})
+	if rr.Code != 200 {
+		t.Fatalf("send = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	res := apiJSON(t, rr)
+	if res["sent"].(float64) != 0 || res["refused"] == nil || res["delivery"] != "none" {
+		t.Fatalf("all-refused send = %v, want sent:0 + refused + delivery:none", res)
+	}
+	iss, err := db.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if iss.Status != "approved" {
+		t.Fatalf("issue status = %q, want approved — nothing left the app", iss.Status)
+	}
+	// and it can be sent again: the gate accepts approved
+	rr = apiCall(t, srv, "POST", "/api/v1/issues/"+strconv.FormatInt(issueID, 10)+"/send",
+		map[string]string{"audience": "test"})
+	if rr.Code != 200 {
+		t.Fatalf("resend = %d, want 200 — issue must still be sendable", rr.Code)
+	}
+}
+
 // TestCapsPersistAcrossRestart: the workspace cap is ledger-derived, so
 // a fresh Server over the same store enforces it identically.
 func TestCapsPersistAcrossRestart(t *testing.T) {

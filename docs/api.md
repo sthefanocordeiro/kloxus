@@ -493,6 +493,10 @@ scheduled dispatch.
   only. Addresses on the suppression list or sends over the daily caps
   (global and per-workspace, counted from the outbox ledger so they
   survive restarts) are refused and recorded — never dropped silently.
+  A send where nothing leaves the app (no confirmed readers, or every
+  recipient refused) keeps the issue `approved` so it can be sent
+  again once deliverable; the response carries `delivery:"none"` and
+  a `warnings` entry.
 - Per-recipient idempotency keys dedupe retries; an explicit
   `Idempotency-Key` request header namespaces them, so a retried
   request mails nobody twice.
