@@ -84,7 +84,9 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 				st.mu.Unlock()
 			},
 		}
-		res, err := runner.RunPhaseA(context.Background(), pub)
+		ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+		defer cancel()
+		res, err := runner.RunPhaseA(ctx, pub)
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		st.st.Done = true
