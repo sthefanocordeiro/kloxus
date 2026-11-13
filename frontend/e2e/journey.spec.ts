@@ -55,7 +55,10 @@ async function boardReady(page: Page, isPhone: boolean) {
       : page.getByRole("heading", { name: "This issue" }),
     // hosted runs the real pipeline (~10 min); local fixtures land fast
   ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 120_000 });
-  await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60000 });
+  // hosted: the bench fills when the real run ends (~10-13 min)
+  await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({
+    timeout: process.env.E2E_BASE_URL ? 840_000 : 60_000,
+  });
 }
 
 async function boardOps(page: Page, isPhone: boolean) {
@@ -101,7 +104,9 @@ async function boardOps(page: Page, isPhone: boolean) {
 
   // 5) draft — the step rail runs, then the editor lands
   await page.getByRole("button", { name: /Draft the issue/ }).click();
-  await expect(page.locator("[data-sid]").first()).toBeVisible({ timeout: 600000 });
+  await expect(page.locator("[data-sid]").first()).toBeVisible({
+    timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000,
+  });
 
   // 6) the document is sealed: clicking a section or item heading and
   //    typing must not create free text anywhere — the schema only
@@ -289,7 +294,7 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
       .getByText(/Nothing new/)
       .or(page.getByText(/Preparing the issue/))
       .or(page.getByRole("heading", { name: "This issue" })),
-  ).toBeVisible({ timeout: 600000 });
+  ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
 
   // reset wipes the workspace — the visitor walks onboarding again and
   // the fixture sources collect a fresh issue

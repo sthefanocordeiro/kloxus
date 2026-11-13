@@ -14,7 +14,7 @@ export default defineConfig({
   // Hosted targets run the same journey against remote Postgres — the
   // real app fetches live feeds and calls the model, so a single
   // onboard alone is several minutes and the reset test walks two.
-  timeout: process.env.E2E_BASE_URL ? 1_500_000 : 180_000,
+  timeout: process.env.E2E_BASE_URL ? 1_900_000 : 180_000,
   retries: 0,
   workers: 1,
   use: {
