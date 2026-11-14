@@ -224,14 +224,11 @@ func suppressedQuery(ctx context.Context, q interface {
 
 // --- send ledger (outbox_emails) ---
 
-// OutboxMail is one ledger row: the message plus its delivery state.
+// OutboxMail is one ledger row: the message plus its delivery state
+// (the OutboxEmail ledger fields) and its idempotency key.
 type OutboxMail struct {
 	OutboxEmail
-	Provider   string // resend | outbox
-	ProviderID string
-	Status     string // queued | sent | delivered | bounced | complained | refused | fallback
-	IdemKey    string
-	Error      string
+	IdemKey string
 }
 
 // SaveMail records one outgoing message and returns (id, created).

@@ -385,13 +385,23 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws := reqWS(r)
 	owner := s.workspaceOwner(r.Context(), db(r))
 	mail := "outbox"
+	// mail_transport is the sender's own wire identity — positive
+	// server-side evidence for verification preflights: "outbox" (no
+	// sender), "resend" (the real provider), "synthetic" (the loopback
+	// fake), "custom" (any other injected sender).
+	transport := "outbox"
 	if s.liveMail() {
 		mail = "live"
+		transport = "custom"
+		if t, ok := s.d.Mailer.(interface{ Transport() string }); ok {
+			transport = t.Transport()
+		}
 	}
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
 		"llm_mode": s.d.Cfg.LLMMode,
 		"claimed":  owner != "", "owner_email": owner, "mail": mail,
+		"mail_transport": transport,
 	})
 }
 
@@ -2674,6 +2684,7 @@ func (s *Server) apiOutbox(w http.ResponseWriter, r *http.Request) {
 	for _, e := range emails {
 		out = append(out, map[string]any{
 			"id": e.ID, "kind": e.Kind, "to": e.To, "subject": e.Subject,
+			"provider": e.Provider, "status": e.Status,
 			"created_at": e.CreatedAt,
 		})
 	}
@@ -2687,7 +2698,10 @@ func (s *Server) apiOutboxEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	apiJSON(w, 200, map[string]any{"email": map[string]any{
 		"id": e.ID, "kind": e.Kind, "to": e.To, "subject": e.Subject,
-		"body_md": e.BodyMD, "body_html": e.BodyHTML, "created_at": e.CreatedAt,
+		"body_md": e.BodyMD, "body_html": e.BodyHTML,
+		"provider": e.Provider, "provider_id": e.ProviderID, "status": e.Status,
+		"error":      e.Error,
+		"created_at": e.CreatedAt,
 	}})
 }
 

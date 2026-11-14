@@ -88,6 +88,18 @@ WSID="$(jget workspace.id)"; [ -n "$WSID" ] || die "no workspace id returned"
 [ "$(req GET /api/v1/workspace)" = "200" ] || die "workspace fetch failed"
 say "anonymous workspace $WSID created"
 
+# --- 4b. transport preflight — fail closed before mail/model-capable ops ---
+# Hosted verification is outbox-only under the freeze. The server itself
+# must prove a safe configuration — deterministic demo pipeline plus an
+# outbox mail transport — before smoke touches a run, draft, claim or
+# send route. A live or unknown transport fails here, never after a
+# send. Client flags and NXDOMAIN recipients are not evidence.
+[ "$(jget mode)" = "demo" ] || die "refusing: target mode is '$(jget mode)' — verification needs the deterministic demo pipeline"
+case "$(jget llm_mode)" in auto|off) ;; *) die "refusing: unknown llm_mode '$(jget llm_mode)'" ;; esac
+[ "$(jget mail)" = "outbox" ] && [ "$(jget mail_transport)" = "outbox" ] \
+	|| die "refusing mail-capable checks: target reports mail='$(jget mail)' transport='$(jget mail_transport)' — hosted verification is outbox-only"
+say "transport preflight ok: demo pipeline, outbox mail"
+
 # --- 5. onboard: create publication from the sample proposal -------------
 [ "$(req GET /api/v1/proposal)" = "200" ] || die "proposal fetch failed"
 node -e '
@@ -161,70 +173,16 @@ say "commentary saved"
 [ "$(jget ready)" = "true" ] || die "issue not ready: $(jget checks)"
 [ "$(req POST "/api/v1/issues/$IID/approve")" = "200" ] || die "approve: $(cat "$RESP")"
 say "issue approved"
+# The preflight proved mail_transport=outbox: the send records to the
+# outbox ledger and nothing leaves the app. The live-mail contract
+# (claim gate, confirmed readers, delivery:"none") is covered locally by
+# the fake-live e2e suite — never against a hosted target.
 SEND="$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')"
-LIVEMAIL=""
-if [ "$SEND" = "409" ] && [ "$(jget error.code)" = "unclaimed_workspace" ]; then
-	# Live delivery: sends need a claimed workspace. The claim link lands
-	# in the creator inbox — and in the workspace outbox, where smoke can
-	# complete the magic-link round trip headlessly.
-	say "workspace unclaimed — claiming by magic link"
-	LIVEMAIL=1
-	[ "$(req POST /api/v1/workspace/claim '{"email":"smoke@kloxus.dev"}')" = "200" ] \
-		|| die "claim: $(cat "$RESP")"
-	[ "$(req GET "/api/v1/publications/$PUB/outbox")" = "200" ] || die "outbox list failed"
-	EID="$(node -e '
-		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-		const m = d.emails.find(e => e.kind === "magic_link");
-		console.log(m ? m.id : "");' "$RESP")"
-	[ -n "$EID" ] || die "no magic-link email in the outbox"
-	[ "$(req GET "/api/v1/outbox/$EID")" = "200" ] || die "outbox email fetch failed"
-	CLAIM="$(node -e '
-		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).email;
-		const m = (d.body_md || "").match(/\/claim\?t=[A-Za-z0-9_-]+/);
-		console.log(m ? m[0] : "");' "$RESP")"
-	[ -n "$CLAIM" ] || die "claim link not found in the outbox email"
-	[ "$(req GET "$CLAIM")" = "303" ] || die "claim confirm failed: $(cat "$RESP")"
-	say "workspace claimed via magic link"
-elif [ "$SEND" != "200" ]; then
-	die "send: $(cat "$RESP")"
-fi
-
-if [ "$LIVEMAIL" = "1" ]; then
-	# Zero confirmed readers is an intended terminal state (D33): nothing
-	# leaves the app, the issue stays approved and can go out once a
-	# deliverable recipient exists. Assert that contract — delivery:"none"
-	# plus a warning — not an unconditional sent.
-	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
-		|| die "send after claim: $(cat "$RESP")"
-	[ "$(jget delivery)" = "none" ] \
-		|| die "zero confirmed readers must return delivery=none: $(cat "$RESP")"
-	[ "$(jget issue.status)" = "approved" ] \
-		|| die "delivery=none must leave the issue approved, got $(jget issue.status)"
-	WARN="$(jget warnings)"
-	[ -n "$WARN" ] && [ "$WARN" != "[]" ] \
-		|| die "delivery=none must carry a warning: $(cat "$RESP")"
-	say "zero confirmed readers — delivery:none, issue stays approved"
-	# A test send goes to the claimed owner — and confirms them as a
-	# reader, so the retry has a deliverable recipient.
-	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"test","when":"now"}')" = "200" ] \
-		|| die "test send: $(cat "$RESP")"
-	[ "$(jget to)" = '["smoke@kloxus.dev"]' ] \
-		|| die "test send must go to the claimed owner: $(cat "$RESP")"
-	case "$(jget delivery)" in resend|outbox_fallback|mixed) ;; *)
-		die "unexpected test delivery: $(cat "$RESP")" ;; esac
-	[ "$(jget issue.status)" = "approved" ] \
-		|| die "a test send must not mark the issue sent"
-	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
-		|| die "resend after test: $(cat "$RESP")"
-	case "$(jget delivery)" in resend|outbox_fallback|mixed) ;; *)
-		die "unexpected delivery: $(cat "$RESP")" ;; esac
-	[ "$(jget issue.status)" = "sent" ] \
-		|| die "issue not marked sent after a deliverable send"
-	say "issue sent to the confirmed reader (delivery=$(jget delivery))"
-else
-	[ "$(jget issue.status)" = "sent" ] || die "issue not marked sent"
-	say "issue sent to readers"
-fi
+[ "$SEND" = "200" ] || die "send: $(cat "$RESP")"
+[ "$(jget delivery)" = "outbox" ] \
+	|| die "an outbox transport must answer delivery=outbox: $(cat "$RESP")"
+[ "$(jget issue.status)" = "sent" ] || die "issue not marked sent"
+say "issue delivered to the outbox"
 
 # --- 12. reader page --------------------------------------------------------
 [ "$(req GET "/api/v1/issues/$IID/after")" = "200" ] || die "after failed"

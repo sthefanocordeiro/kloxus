@@ -1,4 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import {
+  claimIfSynthetic,
+  fakeRequests,
+  neverRealMail,
+  preflight,
+  workspaceInfo,
+} from "./mail.ts";
 
 // The judge path at both widths: landing → cited sample → create the
 // sample newsletter → sources → auto first run → build board → remove
@@ -265,34 +272,12 @@ async function scheduleAndHold(page: Page) {
   await expect(page.getByRole("button", { name: "Approve issue" }).first()).toBeVisible({ timeout: 15000 });
 }
 
-async function claimIfLive(page: Page) {
-  // Live deployments gate sends behind a claimed workspace. The claim
-  // email lands in a real inbox — and in the workspace outbox, where
-  // the API request context can complete the magic-link round trip.
-  const ws = await (await page.request.get("/api/v1/workspace")).json();
-  if (ws.mail !== "live" || ws.claimed) return;
-  const claim = await page.request.post("/api/v1/workspace/claim", {
-    data: { email: "smoke@kloxus.dev" },
-  });
-  expect(claim.ok()).toBeTruthy();
-  const pubs = await (await page.request.get("/api/v1/publications")).json();
-  const outbox = await (
-    await page.request.get(`/api/v1/publications/${pubs.publications[0].id}/outbox`)
-  ).json();
-  const ml = outbox.emails.find((e: { kind: string }) => e.kind === "magic_link");
-  expect(ml).toBeTruthy();
-  const mail = await (await page.request.get(`/api/v1/outbox/${ml.id}`)).json();
-  const link = mail.email.body_md.match(/\/claim\?t=[A-Za-z0-9_-]+/)?.[0];
-  expect(link).toBeTruthy();
-  // GET /claim sets the workspace cookie on this browser context
-  const confirmed = await page.request.get(link!);
-  expect(confirmed.status()).toBe(200);
-}
-
 async function sendToReaders(page: Page) {
   // the send action is its own header button post-approval; readers get
   // a confirmation dialog (count, subject, sender) — never one-click
-  const ws = await (await page.request.get("/api/v1/workspace")).json();
+  const ws = await workspaceInfo(page);
+  neverRealMail(ws);
+  const synthetic = ws.mail === "live" && ws.mail_transport === "synthetic";
   const sendBar = async () => {
     const readersBtn = page.getByRole("button", { name: "Send to readers" });
     if (!(await readersBtn.isVisible())) {
@@ -308,23 +293,70 @@ async function sendToReaders(page: Page) {
     await expect(dialog.getByText(/Subject|Assunto/)).toBeVisible();
     return dialog;
   };
-  await (await readersDialog()).getByRole("button", { name: "Send now" }).click();
-  if (ws.mail === "live") {
-    // Live mail with zero confirmed readers is an intended terminal
-    // state (D33): nothing leaves the app, the issue stays approved and
-    // the API warning lands as a toast — the after-sending surface must
-    // not render.
+  const sendPost = () =>
+    page.waitForResponse(
+      (r) => r.url().endsWith("/send") && r.request().method() === "POST",
+    );
+  const firstDialog = await readersDialog();
+  if (synthetic) {
+    // Live rules with zero confirmed readers is an intended terminal
+    // state (D33): delivery "none" — nothing leaves the app, the issue
+    // stays approved, the response carries a warning and the API text
+    // lands as a toast — the after-sending surface must not render.
+    const [noneResp] = await Promise.all([
+      sendPost(),
+      firstDialog.getByRole("button", { name: "Send now" }).click(),
+    ]);
+    const noneBody = await noneResp.json();
+    expect(noneBody.delivery).toBe("none");
+    expect(noneBody.issue.status).toBe("approved");
+    expect(Array.isArray(noneBody.warnings) && noneBody.warnings.length > 0).toBe(true);
     await expect(page.getByText(/nothing was delivered/i).first()).toBeVisible({ timeout: 15000 });
     await expect(page.getByRole("link", { name: /reader page/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
     // A test send goes to the claimed owner — and confirms them as a
-    // reader, so the resend has a deliverable recipient.
+    // reader, so the resend has a deliverable recipient. Success means
+    // a real synthetic-provider receipt, never a fallback or a mix.
+    const before = (await fakeRequests(page)).count;
     await sendBar();
-    await page.getByRole("button", { name: "Send a test" }).click();
-    await expect(page.getByText(/Test sent|Resend failed/i).first()).toBeVisible({ timeout: 15000 });
+    const [testResp] = await Promise.all([
+      sendPost(),
+      page.getByRole("button", { name: "Send a test" }).click(),
+    ]);
+    const testBody = await testResp.json();
+    expect(testBody.delivery).toBe("resend");
+    expect(testBody.sent).toBe(1);
+    expect(testBody.to).toEqual(["smoke@kloxus.dev"]);
+    expect(testBody.issue.status).toBe("approved");
+    await expect(page.getByText(/^Test sent to /).first()).toBeVisible({ timeout: 15000 });
+    const afterTest = await fakeRequests(page);
+    expect(afterTest.count - before).toBe(1);
+    const testReq = afterTest.requests.at(-1)!;
+    expect(testReq.to).toEqual(["smoke@kloxus.dev"]);
+    expect(testReq.auth).toBe("Bearer re_local_verify_synthetic");
     const again = await readersDialog();
     await expect(again.getByText(/1 reader/)).toBeVisible();
-    await again.getByRole("button", { name: "Send now" }).click();
+    const [readersResp] = await Promise.all([
+      sendPost(),
+      again.getByRole("button", { name: "Send now" }).click(),
+    ]);
+    const readersBody = await readersResp.json();
+    expect(readersBody.delivery).toBe("resend");
+    expect(readersBody.sent).toBe(1);
+    // the delivery ledger records the send as provider-sent
+    const mail = await (
+      await page.request.get(`/api/v1/outbox/${readersBody.outbox_email_id}`)
+    ).json();
+    expect(mail.email.provider).toBe("resend");
+    expect(mail.email.status).toBe("sent");
+    expect(mail.email.provider_id).toMatch(/^re_local_/);
+    const afterAll = await fakeRequests(page);
+    expect(afterAll.count - afterTest.count).toBe(1);
+    expect(afterAll.requests.at(-1)!.to).toEqual(["smoke@kloxus.dev"]);
+  } else {
+    // outbox transport: the send records to the ledger and the issue
+    // turns sent.
+    await firstDialog.getByRole("button", { name: "Send now" }).click();
   }
   // the after-sending surface replaces the editor chrome
   await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible({ timeout: 15000 });
@@ -348,6 +380,13 @@ const viewports = [
   { name: "phone", width: 375, height: 740 },
 ];
 
+// Transport preflight first: positive server-side evidence decides
+// whether this suite may run — a live or unknown transport fails here,
+// before the test body performs a single mail- or model-capable call.
+test.beforeEach(async ({ page }) => {
+  await preflight(page);
+});
+
 for (const vp of viewports) {
   test(`demo journey at ${vp.name} (${vp.width}px)`, async ({ page }) => {
     const isPhone = vp.width < 768;
@@ -370,7 +409,7 @@ for (const vp of viewports) {
     await approveIssue(page);
     await scheduleAndHold(page);
     await approveIssue(page);
-    await claimIfLive(page);
+    await claimIfSynthetic(page);
     await sendToReaders(page);
     await readerJourney(page);
   });

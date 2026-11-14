@@ -96,8 +96,35 @@ scripts/smoke.sh https://kloxus.fly.dev            # health → SPA → sample �
 cd frontend && E2E_BASE_URL=https://kloxus.fly.dev npx playwright test
 ```
 
-A PR is not done until both pass against the Fly URL, and its description
-carries the URL, the release version and both outputs.
+Hosted verification is **outbox-only** under the freeze: it must never
+send real email or call a paid model. The safe path is selected by server-side
+evidence, not a client flag — `smoke.sh` and every e2e spec preflight
+`/api/v1/workspace` and refuse to run a mail-capable step unless the
+target itself reports the deterministic demo pipeline
+(`mode=demo`) with the outbox mail transport (`mail=outbox`,
+`mail_transport=outbox`). A live or unknown transport fails closed
+before the first mail-capable request.
+
+The live-mail contract (claim gate, confirmed readers, `delivery`
+outcomes, fallback) is verified **locally** against the loopback fake
+provider — never against the hosted app:
+
+```bash
+cd frontend
+node ../scripts/fake-resend.mjs &            # or let playwright boot it
+E2E_LIVE_MAIL=1 npx playwright test          # synthetic Resend on 127.0.0.1:8399
+```
+
+`E2E_LIVE_MAIL` boots the app with `KLOXUS_FAKE_RESEND_URL` — a
+literal-loopback-only endpoint validated at startup (no userinfo, path,
+query, fragment, DNS names or redirects; mutually exclusive with
+`RESEND_API_KEY`; synthetic credential). The modes are mutually
+exclusive: `E2E_BASE_URL` + `E2E_LIVE_MAIL` is a hard error, no
+webServer is reused, and the app boots with `KLOXUS_NO_DOTENV=1` and
+scrubbed credentials so nothing inherited can leak in.
+
+A PR is not done until both hosted checks pass against the Fly URL, and
+its description carries the URL, the release version and both outputs.
 
 ## Merge
 
