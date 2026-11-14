@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/ingest"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
@@ -212,6 +214,24 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 			Secret:     cfg.WebhookSecret,
 		}
 	}
+	var mailer delivery.Sender
+	switch {
+	case cfg.FakeResendURL != "":
+		// Verification-only transport: a literal-loopback fake with a
+		// synthetic credential — live-mail rules run end to end and
+		// nothing real can leave the machine. Config rejected an
+		// invalid or remote endpoint already; an error here still
+		// stops startup rather than falling back to a real API.
+		fake, err := delivery.NewLoopbackSender(cfg.FakeResendURL, cfg.FromAddress)
+		if err != nil {
+			return err
+		}
+		mailer = fake
+	case cfg.ResendAPIKey != "":
+		// A configured key means real mail: claim gate + confirmed
+		// readers + caps all switch on. Empty key keeps outbox mode.
+		mailer = delivery.NewResend(cfg.ResendAPIKey, cfg.FromAddress)
+	}
 	var wsm *workspace.Manager
 	var err error
 	if cfg.DataDir != "" {
@@ -231,7 +251,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	}
 	srv := web.New(web.Deps{
 		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider,
-		Monitor: monitor, Seed: seed, Pool: pool,
+		Monitor: monitor, Mailer: mailer, Seed: seed, Pool: pool,
 	})
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
 	if cfg.IngestEnabled {
@@ -244,7 +264,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)
 	go openBrowser(url)
 	httpSrv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Addr:              net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port)),
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,

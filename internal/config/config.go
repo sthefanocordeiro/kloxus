@@ -6,6 +6,9 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/mail"
+	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -17,6 +20,11 @@ import (
 type Config struct {
 	Mode string // demo | real
 	Port int
+	// Bind is the interface the HTTP listener binds to. Loopback by
+	// default so local dev and test runs never prompt the host firewall;
+	// the deployed image sets KLOXUS_BIND=0.0.0.0 (the Dockerfile ENV)
+	// because Fly routes to the machine's private address.
+	Bind string
 	// DatabaseURL is the Postgres connection string (DATABASE_URL) —
 	// the Supabase direct or session-pooler address in production, a
 	// local Postgres in development.
@@ -36,14 +44,28 @@ type Config struct {
 	// LLMMode gates every model call: "auto" (default) runs the normal
 	// pipeline; "off" runs the deterministic pipeline and any model call
 	// attempted fails loudly (llm.None is the configured provider).
-	LLMMode string
-	MasterKey       string
-	ResendAPIKey    string
-	FromAddress     string
+	LLMMode      string
+	MasterKey    string
+	ResendAPIKey string
+	FromAddress  string
+	// FakeResendURL points the mail transport at a literal-loopback fake
+	// provider (scripts/fake-resend.mjs) — verification only. The sender
+	// carries a synthetic credential, follows no redirects and falls back
+	// to nothing: the value is validated at Load and an invalid one stops
+	// the process. Mutually exclusive with RESEND_API_KEY — the fake
+	// never touches a real credential. Never set on a deployed app.
+	FakeResendURL   string
 	FirecrawlAPIKey string
 	AbacatePayKey   string
 	PublicURL       string
 	WebhookSecret   string
+	// ResendWebhookSecret verifies Svix signatures on /webhooks/resend.
+	ResendWebhookSecret string
+	// EmailDailyCap bounds real sends across all workspaces per UTC day
+	// (Resend free tier is 100/day); EmailWorkspaceDailyCap bounds one
+	// workspace. Both are persisted in the outbox ledger.
+	EmailDailyCap          int
+	EmailWorkspaceDailyCap int
 
 	// Ingest governs the global source scheduler (D29). IngestEnabled
 	// starts the poll loop (real mode defaults it on, demo off).
@@ -55,18 +77,23 @@ type Config struct {
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
+// KLOXUS_NO_DOTENV skips the file entirely — verification runs set it so an
+// inherited .env can never leak credentials or endpoints into the process.
 func Load() (*Config, error) {
-	if f, err := os.Open(".env"); err == nil {
-		for k, v := range parseDotEnv(f) {
-			if _, exists := os.LookupEnv(k); !exists {
-				os.Setenv(k, v)
+	if os.Getenv("KLOXUS_NO_DOTENV") == "" {
+		if f, err := os.Open(".env"); err == nil {
+			for k, v := range parseDotEnv(f) {
+				if _, exists := os.LookupEnv(k); !exists {
+					os.Setenv(k, v)
+				}
 			}
+			f.Close()
 		}
-		f.Close()
 	}
 	cfg := &Config{
 		Mode:            getenv("KLOXUS_MODE", "demo"),
 		Port:            getint("KLOXUS_PORT", 8080),
+		Bind:            getenv("KLOXUS_BIND", "127.0.0.1"),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		OutDir:          getenv("KLOXUS_OUT_DIR", "out"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
@@ -77,18 +104,39 @@ func Load() (*Config, error) {
 		MasterKey:       os.Getenv("KLOXUS_MASTER_KEY"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
+		FakeResendURL:   os.Getenv("KLOXUS_FAKE_RESEND_URL"),
 		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
 		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),
 		CookieSecret:    os.Getenv("KLOXUS_COOKIE_SECRET"),
+
+		ResendWebhookSecret:    os.Getenv("RESEND_WEBHOOK_SECRET"),
+		EmailDailyCap:          getint("KLOXUS_EMAIL_DAILY_CAP", 80),
+		EmailWorkspaceDailyCap: getint("KLOXUS_EMAIL_WS_DAILY_CAP", 25),
 	}
 	if cfg.Mode != "demo" && cfg.Mode != "real" {
 		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)
 	}
 	if cfg.LLMMode != "auto" && cfg.LLMMode != "off" {
 		return nil, fmt.Errorf("KLOXUS_LLM_MODE must be \"auto\" or \"off\", got %q", cfg.LLMMode)
+	}
+	if cfg.ResendAPIKey != "" {
+		if err := ValidFromAddress(cfg.FromAddress); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.FakeResendURL != "" {
+		if cfg.ResendAPIKey != "" {
+			return nil, fmt.Errorf("KLOXUS_FAKE_RESEND_URL and RESEND_API_KEY are mutually exclusive — the verification transport never carries a real credential")
+		}
+		if err := ValidateLoopbackEndpoint(cfg.FakeResendURL); err != nil {
+			return nil, fmt.Errorf("KLOXUS_FAKE_RESEND_URL: %w", err)
+		}
+		if err := ValidFromAddress(cfg.FromAddress); err != nil {
+			return nil, err
+		}
 	}
 	// Real mode ingests by default; KLOXUS_INGEST=0/opt-out disables it.
 	// Demo mode stays fixture-only unless explicitly opted in.
@@ -101,8 +149,51 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// ValidateLoopbackEndpoint restricts a URL to a literal loopback HTTP
+// endpoint — no userinfo, query, fragment or path — so a verification
+// transport can never be pointed at (or leak to) a remote host. The host
+// must be a loopback IP literal (127.0.0.0/8 or ::1); a DNS name such as
+// "localhost" is not literal proof and is rejected.
+func ValidateLoopbackEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", raw, err)
+	}
+	if u.Scheme != "http" {
+		return fmt.Errorf("must be a plain http URL, got scheme %q", u.Scheme)
+	}
+	if u.User != nil {
+		return fmt.Errorf("must not carry userinfo")
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return fmt.Errorf("must not carry a query or fragment")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return fmt.Errorf("must not carry a path, got %q", u.Path)
+	}
+	ip, err := netip.ParseAddr(u.Hostname())
+	if err != nil || !ip.IsLoopback() {
+		return fmt.Errorf("host %q is not a literal loopback address", u.Hostname())
+	}
+	return nil
+}
+
 // LLMOff reports whether the deterministic no-model mode is on.
 func (c *Config) LLMOff() bool { return c.LLMMode == "off" }
+
+// ValidFromAddress requires the full "Name <local@domain>" form — a
+// bare domain or bare address is a config error that would surface only
+// when the first send is rejected (CTO note on KLOX-11).
+func ValidFromAddress(s string) error {
+	a, err := mail.ParseAddress(s)
+	if err != nil || a.Address == "" || !strings.Contains(a.Address, "@") {
+		return fmt.Errorf("KLOXUS_FROM_ADDRESS must be a full \"Name <local@domain>\" sender address, got %q", s)
+	}
+	if strings.TrimSpace(a.Name) == "" {
+		return fmt.Errorf("KLOXUS_FROM_ADDRESS must include a display name (\"Name <local@domain>\"), got %q", s)
+	}
+	return nil
+}
 
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

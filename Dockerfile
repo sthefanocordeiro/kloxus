@@ -18,10 +18,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kloxus ./cmd/kloxu
 FROM debian:bookworm-slim
 # ca-certificates: the feed fetcher and LLM client verify TLS against
 # the system roots — bookworm-slim ships none.
-RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates \
-	&& rm -rf /var/lib/apt/lists/*
-RUN useradd --system --uid 10001 --create-home kloxus \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& useradd --system --uid 10001 --create-home kloxus \
 	&& mkdir -p /data \
 	&& chown -R kloxus:kloxus /data
 USER kloxus
@@ -31,6 +30,7 @@ COPY --from=build /out/kloxus /app/kloxus
 # app (kloxus runs real, kloxus-demo stays on fixtures).
 ENV KLOXUS_MODE=demo \
 	KLOXUS_PORT=8080 \
+	KLOXUS_BIND=0.0.0.0 \
 	KLOXUS_DATA_DIR=/data \
 	KLOXUS_OUT_DIR=/data/out \
 	KLOXUS_NO_BROWSER=1
