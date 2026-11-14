@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -103,6 +104,95 @@ func TestRunHeadless(t *testing.T) {
 	db.QueryRowContext(ctx, `SELECT d.json FROM dossiers d JOIN issue_items ii ON ii.id = d.issue_item_id WHERE ii.issue_id = $1`, res.IssueID).Scan(&dossierJSON)
 	if !strings.Contains(dossierJSON, `"title":"Consulta do regulador"`) {
 		t.Errorf("stored dossier lost picked title: %s", dossierJSON)
+	}
+}
+
+// TestPhaseACatalogScale reproduces KLOX-41: a fresh publication that
+// confirmed the suggested catalog sees the whole shared item pool on
+// its first run. At ~5k items the deterministic run used to issue
+// ~8–9k sequential remote INSERT/UPDATE calls across dedupe and
+// triage and hit the 15-minute run timeout on the hosted release;
+// with the writes batched the phase must finish far inside it.
+func TestPhaseACatalogScale(t *testing.T) {
+	pool := testdb.Pool(t)
+	db := testdb.WSOn(t, pool)
+	ctx := context.Background()
+
+	def := &config.Publication{
+		Slug: "p", Name: "Pub", Language: "pt-BR",
+		Sections: []config.Section{{Title: "Lead", Items: 2, Commentary: "none"}},
+	}
+	pubID, err := db.SeedPublication(ctx, def)
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	dj, err := pool.CatalogEntry(ctx, "daily-journal")
+	if err != nil {
+		t.Fatalf("CatalogEntry daily-journal: %v", err)
+	}
+	tb, err := pool.CatalogEntry(ctx, "tecnoblog")
+	if err != nil {
+		t.Fatalf("CatalogEntry tecnoblog: %v", err)
+	}
+	if _, err := db.AddCatalogSource(ctx, pubID, dj); err != nil {
+		t.Fatalf("AddCatalogSource dj: %v", err)
+	}
+	if _, err := db.AddCatalogSource(ctx, pubID, tb); err != nil {
+		t.Fatalf("AddCatalogSource tb: %v", err)
+	}
+	// ~5k shared items — the pool size that timed out on window #20:
+	// Daily Journal signals (some citing the articles, so
+	// mergeCitedGroups runs) plus a launch feed's articles.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO items (catalog_id, external_id, url, canonical_url, title, published_at, content_text, kind, meta_json)
+		SELECT $1, 'dj-' || g, 'https://dj.example/' || g, 'https://dj.example/' || g,
+		       'dj story ' || g, now_utc(), 'signal body ' || g, 'signal',
+		       json_build_object('cited_urls', json_build_array('https://tb.example/' || (g % 1500)))::text
+		FROM generate_series(1, 3500) g`, dj.ID); err != nil {
+		t.Fatalf("seed signals: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO items (catalog_id, external_id, url, canonical_url, title, published_at, content_text, kind)
+		SELECT $1, 'tb-' || g, 'https://tb.example/' || g, 'https://tb.example/' || g,
+		       'article ' || g, now_utc(), 'article body ' || g, 'article'
+		FROM generate_series(1, 1500) g`, tb.ID); err != nil {
+		t.Fatalf("seed articles: %v", err)
+	}
+	t.Cleanup(func() {
+		// Links go first: story_items.item_id is a hard FK and the
+		// workspace cascade that removes it runs after this cleanup.
+		db.ExecContext(context.Background(),
+			`DELETE FROM story_items WHERE item_id IN
+				(SELECT id FROM items WHERE external_id LIKE 'dj-%' OR external_id LIKE 'tb-%')`)
+		db.ExecContext(context.Background(),
+			`DELETE FROM items WHERE external_id LIKE 'dj-%' OR external_id LIKE 'tb-%'`)
+	})
+
+	pub, err := db.GetPublication(ctx, "p")
+	if err != nil {
+		t.Fatalf("GetPublication: %v", err)
+	}
+	runner := &Runner{DB: db, Deterministic: true, MaxDeepDives: 3}
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	res, err := runner.RunPhaseA(runCtx, pub)
+	if err != nil {
+		t.Fatalf("RunPhaseA at ~5k-item pool: %v", err)
+	}
+	// Shared catalog rows from other tests may add to the pool; assert
+	// the seeded floor, not an exact count.
+	if res.Items < 5000 || res.Stories == 0 || res.IssueID == 0 {
+		t.Fatalf("result: %+v", res)
+	}
+	// Every story that survives lineup merges carries a triage verdict.
+	var total, scored int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*), count(triage_score) FROM stories WHERE publication_id = $1`,
+		pubID).Scan(&total, &scored); err != nil {
+		t.Fatalf("count stories: %v", err)
+	}
+	if total == 0 || scored != total {
+		t.Fatalf("triaged stories = %d of %d", scored, total)
 	}
 }
 
