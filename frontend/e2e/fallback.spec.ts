@@ -127,9 +127,10 @@ test("provider failure falls back to the outbox — and recovery sends", async (
   // intentional failure: the provider must not count as success — the
   // message lands in the ledger as fallback and the issue stays
   // approved.
+  let failed;
   await setFakeFailing(page, true);
   try {
-    const failed = await apiPost(page, `/api/v1/issues/${iid}/send`, {
+    failed = await apiPost(page, `/api/v1/issues/${iid}/send`, {
       audience: "test",
       when: "now",
     });
