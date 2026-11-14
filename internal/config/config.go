@@ -37,10 +37,14 @@ type Config struct {
 	// LLMMode gates every model call: "auto" (default) runs the normal
 	// pipeline; "off" runs the deterministic pipeline and any model call
 	// attempted fails loudly (llm.None is the configured provider).
-	LLMMode string
-	MasterKey       string
-	ResendAPIKey    string
-	FromAddress     string
+	LLMMode      string
+	MasterKey    string
+	ResendAPIKey string
+	FromAddress  string
+	// ResendBaseURL overrides the Resend API endpoint — a local fake
+	// transport (scripts/fake-resend.mjs) for verification runs that must
+	// exercise live-mail rules without a provider. Empty hits the real API.
+	ResendBaseURL   string
 	FirecrawlAPIKey string
 	AbacatePayKey   string
 	PublicURL       string
@@ -77,6 +81,7 @@ func Load() (*Config, error) {
 		MasterKey:       os.Getenv("KLOXUS_MASTER_KEY"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
+		ResendBaseURL:   os.Getenv("RESEND_BASE_URL"),
 		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),

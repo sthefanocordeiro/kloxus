@@ -93,6 +93,9 @@ export function IssuePage() {
     qc.invalidateQueries({ queryKey: ["document", issueID] });
     qc.invalidateQueries({ queryKey: ["readiness", issueID] });
     qc.invalidateQueries({ queryKey: ["issue", issueID] });
+    // a send can change the confirmed-reader count the dialog shows
+    // (a test send confirms the claimed owner as a reader)
+    qc.invalidateQueries({ queryKey: ["reader"] });
   }, [qc, issueID]);
 
   // evidence pane selection

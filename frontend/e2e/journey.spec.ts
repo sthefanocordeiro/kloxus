@@ -292,12 +292,40 @@ async function claimIfLive(page: Page) {
 async function sendToReaders(page: Page) {
   // the send action is its own header button post-approval; readers get
   // a confirmation dialog (count, subject, sender) — never one-click
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await page.getByRole("button", { name: "Send to readers" }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText(/reader.*paying/)).toBeVisible();
-  await expect(dialog.getByText(/Subject|Assunto/)).toBeVisible();
-  await dialog.getByRole("button", { name: "Send now" }).click();
+  const ws = await (await page.request.get("/api/v1/workspace")).json();
+  const sendBar = async () => {
+    const readersBtn = page.getByRole("button", { name: "Send to readers" });
+    if (!(await readersBtn.isVisible())) {
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+    }
+    await expect(readersBtn).toBeVisible();
+  };
+  const readersDialog = async () => {
+    await sendBar();
+    await page.getByRole("button", { name: "Send to readers" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText(/reader.*paying/)).toBeVisible();
+    await expect(dialog.getByText(/Subject|Assunto/)).toBeVisible();
+    return dialog;
+  };
+  await (await readersDialog()).getByRole("button", { name: "Send now" }).click();
+  if (ws.mail === "live") {
+    // Live mail with zero confirmed readers is an intended terminal
+    // state (D33): nothing leaves the app, the issue stays approved and
+    // the API warning lands as a toast — the after-sending surface must
+    // not render.
+    await expect(page.getByText(/nothing was delivered/i).first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole("link", { name: /reader page/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+    // A test send goes to the claimed owner — and confirms them as a
+    // reader, so the resend has a deliverable recipient.
+    await sendBar();
+    await page.getByRole("button", { name: "Send a test" }).click();
+    await expect(page.getByText(/Test sent|Resend failed/i).first()).toBeVisible({ timeout: 15000 });
+    const again = await readersDialog();
+    await expect(again.getByText(/1 reader/)).toBeVisible();
+    await again.getByRole("button", { name: "Send now" }).click();
+  }
   // the after-sending surface replaces the editor chrome
   await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible({ timeout: 15000 });
   await expect(page.getByText(/guide learned|guide/i).first()).toBeVisible();

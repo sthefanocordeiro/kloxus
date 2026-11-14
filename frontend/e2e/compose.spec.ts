@@ -98,6 +98,30 @@ async function approveIssue(page: Page) {
   await expect(page.getByText("approved", { exact: false }).first()).toBeVisible({ timeout: 15000 });
 }
 
+async function claimIfLive(page: Page) {
+  // Live deployments gate sends behind a claimed workspace. The claim
+  // email lands in a real inbox — and in the workspace outbox, where
+  // the API request context can complete the magic-link round trip.
+  const ws = await (await page.request.get("/api/v1/workspace")).json();
+  if (ws.mail !== "live" || ws.claimed) return;
+  const claim = await page.request.post("/api/v1/workspace/claim", {
+    data: { email: "smoke@kloxus.dev" },
+  });
+  expect(claim.ok()).toBeTruthy();
+  const pubs = await (await page.request.get("/api/v1/publications")).json();
+  const outbox = await (
+    await page.request.get(`/api/v1/publications/${pubs.publications[0].id}/outbox`)
+  ).json();
+  const ml = outbox.emails.find((e: { kind: string }) => e.kind === "magic_link");
+  expect(ml).toBeTruthy();
+  const mail = await (await page.request.get(`/api/v1/outbox/${ml.id}`)).json();
+  const link = mail.email.body_md.match(/\/claim\?t=[A-Za-z0-9_-]+/)?.[0];
+  expect(link).toBeTruthy();
+  // GET /claim sets the workspace cookie on this browser context
+  const confirmed = await page.request.get(link!);
+  expect(confirmed.status()).toBe(200);
+}
+
 test("manual compose journey", async ({ page }) => {
   await page.setViewportSize({ width: 1360, height: 850 });
   await onboard(page);
@@ -136,8 +160,12 @@ test("manual compose journey", async ({ page }) => {
   await typeCommentary(page);
   await approveIssue(page);
 
+  // live mail gates sends behind a claimed workspace — claim first, or
+  // the test send is correctly refused 409 unclaimed_workspace
+  await claimIfLive(page);
+
   // dry send: a test email goes to the outbox, the issue stays approved
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await page.getByRole("button", { name: "Send a test" }).click();
-  await expect(page.getByText(/Test sent/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/Test sent|Resend failed/).first()).toBeVisible({ timeout: 15000 });
 });

@@ -162,11 +162,13 @@ say "commentary saved"
 [ "$(req POST "/api/v1/issues/$IID/approve")" = "200" ] || die "approve: $(cat "$RESP")"
 say "issue approved"
 SEND="$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')"
+LIVEMAIL=""
 if [ "$SEND" = "409" ] && [ "$(jget error.code)" = "unclaimed_workspace" ]; then
 	# Live delivery: sends need a claimed workspace. The claim link lands
 	# in the creator inbox — and in the workspace outbox, where smoke can
 	# complete the magic-link round trip headlessly.
 	say "workspace unclaimed — claiming by magic link"
+	LIVEMAIL=1
 	[ "$(req POST /api/v1/workspace/claim '{"email":"smoke@kloxus.dev"}')" = "200" ] \
 		|| die "claim: $(cat "$RESP")"
 	[ "$(req GET "/api/v1/publications/$PUB/outbox")" = "200" ] || die "outbox list failed"
@@ -183,13 +185,46 @@ if [ "$SEND" = "409" ] && [ "$(jget error.code)" = "unclaimed_workspace" ]; then
 	[ -n "$CLAIM" ] || die "claim link not found in the outbox email"
 	[ "$(req GET "$CLAIM")" = "303" ] || die "claim confirm failed: $(cat "$RESP")"
 	say "workspace claimed via magic link"
-	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
-		|| die "send after claim: $(cat "$RESP")"
 elif [ "$SEND" != "200" ]; then
 	die "send: $(cat "$RESP")"
 fi
-[ "$(jget issue.status)" = "sent" ] || die "issue not marked sent"
-say "issue sent to readers"
+
+if [ "$LIVEMAIL" = "1" ]; then
+	# Zero confirmed readers is an intended terminal state (D33): nothing
+	# leaves the app, the issue stays approved and can go out once a
+	# deliverable recipient exists. Assert that contract — delivery:"none"
+	# plus a warning — not an unconditional sent.
+	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
+		|| die "send after claim: $(cat "$RESP")"
+	[ "$(jget delivery)" = "none" ] \
+		|| die "zero confirmed readers must return delivery=none: $(cat "$RESP")"
+	[ "$(jget issue.status)" = "approved" ] \
+		|| die "delivery=none must leave the issue approved, got $(jget issue.status)"
+	WARN="$(jget warnings)"
+	[ -n "$WARN" ] && [ "$WARN" != "[]" ] \
+		|| die "delivery=none must carry a warning: $(cat "$RESP")"
+	say "zero confirmed readers — delivery:none, issue stays approved"
+	# A test send goes to the claimed owner — and confirms them as a
+	# reader, so the retry has a deliverable recipient.
+	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"test","when":"now"}')" = "200" ] \
+		|| die "test send: $(cat "$RESP")"
+	[ "$(jget to)" = '["smoke@kloxus.dev"]' ] \
+		|| die "test send must go to the claimed owner: $(cat "$RESP")"
+	case "$(jget delivery)" in resend|outbox_fallback|mixed) ;; *)
+		die "unexpected test delivery: $(cat "$RESP")" ;; esac
+	[ "$(jget issue.status)" = "approved" ] \
+		|| die "a test send must not mark the issue sent"
+	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
+		|| die "resend after test: $(cat "$RESP")"
+	case "$(jget delivery)" in resend|outbox_fallback|mixed) ;; *)
+		die "unexpected delivery: $(cat "$RESP")" ;; esac
+	[ "$(jget issue.status)" = "sent" ] \
+		|| die "issue not marked sent after a deliverable send"
+	say "issue sent to the confirmed reader (delivery=$(jget delivery))"
+else
+	[ "$(jget issue.status)" = "sent" ] || die "issue not marked sent"
+	say "issue sent to readers"
+fi
 
 # --- 12. reader page --------------------------------------------------------
 [ "$(req GET "/api/v1/issues/$IID/after")" = "200" ] || die "after failed"

@@ -211,7 +211,9 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	if cfg.ResendAPIKey != "" {
 		// A configured key means real mail: claim gate + confirmed
 		// readers + caps all switch on. Empty key keeps outbox mode.
-		mailer = delivery.NewResend(cfg.ResendAPIKey, cfg.FromAddress)
+		rs := delivery.NewResend(cfg.ResendAPIKey, cfg.FromAddress)
+		rs.BaseURL = cfg.ResendBaseURL
+		mailer = rs
 	}
 	var wsm *workspace.Manager
 	var err error
