@@ -168,3 +168,142 @@ func TestRankedCandidatesBatched(t *testing.T) {
 		t.Fatalf("StoryOutlets(nil) = %v %v", empty, err)
 	}
 }
+
+// TestCreateStoriesBatched exercises the run-scale dedupe write path:
+// ~5k stored items grouped into ~2.5k clusters must persist in two
+// statements (KLOX-41), with ids pairing positionally to drafts, and
+// the batch triage update must land in one statement too.
+func TestCreateStoriesBatched(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+
+	pubID, err := db.SeedPublication(ctx, testPub())
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	srcs, err := db.Sources(ctx, pubID)
+	if err != nil || len(srcs) == 0 {
+		t.Fatalf("Sources: %v len=%d", err, len(srcs))
+	}
+	// 5000 items — the shared-catalog pool size that timed out on Fly.
+	const N = 5000
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO items (workspace_id, source_id, external_id, url, title)
+		SELECT $1, $2, 'it-' || g, 'https://x.example/' || g, 'item ' || g
+		FROM generate_series(1, $3) g`, db.ws, srcs[0].ID, N); err != nil {
+		t.Fatalf("insert items: %v", err)
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT id FROM items WHERE workspace_id = $1 AND source_id = $2 ORDER BY id`, db.ws, srcs[0].ID)
+	if err != nil {
+		t.Fatalf("select item ids: %v", err)
+	}
+	var itemIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan item id: %v", err)
+		}
+		itemIDs = append(itemIDs, id)
+	}
+	rows.Close()
+	if len(itemIDs) != N {
+		t.Fatalf("items = %d, want %d", len(itemIDs), N)
+	}
+
+	// Two items per cluster, mirroring the QA pool shape; give cluster 0
+	// a duplicate member id to exercise the ON CONFLICT path.
+	var drafts []StoryDraft
+	for i := 0; i+1 < len(itemIDs); i += 2 {
+		members := []int64{itemIDs[i], itemIDs[i+1]}
+		if len(drafts) == 0 {
+			members = append(members, itemIDs[i])
+		}
+		drafts = append(drafts, StoryDraft{
+			Title:     fmt.Sprintf("story %d", i/2),
+			Simhash:   int64(i),
+			DedupeKey: fmt.Sprintf("key-%d", i/2),
+			ItemIDs:   members,
+		})
+	}
+	if err := db.CreateStories(ctx, pubID, drafts); err != nil {
+		t.Fatalf("CreateStories: %v", err)
+	}
+	if err := db.CreateStories(ctx, pubID, nil); err != nil {
+		t.Fatalf("CreateStories(nil): %v", err)
+	}
+
+	var storyCount, linkCount int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM stories WHERE workspace_id = $1 AND publication_id = $2`,
+		db.ws, pubID).Scan(&storyCount); err != nil {
+		t.Fatalf("count stories: %v", err)
+	}
+	if storyCount != len(drafts) {
+		t.Fatalf("stories = %d, want %d", storyCount, len(drafts))
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM story_items WHERE workspace_id = $1`, db.ws).Scan(&linkCount); err != nil {
+		t.Fatalf("count story_items: %v", err)
+	}
+	if linkCount != N {
+		t.Fatalf("story_items = %d, want %d (dup member must collapse)", linkCount, N)
+	}
+	// Positional pairing: story 0's title/dedupe_key must sit on the row
+	// that owns the first items — a shuffled RETURNING would mislink.
+	var title, key string
+	if err := db.QueryRowContext(ctx, `
+		SELECT s.title, s.dedupe_key FROM stories s
+		WHERE s.workspace_id = $1 AND s.id = (
+			SELECT story_id FROM story_items WHERE workspace_id = $1 AND item_id = $2)`,
+		db.ws, itemIDs[0]).Scan(&title, &key); err != nil {
+		t.Fatalf("story of first item: %v", err)
+	}
+	if title != "story 0" || key != "key-0" {
+		t.Fatalf("first story = %q/%q, want story 0/key-0", title, key)
+	}
+
+	rows, err = db.QueryContext(ctx,
+		`SELECT id FROM stories WHERE workspace_id = $1 AND publication_id = $2 ORDER BY id`, db.ws, pubID)
+	if err != nil {
+		t.Fatalf("select story ids: %v", err)
+	}
+	var storyIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan story id: %v", err)
+		}
+		storyIDs = append(storyIDs, id)
+	}
+	rows.Close()
+	updates := make([]StoryTriage, len(storyIDs))
+	for i, sid := range storyIDs {
+		updates[i] = StoryTriage{StoryID: sid, Score: float64(i), Reason: fmt.Sprintf("r%d", i)}
+	}
+	if err := db.SetStoriesTriage(ctx, updates); err != nil {
+		t.Fatalf("SetStoriesTriage: %v", err)
+	}
+	var scored int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM stories WHERE workspace_id = $1 AND publication_id = $2 AND triage_score IS NOT NULL`,
+		db.ws, pubID).Scan(&scored); err != nil {
+		t.Fatalf("count scored: %v", err)
+	}
+	if scored != len(drafts) {
+		t.Fatalf("scored = %d, want %d", scored, len(drafts))
+	}
+	var gotScore float64
+	var gotReason string
+	if err := db.QueryRowContext(ctx,
+		`SELECT triage_score, triage_reason FROM stories WHERE workspace_id = $1 AND title = 'story 7'`,
+		db.ws).Scan(&gotScore, &gotReason); err != nil {
+		t.Fatalf("verdict of story 7: %v", err)
+	}
+	if gotScore != 7 || gotReason != "r7" {
+		t.Fatalf("story 7 verdict = %v/%q, want 7/r7", gotScore, gotReason)
+	}
+	if err := db.SetStoriesTriage(ctx, nil); err != nil {
+		t.Fatalf("SetStoriesTriage(nil): %v", err)
+	}
+}
