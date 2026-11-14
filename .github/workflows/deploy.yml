@@ -34,11 +34,13 @@ jobs:
           exit 1
       # Safe-path selection lives in smoke.sh, not a workflow flag: the
       # script preflights the server's own /api/v1/workspace evidence
-      # and fails closed unless the target reports the deterministic
-      # demo pipeline with the outbox mail transport. Hosted
+      # and fails closed unless the target reports a no-AI posture —
+      # the deterministic demo pipeline, or real mode with
+      # llm_mode=off — plus the outbox mail transport. Hosted
       # verification is outbox-only under the freeze — a live or
-      # unknown mail transport makes the script refuse before any
-      # mail- or model-capable request, so this job can never send
-      # real email.
+      # unknown mail transport, or a real target with the model
+      # enabled, makes the script refuse before any mail- or
+      # model-capable request, so this job can never send real email
+      # or spend on a model.
       - name: smoke check (outbox-only — server-side transport evidence)
         run: bash scripts/smoke.sh https://kloxus.fly.dev
