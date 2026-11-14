@@ -132,7 +132,7 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 		return Response{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Response{}, fmt.Errorf("anthropic: status %d: %s", resp.StatusCode, truncate(string(raw), 400))
+		return Response{}, &StatusError{Provider: "anthropic", Status: resp.StatusCode, Body: truncate(string(raw), 400)}
 	}
 	var ar anthropicResponse
 	if err := json.Unmarshal(raw, &ar); err != nil {

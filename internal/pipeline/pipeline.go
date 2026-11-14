@@ -141,6 +141,18 @@ func decodeJSON(text string, out any) error {
 	return json.Unmarshal([]byte(s[start:end+1]), out)
 }
 
+// complete invokes the provider behind a panic guard: a provider that
+// panics fails this step (and the run) instead of taking the process
+// down. Every model call in a pipeline step goes through here (D32).
+func (r *Runner) complete(ctx context.Context, req llm.Request) (resp llm.Response, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("template %s: model call panicked: %v", req.Template, p)
+		}
+	}()
+	return r.LLM.Complete(ctx, req)
+}
+
 // call renders a prompt, calls the model and decodes JSON output,
 // retrying once on invalid JSON.
 func (r *Runner) call(ctx context.Context, model, name string, data any, out any) (llm.Response, error) {
@@ -153,10 +165,17 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 	if err != nil {
 		return llm.Response{}, err
 	}
-	// 32k: real feeds produce far larger JSON replies than the fixtures —
-	// an 8k cap truncates mid-JSON (dossier on ~20 real stories already did).
-	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: 32768}
-	resp, err := r.LLM.Complete(ctx, req)
+	// Long-form steps need a bigger ceiling: real feeds produce far
+	// larger JSON replies than the fixtures — an 8k cap truncated a
+	// dossier on ~20 real stories mid-JSON, and truncation lands as
+	// invalid JSON the repair retry cannot fix.
+	maxTok := 8192
+	switch name {
+	case "dossier", "deepdive", "draft":
+		maxTok = 32768
+	}
+	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: maxTok}
+	resp, err := r.complete(ctx, req)
 	if err != nil {
 		return resp, err
 	}
@@ -166,7 +185,7 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 			return resp, fmt.Errorf("template %s: %w", name, err)
 		}
 		req.User = user + "\n\nYour previous reply was not valid JSON (" + err.Error() + "). Reply with ONLY the JSON."
-		resp2, err2 := r.LLM.Complete(ctx, req)
+		resp2, err2 := r.complete(ctx, req)
 		if err2 != nil {
 			return resp2, err2
 		}

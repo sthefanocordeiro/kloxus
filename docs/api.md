@@ -99,7 +99,9 @@ emailed link) resolve to the same handlers.
 
 `llm_mode` is `"off"` when `KLOXUS_LLM_MODE=off`: runs rank and draft
 deterministically with zero model calls, and AI-only endpoints (guide
-rebuild) answer `409 ai_disabled`.
+rebuild) answer `409 ai_disabled`. Deterministic runs bypass AI run
+admission — the kill switch, run budget and daily cap guard real model
+work only — and write nothing to the AI run ledger.
 
 ## Publications
 

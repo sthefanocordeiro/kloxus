@@ -1,0 +1,35 @@
+slug: sinal-aberto
+name: Sinal Aberto
+language: pt-BR
+topic: Tecnologia e IA — o que muda na vida de quem trabalha com tecnologia
+audience: Profissionais de tecnologia e leitores curiosos, sem jargão
+editorial_line: |
+  Priorize impacto real em vez de anúncios e hype.
+  Pule lançamentos sem disponibilidade no Brasil.
+  Pule rodadas de investimento, a menos que mudem um mercado.
+  Prefira fontes primárias e veículos que cobrem o assunto há anos.
+tone: Direto, em primeira pessoa, sem hype
+frequency: weekly
+sections:
+  - title: A principal
+    items: 1
+    commentary: required
+  - title: Vale saber
+    items: 4
+    commentary: optional
+  - title: Links rápidos
+    items: 5
+    commentary: none
+sources:
+  - name: G1 Tecnologia
+    type: rss
+    url: https://g1.globo.com/rss/g1/tecnologia/
+  - name: Tecnoblog
+    type: rss
+    url: https://tecnoblog.net/feed/
+  - name: Canaltech
+    type: rss
+    url: https://canaltech.com.br/rss/
+paywall:
+  enabled: false
+ai_disclosure: short

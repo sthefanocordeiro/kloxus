@@ -27,6 +27,9 @@ type Deps struct {
 	Cfg     *config.Config
 	Fetcher sources.Fetcher
 	LLM     llm.Provider
+	// Guard enforces the LLM spend limits at run admission and backs the
+	// admin kill switch (D32/D36). Nil disables the guards (tests).
+	Guard   *llm.Guard
 	Monitor sources.MonitorProvider
 	// Mailer transports real email when configured (Resend in
 	// production, a fake in tests). Nil means outbox-only mode: every
@@ -72,6 +75,8 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /a/{id}", s.articlePage)
 	m.HandleFunc("GET /outbox/{id}/eml", s.outboxEML)
 	m.HandleFunc("POST /webhooks/firecrawl", s.firecrawlWebhook)
+	m.HandleFunc("GET /api/v1/admin/llm", s.apiAdminLLM)
+	m.HandleFunc("POST /api/v1/admin/llm", s.apiAdminLLMSet)
 	m.HandleFunc("POST /webhooks/resend", s.resendWebhook)
 	// Claim and opt-in links open in any browser — they carry their own
 	// proof (token/MAC) and must not mint a visitor workspace first.
@@ -190,13 +195,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mux.ServeHTTP(w, r)
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/webhooks/") ||
+	if strings.HasPrefix(r.URL.Path, "/webhooks/") || strings.HasPrefix(r.URL.Path, "/api/v1/admin/") ||
 		r.URL.Path == "/claim" || strings.HasPrefix(r.URL.Path, "/claim/") ||
 		r.URL.Path == "/confirm-sub" || strings.HasPrefix(r.URL.Path, "/confirm-sub/") ||
 		(r.Method == http.MethodPost && (r.URL.Path == "/unsub" || strings.HasPrefix(r.URL.Path, "/unsub/"))) {
-		// Webhooks carry provider auth and emailed links their own token
-		// — resolving would mint a junk workspace per call and trip the
-		// create limit.
+		// Webhooks and admin calls carry provider auth, and emailed links
+		// their own token — resolving would mint a junk workspace per
+		// call and trip the create limit.
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		s.mux.ServeHTTP(w, r)
 		return
@@ -207,6 +212,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), ctxWS, ws))
+	// Interactive model calls (guide rebuilds, sentence checks) account
+	// to this workspace too — the run endpoints swap in a run scope.
+	r = r.WithContext(llm.WithWorkspace(r.Context(), ws.ID))
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 		if strings.HasPrefix(r.URL.Path, "/api/v1/") {
