@@ -62,6 +62,27 @@ func (db *DB) RecentMagicLinks(ctx context.Context, since string) (int, error) {
 	return n, err
 }
 
+// PeekMagicLink resolves a token without spending it — the GET side of
+// the two-step claim, which mail-scanner prefetches must leave intact.
+// Same validity rule as ConsumeMagicLink (sql.ErrNoRows on invalid,
+// spent or expired).
+func (p *Pool) PeekMagicLink(ctx context.Context, tokenHash, now string) (wsID, email string, err error) {
+	err = p.db.QueryRowContext(ctx, `
+		SELECT workspace_id, email FROM magic_links
+		WHERE token_hash = $1 AND used_at = '' AND expires_at > $2`,
+		tokenHash, now).Scan(&wsID, &email)
+	return
+}
+
+// PeekMagicLink is the local-mode variant.
+func (db *DB) PeekMagicLink(ctx context.Context, tokenHash, now string) (email string, err error) {
+	err = db.QueryRowContext(ctx, `
+		SELECT email FROM magic_links
+		WHERE workspace_id = $3 AND token_hash = $1 AND used_at = '' AND expires_at > $2`,
+		tokenHash, now, db.ws).Scan(&email)
+	return
+}
+
 // ConsumeMagicLink atomically spends a token: it must exist, be unused
 // and unexpired. Returns the workspace and email it was minted for
 // (sql.ErrNoRows on anything else — the link is invalid, spent or

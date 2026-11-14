@@ -74,8 +74,10 @@ func New(d Deps) *Server {
 	// proof (token/MAC) and must not mint a visitor workspace first.
 	// The trailing-slash twins keep a stray slash on an emailed link
 	// from falling through to the SPA 404 (KLOX-27), same as /sample/a.
-	m.HandleFunc("GET /claim", s.claimConfirm)
-	m.HandleFunc("GET /claim/", s.claimConfirm)
+	m.HandleFunc("GET /claim", s.claimPage)
+	m.HandleFunc("GET /claim/", s.claimPage)
+	m.HandleFunc("POST /claim", s.claimConfirm)
+	m.HandleFunc("POST /claim/", s.claimConfirm)
 	m.HandleFunc("GET /confirm-sub", s.confirmSub)
 	m.HandleFunc("GET /confirm-sub/", s.confirmSub)
 	m.HandleFunc("POST /unsub", s.unsubOneClick) // RFC 8058 one-click

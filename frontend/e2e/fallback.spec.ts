@@ -115,7 +115,11 @@ async function claimSynthetic(page: Page) {
   const mail = await apiGet(page, `/api/v1/outbox/${ml.id}`);
   const link = mail.email.body_md.match(/\/claim\?t=[A-Za-z0-9_-]+/)?.[0];
   expect(link).toBeTruthy();
-  const confirmed = await page.request.get(link!);
+  // Two-step claim: GET lands the confirm page; the explicit POST
+  // spends the token (see claimIfSynthetic in mail.ts)
+  const claimPage = await page.request.get(link!);
+  expect(claimPage.status()).toBe(200);
+  const confirmed = await page.request.post(link!);
   expect(confirmed.status()).toBe(200);
 }
 

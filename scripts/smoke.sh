@@ -178,9 +178,39 @@ say "issue approved"
 # (claim gate, confirmed readers, delivery:"none") is covered locally by
 # the fake-live e2e suite — never against a hosted target.
 SEND="$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')"
-[ "$SEND" = "200" ] || die "send: $(cat "$RESP")"
-[ "$(jget delivery)" = "outbox" ] \
-	|| die "an outbox transport must answer delivery=outbox: $(cat "$RESP")"
+if [ "$SEND" = "409" ] && [ "$(jget error.code)" = "unclaimed_workspace" ]; then
+	# Live delivery: sends need a claimed workspace. The claim link lands
+	# in the creator inbox — and in the workspace outbox, where smoke can
+	# complete the magic-link round trip headlessly.
+	say "workspace unclaimed — claiming by magic link"
+	[ "$(req POST /api/v1/workspace/claim '{"email":"smoke@kloxus.dev"}')" = "200" ] \
+		|| die "claim: $(cat "$RESP")"
+	[ "$(req GET "/api/v1/publications/$PUB/outbox")" = "200" ] || die "outbox list failed"
+	EID="$(node -e '
+		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+		const m = d.emails.find(e => e.kind === "magic_link");
+		console.log(m ? m.id : "");' "$RESP")"
+	[ -n "$EID" ] || die "no magic-link email in the outbox"
+	[ "$(req GET "/api/v1/outbox/$EID")" = "200" ] || die "outbox email fetch failed"
+	CLAIM="$(node -e '
+		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).email;
+		const m = (d.body_md || "").match(/\/claim\?t=[A-Za-z0-9_-]+/);
+		console.log(m ? m[0] : "");' "$RESP")"
+	[ -n "$CLAIM" ] || die "claim link not found in the outbox email"
+	# Two-step claim: the emailed link lands a confirm page (a scanner's
+	# prefetch must not spend the token); its explicit POST claims.
+	[ "$(req GET "$CLAIM")" = "200" ] || die "claim page failed: $(cat "$RESP")"
+	grep -q 'Confirm claim' "$RESP" || die "claim page is not the confirm form"
+	[ "$(req POST "$CLAIM")" = "303" ] || die "claim confirm failed: $(cat "$RESP")"
+	say "workspace claimed via magic link"
+	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
+		|| die "send after claim: $(cat "$RESP")"
+elif [ "$SEND" != "200" ]; then
+	die "send: $(cat "$RESP")"
+else
+	[ "$(jget delivery)" = "outbox" ] \
+		|| die "an outbox transport must answer delivery=outbox: $(cat "$RESP")"
+fi
 [ "$(jget issue.status)" = "sent" ] || die "issue not marked sent"
 say "issue delivered to the outbox"
 

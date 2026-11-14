@@ -64,8 +64,11 @@ export async function claimIfSynthetic(page: Page) {
   const mail = await (await page.request.get(`/api/v1/outbox/${ml.id}`)).json();
   const link = mail.email.body_md.match(/\/claim\?t=[A-Za-z0-9_-]+/)?.[0];
   expect(link).toBeTruthy();
-  // GET /claim sets the workspace cookie on this browser context
-  const confirmed = await page.request.get(link!);
+  // Two-step claim: GET lands the confirm page (prefetch-safe); the
+  // explicit POST spends the token and sets the cookie on this context
+  const claimPage = await page.request.get(link!);
+  expect(claimPage.status()).toBe(200);
+  const confirmed = await page.request.post(link!);
   expect(confirmed.status()).toBe(200);
 }
 
