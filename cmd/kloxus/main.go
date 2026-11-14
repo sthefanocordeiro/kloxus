@@ -209,7 +209,19 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		}
 	}
 	var mailer delivery.Sender
-	if cfg.ResendAPIKey != "" {
+	switch {
+	case cfg.FakeResendURL != "":
+		// Verification-only transport: a literal-loopback fake with a
+		// synthetic credential — live-mail rules run end to end and
+		// nothing real can leave the machine. Config rejected an
+		// invalid or remote endpoint already; an error here still
+		// stops startup rather than falling back to a real API.
+		fake, err := delivery.NewLoopbackSender(cfg.FakeResendURL, cfg.FromAddress)
+		if err != nil {
+			return err
+		}
+		mailer = fake
+	case cfg.ResendAPIKey != "":
 		// A configured key means real mail: claim gate + confirmed
 		// readers + caps all switch on. Empty key keeps outbox mode.
 		mailer = delivery.NewResend(cfg.ResendAPIKey, cfg.FromAddress)

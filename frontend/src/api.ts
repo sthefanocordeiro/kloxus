@@ -5,10 +5,13 @@ export interface Workspace {
   mode: string;
   hosted: boolean;
   llm_mode: string; // "auto" | "off" — off = deterministic pipeline, no AI calls
-  // live mail (Resend configured) requires a claim before any send
+  // live mail (a sender is configured) requires a claim before any send
   claimed?: boolean;
   owner_email?: string;
   mail?: "live" | "outbox";
+  // the sender's wire identity — server-side evidence for verification
+  // preflights: outbox | resend | synthetic (loopback fake) | custom
+  mail_transport?: "outbox" | "resend" | "synthetic" | "custom";
 }
 
 export interface Publication {
@@ -49,6 +52,12 @@ export interface OutboxEmail {
   subject: string;
   body_md?: string;
   body_html?: string;
+  // delivery-ledger fields: provider resend|outbox, status
+  // queued|sent|delivered|bounced|complained|refused|fallback
+  provider?: string;
+  provider_id?: string;
+  status?: string;
+  error?: string;
   created_at: string;
 }
 

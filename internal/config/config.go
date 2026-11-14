@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/mail"
+	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -42,10 +44,17 @@ type Config struct {
 	// LLMMode gates every model call: "auto" (default) runs the normal
 	// pipeline; "off" runs the deterministic pipeline and any model call
 	// attempted fails loudly (llm.None is the configured provider).
-	LLMMode string
-	MasterKey       string
-	ResendAPIKey    string
-	FromAddress     string
+	LLMMode      string
+	MasterKey    string
+	ResendAPIKey string
+	FromAddress  string
+	// FakeResendURL points the mail transport at a literal-loopback fake
+	// provider (scripts/fake-resend.mjs) — verification only. The sender
+	// carries a synthetic credential, follows no redirects and falls back
+	// to nothing: the value is validated at Load and an invalid one stops
+	// the process. Mutually exclusive with RESEND_API_KEY — the fake
+	// never touches a real credential. Never set on a deployed app.
+	FakeResendURL   string
 	FirecrawlAPIKey string
 	AbacatePayKey   string
 	PublicURL       string
@@ -60,14 +69,18 @@ type Config struct {
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
+// KLOXUS_NO_DOTENV skips the file entirely — verification runs set it so an
+// inherited .env can never leak credentials or endpoints into the process.
 func Load() (*Config, error) {
-	if f, err := os.Open(".env"); err == nil {
-		for k, v := range parseDotEnv(f) {
-			if _, exists := os.LookupEnv(k); !exists {
-				os.Setenv(k, v)
+	if os.Getenv("KLOXUS_NO_DOTENV") == "" {
+		if f, err := os.Open(".env"); err == nil {
+			for k, v := range parseDotEnv(f) {
+				if _, exists := os.LookupEnv(k); !exists {
+					os.Setenv(k, v)
+				}
 			}
+			f.Close()
 		}
-		f.Close()
 	}
 	cfg := &Config{
 		Mode:            getenv("KLOXUS_MODE", "demo"),
@@ -83,6 +96,7 @@ func Load() (*Config, error) {
 		MasterKey:       os.Getenv("KLOXUS_MASTER_KEY"),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
+		FakeResendURL:   os.Getenv("KLOXUS_FAKE_RESEND_URL"),
 		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
@@ -105,7 +119,47 @@ func Load() (*Config, error) {
 			return nil, err
 		}
 	}
+	if cfg.FakeResendURL != "" {
+		if cfg.ResendAPIKey != "" {
+			return nil, fmt.Errorf("KLOXUS_FAKE_RESEND_URL and RESEND_API_KEY are mutually exclusive — the verification transport never carries a real credential")
+		}
+		if err := ValidateLoopbackEndpoint(cfg.FakeResendURL); err != nil {
+			return nil, fmt.Errorf("KLOXUS_FAKE_RESEND_URL: %w", err)
+		}
+		if err := ValidFromAddress(cfg.FromAddress); err != nil {
+			return nil, err
+		}
+	}
 	return cfg, nil
+}
+
+// ValidateLoopbackEndpoint restricts a URL to a literal loopback HTTP
+// endpoint — no userinfo, query, fragment or path — so a verification
+// transport can never be pointed at (or leak to) a remote host. The host
+// must be a loopback IP literal (127.0.0.0/8 or ::1); a DNS name such as
+// "localhost" is not literal proof and is rejected.
+func ValidateLoopbackEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", raw, err)
+	}
+	if u.Scheme != "http" {
+		return fmt.Errorf("must be a plain http URL, got scheme %q", u.Scheme)
+	}
+	if u.User != nil {
+		return fmt.Errorf("must not carry userinfo")
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return fmt.Errorf("must not carry a query or fragment")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return fmt.Errorf("must not carry a path, got %q", u.Path)
+	}
+	ip, err := netip.ParseAddr(u.Hostname())
+	if err != nil || !ip.IsLoopback() {
+		return fmt.Errorf("host %q is not a literal loopback address", u.Hostname())
+	}
+	return nil
 }
 
 // LLMOff reports whether the deterministic no-model mode is on.

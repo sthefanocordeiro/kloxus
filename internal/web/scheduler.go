@@ -146,9 +146,10 @@ func (s *Server) sendScheduledIssue(ctx context.Context, pool *store.Pool, j sto
 		wdb.RecordDecision(ctx, iss.PublicationID, 0, "send",
 			fmt.Sprintf("scheduled send partially refused (%d): %s", len(sum.Refused), strings.Join(sum.Refused, "; ")))
 	}
-	// Nothing left the app (empty or all-refused send): return the
-	// issue to approved so the creator can send it once deliverable.
-	if sum.Sent+sum.Fallback+sum.Deduped == 0 {
+	// Nothing left the app (empty, all-refused or all-fallback send):
+	// return the issue to approved so the creator can send it once
+	// deliverable.
+	if sum.Sent+sum.Deduped == 0 {
 		wdb.RecordDecision(ctx, iss.PublicationID, 0, "send", "scheduled send delivered nothing — issue returned to approved")
 		return wdb.SetIssueStatus(ctx, iss.ID, "approved")
 	}

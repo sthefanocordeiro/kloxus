@@ -32,5 +32,13 @@ jobs:
           done
           echo "kloxus.fly.dev did not answer healthz within 3 minutes" >&2
           exit 1
-      - name: smoke check
+      # Safe-path selection lives in smoke.sh, not a workflow flag: the
+      # script preflights the server's own /api/v1/workspace evidence
+      # and fails closed unless the target reports the deterministic
+      # demo pipeline with the outbox mail transport. Hosted
+      # verification is outbox-only under the freeze — a live or
+      # unknown mail transport makes the script refuse before any
+      # mail- or model-capable request, so this job can never send
+      # real email.
+      - name: smoke check (outbox-only — server-side transport evidence)
         run: bash scripts/smoke.sh https://kloxus.fly.dev

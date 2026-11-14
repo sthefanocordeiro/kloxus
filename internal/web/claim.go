@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -140,6 +141,46 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 		resp["claim_url"] = link
 	}
 	apiJSON(w, 200, resp)
+}
+
+// claimPage lands the emailed magic link without spending it. Mail
+// scanners prefetch every link in a message, so a GET that consumed the
+// single-use token left the user's real click "already expired" — the
+// claim only spends on this page's explicit POST (KLOX-27 follow-on).
+// An invalid, spent or expired token renders the one failure state.
+func (s *Server) claimPage(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("t")
+	hash := hashToken(token)
+	now := store.NowUTC()
+	var email string
+	if pool := s.d.WS.Pool(); pool != nil {
+		_, em, err := pool.PeekMagicLink(r.Context(), hash, now)
+		if err != nil {
+			claimFail(w)
+			return
+		}
+		email = em
+	} else if l := s.d.WS.Local(); l != nil {
+		em, err := l.DB.PeekMagicLink(r.Context(), hash, now)
+		if err != nil {
+			claimFail(w)
+			return
+		}
+		email = em
+	} else {
+		claimFail(w)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// the URL carries a credential — don't let a cache keep or replay it
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintf(w, `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:34em;margin:4em auto">`+
+		`<h1>Claim your Kloxus workspace</h1>`+
+		`<p>Confirming signs this browser in as the workspace owner (%s).</p>`+
+		`<form method="POST" action="/claim?t=%s"><button type="submit" `+
+		`style="font-size:1em;padding:.6em 1.4em;cursor:pointer">Confirm claim</button></form>`+
+		`<p style="color:#777;font-size:.85em">The link works once and expires 15 minutes after it was sent.</p></body></html>`,
+		html.EscapeString(email), url.QueryEscape(token))
 }
 
 // claimConfirm spends a magic link: it must be unexpired and unused,

@@ -62,6 +62,27 @@ func (db *DB) RecentMagicLinks(ctx context.Context, since string) (int, error) {
 	return n, err
 }
 
+// PeekMagicLink resolves a token without spending it — the GET side of
+// the two-step claim, which mail-scanner prefetches must leave intact.
+// Same validity rule as ConsumeMagicLink (sql.ErrNoRows on invalid,
+// spent or expired).
+func (p *Pool) PeekMagicLink(ctx context.Context, tokenHash, now string) (wsID, email string, err error) {
+	err = p.db.QueryRowContext(ctx, `
+		SELECT workspace_id, email FROM magic_links
+		WHERE token_hash = $1 AND used_at = '' AND expires_at > $2`,
+		tokenHash, now).Scan(&wsID, &email)
+	return
+}
+
+// PeekMagicLink is the local-mode variant.
+func (db *DB) PeekMagicLink(ctx context.Context, tokenHash, now string) (email string, err error) {
+	err = db.QueryRowContext(ctx, `
+		SELECT email FROM magic_links
+		WHERE workspace_id = $3 AND token_hash = $1 AND used_at = '' AND expires_at > $2`,
+		tokenHash, now, db.ws).Scan(&email)
+	return
+}
+
 // ConsumeMagicLink atomically spends a token: it must exist, be unused
 // and unexpired. Returns the workspace and email it was minted for
 // (sql.ErrNoRows on anything else — the link is invalid, spent or
@@ -224,24 +245,30 @@ func suppressedQuery(ctx context.Context, q interface {
 
 // --- send ledger (outbox_emails) ---
 
-// OutboxMail is one ledger row: the message plus its delivery state.
+// OutboxMail is one ledger row: the message plus its delivery state
+// (the OutboxEmail ledger fields) and its idempotency key.
 type OutboxMail struct {
 	OutboxEmail
-	Provider   string // resend | outbox
-	ProviderID string
-	Status     string // queued | sent | delivered | bounced | complained | refused | fallback
-	IdemKey    string
-	Error      string
+	IdemKey string
 }
 
 // SaveMail records one outgoing message and returns (id, created).
 // With an idempotency key the insert is deduped: a repeated key returns
 // the existing row with created=false — the caller must not send again.
+// A status='fallback' row is the exception: it records a send that never
+// left the app, so it must not satisfy idempotency — the conflict
+// requeues the row in place (fresh body, queued again, attempt stamped)
+// and reports created=true so the retry really reaches the provider.
 func (db *DB) SaveMail(ctx context.Context, kind, to, subject, bodyMD, bodyHTML, provider, status, idemKey string) (id int64, created bool, err error) {
 	err = db.QueryRowContext(ctx, `
 		INSERT INTO outbox_emails (workspace_id, kind, to_addr, subject, body_md, body_html, provider, status, idem_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (workspace_id, idem_key) WHERE idem_key <> '' DO NOTHING
+		ON CONFLICT (workspace_id, idem_key) WHERE idem_key <> ''
+		DO UPDATE SET to_addr = EXCLUDED.to_addr, subject = EXCLUDED.subject,
+			body_md = EXCLUDED.body_md, body_html = EXCLUDED.body_html,
+			provider = EXCLUDED.provider, provider_id = '',
+			status = EXCLUDED.status, error = '', created_at = EXCLUDED.created_at
+		WHERE outbox_emails.status = 'fallback'
 		RETURNING id`, db.ws, kind, to, subject, bodyMD, bodyHTML, provider, status, idemKey).Scan(&id)
 	if err == sql.ErrNoRows {
 		err = db.QueryRowContext(ctx,
