@@ -290,6 +290,27 @@ func (db *DB) SaveCommentary(ctx context.Context, issueID int64, commentary map[
 	return err
 }
 
+// AddCatalogSource registers a catalog pick on a publication: the row
+// mirrors the catalog's name/url so display reads stay local, and the
+// catalog_id link is what the editorial run filters shared items by.
+func (db *DB) AddCatalogSource(ctx context.Context, pubID int64, cs *CatalogSource) (int64, error) {
+	typ := cs.Kind
+	if typ == "api" {
+		typ = "rss" // the stored type drives display badges only
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO sources (workspace_id, publication_id, type, url, name, catalog_id)
+		 VALUES ($1,$2,$3,$4,$5,$6)
+		 ON CONFLICT (publication_id, url) DO UPDATE SET catalog_id = excluded.catalog_id`,
+		db.ws, pubID, typ, cs.URL, cs.Name, cs.ID); err != nil {
+		return 0, err
+	}
+	var id int64
+	err := db.QueryRowContext(ctx,
+		`SELECT id FROM sources WHERE workspace_id = $1 AND publication_id = $2 AND url = $3`, db.ws, pubID, cs.URL).Scan(&id)
+	return id, err
+}
+
 // AddSource registers a new source on a publication.
 func (db *DB) AddSource(ctx context.Context, pubID int64, typ, url, name string) (int64, error) {
 	if _, err := db.ExecContext(ctx,
@@ -481,15 +502,22 @@ func (db *DB) ReaderByToken(ctx context.Context, pubID int64, token string) (int
 	return id, err
 }
 
-// OutboxEmail is one simulated outgoing message stored per workspace.
+// OutboxEmail is one outgoing message stored per workspace. Provider,
+// ProviderID, Status and Error are the delivery-ledger fields: provider
+// "resend" means the provider protocol was attempted (a real key or the
+// loopback fake), "outbox" means it never left the app.
 type OutboxEmail struct {
-	ID        int64
-	Kind      string
-	To        string
-	Subject   string
-	BodyMD    string
-	BodyHTML  string
-	CreatedAt string
+	ID         int64
+	Kind       string
+	To         string
+	Subject    string
+	BodyMD     string
+	BodyHTML   string
+	Provider   string
+	ProviderID string
+	Status     string
+	Error      string
+	CreatedAt  string
 }
 
 // SaveOutboxEmail records a simulated email in the workspace outbox.
@@ -505,7 +533,8 @@ func (db *DB) SaveOutboxEmail(ctx context.Context, kind, to, subject, bodyMD, bo
 // OutboxEmails lists recorded emails, newest first.
 func (db *DB) OutboxEmails(ctx context.Context) ([]OutboxEmail, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, kind, to_addr, subject, created_at FROM outbox_emails WHERE workspace_id = $1 ORDER BY id DESC`, db.ws)
+		`SELECT id, kind, to_addr, subject, provider, provider_id, status, error, created_at
+		 FROM outbox_emails WHERE workspace_id = $1 ORDER BY id DESC`, db.ws)
 	if err != nil {
 		return nil, err
 	}
@@ -513,7 +542,8 @@ func (db *DB) OutboxEmails(ctx context.Context) ([]OutboxEmail, error) {
 	var out []OutboxEmail
 	for rows.Next() {
 		var e OutboxEmail
-		if err := rows.Scan(&e.ID, &e.Kind, &e.To, &e.Subject, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Kind, &e.To, &e.Subject,
+			&e.Provider, &e.ProviderID, &e.Status, &e.Error, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -525,9 +555,10 @@ func (db *DB) OutboxEmails(ctx context.Context) ([]OutboxEmail, error) {
 func (db *DB) GetOutboxEmail(ctx context.Context, id int64) (*OutboxEmail, error) {
 	var e OutboxEmail
 	err := db.QueryRowContext(ctx,
-		`SELECT id, kind, to_addr, subject, body_md, body_html, created_at FROM outbox_emails
-		 WHERE workspace_id = $1 AND id = $2`, db.ws, id).
-		Scan(&e.ID, &e.Kind, &e.To, &e.Subject, &e.BodyMD, &e.BodyHTML, &e.CreatedAt)
+		`SELECT id, kind, to_addr, subject, body_md, body_html, provider, provider_id, status, error, created_at
+		 FROM outbox_emails WHERE workspace_id = $1 AND id = $2`, db.ws, id).
+		Scan(&e.ID, &e.Kind, &e.To, &e.Subject, &e.BodyMD, &e.BodyHTML,
+			&e.Provider, &e.ProviderID, &e.Status, &e.Error, &e.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

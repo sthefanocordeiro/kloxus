@@ -3,25 +3,81 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 )
 
-// Item is a raw collected item.
+// Item is a raw collected item. Catalog items (catalog_id set) are
+// shared across workspaces — the global ingest scheduler fetched them
+// once for everyone (D29); fixture items keep a per-workspace source.
 type Item struct {
-	ID           int64
-	SourceID     int64
-	SourceName   string
-	SourceURL    string
-	SourceType   string
-	ExternalID   string
-	URL          string
-	CanonicalURL string
-	Title        string
-	Author       string
-	PublishedAt  string
-	ContentText  string
+	ID            int64
+	SourceID      int64
+	CatalogID     int64
+	SourceName    string
+	SourceURL     string
+	SourceType    string
+	ExternalID    string
+	URL           string
+	CanonicalURL  string
+	Title         string
+	Author        string
+	PublishedAt   string
+	ContentText   string
+	Kind          string // article | signal
+	Meta          ItemMeta
+	BodyTruncated bool
+	FetchedAt     string
+}
+
+// ItemMeta carries signal-source metadata (the Daily Journal fields the
+// catalog keeps: clustering counters and the links the story cites).
+type ItemMeta struct {
+	Description string   `json:"description,omitempty"`
+	Categories  []string `json:"categories,omitempty"`
+	Topics      []string `json:"topics,omitempty"`
+	OutletCount int      `json:"outlet_count,omitempty"`
+	SourceCount int      `json:"source_count,omitempty"`
+	DJURL       string   `json:"dj_url,omitempty"`
+	CitedURLs   []string `json:"cited_urls,omitempty"`
+}
+
+// Signal reports whether the item is a link-level signal (Hacker News,
+// Daily Journal) rather than a full-text article: signals rank and
+// attribute stories but never serve as citation evidence.
+func (it Item) Signal() bool { return it.Kind == "signal" }
+
+// itemCols is the shared select list for the dual-source item queries:
+// a workspace's fixture sources (s) or the catalog entries (c) its
+// source rows point at. Source fields coalesce s → c.
+const itemCols = `i.id, i.source_id, i.catalog_id,
+	COALESCE(s.name, c.name, ''), COALESCE(s.url, c.url, ''), COALESCE(s.type, 'rss'),
+	i.external_id, i.url, i.canonical_url, i.title, i.author, i.published_at,
+	i.content_text, i.kind, i.meta_json, i.body_truncated, i.fetched_at`
+
+func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
+	var it Item
+	var sourceID, catalogID sql.NullInt64
+	var externalID, canon, published, author sql.NullString
+	var meta string
+	err := row.Scan(&it.ID, &sourceID, &catalogID, &it.SourceName, &it.SourceURL,
+		&it.SourceType, &externalID, &it.URL, &canon, &it.Title, &author,
+		&published, &it.ContentText, &it.Kind, &meta, &it.BodyTruncated, &it.FetchedAt)
+	if err != nil {
+		return nil, err
+	}
+	it.SourceID = sourceID.Int64
+	it.CatalogID = catalogID.Int64
+	it.ExternalID = externalID.String
+	it.CanonicalURL = canon.String
+	it.Author = author.String
+	it.PublishedAt = published.String
+	if meta != "" && meta != "{}" {
+		json.Unmarshal([]byte(meta), &it.Meta)
+	}
+	return &it, nil
 }
 
 // SaveItems inserts collected items (idempotent per source+external_id).
@@ -44,28 +100,32 @@ func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawIt
 	return added, nil
 }
 
-// ItemsForPublication returns all items across a publication's sources.
+// ItemsForPublication returns all items across a publication's sources:
+// the workspace's own fixture items plus the shared catalog items its
+// catalog picks have collected (D29).
 func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT i.id, i.source_id, s.name, s.url, s.type, i.external_id, i.url,
-		       i.canonical_url, i.title, i.author, i.published_at, i.content_text
-		FROM items i JOIN sources s ON s.id = i.source_id
-		WHERE i.workspace_id = $1 AND s.publication_id = $2 ORDER BY i.id`, db.ws, pubID)
+		SELECT `+itemCols+`
+		FROM items i
+		LEFT JOIN sources s ON s.id = i.source_id
+		LEFT JOIN source_catalog c ON c.id = i.catalog_id
+		WHERE (s.id IS NOT NULL AND s.workspace_id = $1 AND s.publication_id = $2)
+		   OR (c.id IS NOT NULL AND EXISTS (
+		         SELECT 1 FROM sources ws
+		         WHERE ws.workspace_id = $1 AND ws.publication_id = $2
+		           AND ws.catalog_id = i.catalog_id))
+		ORDER BY i.id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Item
 	for rows.Next() {
-		var it Item
-		var canon, sourceName sql.NullString
-		if err := rows.Scan(&it.ID, &it.SourceID, &sourceName, &it.SourceURL, &it.SourceType,
-			&it.ExternalID, &it.URL, &canon, &it.Title, &it.Author, &it.PublishedAt, &it.ContentText); err != nil {
+		it, err := scanItem(rows)
+		if err != nil {
 			return nil, err
 		}
-		it.CanonicalURL = canon.String
-		it.SourceName = sourceName.String
-		out = append(out, it)
+		out = append(out, *it)
 	}
 	return out, rows.Err()
 }
@@ -85,23 +145,17 @@ func (db *DB) MarkSourceFetched(ctx context.Context, sourceID int64, name, statu
 	return err
 }
 
-// GetItem loads one item with its source's outlet name.
+// GetItem loads one item with its source's outlet name. Shared catalog
+// items (workspace_id NULL) resolve for any workspace — reader links
+// cite them across tenants by design.
 func (db *DB) GetItem(ctx context.Context, id int64) (*Item, error) {
-	var it Item
-	var canon, sourceName sql.NullString
-	err := db.QueryRowContext(ctx, `
-		SELECT i.id, i.source_id, s.url, s.type, i.external_id, i.url,
-		       i.canonical_url, i.title, i.author, i.published_at, i.content_text, s.name
-		FROM items i JOIN sources s ON s.id = i.source_id
-		WHERE i.workspace_id = $1 AND i.id = $2`, db.ws, id).
-		Scan(&it.ID, &it.SourceID, &it.SourceURL, &it.SourceType,
-			&it.ExternalID, &it.URL, &canon, &it.Title, &it.Author, &it.PublishedAt, &it.ContentText, &sourceName)
-	if err != nil {
-		return nil, err
-	}
-	it.CanonicalURL = canon.String
-	it.SourceName = sourceName.String
-	return &it, nil
+	return scanItem(db.QueryRowContext(ctx, `
+		SELECT `+itemCols+`
+		FROM items i
+		LEFT JOIN sources s ON s.id = i.source_id
+		LEFT JOIN source_catalog c ON c.id = i.catalog_id
+		WHERE i.id = $2 AND (i.workspace_id = $1 OR i.catalog_id IS NOT NULL)`,
+		db.ws, id))
 }
 
 // Story is a deduplicated group of items covering the same story.
@@ -209,11 +263,11 @@ func (db *DB) BestAlternative(ctx context.Context, pubID, issueID int64) (*Story
 
 func (db *DB) storyItems(ctx context.Context, storyID int64) ([]Item, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT i.id, i.source_id, s.name, s.url, s.type, i.external_id, i.url,
-		       i.canonical_url, i.title, i.author, i.published_at, i.content_text
+		SELECT `+itemCols+`
 		FROM story_items si
 		JOIN items i ON i.id = si.item_id
-		JOIN sources s ON s.id = i.source_id
+		LEFT JOIN sources s ON s.id = i.source_id
+		LEFT JOIN source_catalog c ON c.id = i.catalog_id
 		WHERE si.workspace_id = $1 AND si.story_id = $2 ORDER BY i.id`, db.ws, storyID)
 	if err != nil {
 		return nil, err
@@ -221,15 +275,11 @@ func (db *DB) storyItems(ctx context.Context, storyID int64) ([]Item, error) {
 	defer rows.Close()
 	var out []Item
 	for rows.Next() {
-		var it Item
-		var canon, sourceName sql.NullString
-		if err := rows.Scan(&it.ID, &it.SourceID, &sourceName, &it.SourceURL, &it.SourceType,
-			&it.ExternalID, &it.URL, &canon, &it.Title, &it.Author, &it.PublishedAt, &it.ContentText); err != nil {
+		it, err := scanItem(rows)
+		if err != nil {
 			return nil, err
 		}
-		it.CanonicalURL = canon.String
-		it.SourceName = sourceName.String
-		out = append(out, it)
+		out = append(out, *it)
 	}
 	return out, rows.Err()
 }
@@ -258,11 +308,11 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 		return nil, err
 	}
 	itemRows, err := db.QueryContext(ctx, `
-		SELECT si.story_id, i.id, i.source_id, s.name, s.url, s.type, i.external_id, i.url,
-		       i.canonical_url, i.title, i.author, i.published_at, i.content_text
+		SELECT si.story_id, `+itemCols+`
 		FROM story_items si
 		JOIN items i ON i.id = si.item_id
-		JOIN sources s ON s.id = i.source_id
+		LEFT JOIN sources s ON s.id = i.source_id
+		LEFT JOIN source_catalog c ON c.id = i.catalog_id
 		WHERE si.workspace_id = $1
 		  AND si.story_id IN (SELECT id FROM stories WHERE workspace_id = $1 AND publication_id = $2)
 		ORDER BY si.story_id, i.id`, db.ws, pubID)
@@ -273,13 +323,23 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 	for itemRows.Next() {
 		var storyID int64
 		var it Item
-		var canon, sourceName sql.NullString
-		if err := itemRows.Scan(&storyID, &it.ID, &it.SourceID, &sourceName, &it.SourceURL, &it.SourceType,
-			&it.ExternalID, &it.URL, &canon, &it.Title, &it.Author, &it.PublishedAt, &it.ContentText); err != nil {
+		var sourceID, catalogID sql.NullInt64
+		var externalID, canon, published, author sql.NullString
+		var meta string
+		if err := itemRows.Scan(&storyID, &it.ID, &sourceID, &catalogID, &it.SourceName, &it.SourceURL,
+			&it.SourceType, &externalID, &it.URL, &canon, &it.Title, &author,
+			&published, &it.ContentText, &it.Kind, &meta, &it.BodyTruncated, &it.FetchedAt); err != nil {
 			return nil, err
 		}
+		it.SourceID = sourceID.Int64
+		it.CatalogID = catalogID.Int64
+		it.ExternalID = externalID.String
 		it.CanonicalURL = canon.String
-		it.SourceName = sourceName.String
+		it.Author = author.String
+		it.PublishedAt = published.String
+		if meta != "" && meta != "{}" {
+			json.Unmarshal([]byte(meta), &it.Meta)
+		}
 		if pos, ok := idx[storyID]; ok {
 			out[pos].Items = append(out[pos].Items, it)
 		}

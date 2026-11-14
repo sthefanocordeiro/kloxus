@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, Circle, ExternalLink } from "lucide-react";
+import { useContext, useEffect, useRef, useState } from "react";
+import { ArrowRight, CheckCircle2, Circle, ExternalLink, Plus } from "lucide-react";
 import { api, type Check, type Coverage, type DocItem, type IssueDocument, type IssueItem } from "../api";
 import { coverageDone, coverageLabel, readyFromChecks } from "../docModel";
+import { DocActionsCtx } from "../editor/nodes";
+import { ComposeBox, type ComposeInsert } from "./Compose";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { fmtDate } from "../lib/fmt";
@@ -150,6 +152,8 @@ export function EvidencePane({
   sid?: string;
 }) {
   const { t, lang } = useT();
+  const actions = useContext(DocActionsCtx);
+  const [insert, setInsert] = useState<ComposeInsert | null>(null);
   const dossier = useQuery({
     queryKey: ["dossier", item?.issue_item_id],
     queryFn: () => api.dossier(item!.issue_item_id),
@@ -179,6 +183,9 @@ export function EvidencePane({
   return (
     <div ref={flash} className="h-full space-y-4 overflow-y-auto p-3 text-sm">
       <p className="font-doc font-semibold leading-6">{item.headline}</p>
+      {item.issue_item_id !== 0 && !actions.readOnly && (
+        <ComposeBox item={item} insert={insert} />
+      )}
       {d && (
         <>
           {d.facts.length + (d.deep_facts?.length ?? 0) > 0 && (
@@ -228,6 +235,21 @@ export function EvidencePane({
               <p className="mt-1 border-l-2 border-line pl-2 text-[13px] leading-5 text-muted">
                 {evFor(s.ref) ?? s.excerpt}
               </p>
+              {item.issue_item_id !== 0 && !actions.readOnly && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setInsert((i) => ({
+                      text: evFor(s.ref) ?? s.excerpt, cite: s.ref, seq: (i?.seq ?? 0) + 1,
+                    }))
+                  }
+                  title={t.compose.insertExcerpt(s.ref)}
+                  aria-label={t.compose.insertExcerpt(s.ref)}
+                  className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-teal hover:underline"
+                >
+                  <Plus size={11} /> {t.compose.insert}
+                </button>
+              )}
             </Card>
           ))}
         </div>

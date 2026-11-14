@@ -9,6 +9,14 @@ link, **hosted demo URL (must stay up through evaluation)**, and a
 real sources, real model calls, real email, Postgres — instead of the
 zero-setup fixture demo. Judges are not required to run anything locally.
 
+**Direction changed again on 2026-11-13 (D37):** after USD 7.86 of
+Anthropic spend, the owner froze all paid LLM use until a measured budget
+is approved and deferred AI deduplication/analysis/generative drafting to
+the post-hackathon roadmap. The MVP is now **no-paid-AI**: ingestion +
+deterministic normalization + canonical-URL/exact-hash dedup + manual
+compose + delivery, with the spend kill switch live in prod.
+
+
 Constraints that still hold: nothing is sent without human approval, the AI
 never writes the commentary, every factual sentence carries a source, and
 publisher rules (robots, terms) are respected without workarounds. The fake
@@ -83,6 +91,25 @@ to SQLite + Litestream and move on.
 issue from today's news, claims the workspace by email and receives the
 approved issue in a real inbox.
 
+## R4d — No-paid-AI MVP (Nov 13–21) — owner directive, D37
+
+- **Spend containment** — PR #17 (KLOX-10) kill switch + $1/day global cap
+  + 2 runs/day/workspace deployed to `kloxus` inside a serialized release
+  window; `KLOXUS_MODE=demo` as the pre-deploy kill path. Hosted verify:
+  `GET /api/v1/admin/llm` → `kill: true`.
+- **Deterministic run mode** (KLOX-31) — zero model calls; deterministic
+  rank; canonical-URL/exact-hash dedup; AI endpoints return 409.
+- **Manual compose** (KLOX-32) — human fills lineup items with cited
+  excerpts; no AI-written text.
+- **Parked (not deleted):** AI story grouping, analysis, generative
+  drafting. Returns only as opt-in, capped, behind the deployed kill
+  switch with owner-approved budget.
+
+**Exit:** `llm_ledger` shows zero new paid `call` rows after the freeze;
+the full loop (ingest → dedupe → manual compose → send) runs with zero
+Anthropic spend.
+
+
 ## R5 — Discovery and checkout (Nov 21–24)
 
 - **Discover a topic** — query expansion + Firecrawl Search + Daily Journal
@@ -119,6 +146,10 @@ The real pipeline and the landing page are never cut.
 - Pilot with up to 5 real publications; go/no-go (Feb 2027).
 - SaaS evolution: Kloxus subscription billing, creator-owned AbacatePay
   accounts (D8), semantic search (Exa or pgvector over our own items).
+- Parked MVP scope (D37): AI story grouping, AI analysis and generative
+  drafting — return only behind the deployed kill switch with an
+  owner-approved budget.
+
 
 ## Risks
 

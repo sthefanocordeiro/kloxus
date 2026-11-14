@@ -165,14 +165,13 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 	if err != nil {
 		return llm.Response{}, err
 	}
-	// Long-form steps need a bigger ceiling: a real dossier or a whole
-	// issue draft does not fit in 8k output tokens, and truncation lands
-	// as invalid JSON the repair retry cannot fix.
+	// Long-form steps need a bigger ceiling: real feeds produce far
+	// larger JSON replies than the fixtures — an 8k cap truncated a
+	// dossier on ~20 real stories mid-JSON, and truncation lands as
+	// invalid JSON the repair retry cannot fix.
 	maxTok := 8192
 	switch name {
-	case "dossier", "deepdive":
-		maxTok = 16384
-	case "draft":
+	case "dossier", "deepdive", "draft":
 		maxTok = 32768
 	}
 	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: maxTok}
@@ -273,7 +272,16 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	if err != nil {
 		return nil, err
 	}
+	hasCatalog := false
 	for _, s := range srcs {
+		if s.CatalogID != 0 {
+			// Catalog sources are ingested globally by the scheduler —
+			// a run never fetches them itself (D29: one request per
+			// interval no matter how many workspaces run).
+			hasCatalog = true
+			r.DB.MarkSourceFetched(ctx, s.ID, s.Name, "ok: shared catalog")
+			continue
+		}
 		if r.DemoMode && !strings.HasPrefix(s.URL, "fixtures/") {
 			// Visitor-added sources are never fetched on the hosted demo
 			// (SSRF surface); they are stored but skipped at collect time.
@@ -296,6 +304,16 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		r.DB.MarkSourceFetched(ctx, s.ID, outlet, fmt.Sprintf("ok: %d items, %d new", len(raw), n))
 		res.Items += len(raw)
 		res.New += n
+	}
+	if hasCatalog {
+		// What's "new" for a shared source is what the scheduler stored
+		// after this publication's last issue, not what this run fetched.
+		total, fresh, err := r.DB.CatalogItemsStats(ctx, pub.ID)
+		if err != nil {
+			return nil, err
+		}
+		res.Items += total
+		res.New += fresh
 	}
 	if res.New == 0 {
 		if _, err := r.DB.LatestIssue(ctx, pub.ID); err == nil {
@@ -331,6 +349,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	for i, it := range items {
 		groups[clusters[i]] = append(groups[clusters[i]], it)
 	}
+	groups = mergeCitedGroups(groups)
 	ordered := make([][]store.Item, 0, len(groups))
 	for _, g := range groups {
 		ordered = append(ordered, g)
@@ -388,8 +407,22 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		Outlets string
 		Snippet string
 	}
-	ts := make([]triStory, len(stories))
-	for i, s := range stories {
+	// Real catalogs yield hundreds of stories and triage answers one row
+	// per story — an unbounded response truncates mid-JSON, a scale the
+	// fixture never reaches. Cap the prompt by a cheap pre-rank when the
+	// batch overflows; leftovers keep score 0 and sit on the bench.
+	// Under the cap the original order stands, so replay prompts are
+	// unchanged.
+	triIdx := make([]int, len(stories))
+	for i := range triIdx {
+		triIdx[i] = i
+	}
+	if len(triIdx) > maxTriageStories {
+		triIdx = triageOrder(stories)[:maxTriageStories]
+	}
+	ts := make([]triStory, len(triIdx))
+	for i, si := range triIdx {
+		s := stories[si]
 		snip := ""
 		if len(s.Items) > 0 {
 			snip = truncate(s.Items[0].ContentText, 400)
@@ -434,12 +467,17 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		r.emit("triage", map[string]int{"ranked": len(triage)})
 		r.record(ctx, pub.ID, issueID, "triage", r.TriageModel, start, resp)
 		for _, t := range triage {
-			scoreByRef[t.Ref] = struct {
-				score  float64
-				reason string
-			}{t.Score, t.Reason}
-			if t.Ref-1 >= 0 && t.Ref-1 < len(stories) {
-				r.DB.SetStoryTriage(ctx, stories[t.Ref-1].ID, t.Score, t.Reason)
+			// Daily Journal's outlet_count boosts the story: a signal that
+			// N outlets already covered is a stronger candidate (D30). The
+			// boost is applied post-call so prompts stay fixture-stable.
+			if t.Ref-1 >= 0 && t.Ref-1 < len(triIdx) {
+				si := triIdx[t.Ref-1]
+				t.Score += signalBoost(stories[si])
+				scoreByRef[si+1] = struct {
+					score  float64
+					reason string
+				}{t.Score, t.Reason}
+				r.DB.SetStoryTriage(ctx, stories[si].ID, t.Score, t.Reason)
 			}
 		}
 	}
@@ -520,6 +558,12 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			if err := r.DB.MergeStories(ctx, primary.ID, merges); err != nil {
 				return nil, err
 			}
+		}
+		memberItems = evidenceItems(memberItems)
+		if len(memberItems) == 0 {
+			// A story with only signal members (a bare HN/DJ link) has
+			// no evidence body — it can't be drafted or cited.
+			continue
 		}
 		sc := scoreByRef[p.Refs[0]]
 		iiID, err := r.DB.CreateIssueItem(ctx, store.IssueItem{
@@ -1028,6 +1072,7 @@ func (r *Runner) finish(ctx context.Context, res *Result, outDir string) (*Resul
 type Dossier struct {
 	Ref            int             `json:"ref"`
 	Title          string          `json:"title,omitempty"` // storylist-picked title, set at save time
+	Origin         string          `json:"origin,omitempty"` // "manual" when built without a model
 	Summary        string          `json:"summary"`
 	Facts          []DossierFact   `json:"facts"`
 	DeepFacts      []DossierFact   `json:"deep_facts,omitempty"`
@@ -1381,6 +1426,87 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	return synthDossier(ref, cand.Title, interpretation, cand.Items)
 }
 
+// ensureManualDossiers creates deterministic dossiers for lineup items
+// that lack one — the compose flow's version of ensureDossiers, except
+// it never calls the model.
+func (r *Runner) ensureManualDossiers(ctx context.Context, issueID int64) error {
+	iis, err := r.DB.IssueItems(ctx, issueID)
+	if err != nil {
+		return err
+	}
+	maxRef := 0
+	var missing []store.IssueItem
+	for _, ii := range iis {
+		if dj, err := r.DB.Dossier(ctx, ii.ID); err == nil {
+			var d Dossier
+			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
+				maxRef = d.Ref
+			}
+			continue
+		}
+		if ii.Status == "approved" || ii.Status == "pending" {
+			missing = append(missing, ii)
+		}
+	}
+	for _, ii := range missing {
+		cand, err := r.DB.StoryWithItems(ctx, ii.StoryID)
+		if err != nil {
+			return err
+		}
+		maxRef++
+		// Origin "manual" marks the dossier as editor-facing reference
+		// material: its sentences were never model-written, so edits on
+		// them use the deterministic citation check, not a model call.
+		d := synthDossier(maxRef, cand.Title, "", cand.Items)
+		d.Interpretation = nil
+		d.Origin = "manual"
+		data, _ := json.Marshal(d)
+		if err := r.DB.SaveDossier(ctx, ii.ID, string(data)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ComposeSkeleton writes the manual-compose issue body: the board's
+// lineup becomes section headings and empty item slots (headline +
+// source list, no body text) for the editor to fill. Items missing a
+// dossier get a deterministic one — the whole path is model-free.
+func (r *Runner) ComposeSkeleton(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
+	res := &Result{IssueID: issueID}
+	if err := r.ensureManualDossiers(ctx, issueID); err != nil {
+		return nil, err
+	}
+	entries, dossierByRef, err := r.loadEntries(ctx, issueID, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no approved items — approve at least one story before composing")
+	}
+	res.Selected = len(entries)
+	sort.SliceStable(entries, func(a, b int) bool { return entries[a].position < entries[b].position })
+	number := res.Number
+	if number == 0 {
+		if iss, err := r.DB.GetIssue(ctx, issueID); err == nil {
+			number = iss.Number
+		}
+	}
+	sectionOrder := []string{}
+	for _, s := range pub.Sections {
+		sectionOrder = append(sectionOrder, s.Title)
+	}
+	// empty draft map: assembleIssue emits headline + sources only
+	body := assembleIssue(pub, number, entries, map[int]struct {
+		headline, body string
+	}{}, dossierByRef, sectionOrder)
+	if err := r.DB.UpdateIssue(ctx, issueID, "drafted", body, "[]"); err != nil {
+		return nil, err
+	}
+	res.Number = number
+	return res, nil
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -1403,4 +1529,128 @@ func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outD
 		Deterministic: det,
 	}
 	return r.Run(ctx, pub, outDir)
+}
+
+// maxTriageStories bounds the one prompt whose answer size scales with
+// the catalog — everything else is fixed-shape or section-bounded.
+const maxTriageStories = 80
+
+// triageOrder ranks story indexes for the bounded triage prompt:
+// article-bearing clusters first (signal-only groups can't be drafted),
+// then corroborated ones (more member items), then freshest.
+func triageOrder(stories []store.Story) []int {
+	idx := make([]int, len(stories))
+	for i := range idx {
+		idx[i] = i
+	}
+	newest := make([]string, len(stories))
+	hasArticle := make([]bool, len(stories))
+	for i, s := range stories {
+		for _, it := range s.Items {
+			if !it.Signal() {
+				hasArticle[i] = true
+			}
+			if it.PublishedAt > newest[i] {
+				newest[i] = it.PublishedAt
+			}
+		}
+	}
+	sort.Slice(idx, func(a, b int) bool {
+		i, j := idx[a], idx[b]
+		if hasArticle[i] != hasArticle[j] {
+			return hasArticle[i]
+		}
+		if len(stories[i].Items) != len(stories[j].Items) {
+			return len(stories[i].Items) > len(stories[j].Items)
+		}
+		if newest[i] != newest[j] {
+			return newest[i] > newest[j]
+		}
+		return stories[i].ID < stories[j].ID
+	})
+	return idx
+}
+
+// signalBoost returns the Daily Journal ranking boost for a story: the
+// largest outlet_count among its signal members, scaled to at most +2
+// score points (D30). Signals without DJ metadata contribute nothing.
+func signalBoost(s store.Story) float64 {
+	m := 0
+	for _, it := range s.Items {
+		if it.Meta.OutletCount > m {
+			m = it.Meta.OutletCount
+		}
+	}
+	if m > 5 {
+		m = 5
+	}
+	return float64(m) * 0.4
+}
+
+// evidenceItems drops signal rows (links-only HN/DJ entries) from a
+// story's member list for LLM and citation use: signals rank and
+// attribute but are never evidence (D30). Story membership in the DB
+// still includes them so the UI can show "via Daily Journal".
+func evidenceItems(items []store.Item) []store.Item {
+	out := items[:0:0]
+	for _, it := range items {
+		if !it.Signal() {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// mergeCitedGroups folds a signal's cluster into the cluster holding an
+// article the signal cites — a Daily Journal story's sources[] links
+// point at the same reporting our launch feeds carried, so the signal
+// attaches to that story instead of clustering alone.
+func mergeCitedGroups(groups map[int][]store.Item) map[int][]store.Item {
+	owner := map[string]int{}
+	for id, g := range groups {
+		for _, it := range g {
+			if !it.Signal() && it.CanonicalURL != "" {
+				if _, ok := owner[it.CanonicalURL]; !ok {
+					owner[it.CanonicalURL] = id
+				}
+			}
+		}
+	}
+	// union-find over cluster ids
+	parent := map[int]int{}
+	var find func(int) int
+	find = func(x int) int {
+		p, ok := parent[x]
+		if !ok || p == x {
+			return x
+		}
+		parent[x] = find(p)
+		return parent[x]
+	}
+	union := func(a, b int) {
+		ra, rb := find(a), find(b)
+		if ra != rb {
+			parent[rb] = ra
+		}
+	}
+	for id, g := range groups {
+		for _, it := range g {
+			if !it.Signal() {
+				continue
+			}
+			for _, u := range it.Meta.CitedURLs {
+				if tgt, ok := owner[u]; ok {
+					union(id, tgt)
+				}
+			}
+		}
+	}
+	if len(parent) == 0 {
+		return groups
+	}
+	merged := map[int][]store.Item{}
+	for id, g := range groups {
+		merged[find(id)] = append(merged[find(id)], g...)
+	}
+	return merged
 }

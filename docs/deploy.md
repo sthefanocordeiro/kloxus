@@ -21,6 +21,22 @@ check's grace period. Secrets (Anthropic, Resend, Firecrawl, AbacatePay,
 `KLOXUS_PUBLIC_URL`) are set on the app with `fly secrets set` — never in
 the file, the repo or a PR.
 
+### Email (Resend)
+
+- `RESEND_API_KEY` (sending-only, scoped to `kloxus-ai.trendfi.com.br`)
+  flips mail to live mode; without it every send stays in the outbox.
+- `KLOXUS_FROM_ADDRESS` is the full sender —
+  `Kloxus <news@kloxus-ai.trendfi.com.br>` — a display name is required.
+- `RESEND_WEBHOOK_SECRET` verifies the Svix signature on
+  `POST /webhooks/resend`, which feeds delivered/bounced/complained into
+  the send ledger and the global suppression list. Point the Resend
+  webhook at `https://kloxus.fly.dev/webhooks/resend` and subscribe to
+  those three events; the Resend key cannot query delivery status, so
+  without the webhook every send stalls at `sent` and bounces keep
+  mailing dead addresses.
+- `KLOXUS_EMAIL_DAILY_CAP` (80) and `KLOXUS_EMAIL_WS_DAILY_CAP` (25)
+  are env-tunable; the ledger in Postgres makes them survive restarts.
+
 ## Postgres (Supabase)
 
 All app data lives in one Supabase Postgres database reached through
@@ -80,8 +96,35 @@ scripts/smoke.sh https://kloxus.fly.dev            # health → SPA → sample �
 cd frontend && E2E_BASE_URL=https://kloxus.fly.dev npx playwright test
 ```
 
-A PR is not done until both pass against the Fly URL, and its description
-carries the URL, the release version and both outputs.
+Hosted verification is **outbox-only** under the freeze: it must never
+send real email or call a paid model. The safe path is selected by server-side
+evidence, not a client flag — `smoke.sh` and every e2e spec preflight
+`/api/v1/workspace` and refuse to run a mail-capable step unless the
+target itself reports the deterministic demo pipeline
+(`mode=demo`) with the outbox mail transport (`mail=outbox`,
+`mail_transport=outbox`). A live or unknown transport fails closed
+before the first mail-capable request.
+
+The live-mail contract (claim gate, confirmed readers, `delivery`
+outcomes, fallback) is verified **locally** against the loopback fake
+provider — never against the hosted app:
+
+```bash
+cd frontend
+node ../scripts/fake-resend.mjs &            # or let playwright boot it
+E2E_LIVE_MAIL=1 npx playwright test          # synthetic Resend on 127.0.0.1:8399
+```
+
+`E2E_LIVE_MAIL` boots the app with `KLOXUS_FAKE_RESEND_URL` — a
+literal-loopback-only endpoint validated at startup (no userinfo, path,
+query, fragment, DNS names or redirects; mutually exclusive with
+`RESEND_API_KEY`; synthetic credential). The modes are mutually
+exclusive: `E2E_BASE_URL` + `E2E_LIVE_MAIL` is a hard error, no
+webServer is reused, and the app boots with `KLOXUS_NO_DOTENV=1` and
+scrubbed credentials so nothing inherited can leak in.
+
+A PR is not done until both hosted checks pass against the Fly URL, and
+its description carries the URL, the release version and both outputs.
 
 ## Merge
 

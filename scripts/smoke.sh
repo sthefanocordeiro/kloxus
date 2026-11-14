@@ -52,8 +52,11 @@ jget() {
 
 # wait_run <run-id> <label> — polls until the run finishes
 wait_run() {
+	# The real app fetches live feeds and calls the model — a run takes
+	# minutes, not the fixture's seconds. 400×2 s ≈ 13 min, inside the
+	# server's own 15-minute run bound.
 	local rid="$1" label="$2" i st
-	for i in $(seq 1 150); do
+	for i in $(seq 1 400); do
 		[ "$(req GET "/api/v1/runs/$rid")" = "200" ] || die "$label: run status request failed"
 		st="$(jget run.status)"
 		case "$st" in
@@ -64,7 +67,7 @@ wait_run() {
 			*) die "$label: unknown run status '$st'" ;;
 		esac
 	done
-	die "$label run did not finish in 5 minutes"
+	die "$label run did not finish in 13 minutes"
 }
 
 # --- 1. health -----------------------------------------------------------
@@ -88,6 +91,18 @@ say "GET /api/v1/sample ok"
 WSID="$(jget workspace.id)"; [ -n "$WSID" ] || die "no workspace id returned"
 [ "$(req GET /api/v1/workspace)" = "200" ] || die "workspace fetch failed"
 say "anonymous workspace $WSID created"
+
+# --- 4b. transport preflight — fail closed before mail/model-capable ops ---
+# Hosted verification is outbox-only under the freeze. The server itself
+# must prove a safe configuration — deterministic demo pipeline plus an
+# outbox mail transport — before smoke touches a run, draft, claim or
+# send route. A live or unknown transport fails here, never after a
+# send. Client flags and NXDOMAIN recipients are not evidence.
+[ "$(jget mode)" = "demo" ] || die "refusing: target mode is '$(jget mode)' — verification needs the deterministic demo pipeline"
+case "$(jget llm_mode)" in auto|off) ;; *) die "refusing: unknown llm_mode '$(jget llm_mode)'" ;; esac
+[ "$(jget mail)" = "outbox" ] && [ "$(jget mail_transport)" = "outbox" ] \
+	|| die "refusing mail-capable checks: target reports mail='$(jget mail)' transport='$(jget mail_transport)' — hosted verification is outbox-only"
+say "transport preflight ok: demo pipeline, outbox mail"
 
 # --- 5. onboard: create publication from the sample proposal -------------
 [ "$(req GET /api/v1/proposal)" = "200" ] || die "proposal fetch failed"
@@ -124,15 +139,20 @@ say "issue $IID collected"
 DRID="$(jget run.id)"; [ -n "$DRID" ] || die "no draft run id"
 wait_run "$DRID" "draft"
 
-# --- 9. resolve every flagged sentence ------------------------------------
-for i in $(seq 1 30); do
+# --- 9. resolve every flagged or uncited sentence --------------------------
+# Real drafts flag far more sentences than the fixture's handful and can
+# leave fact sentences uncited — both block readiness the same way an
+# editor would resolve them: remove the sentence. Cap stays a loop guard.
+for i in $(seq 1 300); do
 	[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
 	SIDVER="$(node -e '
 		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).document;
 		for (const s of d.sections)
 			for (const it of s.items)
 				for (const sn of it.sentences)
-					if (sn.flag) { console.log(sn.id + "|" + d.version); process.exit(0); }
+					if (sn.flag || (sn.kind === "fact" && !(sn.citations && sn.citations.length))) {
+						console.log(sn.id + "|" + d.version); process.exit(0);
+					}
 		console.log("");' "$RESP")"
 	[ -z "$SIDVER" ] && break
 	SID="${SIDVER%%|*}"; VER="${SIDVER##*|}"
@@ -162,10 +182,46 @@ say "commentary saved"
 [ "$(jget ready)" = "true" ] || die "issue not ready: $(jget checks)"
 [ "$(req POST "/api/v1/issues/$IID/approve")" = "200" ] || die "approve: $(cat "$RESP")"
 say "issue approved"
-[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
-	|| die "send: $(cat "$RESP")"
+# The preflight proved mail_transport=outbox: the send records to the
+# outbox ledger and nothing leaves the app. The live-mail contract
+# (claim gate, confirmed readers, delivery:"none") is covered locally by
+# the fake-live e2e suite — never against a hosted target.
+SEND="$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')"
+if [ "$SEND" = "409" ] && [ "$(jget error.code)" = "unclaimed_workspace" ]; then
+	# Live delivery: sends need a claimed workspace. The claim link lands
+	# in the creator inbox — and in the workspace outbox, where smoke can
+	# complete the magic-link round trip headlessly.
+	say "workspace unclaimed — claiming by magic link"
+	[ "$(req POST /api/v1/workspace/claim '{"email":"smoke@kloxus.dev"}')" = "200" ] \
+		|| die "claim: $(cat "$RESP")"
+	[ "$(req GET "/api/v1/publications/$PUB/outbox")" = "200" ] || die "outbox list failed"
+	EID="$(node -e '
+		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+		const m = d.emails.find(e => e.kind === "magic_link");
+		console.log(m ? m.id : "");' "$RESP")"
+	[ -n "$EID" ] || die "no magic-link email in the outbox"
+	[ "$(req GET "/api/v1/outbox/$EID")" = "200" ] || die "outbox email fetch failed"
+	CLAIM="$(node -e '
+		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).email;
+		const m = (d.body_md || "").match(/\/claim\?t=[A-Za-z0-9_-]+/);
+		console.log(m ? m[0] : "");' "$RESP")"
+	[ -n "$CLAIM" ] || die "claim link not found in the outbox email"
+	# Two-step claim: the emailed link lands a confirm page (a scanner's
+	# prefetch must not spend the token); its explicit POST claims.
+	[ "$(req GET "$CLAIM")" = "200" ] || die "claim page failed: $(cat "$RESP")"
+	grep -q 'Confirm claim' "$RESP" || die "claim page is not the confirm form"
+	[ "$(req POST "$CLAIM")" = "303" ] || die "claim confirm failed: $(cat "$RESP")"
+	say "workspace claimed via magic link"
+	[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \
+		|| die "send after claim: $(cat "$RESP")"
+elif [ "$SEND" != "200" ]; then
+	die "send: $(cat "$RESP")"
+else
+	[ "$(jget delivery)" = "outbox" ] \
+		|| die "an outbox transport must answer delivery=outbox: $(cat "$RESP")"
+fi
 [ "$(jget issue.status)" = "sent" ] || die "issue not marked sent"
-say "issue sent to readers (demo outbox)"
+say "issue delivered to the outbox"
 
 # --- 12. reader page --------------------------------------------------------
 [ "$(req GET "/api/v1/issues/$IID/after")" = "200" ] || die "after failed"
