@@ -22,6 +22,7 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
   useEffect(() => {
+    let poll: ReturnType<typeof setInterval> | undefined;
     const es = new EventSource(`/api/v1/runs/${runID}/events`);
     es.addEventListener("step", (e) => {
       const ev = JSON.parse((e as MessageEvent).data) as RunEvent;
@@ -35,8 +36,28 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
       const run = JSON.parse((e as MessageEvent).data);
       onDoneRef.current(run, eventsRef.current);
     });
-    es.onerror = () => es.close();
-    return () => es.close();
+    // A real run outlives any proxy idle timeout — when the stream dies,
+    // fall back to polling the run snapshot instead of stalling the rail.
+    es.onerror = () => {
+      es.close();
+      poll ??= setInterval(async () => {
+        try {
+          const run = await api.run(runID);
+          if (run.status !== "running") {
+            clearInterval(poll);
+            if (doneRef.current) return;
+            doneRef.current = true;
+            onDoneRef.current(run, eventsRef.current);
+          }
+        } catch {
+          // transient — keep polling
+        }
+      }, 3000);
+    };
+    return () => {
+      es.close();
+      if (poll) clearInterval(poll);
+    };
   }, [runID]);
 
   const doneSteps = new Set(events.map((e) => e.step));

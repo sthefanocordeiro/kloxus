@@ -22,10 +22,16 @@ const baseURL = process.env.E2E_BASE_URL ?? APP_ORIGIN;
 export default defineConfig({
   testDir: "./e2e",
   // Hosted targets run the same journey against remote Postgres — two
-  // pipeline runs plus editor ops need a much larger budget than local.
-  timeout: mode === "hosted" ? 600_000 : 180_000,
+  // pipeline runs plus editor ops need a much larger budget than local,
+  // and the real app fetches live feeds on top of that.
+  timeout: mode === "hosted" ? 1_900_000 : 180_000,
   retries: 0,
-  workers: 1,
+  // hosted: 3 parallel workers — every test walks its own anonymous
+  // workspace, so serialising just burns the deploy-lock window.
+  workers: process.env.E2E_BASE_URL ? 3 : 1,
+  // tests share one file — without fullyParallel they stay serial no
+  // matter the worker count.
+  fullyParallel: !!process.env.E2E_BASE_URL,
   use: {
     baseURL,
     locale: "en-US",

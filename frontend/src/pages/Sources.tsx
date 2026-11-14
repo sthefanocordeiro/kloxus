@@ -43,7 +43,8 @@ export function SourcesPage() {
   // suspenders filter also drops an offered row the moment a source
   // with that URL exists
   const addedURLs = new Set((sources.data ?? []).map((s) => s.url));
-  const offered = (catalog.data ?? []).filter((o) => !addedURLs.has(o.url));
+  const offered = (catalog.data?.offered ?? []).filter((o) => !addedURLs.has(o.url));
+  const unavailable = catalog.data?.unavailable ?? [];
   const count = (sources.data?.length ?? 0) + offered.filter((o) => checked(o.url)).length;
   const confirm = useMutation({
     mutationFn: async () => {
@@ -121,10 +122,13 @@ export function SourcesPage() {
                       <span className="block truncate text-sm font-medium">{o.name || o.url}</span>
                       <span className="mt-0.5 flex items-center gap-2 text-xs text-muted">
                         <Badge>{o.type === "rss" ? t.sourcesPage.ownType.rss : t.sourcesPage.ownType.page}</Badge>
+                        {o.policy === "signal" && <Badge tone="warn">{t.sourcesPage.signalBadge}</Badge>}
+                        {o.suspended && <Badge tone="warn">{t.sourcesPage.suspendedBadge}</Badge>}
                         {o.items_per_week != null && o.items_per_week > 0 && (
                           <span>{t.sourcesPage.itemsWeek(o.items_per_week)}</span>
                         )}
                       </span>
+                      {o.note && <span className="mt-0.5 block text-xs text-muted">{o.note}</span>}
                     </span>
                   </label>
                   <Button variant="outline" size="sm" onClick={() => preview(o.type, o.url)}>
@@ -145,6 +149,27 @@ export function SourcesPage() {
                     {previewNote[o.url] && <li className="text-xs text-muted">{previewNote[o.url]}</li>}
                   </ul>
                 )}
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+
+      {unavailable.length > 0 && (
+        <>
+          <h2 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.unavailable}</h2>
+          <div className="mt-2 grid gap-2">
+            {unavailable.map((u) => (
+              <Card key={u.url} className="flex items-center gap-3 p-3 opacity-70">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{u.name}</p>
+                  <p className="mt-0.5 flex items-center gap-2 text-xs text-muted">
+                    <Badge tone="warn">
+                      {u.policy === "blocked" ? t.sourcesPage.unavailableWhy.blocked : t.sourcesPage.unavailableWhy.hold}
+                    </Badge>
+                  </p>
+                  {u.note && <p className="mt-0.5 text-xs text-muted">{u.note}</p>}
+                </div>
               </Card>
             ))}
           </div>

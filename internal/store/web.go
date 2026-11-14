@@ -290,6 +290,27 @@ func (db *DB) SaveCommentary(ctx context.Context, issueID int64, commentary map[
 	return err
 }
 
+// AddCatalogSource registers a catalog pick on a publication: the row
+// mirrors the catalog's name/url so display reads stay local, and the
+// catalog_id link is what the editorial run filters shared items by.
+func (db *DB) AddCatalogSource(ctx context.Context, pubID int64, cs *CatalogSource) (int64, error) {
+	typ := cs.Kind
+	if typ == "api" {
+		typ = "rss" // the stored type drives display badges only
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO sources (workspace_id, publication_id, type, url, name, catalog_id)
+		 VALUES ($1,$2,$3,$4,$5,$6)
+		 ON CONFLICT (publication_id, url) DO UPDATE SET catalog_id = excluded.catalog_id`,
+		db.ws, pubID, typ, cs.URL, cs.Name, cs.ID); err != nil {
+		return 0, err
+	}
+	var id int64
+	err := db.QueryRowContext(ctx,
+		`SELECT id FROM sources WHERE workspace_id = $1 AND publication_id = $2 AND url = $3`, db.ws, pubID, cs.URL).Scan(&id)
+	return id, err
+}
+
 // AddSource registers a new source on a publication.
 func (db *DB) AddSource(ctx context.Context, pubID int64, typ, url, name string) (int64, error) {
 	if _, err := db.ExecContext(ctx,

@@ -26,6 +26,13 @@ func (s *Server) articlePage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	if it.CatalogID != 0 {
+		// Real items redirect to the publisher's page — the citation
+		// links a creator sees open the original article, not a
+		// simulated stand-in. The outlet name travels with the item.
+		http.Redirect(w, r, it.URL, http.StatusFound)
+		return
+	}
 	meta := it.PublishedAt
 	if it.Author != "" {
 		meta += " · " + it.Author
