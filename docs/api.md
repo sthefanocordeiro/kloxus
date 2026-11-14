@@ -535,13 +535,17 @@ scheduled dispatch.
   only. Addresses on the suppression list or sends over the daily caps
   (global and per-workspace, counted from the outbox ledger so they
   survive restarts) are refused and recorded — never dropped silently.
-  A send where nothing leaves the app (no confirmed readers, or every
-  recipient refused) keeps the issue `approved` so it can be sent
-  again once deliverable; the response carries `delivery:"none"` and
-  a `warnings` entry.
+  A send where nothing leaves the app (no confirmed readers, every
+  recipient refused, or every message falling back) keeps the issue
+  `approved` so it can be sent again once deliverable; the response
+  carries `delivery:"none"` or `"outbox_fallback"` and a `warnings`
+  entry.
 - Per-recipient idempotency keys dedupe retries; an explicit
   `Idempotency-Key` request header namespaces them, so a retried
-  request mails nobody twice.
+  request mails nobody twice. A `status:"fallback"` row does not
+  satisfy idempotency — it records a send that never left the app, so
+  a retry requeues the same ledger row and really reaches the
+  provider.
 - A provider failure keeps the message as an outbox copy
   (`"fallback": true`) so the creator can still see what went out.
 ```json

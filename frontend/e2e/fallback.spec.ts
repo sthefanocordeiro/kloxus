@@ -145,7 +145,9 @@ test("provider failure falls back to the outbox — and recovery sends", async (
   }
 
   // recovered: the retry must really reach the synthetic provider —
-  // receipt, recipients and ledger all agree.
+  // receipt, recipients and ledger all agree. A fallback row never
+  // left the app, so it must not satisfy idempotency: the retry
+  // requeues the same ledger row instead of deduping on it.
   const before = (await fakeRequests(page)).count;
   const sent = await apiPost(page, `/api/v1/issues/${iid}/send`, {
     audience: "test",
@@ -155,6 +157,7 @@ test("provider failure falls back to the outbox — and recovery sends", async (
   expect(sent.sent).toBe(1);
   expect(sent.to).toEqual(["smoke@kloxus.dev"]);
   expect(sent.issue.status).toBe("approved");
+  expect(sent.outbox_email_id).toBe(failed.outbox_email_id);
   const reqs = await fakeRequests(page);
   expect(reqs.count - before).toBe(1);
   const last = reqs.requests.at(-1)!;

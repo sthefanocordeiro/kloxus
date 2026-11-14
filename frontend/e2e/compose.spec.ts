@@ -187,9 +187,24 @@ test("manual compose journey", async ({ page }) => {
     await page.request.get(`/api/v1/outbox/${sendBody.outbox_email_id}`)
   ).json();
   expect(mail.email.body_md).toContain("Editor-written paragraph 1");
-  expect(mail.email.body_md).toMatch(/\/a\/\d+/);
   if (fakeLive) {
+    // the owner test send is ungated — citation links ship in the copy
+    expect(mail.email.body_md).toMatch(/\/a\/\d+/);
     expect(mail.email.provider).toBe("resend");
     expect(mail.email.status).toBe("sent");
+  } else {
+    // the recorded copy is gated for the unsubscribed demo reader —
+    // the paywall keeps the cited teaser sentence but strips the
+    // **Sources:** lines and their /a/n links. Citation-link coverage
+    // is asserted on the ungated subscriber preview instead.
+    expect(mail.email.body_md).toMatch(/\[1\]/);
+    expect(mail.email.body_md).toMatch(/Exclusivo para assinantes|Subscribers only/);
+    const iid = page.url().match(/\/issues\/(\d+)/)![1];
+    const prev = await (
+      await page.request.get(`/api/v1/issues/${iid}/preview?reader=subscriber`)
+    ).json();
+    expect(prev.gated).toBe(false);
+    expect(prev.body_md).toContain("Editor-written paragraph 1");
+    expect(prev.body_md).toMatch(/\/a\/\d+/);
   }
 });
