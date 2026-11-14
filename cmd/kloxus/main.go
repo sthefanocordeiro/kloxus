@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -251,7 +252,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)
 	go openBrowser(url)
 	httpSrv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Addr:              net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port)),
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,

@@ -111,6 +111,25 @@ func TestLLMMode(t *testing.T) {
 	}
 }
 
+func TestBind(t *testing.T) {
+	t.Setenv("KLOXUS_BIND", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Bind != "127.0.0.1" {
+		t.Fatalf("default Bind = %q, want 127.0.0.1", cfg.Bind)
+	}
+	t.Setenv("KLOXUS_BIND", "0.0.0.0")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Bind != "0.0.0.0" {
+		t.Fatalf("Bind = %q, want 0.0.0.0", cfg.Bind)
+	}
+}
+
 // TestFakeResendConfig pins the verification-only boundary
 // (KLOX-32): the fake endpoint is validated at Load, is mutually
 // exclusive with a real credential and still needs a valid From.
