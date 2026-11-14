@@ -58,9 +58,14 @@ conflict` and the response carries the fresh `document`.
 ### `GET /api/v1/workspace`
 ```json
 {"id": "local", "label": "local demo", "mode": "demo", "hosted": false, "llm_mode": "auto",
- "claimed": false, "owner_email": "", "mail": "outbox"}
+ "claimed": false, "owner_email": "", "mail": "outbox", "mail_transport": "outbox"}
 ```
-`mail` is `"live"` when Resend is configured, `"outbox"` otherwise.
+`mail` is `"live"` when a mail sender is configured, `"outbox"`
+otherwise. `mail_transport` is the sender's own wire identity —
+positive server-side evidence verification scripts preflight before
+any mail-capable step: `"outbox"` (no sender), `"resend"` (the real
+provider), `"synthetic"` (the loopback fake built by
+`KLOXUS_FAKE_RESEND_URL`), `"custom"` (any other injected sender).
 `claimed`/`owner_email` describe the workspace claim below.
 
 ### `POST /api/v1/workspace/claim`
@@ -530,13 +535,17 @@ scheduled dispatch.
   only. Addresses on the suppression list or sends over the daily caps
   (global and per-workspace, counted from the outbox ledger so they
   survive restarts) are refused and recorded — never dropped silently.
-  A send where nothing leaves the app (no confirmed readers, or every
-  recipient refused) keeps the issue `approved` so it can be sent
-  again once deliverable; the response carries `delivery:"none"` and
-  a `warnings` entry.
+  A send where nothing leaves the app (no confirmed readers, every
+  recipient refused, or every message falling back) keeps the issue
+  `approved` so it can be sent again once deliverable; the response
+  carries `delivery:"none"` or `"outbox_fallback"` and a `warnings`
+  entry.
 - Per-recipient idempotency keys dedupe retries; an explicit
   `Idempotency-Key` request header namespaces them, so a retried
-  request mails nobody twice.
+  request mails nobody twice. A `status:"fallback"` row does not
+  satisfy idempotency — it records a send that never left the app, so
+  a retry requeues the same ledger row and really reaches the
+  provider.
 - A provider failure keeps the message as an outbox copy
   (`"fallback": true`) so the creator can still see what went out.
 ```json
@@ -583,7 +592,8 @@ presentation-only (the client styles it).
 ```json
 {"emails": [{"id": 7, "kind": "test", "to": "demo@reader.test",
              "subject": "Futuro Próximo — issue 1",
-             "created_at": "2026-11-11 12:00:00"}]}
+             "created_at": "2026-11-11 12:00:00",
+             "provider": "outbox", "status": "sent"}]}
 ```
 Kinds: `issue`, `test`, `magic_link`, `reader_confirm`. In live mode the
 outbox doubles as the send ledger — every attempted message is a row
@@ -591,7 +601,9 @@ with `status` (`queued`, `sent`, `delivered`, `bounced`, `complained`,
 `refused`, `fallback`), `provider` (`resend`/`outbox`) and
 `provider_id` for webhook correlation.
 
-### `GET /api/v1/outbox/{id}` — full email incl. `body_md`/`body_html`.
+### `GET /api/v1/outbox/{id}` — full email incl. `body_md`/`body_html`,
+`provider`, `provider_id`, `status` and `error` (sanitized fallback
+reason).
 
 ## Paywall & reader state
 

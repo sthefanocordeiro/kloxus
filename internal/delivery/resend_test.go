@@ -38,8 +38,10 @@ func fakeResend(t *testing.T, handler func(attempt int, w http.ResponseWriter, c
 		handler(attempt, w, &c)
 	}))
 	t.Cleanup(srv.Close)
-	rs := NewResend("re_test_secret_key", "Kloxus <news@kloxus-ai.trendfi.com.br>")
-	rs.BaseURL = srv.URL
+	rs, err := NewLoopbackSender(srv.URL, "Kloxus <news@kloxus-ai.trendfi.com.br>")
+	if err != nil {
+		t.Fatalf("NewLoopbackSender(%q): %v", srv.URL, err)
+	}
 	return rs, func() []resendCall { mu.Lock(); defer mu.Unlock(); return append([]resendCall(nil), calls...) }
 }
 
@@ -77,7 +79,7 @@ func TestResendSendRequestShape(t *testing.T) {
 		t.Fatalf("calls = %d, want 1", len(got))
 	}
 	c := got[0]
-	if c.auth != "Bearer re_test_secret_key" {
+	if c.auth != "Bearer "+syntheticKey {
 		t.Fatalf("Authorization = %q", c.auth)
 	}
 	if c.idem != "issue/1/r1" {
@@ -165,8 +167,10 @@ func TestResendRetriesNetworkError(t *testing.T) {
 	}))
 	url := srv.URL
 	srv.Close() // down: dials fail
-	rs := NewResend("re_test_secret_key", "Kloxus <n@x.com>")
-	rs.BaseURL = url
+	rs, err := NewLoopbackSender(url, "Kloxus <n@x.com>")
+	if err != nil {
+		t.Fatalf("NewLoopbackSender(%q): %v", url, err)
+	}
 	rs.MaxAttempts = 2
 	if _, err := rs.Send(context.Background(), testMsg()); err == nil {
 		t.Fatal("expected a transport error")

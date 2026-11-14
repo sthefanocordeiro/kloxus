@@ -1,4 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
+import {
+  claimIfSynthetic,
+  fakeLive,
+  fakeRequests,
+  neverRealMail,
+  preflight,
+  workspaceInfo,
+} from "./mail.ts";
 
 // Manual compose journey (KLOX-32): pick candidates → "Write it myself"
 // opens the issue as empty item slots → the editor writes each pauta by
@@ -98,6 +106,13 @@ async function approveIssue(page: Page) {
   await expect(page.getByText("approved", { exact: false }).first()).toBeVisible({ timeout: 15000 });
 }
 
+// Transport preflight first: positive server-side evidence decides
+// whether this suite may run — a live or unknown transport fails here,
+// before the test body performs a single mail- or model-capable call.
+test.beforeEach(async ({ page }) => {
+  await preflight(page);
+});
+
 test("manual compose journey", async ({ page }) => {
   await page.setViewportSize({ width: 1360, height: 850 });
   await onboard(page);
@@ -136,8 +151,60 @@ test("manual compose journey", async ({ page }) => {
   await typeCommentary(page);
   await approveIssue(page);
 
-  // dry send: a test email goes to the outbox, the issue stays approved
+  // live-mail rules gate sends behind a claimed workspace — claim
+  // first (synthetic transport only; a real provider is refused), or
+  // the test send is correctly refused 409 unclaimed_workspace
+  await claimIfSynthetic(page);
+
+  // dry send: a test email goes out, the issue stays approved. The
+  // outcome must be the recorded send itself — never a provider
+  // failure or fallback — and the recorded message must carry the
+  // editor-written, cited body.
+  neverRealMail(await workspaceInfo(page));
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await page.getByRole("button", { name: "Send a test" }).click();
-  await expect(page.getByText(/Test sent/)).toBeVisible({ timeout: 15000 });
+  const [sendResp] = await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/send") && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Send a test" }).click(),
+  ]);
+  const sendBody = await sendResp.json();
+  expect(sendBody.issue.status).toBe("approved");
+  if (fakeLive) {
+    // synthetic-live: the fake provider must have accepted the message —
+    // "Resend failed" or a fallback is a failure here, not a success
+    expect(sendBody.delivery).toBe("resend");
+    expect(sendBody.to).toEqual(["smoke@kloxus.dev"]);
+    const reqs = await fakeRequests(page);
+    const last = reqs.requests.at(-1)!;
+    expect(last.to).toEqual(["smoke@kloxus.dev"]);
+    expect(last.auth).toBe("Bearer re_local_verify_synthetic");
+    expect(last.text).toContain("Editor-written paragraph 1");
+    expect(last.text).toMatch(/\/a\/\d+/); // the citation link survives to the wire
+  } else {
+    expect(sendBody.delivery).toBe("outbox");
+  }
+  await expect(page.getByText(/^Test sent to /).first()).toBeVisible({ timeout: 15000 });
+  const mail = await (
+    await page.request.get(`/api/v1/outbox/${sendBody.outbox_email_id}`)
+  ).json();
+  expect(mail.email.body_md).toContain("Editor-written paragraph 1");
+  if (fakeLive) {
+    // the owner test send is ungated — citation links ship in the copy
+    expect(mail.email.body_md).toMatch(/\/a\/\d+/);
+    expect(mail.email.provider).toBe("resend");
+    expect(mail.email.status).toBe("sent");
+  } else {
+    // the recorded copy is gated for the unsubscribed demo reader —
+    // the paywall keeps the cited teaser sentence but strips the
+    // **Sources:** lines and their /a/n links. Citation-link coverage
+    // is asserted on the ungated subscriber preview instead.
+    expect(mail.email.body_md).toMatch(/\[1\]/);
+    expect(mail.email.body_md).toMatch(/Exclusivo para assinantes|Subscribers only/);
+    const iid = page.url().match(/\/issues\/(\d+)/)![1];
+    const prev = await (
+      await page.request.get(`/api/v1/issues/${iid}/preview?reader=subscriber`)
+    ).json();
+    expect(prev.gated).toBe(false);
+    expect(prev.body_md).toContain("Editor-written paragraph 1");
+    expect(prev.body_md).toMatch(/\/a\/\d+/);
+  }
 });

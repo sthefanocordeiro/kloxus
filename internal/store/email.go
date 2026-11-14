@@ -224,24 +224,30 @@ func suppressedQuery(ctx context.Context, q interface {
 
 // --- send ledger (outbox_emails) ---
 
-// OutboxMail is one ledger row: the message plus its delivery state.
+// OutboxMail is one ledger row: the message plus its delivery state
+// (the OutboxEmail ledger fields) and its idempotency key.
 type OutboxMail struct {
 	OutboxEmail
-	Provider   string // resend | outbox
-	ProviderID string
-	Status     string // queued | sent | delivered | bounced | complained | refused | fallback
-	IdemKey    string
-	Error      string
+	IdemKey string
 }
 
 // SaveMail records one outgoing message and returns (id, created).
 // With an idempotency key the insert is deduped: a repeated key returns
 // the existing row with created=false — the caller must not send again.
+// A status='fallback' row is the exception: it records a send that never
+// left the app, so it must not satisfy idempotency — the conflict
+// requeues the row in place (fresh body, queued again, attempt stamped)
+// and reports created=true so the retry really reaches the provider.
 func (db *DB) SaveMail(ctx context.Context, kind, to, subject, bodyMD, bodyHTML, provider, status, idemKey string) (id int64, created bool, err error) {
 	err = db.QueryRowContext(ctx, `
 		INSERT INTO outbox_emails (workspace_id, kind, to_addr, subject, body_md, body_html, provider, status, idem_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (workspace_id, idem_key) WHERE idem_key <> '' DO NOTHING
+		ON CONFLICT (workspace_id, idem_key) WHERE idem_key <> ''
+		DO UPDATE SET to_addr = EXCLUDED.to_addr, subject = EXCLUDED.subject,
+			body_md = EXCLUDED.body_md, body_html = EXCLUDED.body_html,
+			provider = EXCLUDED.provider, provider_id = '',
+			status = EXCLUDED.status, error = '', created_at = EXCLUDED.created_at
+		WHERE outbox_emails.status = 'fallback'
 		RETURNING id`, db.ws, kind, to, subject, bodyMD, bodyHTML, provider, status, idemKey).Scan(&id)
 	if err == sql.ErrNoRows {
 		err = db.QueryRowContext(ctx,

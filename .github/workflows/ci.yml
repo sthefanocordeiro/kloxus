@@ -72,6 +72,11 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      # Transport-safety negatives (KLOX-32): conflicting flags, .env /
+      # credential leakage, occupied ports and wrong-identity servers
+      # must all fail closed — runs without Postgres or browsers.
+      - name: e2e transport isolation tests
+        run: node --test scripts/e2e-isolation.test.mjs
       - name: appdist is built and keeps its placeholder
         run: |
           test -f internal/web/appdist/index.html
