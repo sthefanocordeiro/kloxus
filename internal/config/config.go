@@ -18,6 +18,11 @@ import (
 type Config struct {
 	Mode string // demo | real
 	Port int
+	// Bind is the interface the HTTP listener binds to. Loopback by
+	// default so local dev and test runs never prompt the host firewall;
+	// the deployed image sets KLOXUS_BIND=0.0.0.0 (the Dockerfile ENV)
+	// because Fly routes to the machine's private address.
+	Bind string
 	// DatabaseURL is the Postgres connection string (DATABASE_URL) —
 	// the Supabase direct or session-pooler address in production, a
 	// local Postgres in development.
@@ -67,6 +72,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Mode:            getenv("KLOXUS_MODE", "demo"),
 		Port:            getint("KLOXUS_PORT", 8080),
+		Bind:            getenv("KLOXUS_BIND", "127.0.0.1"),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		OutDir:          getenv("KLOXUS_OUT_DIR", "out"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
