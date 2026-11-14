@@ -88,6 +88,18 @@ WSID="$(jget workspace.id)"; [ -n "$WSID" ] || die "no workspace id returned"
 [ "$(req GET /api/v1/workspace)" = "200" ] || die "workspace fetch failed"
 say "anonymous workspace $WSID created"
 
+# --- 4b. transport preflight — fail closed before mail/model-capable ops ---
+# Hosted verification is outbox-only under the freeze. The server itself
+# must prove a safe configuration — deterministic demo pipeline plus an
+# outbox mail transport — before smoke touches a run, draft, claim or
+# send route. A live or unknown transport fails here, never after a
+# send. Client flags and NXDOMAIN recipients are not evidence.
+[ "$(jget mode)" = "demo" ] || die "refusing: target mode is '$(jget mode)' — verification needs the deterministic demo pipeline"
+case "$(jget llm_mode)" in auto|off) ;; *) die "refusing: unknown llm_mode '$(jget llm_mode)'" ;; esac
+[ "$(jget mail)" = "outbox" ] && [ "$(jget mail_transport)" = "outbox" ] \
+	|| die "refusing mail-capable checks: target reports mail='$(jget mail)' transport='$(jget mail_transport)' — hosted verification is outbox-only"
+say "transport preflight ok: demo pipeline, outbox mail"
+
 # --- 5. onboard: create publication from the sample proposal -------------
 [ "$(req GET /api/v1/proposal)" = "200" ] || die "proposal fetch failed"
 node -e '
@@ -161,6 +173,10 @@ say "commentary saved"
 [ "$(jget ready)" = "true" ] || die "issue not ready: $(jget checks)"
 [ "$(req POST "/api/v1/issues/$IID/approve")" = "200" ] || die "approve: $(cat "$RESP")"
 say "issue approved"
+# The preflight proved mail_transport=outbox: the send records to the
+# outbox ledger and nothing leaves the app. The live-mail contract
+# (claim gate, confirmed readers, delivery:"none") is covered locally by
+# the fake-live e2e suite — never against a hosted target.
 SEND="$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')"
 if [ "$SEND" = "409" ] && [ "$(jget error.code)" = "unclaimed_workspace" ]; then
 	# Live delivery: sends need a claimed workspace. The claim link lands
@@ -191,9 +207,12 @@ if [ "$SEND" = "409" ] && [ "$(jget error.code)" = "unclaimed_workspace" ]; then
 		|| die "send after claim: $(cat "$RESP")"
 elif [ "$SEND" != "200" ]; then
 	die "send: $(cat "$RESP")"
+else
+	[ "$(jget delivery)" = "outbox" ] \
+		|| die "an outbox transport must answer delivery=outbox: $(cat "$RESP")"
 fi
 [ "$(jget issue.status)" = "sent" ] || die "issue not marked sent"
-say "issue sent to readers"
+say "issue delivered to the outbox"
 
 # --- 12. reader page --------------------------------------------------------
 [ "$(req GET "/api/v1/issues/$IID/after")" = "200" ] || die "after failed"

@@ -93,6 +93,9 @@ export function IssuePage() {
     qc.invalidateQueries({ queryKey: ["document", issueID] });
     qc.invalidateQueries({ queryKey: ["readiness", issueID] });
     qc.invalidateQueries({ queryKey: ["issue", issueID] });
+    // a send can change the confirmed-reader count the dialog shows
+    // (a test send confirms the claimed owner as a reader)
+    qc.invalidateQueries({ queryKey: ["reader"] });
   }, [qc, issueID]);
 
   // evidence pane selection
@@ -160,6 +163,21 @@ export function IssuePage() {
         } catch (e) {
           resync(e);
           return false;
+        }
+      },
+      // manual compose: append editor text to an item — same refusal
+      // contract as editSentence (null ok, reason string to show inline)
+      addSentence: async (itemRef, text, citations, kind) => {
+        try {
+          const r = await api.composeSentence(issueID, itemRef, text, citations, kind, versionRef.current);
+          versionRef.current = r.version;
+          invalidate();
+          return null;
+        } catch (e) {
+          if (e instanceof ApiRequestError && e.document) {
+            qc.setQueryData(["document", issueID], e.document);
+          }
+          return errText(t, e);
         }
       },
     }),
@@ -438,64 +456,64 @@ export function IssuePage() {
           <>
             {/* all three panes stay mounted — visibility toggles per
                 breakpoint so the editor is never double-mounted */}
-            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-              <aside
-                className={cn(
-                  "min-h-0 shrink-0 overflow-y-auto border-line md:w-64 md:flex-none md:border-r",
-                  mobileTab === "list" ? "block flex-1" : "hidden md:block",
-                )}
-              >
-                <PautasPane
-                  doc={doc}
-                  items={itemsQ.data?.items}
-                  selectedRef={sel?.ref ?? null}
-                  onSelect={(ref, iid) => actions.showEvidence(ref, { issueItemId: iid })}
-                />
-              </aside>
-              <main
-                ref={editorWrapRef}
-                className={cn(
-                  "min-h-0 min-w-0 flex-1 overflow-y-auto",
-                  mobileTab === "doc" ? "block" : "hidden md:block",
-                )}
-              >
-                <DocActionsCtx.Provider value={actions}>
-                  <EditorContent editor={editor} />
-                </DocActionsCtx.Provider>
-              </main>
-              <aside
-                className={cn(
-                  "min-h-0 shrink-0 flex-col border-line md:flex md:w-80 md:flex-none md:border-l",
-                  mobileTab === "side" ? "flex flex-1" : "hidden",
-                )}
-              >
-                <div className="flex border-b border-line text-xs">
-                  {(["evidence", "preview"] as const).map((tb) => (
-                    <button
-                      key={tb}
-                      onClick={() => setRightTab(tb)}
-                      className={cn(
-                        "flex-1 px-3 py-2 font-medium",
-                        rightTab === tb ? "border-b-2 border-teal text-ink" : "text-muted",
-                      )}
-                    >
-                      {tb === "evidence" ? t.evidence.title : t.preview.title}
-                    </button>
-                  ))}
-                </div>
-                <div className="min-h-0 flex-1">
-                  {rightTab === "evidence" ? (
-                    <EvidencePane
-                      item={sel ? findItem(doc, sel.ref) : null}
-                      citeRef={sel?.citeRef}
-                      sid={sel?.sid}
-                    />
-                  ) : (
-                    <PreviewPane issueID={issueID} />
+            <DocActionsCtx.Provider value={actions}>
+              <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+                <aside
+                  className={cn(
+                    "min-h-0 shrink-0 overflow-y-auto border-line md:w-64 md:flex-none md:border-r",
+                    mobileTab === "list" ? "block flex-1" : "hidden md:block",
                   )}
-                </div>
-              </aside>
-            </div>
+                >
+                  <PautasPane
+                    doc={doc}
+                    items={itemsQ.data?.items}
+                    selectedRef={sel?.ref ?? null}
+                    onSelect={(ref, iid) => actions.showEvidence(ref, { issueItemId: iid })}
+                  />
+                </aside>
+                <main
+                  ref={editorWrapRef}
+                  className={cn(
+                    "min-h-0 min-w-0 flex-1 overflow-y-auto",
+                    mobileTab === "doc" ? "block" : "hidden md:block",
+                  )}
+                >
+                  <EditorContent editor={editor} />
+                </main>
+                <aside
+                  className={cn(
+                    "min-h-0 shrink-0 flex-col border-line md:flex md:w-80 md:flex-none md:border-l",
+                    mobileTab === "side" ? "flex flex-1" : "hidden",
+                  )}
+                >
+                  <div className="flex border-b border-line text-xs">
+                    {(["evidence", "preview"] as const).map((tb) => (
+                      <button
+                        key={tb}
+                        onClick={() => setRightTab(tb)}
+                        className={cn(
+                          "flex-1 px-3 py-2 font-medium",
+                          rightTab === tb ? "border-b-2 border-teal text-ink" : "text-muted",
+                        )}
+                      >
+                        {tb === "evidence" ? t.evidence.title : t.preview.title}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="min-h-0 flex-1">
+                    {rightTab === "evidence" ? (
+                      <EvidencePane
+                        item={sel ? findItem(doc, sel.ref) : null}
+                        citeRef={sel?.citeRef}
+                        sid={sel?.sid}
+                      />
+                    ) : (
+                      <PreviewPane issueID={issueID} />
+                    )}
+                  </div>
+                </aside>
+              </div>
+            </DocActionsCtx.Provider>
 
             {/* phone tab bar — bottom, per spec */}
             <nav className="flex border-t border-line text-xs md:hidden">

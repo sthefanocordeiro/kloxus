@@ -5,10 +5,13 @@ export interface Workspace {
   mode: string;
   hosted: boolean;
   llm_mode: string; // "auto" | "off" — off = deterministic pipeline, no AI calls
-  // live mail (Resend configured) requires a claim before any send
+  // live mail (a sender is configured) requires a claim before any send
   claimed?: boolean;
   owner_email?: string;
   mail?: "live" | "outbox";
+  // the sender's wire identity — server-side evidence for verification
+  // preflights: outbox | resend | synthetic (loopback fake) | custom
+  mail_transport?: "outbox" | "resend" | "synthetic" | "custom";
 }
 
 export interface Publication {
@@ -49,6 +52,12 @@ export interface OutboxEmail {
   subject: string;
   body_md?: string;
   body_html?: string;
+  // delivery-ledger fields: provider resend|outbox, status
+  // queued|sent|delivered|bounced|complained|refused|fallback
+  provider?: string;
+  provider_id?: string;
+  status?: string;
+  error?: string;
   created_at: string;
 }
 
@@ -334,6 +343,13 @@ export const api = {
   startRun: (pubID: number) => request<{ run: Run }>("POST", `/api/v1/publications/${pubID}/runs`, {}).then((r) => r.run),
   run: (id: string) => request<{ run: Run }>("GET", `/api/v1/runs/${id}`).then((r) => r.run),
   draft: (issueID: number) => request<{ run: Run }>("POST", `/api/v1/issues/${issueID}/draft`, {}).then((r) => r.run),
+  // manual compose: the lineup becomes empty item slots, no model calls
+  compose: (issueID: number) =>
+    request<{ issue: IssueSummary; selected: number }>("POST", `/api/v1/issues/${issueID}/compose`, {}),
+  composeSentence: (issueID: number, ref: number, text: string, citations: number[], kind: "fact" | "interpretation", version: string) =>
+    request<{ coverage: Coverage; flags: number; version: string; added?: number }>(
+      "POST", `/api/v1/issues/${issueID}/items/${ref}/compose`, { text, kind, citations, version },
+    ),
   decide: (issueID: number, itemID: number, kind: string, reason?: string) =>
     request<{ item: IssueItem; pending: number; guide?: { version: number; added?: string[] } }>(
       "POST", `/api/v1/issues/${issueID}/items/${itemID}/decisions`, { kind, reason },

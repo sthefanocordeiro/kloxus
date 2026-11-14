@@ -602,6 +602,117 @@ func TestFallbackToOutbox(t *testing.T) {
 	}
 }
 
+// TestFallbackRetrySends: a fallback row never left the app, so it must
+// not satisfy idempotency — the retry requeues the same ledger row and
+// really reaches the provider. A delivered send still dedupes.
+func TestFallbackRetrySends(t *testing.T) {
+	fake := &fakeSender{}
+	deps, db, pub, _ := liveDeps(t, fake, nil)
+	srv := web.New(deps)
+	claimWorkspace(t, srv, db, "retry@hackbrazil.dev")
+	issueID := approvedIssue(t, db, pub.ID, 1, "Edição 1")
+	sendURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10) + "/send"
+
+	fake.err = errors.New("resend api: 503 backend down")
+	rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
+	if rr.Code != 200 {
+		t.Fatalf("send = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	res := apiJSON(t, rr)
+	if res["delivery"] != "outbox_fallback" {
+		t.Fatalf("failed send delivery = %v, want outbox_fallback", res["delivery"])
+	}
+	id := int64(res["outbox_email_id"].(float64))
+	fake.err = nil
+
+	before := len(fake.messages())
+	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
+	if rr.Code != 200 {
+		t.Fatalf("retry = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	res = apiJSON(t, rr)
+	if res["delivery"] != "resend" || res["sent"].(float64) != 1 {
+		t.Fatalf("retry = %v, want a real resend", res)
+	}
+	if int64(res["outbox_email_id"].(float64)) != id {
+		t.Fatalf("retry wrote a new ledger row, want the fallback row %d requeued", id)
+	}
+	if n := len(fake.messages()) - before; n != 1 {
+		t.Fatalf("provider got %d messages on retry, want 1", n)
+	}
+	mail, err := db.GetMail(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetMail: %v", err)
+	}
+	if mail.Status != "sent" || mail.Provider != "resend" || mail.ProviderID == "" || mail.Error != "" {
+		t.Fatalf("ledger = %s/%s err=%q, want a clean sent resend row", mail.Status, mail.Provider, mail.Error)
+	}
+
+	// a delivered send still dedupes — idempotency itself is intact
+	before = len(fake.messages())
+	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
+	res = apiJSON(t, rr)
+	if res["delivery"] != "none" || res["deduped"].(float64) != 1 {
+		t.Fatalf("re-send after a success = %v, want deduped", res)
+	}
+	if n := len(fake.messages()) - before; n != 0 {
+		t.Fatalf("provider got %d messages on a deduped retry, want 0", n)
+	}
+}
+
+// TestFallbackIssueSendStaysApproved: a readers send where every
+// message fell back delivered nothing, so the issue stays approved
+// and the retry — requeuing the same ledger rows — can still go out.
+func TestFallbackIssueSendStaysApproved(t *testing.T) {
+	fake := &fakeSender{}
+	deps, db, pub, _ := liveDeps(t, fake, nil)
+	srv := web.New(deps)
+	owner := fmt.Sprintf("fb-%d@hackbrazil.dev", time.Now().UnixNano())
+	reader := fmt.Sprintf("rd-%d@x.dev", time.Now().UnixNano())
+	claimWorkspace(t, srv, db, owner)
+	subscribeAndConfirm(t, srv, db, pub, reader)
+	issueID := approvedIssue(t, db, pub.ID, 1, "Edição 1")
+	sendURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10) + "/send"
+
+	fake.err = errors.New("resend api: 503 backend down")
+	rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "readers"})
+	if rr.Code != 200 {
+		t.Fatalf("send = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	res := apiJSON(t, rr)
+	if res["delivery"] != "outbox_fallback" || res["warnings"] == nil {
+		t.Fatalf("all-fallback send = %v, want outbox_fallback + warning", res)
+	}
+	iss, err := db.GetIssue(context.Background(), issueID)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if iss.Status != "approved" {
+		t.Fatalf("issue status = %q, want approved — nothing left the app", iss.Status)
+	}
+	fake.err = nil
+
+	before := len(fake.messages())
+	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "readers"})
+	if rr.Code != 200 {
+		t.Fatalf("retry = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	res = apiJSON(t, rr)
+	if res["delivery"] != "resend" || res["sent"].(float64) != 1 {
+		t.Fatalf("retry = %v, want a real resend", res)
+	}
+	if n := len(fake.messages()) - before; n != 1 {
+		t.Fatalf("provider got %d messages on retry, want 1", n)
+	}
+	iss, err = db.GetIssue(context.Background(), issueID)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if iss.Status != "sent" {
+		t.Fatalf("issue status = %q after a real resend, want sent", iss.Status)
+	}
+}
+
 // TestAllRefusedSendStaysApproved: a readers send where every
 // recipient is refused delivers nothing, so the issue stays approved
 // and can be sent again once deliverable.

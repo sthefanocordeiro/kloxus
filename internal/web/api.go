@@ -385,13 +385,23 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws := reqWS(r)
 	owner := s.workspaceOwner(r.Context(), db(r))
 	mail := "outbox"
+	// mail_transport is the sender's own wire identity — positive
+	// server-side evidence for verification preflights: "outbox" (no
+	// sender), "resend" (the real provider), "synthetic" (the loopback
+	// fake), "custom" (any other injected sender).
+	transport := "outbox"
 	if s.liveMail() {
 		mail = "live"
+		transport = "custom"
+		if t, ok := s.d.Mailer.(interface{ Transport() string }); ok {
+			transport = t.Transport()
+		}
 	}
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
 		"llm_mode": s.d.Cfg.LLMMode,
 		"claimed":  owner != "", "owner_email": owner, "mail": mail,
+		"mail_transport": transport,
 	})
 }
 
@@ -1485,6 +1495,26 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	}
 	checks = append(checks, c)
 
+	// manual compose leaves item slots empty until the editor writes
+	// them — an empty item blocks approval exactly like an uncited fact
+	empty, firstEmpty := 0, ""
+	for _, sec := range doc.Sections {
+		for _, it := range sec.Items {
+			if len(it.Sentences) == 0 {
+				empty++
+				if firstEmpty == "" {
+					firstEmpty = fmt.Sprint(it.Ref)
+				}
+			}
+		}
+	}
+	c = apiCheck{Code: "empty_items", OK: empty == 0, Count: empty,
+		Message: fmt.Sprintf("%d item(s) still empty — write each item's text", empty)}
+	if !c.OK {
+		c.Target = &apiTarget{Kind: "item", Ref: firstEmpty}
+	}
+	checks = append(checks, c)
+
 	missing := []string{}
 	if pub != nil {
 		for _, sc := range pub.Sections {
@@ -1628,6 +1658,202 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		st.st.IssueID = res.IssueID
 	}()
 	apiJSON(w, 202, map[string]any{"run": runView(st)})
+}
+
+// apiCompose writes the manual-compose skeleton: the board's lineup
+// becomes the issue document with empty item slots — headlines and
+// source lists only, no model-written text. Pending lineup items are
+// approved as-is. The whole path is deterministic: items missing a
+// dossier get one built from their collected items, and the endpoint
+// never touches the LLM provider.
+func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.apiIssueID(r)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
+		return
+	}
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	// compose is for empty issues: it must never overwrite written work
+	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
+	if apiDBErr(w, r, err, "document") {
+		return
+	}
+	written := 0
+	for _, sec := range doc.Sections {
+		for _, it := range sec.Items {
+			written += len(it.Sentences)
+		}
+	}
+	if written > 0 {
+		apiErr(w, 409, "not_empty", "this issue already has written content — compose is only for empty issues")
+		return
+	}
+	// same lineup gate as drafting: every configured section needs a story
+	lineup, _ := db(r).IssueItems(r.Context(), iss.ID)
+	filled := map[string]int{}
+	for _, ii := range lineup {
+		if ii.Status == "pending" || ii.Status == "approved" {
+			filled[ii.Section]++
+		}
+	}
+	var reasons []apiReason
+	for _, sec := range pub.Sections {
+		if filled[sec.Title] == 0 {
+			reasons = append(reasons, apiReason{Code: "section_empty",
+				Message: fmt.Sprintf("section %q has no stories", sec.Title),
+				Target:  &apiTarget{Kind: "section", Ref: sec.Title}})
+		}
+	}
+	if len(reasons) > 0 {
+		apiErr(w, 409, "blocked", fmt.Sprintf("%d section(s) still empty — fill each one before composing", len(reasons)), reasons...)
+		return
+	}
+	ctx := r.Context()
+	for _, ii := range lineup {
+		if ii.Status == "pending" {
+			if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, ii.ID, "approved"), "item") {
+				return
+			}
+		}
+	}
+	runner := &pipeline.Runner{DB: db(r)}
+	res, err := runner.ComposeSkeleton(ctx, pub, iss.ID)
+	if err != nil {
+		apiErr(w, 409, "blocked", err.Error())
+		return
+	}
+	db(r).RecordDecision(ctx, iss.PublicationID, 0, "manual_compose",
+		fmt.Sprintf("lineup of %d item(s) became empty slots for manual writing", res.Selected))
+	fresh, err := db(r).GetIssue(ctx, iss.ID)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	apiJSON(w, 200, map[string]any{"issue": s.issueSummary(r, fresh), "selected": res.Selected})
+}
+
+// apiComposeSentence adds editor-written text to an item — the manual
+// counterpart of a drafted sentence. Multi-sentence input is stored one
+// sentence per line; each factual sentence carries every chosen [n]
+// marker, so citecheck and readiness treat it exactly like AI-drafted
+// content (an uncited addition fails the uncited_sentences check).
+// kind "interpretation" stores an editor-attributed block instead.
+func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.apiIssueID(r)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
+		return
+	}
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
+	if apiDBErr(w, r, err, "document") {
+		return
+	}
+	ref, _ := strconv.Atoi(r.PathValue("ref"))
+	var item *docItem
+	for si := range doc.Sections {
+		for ii := range doc.Sections[si].Items {
+			if doc.Sections[si].Items[ii].Ref == ref {
+				item = &doc.Sections[si].Items[ii]
+			}
+		}
+	}
+	if item == nil {
+		apiErr(w, 404, "not_found", "item not found in the document")
+		return
+	}
+	var in struct {
+		Text      string `json:"text"`
+		Kind      string `json:"kind"`
+		Citations []int  `json:"citations"`
+		Version   string `json:"version"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if !checkDocVersion(w, doc, in.Version) {
+		return
+	}
+	text := displayText(in.Text) // the contract takes marker-free text
+	if text == "" {
+		apiErr(w, 400, "validation", "item text cannot be empty",
+			apiReason{Code: "empty_sentence", Message: "item text cannot be empty",
+				Target: &apiTarget{Kind: "item", Ref: fmt.Sprint(ref)}})
+		return
+	}
+	kind := in.Kind
+	if kind == "" {
+		kind = "fact"
+	}
+	if kind != "fact" && kind != "interpretation" {
+		apiErr(w, 400, "validation", "kind must be fact or interpretation")
+		return
+	}
+	var raw string
+	if kind == "interpretation" {
+		raw = "> _Interpretação: " + text + "_"
+	} else {
+		d, _ := s.itemDossierByID(r, item)
+		maxRef := 0
+		if d != nil {
+			maxRef = len(d.Sources)
+		}
+		seen := map[int]bool{}
+		markers := ""
+		for _, n := range in.Citations {
+			if n < 1 || (maxRef > 0 && n > maxRef) {
+				apiErr(w, 409, "invalid_citation",
+					fmt.Sprintf("source [%d] does not exist for this item", n))
+				return
+			}
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			markers += fmt.Sprintf(" [%d]", n)
+		}
+		// store one sentence per line, each carrying the citations, so
+		// the document parser and citecheck see the same shape as a
+		// drafted item
+		var lines []string
+		for _, piece := range pipeline.SplitSentences(text) {
+			piece = strings.TrimSpace(piece)
+			if !strings.ContainsFunc(piece, unicode.IsLetter) {
+				continue
+			}
+			lines = append(lines, piece+markers)
+		}
+		if len(lines) == 0 {
+			apiErr(w, 400, "validation", "no sentence found in the item text")
+			return
+		}
+		raw = strings.Join(lines, "\n")
+	}
+	// append at the end of the item's body (before its sources block)
+	body, ok := insertInItem(iss.BodyMD, item, len(item.Sentences), raw)
+	if !ok {
+		apiErr(w, 409, "conflict", "the item no longer accepts this text")
+		return
+	}
+	ctx := r.Context()
+	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
+		return
+	}
+	db(r).RecordDecision(ctx, iss.PublicationID, item.IssueItemID, "manual_compose", raw)
+	revertApproved(r, iss)
+	s.respondSentence(w, r, iss, map[string]any{"added": len(strings.Split(raw, "\n"))})
 }
 
 // --- document / sentence mutations / commentary ---
@@ -2324,9 +2550,9 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	}
 	// A test send only records the mail — the issue stays approved so
 	// it can still go to readers. A readers send marks it sent only
-	// when something left the app: an all-refused or empty send keeps
-	// it approved so it can go out once deliverable.
-	if kind == "issue" && sum.Sent+sum.Fallback+sum.Deduped > 0 {
+	// when something left the app: an all-refused, all-fallback or
+	// empty send keeps it approved so it can go out once deliverable.
+	if kind == "issue" && sum.Sent+sum.Deduped > 0 {
 		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
 			return
 		}
@@ -2351,7 +2577,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	if sum.Fallback > 0 {
 		resp["fallback"] = true
 	}
-	if kind == "issue" && sum.Sent+sum.Fallback+sum.Deduped == 0 {
+	if kind == "issue" && sum.Sent+sum.Deduped == 0 {
 		resp["warnings"] = []string{"nothing was delivered — the issue stayed approved and can be sent again"}
 	}
 	apiJSON(w, 200, resp)
@@ -2458,6 +2684,7 @@ func (s *Server) apiOutbox(w http.ResponseWriter, r *http.Request) {
 	for _, e := range emails {
 		out = append(out, map[string]any{
 			"id": e.ID, "kind": e.Kind, "to": e.To, "subject": e.Subject,
+			"provider": e.Provider, "status": e.Status,
 			"created_at": e.CreatedAt,
 		})
 	}
@@ -2471,7 +2698,10 @@ func (s *Server) apiOutboxEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	apiJSON(w, 200, map[string]any{"email": map[string]any{
 		"id": e.ID, "kind": e.Kind, "to": e.To, "subject": e.Subject,
-		"body_md": e.BodyMD, "body_html": e.BodyHTML, "created_at": e.CreatedAt,
+		"body_md": e.BodyMD, "body_html": e.BodyHTML,
+		"provider": e.Provider, "provider_id": e.ProviderID, "status": e.Status,
+		"error":      e.Error,
+		"created_at": e.CreatedAt,
 	}})
 }
 
@@ -2864,7 +3094,10 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef i
 		n, _ := strconv.Atoi(strings.Trim(m, "[]"))
 		refs[n] = true
 	}
-	// model check first (real mode); demo misses fall to the local check
+	// model check first (real mode); demo misses fall to the local check.
+	// "manual" dossiers (deterministic compose) skip the model entirely —
+	// the manual-compose flow must work with zero model calls, and its
+	// sentences are editor-written, not model claims to re-verify.
 	var checks []struct {
 		ID      int    `json:"id"`
 		Verdict string `json:"verdict"`
@@ -2878,7 +3111,7 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef i
 		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
 		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
 	})
-	if err == nil && !s.d.Cfg.LLMOff() {
+	if err == nil && d.Origin != "manual" && !s.d.Cfg.LLMOff() {
 		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
 			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
 		}); err == nil {

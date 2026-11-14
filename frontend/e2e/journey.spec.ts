@@ -1,4 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import {
+  claimIfSynthetic,
+  fakeRequests,
+  neverRealMail,
+  preflight,
+  workspaceInfo,
+} from "./mail.ts";
 
 // The judge path at both widths: landing → cited sample → create the
 // sample newsletter → sources → auto first run → build board → remove
@@ -20,6 +27,20 @@ const issueCol = (page: Page) => page.locator('section[aria-label="This issue"]'
 const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
+
+// KLOXUS_LLM_MODE=off runs the whole pipeline deterministically — zero
+// model calls, so AI artifacts (the guide rebuild behind "Rule learned")
+// cannot appear. The workspace endpoint reports the mode; a server that
+// predates the flag returns no field and behaves like "auto".
+async function llmOff(page: Page) {
+  const res = await page.request.get("/api/v1/workspace");
+  if (!res.ok()) return false;
+  const body = (await res.json()) as {
+    llm_mode?: string;
+    workspace?: { llm_mode?: string };
+  };
+  return (body.workspace ?? body).llm_mode === "off";
+}
 
 // The workspace starts empty — every journey walks onboarding first:
 // landing → /new → /pub/:id/sources → confirm → first run → board.
@@ -55,17 +76,54 @@ async function boardReady(page: Page, isPhone: boolean) {
   await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60000 });
 }
 
+// A bench "+" add either lands the story in its suggested section — or,
+// when that section is full (deterministic ranking fills every slot),
+// opens the chooser: pick a section, and picking a full one turns the
+// same dialog into the swap picker ("…is full — pick a story to swap
+// out"). A direct add toasts "Added", a swap toasts "Moved".
+async function settleBenchAdd(page: Page) {
+  const chooser = page
+    .getByRole("dialog")
+    .filter({ has: page.getByRole("button", { name: "Close" }) });
+  const settled = page.getByText(/^(Added|Moved) “/);
+  await expect(chooser.or(settled)).toBeVisible({ timeout: 15000 });
+  if (!(await chooser.isVisible())) return;
+  // the dialog's ✕ Close sits outside the list; section rows show
+  // "n/cap" and full ones add "· full" — prefer a section with room
+  const picks = chooser.getByRole("button").filter({ hasNotText: "✕" });
+  const open = picks.filter({ hasNotText: "full" });
+  if ((await open.count()) > 0) {
+    await open.first().click();
+  } else {
+    // every section full: picking one opens the swap picker
+    await picks.first().click();
+    await expect(chooser.getByText(/pick a story to swap out/)).toBeVisible();
+    await picks.first().click();
+  }
+  await expect(settled).toBeVisible({ timeout: 15000 });
+}
+
 async function boardOps(page: Page, isPhone: boolean) {
+  const off = await llmOff(page);
   const tabIssue = page.getByRole("button", { name: /This issue/ });
   const tabBench = page.getByRole("button", { name: /^Pautas/ });
   if (isPhone) await tabIssue.click();
 
-  // 1) remove a Worth-knowing story giving a reason — the guide learns
+  // 1) remove a Worth-knowing story giving a reason — with a model the
+  //    guide learns a rule; under llm off the rebuild is an AI action and
+  //    is skipped, so the toast reports the removal and the bench badge
+  //    marks the deterministic run (attached-asserted: the bench column
+  //    is hidden behind its tab on phone)
   const wk = sectionBox(page, "Worth knowing");
   const removedTitle = (await wk.locator("p.font-doc").first().textContent())!.trim();
   await wk.getByRole("button", { name: "Remove", exact: true }).first().click();
   await page.getByRole("button", { name: "not for my audience" }).click();
-  await expect(page.getByText(/Rule learned/)).toBeVisible({ timeout: 15000 });
+  if (off) {
+    await expect(page.getByText(/^Removed “/)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/AI off — deterministic ranking/)).toHaveCount(1);
+  } else {
+    await expect(page.getByText(/Rule learned/)).toBeVisible({ timeout: 15000 });
+  }
 
   // 2) add a story from the bench with the "+" button (nth(1): the just-
   //    removed story re-ranks first on the bench — pick a different one
@@ -73,21 +131,24 @@ async function boardOps(page: Page, isPhone: boolean) {
   //    section opens the section chooser instead of failing.
   if (isPhone) await tabBench.click();
   await benchCol(page).getByRole("button", { name: "Add to issue", exact: true }).nth(1).click();
-  const chooser = page.getByRole("dialog");
-  await page.waitForTimeout(500);
-  if (await chooser.isVisible()) {
-    await chooser.getByRole("button", { name: /Quick links/ }).click();
-  }
-  await expect(page.getByText(/Added/)).toBeVisible({ timeout: 15000 });
+  await settleBenchAdd(page);
 
-  // 3) move a Worth-knowing story into Quick links via the move menu
+  // 3) move a Worth-knowing story into Quick links via the move menu —
+  //    deterministic ranking caps Quick links 5/5, so under llm off the
+  //    move opens the swap picker: pick the story that leaves. The move
+  //    popover stays open under the dialog, so scope by the prompt text.
   if (isPhone) await tabIssue.click();
   await sectionBox(page, "Worth knowing")
     .getByRole("button", { name: /Move to/ })
     .first()
     .click();
   await page.getByRole("button", { name: /Quick links/ }).click();
-  await expect(page.getByText(/Moved/)).toBeVisible({ timeout: 15000 });
+  if (off) {
+    const swap = page.getByRole("dialog").filter({ hasText: /pick a story to swap out/ });
+    await expect(swap).toBeVisible({ timeout: 15000 });
+    await swap.getByRole("button").filter({ hasNotText: "✕" }).first().click();
+  }
+  await expect(page.getByText(/^Moved “/)).toBeVisible({ timeout: 15000 });
 
   // 4) the lineup persists across a reload — the rejected story stays
   //    benched instead of snapping back into its section
@@ -211,42 +272,92 @@ async function scheduleAndHold(page: Page) {
   await expect(page.getByRole("button", { name: "Approve issue" }).first()).toBeVisible({ timeout: 15000 });
 }
 
-async function claimIfLive(page: Page) {
-  // Live deployments gate sends behind a claimed workspace. The claim
-  // email lands in a real inbox — and in the workspace outbox, where
-  // the API request context can complete the magic-link round trip.
-  const ws = await (await page.request.get("/api/v1/workspace")).json();
-  if (ws.mail !== "live" || ws.claimed) return;
-  const claim = await page.request.post("/api/v1/workspace/claim", {
-    data: { email: "smoke@kloxus.dev" },
-  });
-  expect(claim.ok()).toBeTruthy();
-  const pubs = await (await page.request.get("/api/v1/publications")).json();
-  const outbox = await (
-    await page.request.get(`/api/v1/publications/${pubs.publications[0].id}/outbox`)
-  ).json();
-  const ml = outbox.emails.find((e: { kind: string }) => e.kind === "magic_link");
-  expect(ml).toBeTruthy();
-  const mail = await (await page.request.get(`/api/v1/outbox/${ml.id}`)).json();
-  const link = mail.email.body_md.match(/\/claim\?t=[A-Za-z0-9_-]+/)?.[0];
-  expect(link).toBeTruthy();
-  // Two-step claim: GET lands the confirm page (prefetch-safe); the
-  // explicit POST spends the token and sets the cookie on this context
-  const claimPage = await page.request.get(link!);
-  expect(claimPage.status()).toBe(200);
-  const confirmed = await page.request.post(link!);
-  expect(confirmed.status()).toBe(200);
-}
-
 async function sendToReaders(page: Page) {
   // the send action is its own header button post-approval; readers get
   // a confirmation dialog (count, subject, sender) — never one-click
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await page.getByRole("button", { name: "Send to readers" }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText(/reader.*paying/)).toBeVisible();
-  await expect(dialog.getByText(/Subject|Assunto/)).toBeVisible();
-  await dialog.getByRole("button", { name: "Send now" }).click();
+  const ws = await workspaceInfo(page);
+  neverRealMail(ws);
+  const synthetic = ws.mail === "live" && ws.mail_transport === "synthetic";
+  const sendBar = async () => {
+    const readersBtn = page.getByRole("button", { name: "Send to readers" });
+    if (!(await readersBtn.isVisible())) {
+      await page.getByRole("button", { name: "Send", exact: true }).click();
+    }
+    await expect(readersBtn).toBeVisible();
+  };
+  const readersDialog = async () => {
+    await sendBar();
+    await page.getByRole("button", { name: "Send to readers" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText(/reader.*paying/)).toBeVisible();
+    await expect(dialog.getByText(/Subject|Assunto/)).toBeVisible();
+    return dialog;
+  };
+  const sendPost = () =>
+    page.waitForResponse(
+      (r) => r.url().endsWith("/send") && r.request().method() === "POST",
+    );
+  const firstDialog = await readersDialog();
+  if (synthetic) {
+    // Live rules with zero confirmed readers is an intended terminal
+    // state (D33): delivery "none" — nothing leaves the app, the issue
+    // stays approved, the response carries a warning and the API text
+    // lands as a toast — the after-sending surface must not render.
+    const [noneResp] = await Promise.all([
+      sendPost(),
+      firstDialog.getByRole("button", { name: "Send now" }).click(),
+    ]);
+    const noneBody = await noneResp.json();
+    expect(noneBody.delivery).toBe("none");
+    expect(noneBody.issue.status).toBe("approved");
+    expect(Array.isArray(noneBody.warnings) && noneBody.warnings.length > 0).toBe(true);
+    await expect(page.getByText(/nothing was delivered/i).first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole("link", { name: /reader page/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+    // A test send goes to the claimed owner — and confirms them as a
+    // reader, so the resend has a deliverable recipient. Success means
+    // a real synthetic-provider receipt, never a fallback or a mix.
+    const before = (await fakeRequests(page)).count;
+    await sendBar();
+    const [testResp] = await Promise.all([
+      sendPost(),
+      page.getByRole("button", { name: "Send a test" }).click(),
+    ]);
+    const testBody = await testResp.json();
+    expect(testBody.delivery).toBe("resend");
+    expect(testBody.sent).toBe(1);
+    expect(testBody.to).toEqual(["smoke@kloxus.dev"]);
+    expect(testBody.issue.status).toBe("approved");
+    await expect(page.getByText(/^Test sent to /).first()).toBeVisible({ timeout: 15000 });
+    const afterTest = await fakeRequests(page);
+    expect(afterTest.count - before).toBe(1);
+    const testReq = afterTest.requests.at(-1)!;
+    expect(testReq.to).toEqual(["smoke@kloxus.dev"]);
+    expect(testReq.auth).toBe("Bearer re_local_verify_synthetic");
+    const again = await readersDialog();
+    await expect(again.getByText(/1 reader/)).toBeVisible();
+    const [readersResp] = await Promise.all([
+      sendPost(),
+      again.getByRole("button", { name: "Send now" }).click(),
+    ]);
+    const readersBody = await readersResp.json();
+    expect(readersBody.delivery).toBe("resend");
+    expect(readersBody.sent).toBe(1);
+    // the delivery ledger records the send as provider-sent
+    const mail = await (
+      await page.request.get(`/api/v1/outbox/${readersBody.outbox_email_id}`)
+    ).json();
+    expect(mail.email.provider).toBe("resend");
+    expect(mail.email.status).toBe("sent");
+    expect(mail.email.provider_id).toMatch(/^re_local_/);
+    const afterAll = await fakeRequests(page);
+    expect(afterAll.count - afterTest.count).toBe(1);
+    expect(afterAll.requests.at(-1)!.to).toEqual(["smoke@kloxus.dev"]);
+  } else {
+    // outbox transport: the send records to the ledger and the issue
+    // turns sent.
+    await firstDialog.getByRole("button", { name: "Send now" }).click();
+  }
   // the after-sending surface replaces the editor chrome
   await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible({ timeout: 15000 });
   await expect(page.getByText(/guide learned|guide/i).first()).toBeVisible();
@@ -268,6 +379,13 @@ const viewports = [
   { name: "desktop", width: 1360, height: 850 },
   { name: "phone", width: 375, height: 740 },
 ];
+
+// Transport preflight first: positive server-side evidence decides
+// whether this suite may run — a live or unknown transport fails here,
+// before the test body performs a single mail- or model-capable call.
+test.beforeEach(async ({ page }) => {
+  await preflight(page);
+});
 
 for (const vp of viewports) {
   test(`demo journey at ${vp.name} (${vp.width}px)`, async ({ page }) => {
@@ -291,7 +409,7 @@ for (const vp of viewports) {
     await approveIssue(page);
     await scheduleAndHold(page);
     await approveIssue(page);
-    await claimIfLive(page);
+    await claimIfSynthetic(page);
     await sendToReaders(page);
     await readerJourney(page);
   });

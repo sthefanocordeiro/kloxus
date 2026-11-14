@@ -7,12 +7,15 @@ package delivery
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	resend "github.com/resend/resend-go/v4"
+
+	"github.com/sthefanocordeiro/kloxus/internal/config"
 )
 
 // Message is one outgoing email plus its delivery metadata.
@@ -42,15 +45,62 @@ type Resend struct {
 	MaxAttempts int
 	// MaxWait caps a Retry-After wait so a 429 never parks a request.
 	MaxWait time.Duration
-	// BaseURL overrides the API endpoint in tests (fake Resend server).
-	BaseURL string
+	// Synthetic marks the verification-only transport built by
+	// NewLoopbackSender: a loopback fake with a synthetic credential.
+	Synthetic bool
 }
 
 const resendAttempts = 3
 
+// resendAPI is the one endpoint the production transport may reach —
+// pinned so the SDK's own RESEND_BASE_URL environment default can never
+// redirect a credential-bearing client.
+const resendAPI = "https://api.resend.com/"
+
+// syntheticKey is the fixed credential the loopback transport presents
+// to the fake. It is deliberately not a real key — a fake receipt
+// proves only that the Resend protocol ran, never that a provider was
+// paid.
+const syntheticKey = "re_local_verify_synthetic"
+
 // NewResend builds a Resend sender from process config.
 func NewResend(apiKey, from string) *Resend {
-	return &Resend{Client: resend.NewClient(apiKey), From: from, MaxWait: 30 * time.Second}
+	c := resend.NewClient(apiKey)
+	c.BaseURL, _ = url.Parse(resendAPI)
+	return &Resend{Client: c, From: from, MaxWait: 30 * time.Second}
+}
+
+// NewLoopbackSender builds the verification-only mail transport: the
+// Resend protocol against a validated literal-loopback fake
+// (scripts/fake-resend.mjs). The endpoint must pass
+// config.ValidateLoopbackEndpoint — anything else is a startup error,
+// never a silent fall back to the real API. The client sends the fixed
+// synthetic key and refuses redirects, so no real credential or payload
+// can leave the machine even if the fake misbehaves.
+func NewLoopbackSender(endpoint, from string) (*Resend, error) {
+	if err := config.ValidateLoopbackEndpoint(endpoint); err != nil {
+		return nil, err
+	}
+	// The SDK resolves request paths relative to BaseURL — a missing
+	// trailing slash would eat the last segment.
+	u, _ := url.Parse(strings.TrimSuffix(endpoint, "/") + "/")
+	c := resend.NewCustomClient(&http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errors.New("loopback mail transport must not redirect")
+		},
+	}, syntheticKey)
+	c.BaseURL = u
+	return &Resend{Client: c, From: from, MaxWait: 30 * time.Second, Synthetic: true}, nil
+}
+
+// Transport reports the sender's wire identity for server-side
+// verification preflights: "synthetic" for the loopback fake, "resend"
+// for the real API.
+func (r *Resend) Transport() string {
+	if r.Synthetic {
+		return "synthetic"
+	}
+	return "resend"
 }
 
 func (r *Resend) attempts() int {
@@ -66,17 +116,7 @@ func (r *Resend) Send(ctx context.Context, msg *Message) (string, error) {
 	client := r.Client
 	if client == nil {
 		client = resend.NewClient("")
-	}
-	if r.BaseURL != "" {
-		// The SDK resolves request paths relative to BaseURL — a missing
-		// trailing slash would eat the last segment.
-		base := r.BaseURL
-		if !strings.HasSuffix(base, "/") {
-			base += "/"
-		}
-		if u, err := url.Parse(base); err == nil {
-			client.BaseURL = u
-		}
+		client.BaseURL, _ = url.Parse(resendAPI)
 	}
 	params := &resend.SendEmailRequest{
 		From: r.From, To: msg.To, Subject: msg.Subject,

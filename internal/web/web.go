@@ -131,6 +131,8 @@ func New(d Deps) *Server {
 	m.HandleFunc("POST /api/v1/issues/{id}/items/{iid}/decisions", s.apiDecision)
 	m.HandleFunc("GET /api/v1/items/{iid}/dossier", s.apiDossier)
 	m.HandleFunc("POST /api/v1/issues/{id}/draft", s.apiDraft)
+	m.HandleFunc("POST /api/v1/issues/{id}/compose", s.apiCompose)
+	m.HandleFunc("POST /api/v1/issues/{id}/items/{ref}/compose", s.apiComposeSentence)
 	m.HandleFunc("GET /api/v1/issues/{id}/document", s.apiDocument)
 	m.HandleFunc("PATCH /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceEdit)
 	m.HandleFunc("DELETE /api/v1/issues/{id}/sentences/{sid}", s.apiSentenceRemove)

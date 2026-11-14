@@ -16,6 +16,9 @@ export interface DocActions {
   // open the evidence pane on item ref, optionally highlighting a
   // citation's passage and flashing the sentence
   showEvidence: (itemRef: number, opts?: { citeRef?: number; sid?: string; issueItemId?: number }) => void;
+  // manual compose: append editor-written text to an item — returns
+  // null on success or the refusal reason to show inline
+  addSentence: (itemRef: number, text: string, citations: number[], kind: "fact" | "interpretation") => Promise<string | null>;
   readOnly: boolean;
 }
 
@@ -41,6 +44,7 @@ export const DocActionsCtx = createContext<DocActions>({
   interpret: async () => false,
   removeSentence: async () => false,
   showEvidence: () => {},
+  addSentence: async () => null,
   readOnly: true,
 });
 
@@ -245,21 +249,32 @@ function CommentaryView({ node, editor, getPos }: NodeViewProps) {
 
 // ItemHeadingView — the story's headline as a non-editable atom; click
 // selects it in the evidence pane. The headline lives in attrs so no
-// keystroke can rewrite or merge it into a sentence.
+// keystroke can rewrite or merge it into a sentence. A manual-compose
+// item with no sentences yet gets a dashed "write it" affordance that
+// opens the compose box in the evidence pane.
 function ItemHeadingView({ node, editor }: NodeViewProps) {
+  const { t } = useT();
   const actions = useContext(DocActionsCtx);
-  const a = node.attrs as { ref: number; issueItemId: number; headline: string };
+  const a = node.attrs as { ref: number; issueItemId: number; headline: string; empty: boolean };
+  const open = () => {
+    blurEditor(editor);
+    actions.showEvidence(a.ref, { issueItemId: a.issueItemId });
+  };
   return (
-    <NodeViewWrapper
-      className="mt-6 cursor-pointer font-doc text-lg font-semibold hover:text-teal"
-      onMouseDown={(e: MouseEvent) => e.preventDefault()}
-      onClick={() => {
-        blurEditor(editor);
-        actions.showEvidence(a.ref, { issueItemId: a.issueItemId });
-      }}
-      data-item-ref={a.ref}
-    >
-      <h3>{a.headline}</h3>
+    <NodeViewWrapper className="mt-6" onMouseDown={(e: MouseEvent) => e.preventDefault()} data-item-ref={a.ref}>
+      <h3 className="cursor-pointer font-doc text-lg font-semibold hover:text-teal" onClick={open}>
+        {a.headline}
+      </h3>
+      {a.empty && !actions.readOnly && (
+        <button
+          type="button"
+          contentEditable={false}
+          onClick={open}
+          className="mt-1 inline-flex w-full items-center gap-1.5 rounded-[var(--radius-card)] border border-dashed border-line px-3 py-2 text-left text-xs text-muted transition-colors hover:border-teal/60 hover:text-teal"
+        >
+          <PenLine size={12} /> {t.compose.emptySlot}
+        </button>
+      )}
     </NodeViewWrapper>
   );
 }
@@ -344,7 +359,7 @@ export const ItemHeading = Node.create({
   atom: true,
   selectable: false,
   addAttributes() {
-    return { ref: { default: 0 }, issueItemId: { default: 0 }, headline: { default: "" } };
+    return { ref: { default: 0 }, issueItemId: { default: 0 }, headline: { default: "" }, empty: { default: false } };
   },
   parseHTML() {
     return [{ tag: "h3[data-item-ref]" }];
