@@ -100,10 +100,15 @@ Hosted verification is **outbox-only** under the freeze: it must never
 send real email or call a paid model. The safe path is selected by server-side
 evidence, not a client flag — `smoke.sh` and every e2e spec preflight
 `/api/v1/workspace` and refuse to run a mail-capable step unless the
-target itself reports the deterministic demo pipeline
-(`mode=demo`) with the outbox mail transport (`mail=outbox`,
-`mail_transport=outbox`). A live or unknown transport fails closed
-before the first mail-capable request.
+target itself reports a no-AI posture with the outbox mail transport
+(`mail=outbox`, `mail_transport=outbox`). `smoke.sh` accepts two
+postures: the deterministic demo pipeline (`mode=demo`), or the real
+app with the model hard-off (`mode=real`, `llm_mode=off` —
+deterministic runs over the shared ingested items, with `llm.None`
+failing any model call loudly). The e2e specs still require the demo
+pipeline — their journeys depend on fixture content the real target
+does not serve. A live or unknown transport, or a real target with
+the model enabled, fails closed before the first mail-capable request.
 
 The live-mail contract (claim gate, confirmed readers, `delivery`
 outcomes, fallback) is verified **locally** against the loopback fake

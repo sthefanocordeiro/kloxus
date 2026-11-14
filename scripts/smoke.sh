@@ -94,15 +94,45 @@ say "anonymous workspace $WSID created"
 
 # --- 4b. transport preflight — fail closed before mail/model-capable ops ---
 # Hosted verification is outbox-only under the freeze. The server itself
-# must prove a safe configuration — deterministic demo pipeline plus an
-# outbox mail transport — before smoke touches a run, draft, claim or
-# send route. A live or unknown transport fails here, never after a
-# send. Client flags and NXDOMAIN recipients are not evidence.
-[ "$(jget mode)" = "demo" ] || die "refusing: target mode is '$(jget mode)' — verification needs the deterministic demo pipeline"
-case "$(jget llm_mode)" in auto|off) ;; *) die "refusing: unknown llm_mode '$(jget llm_mode)'" ;; esac
+# must prove a no-AI posture before smoke touches a run, draft, claim or
+# send route — two qualify:
+#   - mode=demo: the deterministic demo/replay pipeline; llm auto|off are
+#     both model-free (the replay provider answers fixtures).
+#   - mode=real + llm_mode=off: the deterministic no-model pipeline over
+#     the shared ingested items — catalog sources never fetch per-run and
+#     llm.None fails any model call loudly, so the same journey verifies
+#     the real app with zero paid AI.
+# A real target with the model enabled, an unknown mode, or any live or
+# unknown mail transport fails here — before the first mail- or
+# model-capable request. Client flags and NXDOMAIN recipients are not
+# evidence.
+MODE="$(jget mode)"; LLMMODE="$(jget llm_mode)"
+case "$MODE" in
+demo)
+	case "$LLMMODE" in auto|off) ;; *) die "refusing: unknown llm_mode '$LLMMODE'" ;; esac
+	;;
+real)
+	[ "$LLMMODE" = "off" ] \
+		|| die "refusing: real target reports llm_mode='$LLMMODE' — verification needs the deterministic pipeline (llm_mode=off)"
+	;;
+*) die "refusing: unknown mode '$MODE' — verification needs the demo pipeline or real mode with llm_mode=off" ;;
+esac
 [ "$(jget mail)" = "outbox" ] && [ "$(jget mail_transport)" = "outbox" ] \
 	|| die "refusing mail-capable checks: target reports mail='$(jget mail)' transport='$(jget mail_transport)' — hosted verification is outbox-only"
-say "transport preflight ok: demo pipeline, outbox mail"
+say "transport preflight ok: mode=$MODE llm_mode=$LLMMODE, outbox mail"
+
+# --- 4c. the operator admin surface stays guarded --------------------------
+# Admin routes bypass workspace resolution and carry operator power (the
+# LLM kill switch, the ingestion fetch log). Hosted smoke must prove they
+# answer only to credentials: without one, /admin/llm replies 401 (token
+# configured) or 403 (surface disabled), and the master-key ingestion
+# view replies 403 — or 404 when no key is configured and the route
+# looks absent. A 200 means the guard is off and the posture is unsafe.
+code="$(req GET /api/v1/admin/llm)"
+case "$code" in 401|403) ;; *) die "unguarded admin surface: GET /api/v1/admin/llm -> $code" ;; esac
+code="$(req GET /api/v1/admin/ingestion)"
+case "$code" in 403|404) ;; *) die "unguarded admin surface: GET /api/v1/admin/ingestion -> $code" ;; esac
+say "admin surface guarded"
 
 # --- 5. onboard: create publication from the sample proposal -------------
 [ "$(req GET /api/v1/proposal)" = "200" ] || die "proposal fetch failed"
