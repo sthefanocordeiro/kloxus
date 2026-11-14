@@ -284,6 +284,44 @@ func (db *DB) storyItems(ctx context.Context, storyID int64) ([]Item, error) {
 	return out, rows.Err()
 }
 
+// StoryOutlet is one member item's outlet, in item order — name with
+// the URL as fallback, matching how the board labels coverage.
+type StoryOutlet struct {
+	Name string
+	URL  string
+}
+
+// StoryOutlets batches member-outlet lookups for many stories into one
+// query — the board's candidate view calls it once per request instead
+// of loading every story's items row by row.
+func (db *DB) StoryOutlets(ctx context.Context, storyIDs []int64) (map[int64][]StoryOutlet, error) {
+	out := map[int64][]StoryOutlet{}
+	if len(storyIDs) == 0 {
+		return out, nil
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT si.story_id, COALESCE(s.name, c.name, ''), COALESCE(s.url, c.url, '')
+		FROM story_items si
+		JOIN items i ON i.id = si.item_id
+		LEFT JOIN sources s ON s.id = i.source_id
+		LEFT JOIN source_catalog c ON c.id = i.catalog_id
+		WHERE si.workspace_id = $1 AND si.story_id = ANY($2)
+		ORDER BY si.story_id, i.id`, db.ws, storyIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var storyID int64
+		var o StoryOutlet
+		if err := rows.Scan(&storyID, &o.Name, &o.URL); err != nil {
+			return nil, err
+		}
+		out[storyID] = append(out[storyID], o)
+	}
+	return out, rows.Err()
+}
+
 // StoriesWithItems loads all stories and their member items.
 func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error) {
 	rows, err := db.QueryContext(ctx,
@@ -452,11 +490,23 @@ type RankedCandidate struct {
 // RankedCandidates lists the run's ranked stories for an issue: every
 // triaged story of the publication that is not already placed in another
 // issue, best score first. `inIssue` tells which are currently in.
+//
+// One round-trip: the issue's own items are joined (deduplicated to the
+// first row per story, matching IssueItemByStory's single-row read) and
+// the dossier flag is an EXISTS on the joined row — at ~160 candidates
+// per-candidate lookups turn the endpoint into a Fly proxy 502.
 func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]RankedCandidate, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT s.id, s.title, COALESCE(s.triage_score,0), COALESCE(s.triage_reason,''),
-		       (SELECT COUNT(*) FROM story_items si WHERE si.story_id = s.id)
+		       (SELECT COUNT(*) FROM story_items si WHERE si.story_id = s.id),
+		       ii.id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section,
+		       EXISTS(SELECT 1 FROM dossiers d WHERE d.workspace_id = $1 AND d.issue_item_id = ii.id)
 		FROM stories s
+		LEFT JOIN (
+		  SELECT DISTINCT ON (story_id) * FROM issue_items
+		  WHERE workspace_id = $1 AND issue_id = $3
+		  ORDER BY story_id, id
+		) ii ON ii.story_id = s.id
 		WHERE s.workspace_id = $1 AND s.publication_id = $2
 		  AND s.triage_score IS NOT NULL
 		  AND s.id NOT IN (
@@ -468,43 +518,38 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 		return nil, err
 	}
 	defer rows.Close()
-	type row struct {
-		id      int64
-		title   string
-		score   float64
-		reason  string
-		members int
-	}
-	var rws []row
+	out := []RankedCandidate{}
 	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.title, &r.score, &r.reason, &r.members); err != nil {
+		var (
+			storyID, members        int64
+			title, reason           string
+			score                   float64
+			iiID, iiPos             sql.NullInt64
+			iiSec, iiStatus, iiOrig sql.NullString
+			iiScore                 sql.NullFloat64
+			iiReason, iiOrigSec     sql.NullString
+			dossier                 bool
+		)
+		if err := rows.Scan(&storyID, &title, &score, &reason, &members,
+			&iiID, &iiSec, &iiScore, &iiReason, &iiStatus, &iiOrig, &iiPos, &iiOrigSec,
+			&dossier); err != nil {
 			return nil, err
 		}
-		rws = append(rws, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	out := make([]RankedCandidate, 0, len(rws))
-	for i, r := range rws {
-		st := &Story{ID: r.id, Title: r.title, TriageScore: r.score, TriageReason: r.reason}
-		ii, err := db.IssueItemByStory(ctx, issueID, r.id)
-		if err != nil && err != sql.ErrNoRows {
-			return nil, err
+		c := RankedCandidate{
+			Story: &Story{ID: storyID, Title: title, TriageScore: score, TriageReason: reason},
+			Rank:  len(out) + 1, Duplicates: int(members) - 1, Dossier: dossier,
 		}
-		dossier := false
-		if ii != nil {
-			if _, err := db.Dossier(ctx, ii.ID); err == nil {
-				dossier = true
+		if iiID.Valid {
+			c.Item = &IssueItem{
+				ID: iiID.Int64, IssueID: issueID, StoryID: storyID,
+				Section: iiSec.String, Score: iiScore.Float64, Reason: iiReason.String,
+				Status: iiStatus.String, Origin: iiOrig.String,
+				Position: int(iiPos.Int64), OrigSection: iiOrigSec.String,
 			}
 		}
-		out = append(out, RankedCandidate{
-			Story: st, Item: ii, Rank: i + 1,
-			Duplicates: r.members - 1, Dossier: dossier,
-		})
+		out = append(out, c)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // SaveDossier upserts the dossier JSON for an issue item.

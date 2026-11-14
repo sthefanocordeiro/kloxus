@@ -1073,7 +1073,10 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
-	out := s.candidateViews(r, cands)
+	out, err := s.candidateViews(r, cands)
+	if apiDBErr(w, r, err, "candidates") {
+		return
+	}
 	apiJSON(w, 200, map[string]any{
 		"candidates": out,
 		"sections":   sectionViews(pub),
@@ -1082,30 +1085,33 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) []apiCandidate {
+func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) ([]apiCandidate, error) {
 	demo := s.d.Cfg.Mode == "demo"
+	ids := make([]int64, len(cands))
+	for i, c := range cands {
+		ids[i] = c.Story.ID
+	}
+	byStory, err := db(r).StoryOutlets(r.Context(), ids)
+	if err != nil {
+		return nil, err
+	}
 	out := []apiCandidate{}
 	for _, c := range cands {
-		story, err := db(r).StoryWithItems(r.Context(), c.Story.ID)
 		outlets := []string{}
-		sources := 0
-		if err == nil {
-			seen := map[string]bool{}
-			for _, it := range story.Items {
-				n := it.SourceName
-				if n == "" {
-					n = it.SourceURL
-				}
-				if !seen[n] {
-					seen[n] = true
-					outlets = append(outlets, n)
-				}
+		seen := map[string]bool{}
+		for _, o := range byStory[c.Story.ID] {
+			n := o.Name
+			if n == "" {
+				n = o.URL
 			}
-			sources = len(story.Items)
+			if !seen[n] {
+				seen[n] = true
+				outlets = append(outlets, n)
+			}
 		}
 		cv := apiCandidate{
 			StoryID: c.Story.ID, Title: c.Story.Title,
-			Outlets: outlets, Sources: sources, Duplicates: c.Duplicates,
+			Outlets: outlets, Sources: len(byStory[c.Story.ID]), Duplicates: c.Duplicates,
 			Score: c.Story.TriageScore, Reason: c.Story.TriageReason, Rank: c.Rank,
 			Dossier: c.Dossier, Available: true,
 		}
@@ -1125,7 +1131,7 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 		}
 		out = append(out, cv)
 	}
-	return out
+	return out, nil
 }
 
 func sectionViews(pub *store.Publication) []map[string]any {
@@ -1256,7 +1262,11 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		guide = s.guideAfterRebuild(w, r, pub)
 	}
 	cands, _ = db(r).RankedCandidates(ctx, iss.PublicationID, iss.ID)
-	resp := map[string]any{"candidates": s.candidateViews(r, cands)}
+	views, err := s.candidateViews(r, cands)
+	if apiDBErr(w, r, err, "candidates") {
+		return
+	}
+	resp := map[string]any{"candidates": views}
 	if guide != nil {
 		resp["guide"] = guide
 	}

@@ -86,8 +86,8 @@ export function SourcesPage() {
                   <p className="mt-0.5 text-xs text-muted">
                     {t.sourcesPage.itemsWeek(s.items_per_week)}
                     {s.last_status && (
-                      <Badge className="ml-2" tone={s.last_status === "ok" ? "teal" : "warn"}>
-                        {s.last_status === "ok" ? t.sourcesPage.lastOk : t.sourcesPage.lastFail}
+                      <Badge className="ml-2" tone={s.last_status.startsWith("ok") ? "teal" : "warn"}>
+                        {s.last_status.startsWith("ok") ? t.sourcesPage.lastOk : t.sourcesPage.lastFail}
                       </Badge>
                     )}
                   </p>
