@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
@@ -217,12 +218,123 @@ func (db *DB) AddStoryItem(ctx context.Context, storyID, itemID int64) error {
 	return err
 }
 
+// StoryDraft is one dedupe cluster ready to persist: display title,
+// SimHash of the representative member, the shared dedupe key and the
+// member item ids.
+type StoryDraft struct {
+	Title     string
+	Simhash   int64
+	DedupeKey string
+	ItemIDs   []int64
+}
+
+// CreateStories inserts every dedupe cluster and its member links in a
+// single transaction — two statements total. The per-cluster and
+// per-item INSERTs it replaces cost a remote round-trip each, which at
+// shared-catalog scale (~5k items → ~8–9k calls) overran the 15-minute
+// run timeout (KLOX-41). Draft order is preserved: the new story ids
+// come back positionally and pair with each draft's member list.
+func (db *DB) CreateStories(ctx context.Context, pubID int64, drafts []StoryDraft) error {
+	if len(drafts) == 0 {
+		return nil
+	}
+	titles := make([]string, len(drafts))
+	simhashes := make([]int64, len(drafts))
+	keys := make([]string, len(drafts))
+	for i, d := range drafts {
+		titles[i], simhashes[i], keys[i] = d.Title, d.Simhash, d.DedupeKey
+	}
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// unnest WITH ORDINALITY carries the draft order through the INSERT
+	// so RETURNING emits the new ids in the same sequence — Postgres
+	// streams RETURNING rows as the tuples go in.
+	rows, err := tx.QueryContext(ctx, `
+		INSERT INTO stories (workspace_id, publication_id, title, simhash, dedupe_key)
+		SELECT $1, $2, d.title, d.simhash, d.dedupe_key
+		FROM unnest($3::text[], $4::bigint[], $5::text[])
+		     WITH ORDINALITY AS d(title, simhash, dedupe_key, ord)
+		ORDER BY d.ord
+		RETURNING id`, db.ws, pubID, titles, simhashes, keys)
+	if err != nil {
+		return err
+	}
+	storyIDs := make([]int64, 0, len(drafts))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		storyIDs = append(storyIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if len(storyIDs) != len(drafts) {
+		return fmt.Errorf("CreateStories: got %d story ids for %d drafts", len(storyIDs), len(drafts))
+	}
+	var linkStory, linkItem []int64
+	for i, d := range drafts {
+		for _, itemID := range d.ItemIDs {
+			linkStory = append(linkStory, storyIDs[i])
+			linkItem = append(linkItem, itemID)
+		}
+	}
+	if len(linkItem) > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO story_items (workspace_id, story_id, item_id)
+			SELECT $1, m.story_id, m.item_id
+			FROM unnest($2::bigint[], $3::bigint[]) AS m(story_id, item_id)
+			ON CONFLICT (story_id, item_id) DO NOTHING`,
+			db.ws, linkStory, linkItem); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // SetStoryTriage stores the triage verdict on a story so alternative
 // candidates can be ranked after the run.
 func (db *DB) SetStoryTriage(ctx context.Context, storyID int64, score float64, reason string) error {
 	_, err := db.ExecContext(ctx,
 		`UPDATE stories SET triage_score = $1, triage_reason = $2 WHERE workspace_id = $3 AND id = $4`,
 		score, reason, db.ws, storyID)
+	return err
+}
+
+// StoryTriage pairs a story id with its triage verdict for the batch
+// update.
+type StoryTriage struct {
+	StoryID int64
+	Score   float64
+	Reason  string
+}
+
+// SetStoriesTriage applies every verdict in one UPDATE. Deterministic
+// triage scores all of a publication's stories — thousands at shared-
+// catalog scale — where the per-story form cost a remote round-trip
+// each.
+func (db *DB) SetStoriesTriage(ctx context.Context, updates []StoryTriage) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(updates))
+	scores := make([]float64, len(updates))
+	reasons := make([]string, len(updates))
+	for i, u := range updates {
+		ids[i], scores[i], reasons[i] = u.StoryID, u.Score, u.Reason
+	}
+	_, err := db.ExecContext(ctx, `
+		UPDATE stories s SET triage_score = u.score, triage_reason = u.reason
+		FROM unnest($2::bigint[], $3::float8[], $4::text[]) AS u(id, score, reason)
+		WHERE s.workspace_id = $1 AND s.id = u.id`,
+		db.ws, ids, scores, reasons)
 	return err
 }
 

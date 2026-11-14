@@ -336,23 +336,25 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		ordered = append(ordered, g)
 	}
 	sort.Slice(ordered, func(a, b int) bool { return ordered[a][0].ID < ordered[b][0].ID })
-	for _, g := range ordered {
+	drafts := make([]store.StoryDraft, len(ordered))
+	for i, g := range ordered {
 		title := g[0].Title
-		for _, it := range g {
+		itemIDs := make([]int64, len(g))
+		for j, it := range g {
+			itemIDs[j] = it.ID
 			if len(it.Title) > len(title) {
 				title = it.Title
 			}
 		}
-		storyID, err := r.DB.CreateStory(ctx, pub.ID, title,
-			int64(dedupe.SimHash(g[0].Title+"\n"+g[0].ContentText)), dedupeKey(g))
-		if err != nil {
-			return nil, err
+		drafts[i] = store.StoryDraft{
+			Title:     title,
+			Simhash:   int64(dedupe.SimHash(g[0].Title + "\n" + g[0].ContentText)),
+			DedupeKey: dedupeKey(g),
+			ItemIDs:   itemIDs,
 		}
-		for _, it := range g {
-			if err := r.DB.AddStoryItem(ctx, storyID, it.ID); err != nil {
-				return nil, err
-			}
-		}
+	}
+	if err := r.DB.CreateStories(ctx, pub.ID, drafts); err != nil {
+		return nil, err
 	}
 	stories, err := r.DB.StoriesWithItems(ctx, pub.ID)
 	if err != nil {
@@ -418,12 +420,19 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	var detReasons []string
 	if r.Deterministic {
 		detScores, detReasons = scoreStories(stories)
+		updates := make([]store.StoryTriage, len(stories))
 		for i := range stories {
 			scoreByRef[i+1] = struct {
 				score  float64
 				reason string
 			}{detScores[i], detReasons[i]}
-			r.DB.SetStoryTriage(ctx, stories[i].ID, detScores[i], detReasons[i])
+			updates[i] = store.StoryTriage{StoryID: stories[i].ID, Score: detScores[i], Reason: detReasons[i]}
+		}
+		// One UPDATE for the whole run: deterministic triage scores
+		// every story, and at shared-catalog scale a call per story
+		// is thousands of remote round-trips (KLOX-41).
+		if err := r.DB.SetStoriesTriage(ctx, updates); err != nil {
+			return nil, err
 		}
 		r.emit("triage", map[string]int{"ranked": len(stories)})
 		r.record(ctx, pub.ID, issueID, "triage", "deterministic", start, llm.Response{})
