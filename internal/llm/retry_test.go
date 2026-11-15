@@ -54,21 +54,63 @@ func TestRetrierRetries429(t *testing.T) {
 	}
 }
 
-func TestRetrierRetries5xxAndNetwork(t *testing.T) {
+func TestRetrierRetries5xx(t *testing.T) {
 	f := &fakeProvider{queue: []struct {
 		resp Response
 		err  error
 	}{
 		{err: &StatusError{Provider: "anthropic", Status: 502, Body: "bad gateway"}},
-		{err: &url.Error{Op: "Post", URL: "https://api.anthropic.com", Err: errors.New("timeout")}},
 		{resp: okResp()},
 	}}
 	r := Retrier{Inner: f, Attempts: 4, Sleep: noSleep}
 	if _, err := r.Complete(context.Background(), Request{}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if f.calls != 3 {
-		t.Fatalf("calls=%d, want 3 (5xx + network retried)", f.calls)
+	if f.calls != 2 {
+		t.Fatalf("calls=%d, want 2 (5xx retried once)", f.calls)
+	}
+}
+
+// TestRetrierDoesNotRetryTransport: network/timeout failures are not
+// retried (KLOX-44: only 429 and 5xx).
+func TestRetrierDoesNotRetryTransport(t *testing.T) {
+	f := &fakeProvider{queue: []struct {
+		resp Response
+		err  error
+	}{
+		{err: &url.Error{Op: "Post", URL: "https://api.anthropic.com", Err: errors.New("timeout")}},
+		{resp: okResp()},
+	}}
+	r := Retrier{Inner: f, Attempts: 4, Sleep: noSleep}
+	_, err := r.Complete(context.Background(), Request{})
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		t.Fatalf("err=%v, want the transport error back unretried", err)
+	}
+	if f.calls != 1 {
+		t.Fatalf("calls=%d, want 1 (transport errors are not retried)", f.calls)
+	}
+}
+
+// TestRetrierDoesNotRetrySizeRefusal: an over-cap prompt is a run
+// error, never retried (KLOX-44).
+func TestRetrierDoesNotRetrySizeRefusal(t *testing.T) {
+	big := &PromptTooLargeError{Template: "dossier", Estimated: 40000, Cap: 30000}
+	f := &fakeProvider{queue: []struct {
+		resp Response
+		err  error
+	}{
+		{err: big},
+		{resp: okResp()},
+	}}
+	r := Retrier{Inner: f, Sleep: noSleep}
+	_, err := r.Complete(context.Background(), Request{})
+	var p *PromptTooLargeError
+	if !errors.As(err, &p) {
+		t.Fatalf("err=%v, want the size refusal back", err)
+	}
+	if f.calls != 1 {
+		t.Fatalf("calls=%d, want 1 (size refusals are not retried)", f.calls)
 	}
 }
 

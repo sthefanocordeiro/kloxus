@@ -143,14 +143,33 @@ func decodeJSON(text string, out any) error {
 
 // complete invokes the provider behind a panic guard: a provider that
 // panics fails this step (and the run) instead of taking the process
-// down. Every model call in a pipeline step goes through here (D32).
+// down. Every model call in a pipeline step goes through here (D32),
+// and every one passes the prompt-size cap first — an over-cap request
+// is refused before the provider sees it (KLOX-44).
 func (r *Runner) complete(ctx context.Context, req llm.Request) (resp llm.Response, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("template %s: model call panicked: %v", req.Template, p)
 		}
 	}()
+	if err := llm.CheckSize(req); err != nil {
+		return llm.Response{}, err
+	}
 	return r.LLM.Complete(ctx, req)
+}
+
+// stepMaxTokens sets the output ceiling each prompt template needs —
+// every model call carries max_tokens (KLOX-44). Long-form steps keep
+// the 32k ceiling real-feed runs proved they need: an 8k cap truncated
+// a dossier on ~20 real stories mid-JSON, and truncation lands as
+// invalid JSON the repair retry cannot fix.
+var stepMaxTokens = map[string]int{
+	"triage":    8192,
+	"storylist": 8192,
+	"dossier":   32768,
+	"deepdive":  32768,
+	"draft":     32768,
+	"citecheck": 8192,
 }
 
 // call renders a prompt, calls the model and decodes JSON output,
@@ -165,14 +184,9 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 	if err != nil {
 		return llm.Response{}, err
 	}
-	// Long-form steps need a bigger ceiling: real feeds produce far
-	// larger JSON replies than the fixtures — an 8k cap truncated a
-	// dossier on ~20 real stories mid-JSON, and truncation lands as
-	// invalid JSON the repair retry cannot fix.
-	maxTok := 8192
-	switch name {
-	case "dossier", "deepdive", "draft":
-		maxTok = 32768
+	maxTok := stepMaxTokens[name]
+	if maxTok == 0 {
+		maxTok = 8192
 	}
 	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: maxTok}
 	resp, err := r.complete(ctx, req)
@@ -568,7 +582,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 				return nil, err
 			}
 		}
-		memberItems = evidenceItems(memberItems)
+		memberItems = capEntrySources(evidenceItems(memberItems))
 		if len(memberItems) == 0 {
 			// A story with only signal members (a bare HN/DJ link) has
 			// no evidence body — it can't be drafted or cited.
@@ -1401,8 +1415,9 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 // synthesized from the story's items when no replay fixture exists.
 func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication, cand *store.Story, ref int) *Dossier {
 	interpretation := "Picked by the editor as an alternative to the previous item."
+	items := capEntrySources(cand.Items)
 	if r.Deterministic {
-		return synthDossier(ref, cand.Title, interpretation, cand.Items)
+		return synthDossier(ref, cand.Title, interpretation, items)
 	}
 	type dSrc struct {
 		Ref  int
@@ -1410,7 +1425,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 		Text string
 	}
 	var srcs []dSrc
-	for j, it := range cand.Items {
+	for j, it := range items {
 		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
 	}
 	var dossiers []Dossier
@@ -1424,7 +1439,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 			if dossiers[i].Ref == ref {
 				d := &dossiers[i]
 				d.Title = cand.Title
-				d.fillSources(cand.Items)
+				d.fillSources(items)
 				return d
 			}
 		}
@@ -1432,7 +1447,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	_ = resp
 	// Synthetic dossier: every claim comes from a member item, so citations
 	// stay valid without a model call.
-	return synthDossier(ref, cand.Title, interpretation, cand.Items)
+	return synthDossier(ref, cand.Title, interpretation, items)
 }
 
 // ensureManualDossiers creates deterministic dossiers for lineup items
@@ -1606,6 +1621,70 @@ func evidenceItems(items []store.Item) []store.Item {
 		if !it.Signal() {
 			out = append(out, it)
 		}
+	}
+	return out
+}
+
+// maxEntrySources bounds the evidence items one issue entry may cite —
+// at 3 sources × 1,200 chars each, a giant cluster can no longer turn
+// one dossier/deepdive call into an oversized prompt (KLOX-44).
+const maxEntrySources = 3
+
+// capEntrySources picks up to maxEntrySources evidence items: the
+// newest item of each unseen outlet first, then the remaining slots by
+// recency. The picks keep their original member order so entries with
+// few sources see no change at all.
+func capEntrySources(items []store.Item) []store.Item {
+	if len(items) <= maxEntrySources {
+		return items
+	}
+	idx := make([]int, len(items))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		ta, oka := parsePublished(items[idx[a]].PublishedAt)
+		tb, okb := parsePublished(items[idx[b]].PublishedAt)
+		if oka != okb {
+			return oka // dated items rank above undated ones
+		}
+		if oka && !ta.Equal(tb) {
+			return ta.After(tb) // newest first
+		}
+		return items[idx[a]].ID < items[idx[b]].ID
+	})
+	outlet := func(i int) string {
+		if items[i].SourceName != "" {
+			return items[i].SourceName
+		}
+		return outletLabel(items[i].URL)
+	}
+	seen := map[string]bool{}
+	picked := map[int]bool{}
+	var pick []int
+	for _, i := range idx {
+		if seen[outlet(i)] {
+			continue
+		}
+		seen[outlet(i)] = true
+		picked[i] = true
+		pick = append(pick, i)
+		if len(pick) == maxEntrySources {
+			break
+		}
+	}
+	for _, i := range idx { // fill leftover slots by recency
+		if len(pick) == maxEntrySources {
+			break
+		}
+		if !picked[i] {
+			pick = append(pick, i)
+		}
+	}
+	sort.Ints(pick)
+	out := make([]store.Item, len(pick))
+	for j, i := range pick {
+		out[j] = items[i]
 	}
 	return out
 }

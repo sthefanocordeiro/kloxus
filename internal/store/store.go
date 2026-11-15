@@ -592,6 +592,16 @@ func (db *DB) CostReport(ctx context.Context, pubID int64, lastN int) ([]CostRow
 	return out, rows.Err()
 }
 
+// IssueCostUSD returns the recorded model cost of the run steps
+// attached to an issue — the number the issue page shows (KLOX-44).
+func (db *DB) IssueCostUSD(ctx context.Context, issueID int64) (float64, error) {
+	var v float64
+	err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(sum(cost_usd), 0) FROM runs WHERE workspace_id = $1 AND issue_id = $2`,
+		db.ws, issueID).Scan(&v)
+	return v, err
+}
+
 // LatestGuide returns the newest editorial guide for a publication.
 // Returns sql.ErrNoRows when none exists yet.
 func (db *DB) LatestGuide(ctx context.Context, pubID int64) (version int, content string, err error) {

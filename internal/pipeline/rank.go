@@ -169,6 +169,7 @@ func primaryOutlet(s *store.Story) string {
 // cited to that source, later sentences become facts. Every claim comes
 // from a member item, so citations stay valid without a model call.
 func synthDossier(ref int, title, interpretation string, items []store.Item) *Dossier {
+	items = capEntrySources(items)
 	var facts []DossierFact
 	var summary string
 	for i, it := range items {

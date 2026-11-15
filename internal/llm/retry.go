@@ -1,14 +1,14 @@
 package llm
 
-// Retry with exponential backoff around a provider (D32): 429, 5xx and
-// network/timeout errors are retried; 4xx client errors, decode
-// failures and caller-side cancellations are not.
+// Retry with exponential backoff around a provider (D32, KLOX-44):
+// only provider 429 and 5xx responses are retried, at most 2 attempts.
+// 4xx client errors, prompt-size refusals, transport failures, decode
+// failures and caller-side cancellations are not retried.
 import (
 	"context"
 	"errors"
 	"fmt"
 	"math/rand"
-	"net/url"
 	"time"
 )
 
@@ -23,24 +23,17 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("%s: status %d: %s", e.Provider, e.Status, e.Body)
 }
 
-// retryable reports whether err is worth retrying: rate limits, server
-// errors and transport failures (timeouts, resets, DNS).
+// retryable reports whether err is worth retrying: provider rate
+// limits and server errors only.
 func retryable(err error) bool {
 	var se *StatusError
-	if errors.As(err, &se) {
-		return se.Status == 429 || se.Status >= 500
-	}
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		return true
-	}
-	return false
+	return errors.As(err, &se) && (se.Status == 429 || se.Status >= 500)
 }
 
 // Retrier wraps a Provider with bounded exponential backoff.
 type Retrier struct {
 	Inner     Provider
-	Attempts  int           // total tries; <=0 means 4
+	Attempts  int           // total tries; <=0 means 2 (KLOX-44)
 	BaseDelay time.Duration // first wait; <=0 means 500ms
 	// Sleep waits between tries; nil uses a jittered timer honoring ctx.
 	Sleep func(ctx context.Context, d time.Duration) error
@@ -50,7 +43,7 @@ type Retrier struct {
 func (r Retrier) Complete(ctx context.Context, req Request) (Response, error) {
 	attempts := r.Attempts
 	if attempts <= 0 {
-		attempts = 4
+		attempts = 2
 	}
 	base := r.BaseDelay
 	if base <= 0 {

@@ -156,6 +156,7 @@ func newGuard(cfg *config.Config, pool *store.Pool) *llm.Guard {
 		Store:        pool,
 		RunsPerDay:   cfg.RunsPerDay,
 		TokensPerRun: int64(cfg.TokensPerRun),
+		RunCapUSD:    cfg.LLMRunCap,
 		DailyCapUSD:  cfg.LLMDailyCap,
 	}
 	g.LoadKill(context.Background())

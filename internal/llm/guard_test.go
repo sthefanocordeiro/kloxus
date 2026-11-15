@@ -217,7 +217,7 @@ func TestGuardInnerErrorPropagates(t *testing.T) {
 }
 
 func TestGuardMessagesAreClean(t *testing.T) {
-	for _, r := range []BlockedReason{ReasonKillSwitch, ReasonWorkspaceRuns, ReasonWorkspaceToken, ReasonDailyCap} {
+	for _, r := range []BlockedReason{ReasonKillSwitch, ReasonWorkspaceRuns, ReasonWorkspaceToken, ReasonDailyCap, ReasonRunSpend} {
 		b := &BlockedError{Reason: r, Message: fmt.Sprintf("msg for %s", r)}
 		if b.Error() == "" {
 			t.Fatal("empty message")

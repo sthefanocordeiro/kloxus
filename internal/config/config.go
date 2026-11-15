@@ -45,11 +45,13 @@ type Config struct {
 	// pipeline; "off" runs the deterministic pipeline and any model call
 	// attempted fails loudly (llm.None is the configured provider).
 	LLMMode string
-	// Spend guards (D32/D36): per-workspace daily run budget, per-run
-	// token budget, global daily dollar cap and the kill-switch env —
-	// all persisted in Postgres so restarts keep the counters.
+	// Spend guards (D32/D36/D40): per-workspace daily run budget, per-run
+	// token budget, per-run dollar cap, global daily dollar cap and the
+	// kill-switch env — all persisted in Postgres so restarts keep the
+	// counters.
 	RunsPerDay   int
 	TokensPerRun int
+	LLMRunCap    float64
 	LLMDailyCap  float64
 	LLMKillEnv   bool   // KLOXUS_LLM_KILL at boot; also checked live per call
 	AdminToken   string // bearer token for /api/v1/admin/*
@@ -111,6 +113,7 @@ func Load() (*Config, error) {
 		LLMMode:         getenv("KLOXUS_LLM_MODE", "auto"),
 		RunsPerDay:      getint("KLOXUS_RUNS_PER_DAY", 2),
 		TokensPerRun:    getint("KLOXUS_TOKENS_PER_RUN", 200000),
+		LLMRunCap:       getfloat("KLOXUS_LLM_RUN_CAP_USD", 0.25),
 		LLMDailyCap:     getfloat("KLOXUS_LLM_DAILY_CAP_USD", 1.00),
 		LLMKillEnv:      os.Getenv("KLOXUS_LLM_KILL") != "",
 		AdminToken:      os.Getenv("KLOXUS_ADMIN_TOKEN"),

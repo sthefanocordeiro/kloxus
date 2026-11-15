@@ -282,7 +282,9 @@ data: {"id": "a1b2c3d4", "kind": "prepare", "status": "done", "issue_id": 1, "�
 }]}
 ```
 `status` ∈ `""` (being prepared) → `reviewing` → `drafted` → `approved`
-→ `sent`. Sent issues are read-only (`read_only`).
+→ `sent`. Sent issues are read-only (`read_only`). `cost_usd` is the
+issue's recorded model spend — the sum of `runs.cost_usd` for that
+issue — shown on the issue page (KLOX-44).
 
 ### `GET /api/v1/issues/{id}` — one issue, same shape as the list row.
 

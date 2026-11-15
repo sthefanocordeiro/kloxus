@@ -40,6 +40,8 @@ export interface IssueSummary {
   items: Record<string, number>;
   flags: number;
   missing_required_commentary: number;
+  // recorded model cost of the run steps attached to this issue
+  cost_usd?: number;
   document_version?: string;
   scheduled_at?: string;
   receipt?: ApprovalReceipt;
