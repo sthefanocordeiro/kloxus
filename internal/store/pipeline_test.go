@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -430,6 +431,13 @@ func TestIssueDocBundle(t *testing.T) {
 	if err != nil || len(srcs) == 0 {
 		t.Fatalf("Sources: %v len=%d", err, len(srcs))
 	}
+	// testPub seeds sources nameless; a real name exercises the
+	// COALESCE(s.name, c.name) path instead of the '' fallback
+	if _, err := db.ExecContext(ctx,
+		`UPDATE sources SET name = 'Feed A' WHERE workspace_id = $1 AND id = $2`,
+		db.ws, srcs[0].ID); err != nil {
+		t.Fatalf("name source: %v", err)
+	}
 	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "Body [1].")
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
@@ -497,9 +505,16 @@ func TestIssueDocBundle(t *testing.T) {
 		t.Fatalf("uncited item leaked into bundle")
 	}
 	got := b.Items[cited]
-	if got.Title != "t1" || got.Author != "me" || got.ContentText != "body1" ||
-		got.SourceID != srcs[0].ID || got.SourceName == "" || got.FetchedAt == "" {
-		t.Fatalf("cited item fields wrong: %+v", got)
+	if got.SourceName != "Feed A" || got.SourceType != "rss" {
+		t.Fatalf("joined source fields wrong: %+v", got)
+	}
+	// the contract is parity with the per-item path the bundle replaced
+	one, err := db.GetItem(ctx, cited)
+	if err != nil {
+		t.Fatalf("GetItem: %v", err)
+	}
+	if !reflect.DeepEqual(*got, *one) {
+		t.Fatalf("bundle item differs from GetItem:\nbundle:  %+v\ngetitem: %+v", got, one)
 	}
 
 	// issue without dossiers still resolves with an empty pair/item set
