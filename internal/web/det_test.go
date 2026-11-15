@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
@@ -87,6 +88,20 @@ func TestDeterministicModeJourney(t *testing.T) {
 	}
 	if iss.Status != "drafted" {
 		t.Fatalf("issue status = %q, want drafted", iss.Status)
+	}
+	// The deterministic draft is an honest compose skeleton: headline +
+	// sources, empty body slots — never source excerpts assembled into
+	// prose (KLOX-48).
+	for _, chunk := range strings.Split(iss.BodyMD, "### ")[1:] {
+		rest := strings.SplitN(chunk, "**Sources:**", 2)[0]
+		if i := strings.Index(rest, "\n"); i >= 0 {
+			if prose := strings.TrimSpace(rest[i:]); prose != "" {
+				t.Errorf("deterministic draft wrote prose: %.80s", prose)
+			}
+		}
+	}
+	if len(iss.Flags) != 0 {
+		t.Errorf("skeleton carried %d flag(s), want none — nothing to verify", len(iss.Flags))
 	}
 }
 

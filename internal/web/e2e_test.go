@@ -272,6 +272,7 @@ outer0:
 	if len(iss.Flags) == 0 {
 		t.Fatal("unchanged edit cleared the flag")
 	}
+	flagCount := len(iss.Flags)
 	// supported edit resolves it (grounded in a dossier fact for [1])
 	if rr := apiCall(t, srv, "PATCH", sents+flaggedID, map[string]any{
 		"text":      "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
@@ -279,8 +280,8 @@ outer0:
 		t.Fatalf("supported edit = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
-	if len(iss.Flags) != 0 {
-		t.Fatalf("supported edit left %d flag(s) — want the sentence replaced", len(iss.Flags))
+	if len(iss.Flags) >= flagCount {
+		t.Fatalf("supported edit left %d flag(s) — want the edited sentence's flag resolved", len(iss.Flags))
 	}
 	// resolve any remaining flags by removal
 	for len(iss.Flags) > 0 {

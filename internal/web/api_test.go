@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
 )
 
@@ -362,6 +363,13 @@ func TestAPIJourney(t *testing.T) {
 		map[string]any{"text": "Something entirely new.", "version": ver})
 	if c := apiErrCode(t, rr); c != "citation_required" {
 		t.Fatalf("uncited edit: code = %q", c)
+	}
+	// an existing but unrelated citation cannot clear the flag either —
+	// the claim must be supported by the cited source's stored text
+	rr = apiCall(t, srv, "PATCH", sents+flaggedID,
+		map[string]any{"text": flaggedText, "citations": []int{3}, "version": ver})
+	if c := apiErrCode(t, rr); c != "unsupported_claim" {
+		t.Fatalf("unrelated citation edit: code = %q", c)
 	}
 	// supported edit resolves the flag (grounded in a dossier fact)
 	rr = apiCall(t, srv, "PATCH", sents+flaggedID,
@@ -879,16 +887,45 @@ outer:
 	if flaggedID == "" {
 		t.Fatal("no flagged sentence")
 	}
+	// the fixture's flagged claim carries a number — marking it as
+	// interpretation is refused: a fact cannot escape the citation
+	// check by being relabeled (KLOX-48).
 	rr = apiCall(t, srv, "POST", issueURL+"/sentences/"+flaggedID+"/interpretation",
+		map[string]string{"text": "A leitura editorial é que a consulta pública muda o jogo.",
+			"version": doc["version"].(string)})
+	if c := apiErrCode(t, rr); c != "interpretation_restricted" {
+		t.Fatalf("numeric claim marked as interpretation: code = %q", c)
+	}
+	iss, _ := db.GetIssue(ctx, issueID)
+	if len(iss.Flags) == 0 {
+		t.Fatal("refused interpretation cleared the flag")
+	}
+	// a plain sentence with no number, date or quotation marks converts.
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	var cleanID string
+outer2:
+	for _, s := range doc["sections"].([]any) {
+		for _, i := range s.(map[string]any)["items"].([]any) {
+			for _, sn := range i.(map[string]any)["sentences"].([]any) {
+				snt := sn.(map[string]any)
+				if snt["flag"] == nil && snt["kind"] == "fact" &&
+					!pipeline.HasNumberDateOrQuote(snt["text"].(string)) {
+					cleanID = snt["id"].(string)
+					break outer2
+				}
+			}
+		}
+	}
+	if cleanID == "" {
+		t.Fatal("no clean sentence to mark as interpretation")
+	}
+	rr = apiCall(t, srv, "POST", issueURL+"/sentences/"+cleanID+"/interpretation",
 		map[string]string{"text": "A leitura editorial é que a consulta pública muda o jogo.",
 			"version": doc["version"].(string)})
 	if rr.Code != 200 {
 		t.Fatalf("interpretation = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
-	iss, _ := db.GetIssue(ctx, issueID)
-	if len(iss.Flags) != 0 {
-		t.Fatalf("interpretation left %d flags", len(iss.Flags))
-	}
+	iss, _ = db.GetIssue(ctx, issueID)
 	if !strings.Contains(iss.BodyMD, "> _Interpretação: A leitura editorial") {
 		t.Fatal("interpretation not stored as an editor-attributed block")
 	}

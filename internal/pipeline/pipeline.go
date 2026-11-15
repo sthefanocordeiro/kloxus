@@ -898,12 +898,13 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		headline, body string
 	}{}
 	if r.Deterministic {
-		// Draftable skeleton: each entry's body is the dossier summary
-		// plus its facts, every claim carrying a [n] citation.
+		// No-model draft = honest compose skeleton: headline + sources,
+		// empty body. Assembling source excerpts into prose would put
+		// words in the draft nobody wrote (KLOX-48).
 		for _, e := range entries {
 			draftByRef[e.ref] = struct {
 				headline, body string
-			}{e.title, synthBody(dossierByRef[e.ref])}
+			}{e.title, ""}
 		}
 		r.emit("draft", map[string]int{"entries": len(entries)})
 		r.record(ctx, pub.ID, issueID, "draft", "deterministic", start, llm.Response{})
@@ -923,6 +924,11 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 			"Items":       drItems,
 		}, &drafted)
 		if err != nil {
+			if _, ok := llm.AsBlocked(err); ok {
+				// Capped model = same honest fallback as model-off:
+				// store the compose skeleton, never excerpts (KLOX-48).
+				return r.ComposeSkeleton(ctx, pub, issueID)
+			}
 			return nil, fmt.Errorf("draft: %w", err)
 		}
 		res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
@@ -1020,10 +1026,15 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 			"Items":       ci,
 		}, &checks)
 		if err != nil {
-			return nil, fmt.Errorf("citecheck: %w", err)
+			if _, blocked := llm.AsBlocked(err); !blocked {
+				return nil, fmt.Errorf("citecheck: %w", err)
+			}
+			// Capped citecheck still lands the deterministic rules —
+			// the draft stays, flagged by the lexical floor (KLOX-48).
+		} else {
+			res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
+			r.record(ctx, pub.ID, issueID, "citecheck", r.TriageModel, start, resp)
 		}
-		res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
-		r.record(ctx, pub.ID, issueID, "citecheck", r.TriageModel, start, resp)
 	}
 
 	sentByID := map[int]sentRec{}
@@ -1053,16 +1064,53 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		}
 		addFlag(int64(s.itemRef), s.text, c.Note)
 	}
-	// deterministic rules: a body sentence with no citation, or an entry
-	// with no citation at all, is flagged without needing the model.
+	// deterministic rules (KLOX-48): these apply under the model too —
+	// the lexical test is the floor a model verdict cannot waive.
+	//   - a body sentence with no citation is flagged;
+	//   - every [n] must be a source of its item, and the cited source's
+	//     stored text must support the sentence ("not supported by [n]");
+	//   - a sentence copying ≥10 consecutive source words is rejected
+	//     ("too close to the source") unless it is a short attributed
+	//     quotation;
+	//   - an entry whose body carries no citation at all is flagged.
+	textByItemID, err := r.sourceTexts(ctx, dossierByRef)
+	if err != nil {
+		return nil, err
+	}
 	for _, s := range extractSentences(body) {
+		d := dossierByRef[s.itemRef]
 		if s.refs == "" {
 			addFlag(int64(s.itemRef), s.text, "sentence has no citation")
+		} else if d != nil {
+			byRef := map[int]DossierSource{}
+			for _, src := range d.Sources {
+				byRef[src.Ref] = src
+			}
+			for _, n := range CitationNums(s.refs) {
+				src, ok := byRef[n]
+				if !ok {
+					addFlag(int64(s.itemRef), s.text,
+						fmt.Sprintf("cites source [%d] that does not exist", n))
+					continue
+				}
+				if !SupportedBySource(s.text, textByItemID[src.ItemID]) {
+					addFlag(int64(s.itemRef), s.text,
+						fmt.Sprintf("not supported by [%d]", n))
+				}
+			}
+		}
+		if d != nil {
+			for _, src := range d.Sources {
+				if TooCloseToSource(s.text, textByItemID[src.ItemID]) {
+					addFlag(int64(s.itemRef), s.text, "too close to the source")
+					break
+				}
+			}
 		}
 	}
 	for _, e := range entries {
 		de, ok := draftByRef[e.ref]
-		if ok && !refRe.MatchString(de.body) {
+		if ok && de.body != "" && !refRe.MatchString(de.body) {
 			addFlag(int64(e.ref), truncate(de.body, 120), "entry has no citations")
 		}
 	}
@@ -1076,6 +1124,34 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	r.emit("citecheck", map[string]int{"checked": len(sents), "flagged": len(res.Flagged)})
 	res.Number = number
 	return res, nil
+}
+
+// sourceTexts batch-loads the stored body of every item a dossier
+// cites, keyed by item id — the corpus the citation floor and the
+// originality rule check against.
+func (r *Runner) sourceTexts(ctx context.Context, dossiers map[int]*Dossier) (map[int64]string, error) {
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, d := range dossiers {
+		for _, s := range d.Sources {
+			if s.ItemID != 0 && !seen[s.ItemID] {
+				seen[s.ItemID] = true
+				ids = append(ids, s.ItemID)
+			}
+		}
+	}
+	out := map[int64]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	items, err := r.DB.GetItems(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for id, it := range items {
+		out[id] = it.ContentText
+	}
+	return out, nil
 }
 
 // finish writes the stored issue body to outDir and returns the result.

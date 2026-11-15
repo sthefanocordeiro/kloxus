@@ -180,6 +180,15 @@ export function EvidencePane({
       .find((s) => s.id === sid)
       ?.evidence?.find((e) => e.ref === ref)?.excerpt;
 
+  // An inserted excerpt is a quotation, not a fact claim: keep it inside
+  // quotes, attribute it to the outlet, and cap it at 25 words so the
+  // draft's originality rule (10+ consecutive source words) accepts it.
+  const quotedExcerpt = (raw: string, name: string) => {
+    const words = raw.trim().split(/\s+/).filter(Boolean);
+    const clip = words.length > 25 ? words.slice(0, 25).join(" ") + "…" : words.join(" ");
+    return `“${clip}” — ${name}`;
+  };
+
   return (
     <div ref={flash} className="h-full space-y-4 overflow-y-auto p-3 text-sm">
       <p className="font-doc font-semibold leading-6">{item.headline}</p>
@@ -240,7 +249,8 @@ export function EvidencePane({
                   type="button"
                   onClick={() =>
                     setInsert((i) => ({
-                      text: evFor(s.ref) ?? s.excerpt, cite: s.ref, seq: (i?.seq ?? 0) + 1,
+                      text: quotedExcerpt(evFor(s.ref) ?? s.excerpt, s.name),
+                      cite: s.ref, seq: (i?.seq ?? 0) + 1,
                     }))
                   }
                   title={t.compose.insertExcerpt(s.ref)}
