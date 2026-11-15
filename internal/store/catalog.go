@@ -36,9 +36,6 @@ type CatalogSource struct {
 	LastFetchAt   string   `json:"last_fetch_at"`
 	LastStatus    string   `json:"last_status"`
 	RobotsAt      string   `json:"robots_at"`
-	Cursor        string   `json:"cursor"`
-	APIDay        string   `json:"api_day"`
-	APICount      int      `json:"api_count"`
 }
 
 // Fetchable reports whether the scheduler may request this source at
@@ -52,8 +49,7 @@ func (c CatalogSource) Fetchable() bool {
 // catalogCols mirrors scanCatalog row order.
 const catalogCols = `id, slug, name, kind, url, feed_url, policy, domain, crawl_delay_ms,
 	poll_minutes, body_mode, credit_author, strip_css, note, enabled, suspended,
-	suspend_reason, etag, last_modified, last_fetch_at, last_status, robots_at,
-	cursor, api_day, api_count`
+	suspend_reason, etag, last_modified, last_fetch_at, last_status, robots_at`
 
 func scanCatalog(row interface{ Scan(...any) error }) (*CatalogSource, error) {
 	var c CatalogSource
@@ -62,7 +58,7 @@ func scanCatalog(row interface{ Scan(...any) error }) (*CatalogSource, error) {
 		&c.Policy, &c.Domain, &c.CrawlDelayMS, &c.PollMinutes, &c.BodyMode,
 		&c.CreditAuthor, &strip, &c.Note, &c.Enabled, &c.Suspended,
 		&c.SuspendReason, &c.ETag, &c.LastModified, &lastFetch, &lastStatus,
-		&robotsAt, &c.Cursor, &c.APIDay, &c.APICount)
+		&robotsAt)
 	if err != nil {
 		return nil, err
 	}
@@ -157,31 +153,6 @@ func (p *Pool) CatalogTouchRobots(ctx context.Context, id int64) error {
 	return err
 }
 
-// CatalogSetCursor stores the Daily Journal poll cursor.
-func (p *Pool) CatalogSetCursor(ctx context.Context, id int64, cursor string) error {
-	_, err := p.db.ExecContext(ctx,
-		`UPDATE source_catalog SET cursor = $1 WHERE id = $2`, cursor, id)
-	return err
-}
-
-// CatalogAPICount returns how many API requests the source has used on
-// the current UTC day (the counter resets when the day rolls over).
-func (p *Pool) CatalogAPICount(ctx context.Context, id int64, day string) (int, error) {
-	var n int
-	err := p.db.QueryRowContext(ctx,
-		`SELECT CASE WHEN api_day = $1 THEN api_count ELSE 0 END FROM source_catalog WHERE id = $2`,
-		day, id).Scan(&n)
-	return n, err
-}
-
-// CatalogAPIIncr counts one API request on the current UTC day.
-func (p *Pool) CatalogAPIIncr(ctx context.Context, id int64, day string) error {
-	_, err := p.db.ExecContext(ctx, `UPDATE source_catalog SET
-		api_day = $1, api_count = CASE WHEN api_day = $1 THEN api_count + 1 ELSE 1 END
-		WHERE id = $2`, day, id)
-	return err
-}
-
 // CatalogItem is what the ingest scheduler stores per fetched entry.
 type CatalogItem struct {
 	ExternalID    string
@@ -206,6 +177,9 @@ func (p *Pool) SaveCatalogItems(ctx context.Context, catalogID int64, raw []Cata
 		if kind == "" {
 			kind = "article"
 		}
+		if IsPromoTitle(r.Title) {
+			kind = "promo"
+		}
 		meta := r.Meta
 		if meta == nil {
 			meta = map[string]any{}
@@ -224,18 +198,6 @@ func (p *Pool) SaveCatalogItems(ctx context.Context, catalogID int64, raw []Cata
 		}
 	}
 	return added, nil
-}
-
-// UpdateCatalogItemMeta merges fields into a stored item's meta_json —
-// used to attach a signal's on-demand detail (the outlets it cites)
-// after the row was first stored.
-func (p *Pool) UpdateCatalogItemMeta(ctx context.Context, catalogID int64, externalID string, meta map[string]any) error {
-	data, _ := json.Marshal(meta)
-	_, err := p.db.ExecContext(ctx,
-		`UPDATE items SET meta_json = (meta_json::jsonb || $3::jsonb)::text
-		 WHERE catalog_id = $1 AND external_id = $2`,
-		catalogID, externalID, string(data))
-	return err
 }
 
 // LogFetch appends one fetch outcome to the per-source log.
@@ -324,31 +286,34 @@ func (p *Pool) CatalogItemsPerWeek(ctx context.Context, catalogID int64) (int, e
 }
 
 // CatalogItemsStats reports, for the catalog sources a publication
-// picked, how many shared items are visible and how many arrived after
-// the last issue — the collect step's "new since last run" signal for
-// globally-ingested sources.
+// picked, how many shared items the run's candidate set would see and
+// how many arrived after the last issue — the collect step's "new
+// since last run" signal for globally-ingested sources. The same
+// bounds as ItemsForPublication apply: no promo rows, the 7-day window
+// (published date, fetched_at fallback) and at most 60 per source.
 func (db *DB) CatalogItemsStats(ctx context.Context, pubID int64) (total, fresh int, err error) {
 	err = db.QueryRowContext(ctx, `
 		SELECT count(*),
 		       count(*) FILTER (WHERE i.fetched_at > COALESCE(
 		           (SELECT max(created_at) FROM issues
 		            WHERE workspace_id = $1 AND publication_id = $2), '1970-01-01'))
-		FROM items i
-		WHERE i.catalog_id IN (SELECT catalog_id FROM sources
-		                       WHERE workspace_id = $1 AND publication_id = $2
-		                         AND catalog_id IS NOT NULL)`,
+		FROM (
+		  SELECT i.fetched_at,
+		    ROW_NUMBER() OVER (
+		      PARTITION BY 'c' || i.catalog_id
+		      ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
+		               i.id DESC
+		    ) AS rn,
+		    COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) AS eff
+		  FROM items i
+		  WHERE i.kind <> 'promo'
+		    AND i.catalog_id IN (SELECT catalog_id FROM sources
+		                         WHERE workspace_id = $1 AND publication_id = $2
+		                           AND catalog_id IS NOT NULL)
+		) i
+		WHERE i.rn <= 60 AND (i.eff IS NULL OR i.eff >= now() - interval '7 days')`,
 		db.ws, pubID).Scan(&total, &fresh)
 	return total, fresh, err
-}
-
-// IsBlockedDomain reports whether the catalog marks a domain as
-// blocked — a signal may cite it for display, but it is never fetched.
-func (p *Pool) IsBlockedDomain(ctx context.Context, domain string) (bool, error) {
-	var n int
-	err := p.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM source_catalog WHERE policy = 'blocked' AND domain = $1`,
-		strings.ToLower(strings.TrimSpace(domain))).Scan(&n)
-	return n > 0, err
 }
 
 // PurgeOldBodies clears stored article bodies older than the retention

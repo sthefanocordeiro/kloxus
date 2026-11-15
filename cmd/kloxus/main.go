@@ -85,7 +85,7 @@ usage:
   kloxus sources check --publication <ref>
   kloxus guide show --publication <ref>
   kloxus costs --publication <ref> [--last n]
-  kloxus ingest [--daemon] [--daily-journal]  poll the source catalog once (or on its schedule)
+  kloxus ingest [--daemon]                  poll the source catalog once (or on its schedule)
   kloxus ingest status                      show the global fetch log
   kloxus record --publication <ref> [--dir d]    regenerate LLM fixtures (real mode)
   kloxus record --live --def <yaml> [--dump-feeds d] [--sample-out d] [--dir d]
@@ -288,8 +288,8 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
 	if cfg.IngestEnabled {
 		// The global feed scheduler — feeds fetch once for every
-		// workspace (D29). Daily Journal stays behind its own flag.
-		sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, cfg.DailyJournal, log.Default())
+		// workspace (D29).
+		sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
 		go sched.Run(context.Background())
 	}
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
@@ -685,17 +685,16 @@ func cmdIngest(args []string) error {
 	}
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
 	daemon := fs.Bool("daemon", false, "keep polling on each source's schedule")
-	dj := fs.Bool("daily-journal", false, "also poll the Daily Journal signal source")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, pool, _, err := openDemoDB()
+	_, pool, _, err := openDemoDB()
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 	ctx := context.Background()
-	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, cfg.DailyJournal || *dj, log.Default())
+	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
 	if *daemon {
 		fmt.Println("ingest scheduler running (Ctrl+C to stop)")
 		sched.Run(ctx)

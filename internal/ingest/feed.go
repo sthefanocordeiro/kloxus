@@ -39,14 +39,9 @@ type Store interface {
 	CatalogMarkFetched(ctx context.Context, id int64, etag, lastModified, status string) error
 	CatalogSetSuspended(ctx context.Context, id int64, suspended bool, reason string) error
 	CatalogTouchRobots(ctx context.Context, id int64) error
-	CatalogSetCursor(ctx context.Context, id int64, cursor string) error
-	CatalogAPICount(ctx context.Context, id int64, day string) (int, error)
-	CatalogAPIIncr(ctx context.Context, id int64, day string) error
 	SaveCatalogItems(ctx context.Context, catalogID int64, raw []store.CatalogItem) (int, error)
-	UpdateCatalogItemMeta(ctx context.Context, catalogID int64, externalID string, meta map[string]any) error
 	LogFetch(ctx context.Context, catalogID int64, status string, httpStatus, items, newItems int, detail string) error
 	PurgeOldBodies(ctx context.Context, olderThan time.Time) (int64, error)
-	IsBlockedDomain(ctx context.Context, domain string) (bool, error)
 }
 
 // FeedFetcher fetches RSS catalog sources.

@@ -490,12 +490,8 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		r.emit("triage", map[string]int{"ranked": len(triage)})
 		r.record(ctx, pub.ID, issueID, "triage", r.TriageModel, start, resp)
 		for _, t := range triage {
-			// Daily Journal's outlet_count boosts the story: a signal that
-			// N outlets already covered is a stronger candidate (D30). The
-			// boost is applied post-call so prompts stay fixture-stable.
 			if t.Ref-1 >= 0 && t.Ref-1 < len(triIdx) {
 				si := triIdx[t.Ref-1]
-				t.Score += signalBoost(stories[si])
 				scoreByRef[si+1] = struct {
 					score  float64
 					reason string
@@ -1094,7 +1090,7 @@ func (r *Runner) finish(ctx context.Context, res *Result, outDir string) (*Resul
 // Dossier is the per-item research record stored as JSON.
 type Dossier struct {
 	Ref            int             `json:"ref"`
-	Title          string          `json:"title,omitempty"` // storylist-picked title, set at save time
+	Title          string          `json:"title,omitempty"`  // storylist-picked title, set at save time
 	Origin         string          `json:"origin,omitempty"` // "manual" when built without a model
 	Summary        string          `json:"summary"`
 	Facts          []DossierFact   `json:"facts"`
@@ -1595,26 +1591,10 @@ func triageOrder(stories []store.Story) []int {
 	return idx
 }
 
-// signalBoost returns the Daily Journal ranking boost for a story: the
-// largest outlet_count among its signal members, scaled to at most +2
-// score points (D30). Signals without DJ metadata contribute nothing.
-func signalBoost(s store.Story) float64 {
-	m := 0
-	for _, it := range s.Items {
-		if it.Meta.OutletCount > m {
-			m = it.Meta.OutletCount
-		}
-	}
-	if m > 5 {
-		m = 5
-	}
-	return float64(m) * 0.4
-}
-
-// evidenceItems drops signal rows (links-only HN/DJ entries) from a
+// evidenceItems drops signal rows (links-only HN entries) from a
 // story's member list for LLM and citation use: signals rank and
 // attribute but are never evidence (D30). Story membership in the DB
-// still includes them so the UI can show "via Daily Journal".
+// still includes them so the UI can show "via <source>".
 func evidenceItems(items []store.Item) []store.Item {
 	out := items[:0:0]
 	for _, it := range items {
@@ -1690,9 +1670,9 @@ func capEntrySources(items []store.Item) []store.Item {
 }
 
 // mergeCitedGroups folds a signal's cluster into the cluster holding an
-// article the signal cites — a Daily Journal story's sources[] links
-// point at the same reporting our launch feeds carried, so the signal
-// attaches to that story instead of clustering alone.
+// article the signal cites — a signal item's cited links point at the
+// same reporting our launch feeds carried, so the signal attaches to
+// that story instead of clustering alone.
 func mergeCitedGroups(groups map[int][]store.Item) map[int][]store.Item {
 	owner := map[string]int{}
 	for id, g := range groups {

@@ -154,6 +154,13 @@ export interface CandidatesResponse {
   sections: BoardSection[];
   demo: boolean;
   llm_mode: string;
+  // bench pagination (KLOX-45): the ranked pool is capped at the top
+  // 150 and the bench pages at page_size — in-issue stories ride along
+  // on every page so the lineup column is always complete.
+  page: number;
+  page_size: number;
+  bench_total: number;
+  has_more: boolean;
 }
 
 export interface StoryItem {
@@ -335,8 +342,9 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   return data as T;
 }
 
-// The real-mode catalog splits into offered rows (launch/signal —
-// pickable) and unavailable rows (hold/blocked — shown with a reason).
+// The real-mode catalog lists only offered rows (launch/signal —
+// pickable). hold/blocked sources are never fetched and never appear
+// in user-facing source lists (KLOX-45).
 export interface CatalogOffer {
   type: string;
   url: string;
@@ -347,15 +355,8 @@ export interface CatalogOffer {
   suspended?: boolean;
   note?: string;
 }
-export interface CatalogUnavailable {
-  name: string;
-  url: string;
-  policy: string;
-  note?: string;
-}
 export interface SourceCatalog {
   offered: CatalogOffer[];
-  unavailable: CatalogUnavailable[];
 }
 
 export const api = {
@@ -382,10 +383,14 @@ export const api = {
     request<{ item: IssueItem; pending: number; guide?: { version: number; added?: string[] } }>(
       "POST", `/api/v1/issues/${issueID}/items/${itemID}/decisions`, { kind, reason },
     ),
-  candidates: (issueID: number) =>
-    request<CandidatesResponse>("GET", `/api/v1/issues/${issueID}/candidates`),
+  candidates: (issueID: number, page = 0) =>
+    request<CandidatesResponse>("GET", `/api/v1/issues/${issueID}/candidates?page=${page}`),
   lineup: (issueID: number, entries: LineupEntry[]) =>
-    request<{ candidates: Candidate[]; guide?: { version: number; added?: string[] } }>(
+    request<{
+      candidates: Candidate[];
+      bench_total?: number; has_more?: boolean; page?: number; page_size?: number;
+      guide?: { version: number; added?: string[] };
+    }>(
       "PUT", `/api/v1/issues/${issueID}/lineup`, { entries },
     ),
   story: (sid: number) => request<{ story: StoryDetail }>("GET", `/api/v1/stories/${sid}`).then((r) => r.story),
@@ -462,8 +467,7 @@ export const api = {
   sources: (pubID: number | string) =>
     request<{ sources: SourceRow[] }>("GET", `/api/v1/publications/${pubID}/sources`).then((r) => r.sources),
   sourceCatalog: (pubID: number | string) =>
-    request<{ offered: CatalogOffer[]; unavailable?: CatalogUnavailable[] }>(
-      "GET", `/api/v1/publications/${pubID}/sources/catalog`),
+    request<SourceCatalog>("GET", `/api/v1/publications/${pubID}/sources/catalog`),
   sourcePreview: (pubID: number | string, type: string, url: string) =>
     request<{ items: PreviewItem[]; note?: string }>(
       "GET", `/api/v1/publications/${pubID}/sources/preview?type=${type}&url=${encodeURIComponent(url)}`),

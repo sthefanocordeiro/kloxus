@@ -28,10 +28,10 @@ func TestCatalogSeeded(t *testing.T) {
 	if byPolicy["launch"] != 6 {
 		t.Fatalf("launch sources=%d want 6", byPolicy["launch"])
 	}
-	if byPolicy["signal"] != 2 { // hacker-news + daily-journal
-		t.Fatalf("signal sources=%d want 2", byPolicy["signal"])
+	if byPolicy["signal"] != 1 { // hacker-news
+		t.Fatalf("signal sources=%d want 1", byPolicy["signal"])
 	}
-	for _, slug := range []string{"tecnoblog", "olhar-digital", "tabnews", "macmagazine", "meiobit", "startups", "hacker-news", "daily-journal", "canaltech", "techcrunch"} {
+	for _, slug := range []string{"tecnoblog", "olhar-digital", "tabnews", "macmagazine", "meiobit", "startups", "hacker-news", "canaltech", "techcrunch"} {
 		if !slugSeen[slug] {
 			t.Fatalf("catalog missing %s", slug)
 		}

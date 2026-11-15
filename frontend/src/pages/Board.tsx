@@ -171,6 +171,15 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const qc = useQueryClient();
   const candsQ = useQuery({ queryKey: ["candidates", issue.id], queryFn: () => api.candidates(issue.id) });
   const [board, setBoard] = useState<Board | null>(null);
+  // bench pagination (KLOX-45): the API pages the top-150 bench at 50
+  // a page; later pages merge into `extraBench`, and at most one page
+  // renders at a time.
+  const BENCH_PAGE = 50;
+  const [extraBench, setExtraBench] = useState<Candidate[]>([]);
+  const [pagesLoaded, setPagesLoaded] = useState(1);
+  const [serverHasMore, setServerHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [benchPage, setBenchPage] = useState(0);
   const [toast, setToast] = useState<{
     text: string;
     undo?: { kind: "board"; board: Board } | { kind: "reject"; itemID: number };
@@ -187,7 +196,13 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const [boardTab, setBoardTab] = useState<"bench" | "issue">("bench");
 
   useEffect(() => {
-    if (candsQ.data) setBoard(boardFrom(candsQ.data));
+    if (candsQ.data) {
+      setBoard(boardFrom(candsQ.data));
+      setExtraBench([]);
+      setPagesLoaded(1);
+      setServerHasMore(candsQ.data.has_more ?? false);
+      setBenchPage(0);
+    }
   }, [candsQ.data]);
 
   const showToast = useCallback(
@@ -210,7 +225,11 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     mutationFn: (v: { entries: LineupEntry[]; prev?: Board }) => api.lineup(issue.id, v.entries),
     onSuccess: (r) => {
       qc.setQueryData(["candidates", issue.id], (old: CandidatesResponse | undefined) =>
-        old ? { ...old, candidates: r.candidates } : old,
+        old ? {
+          ...old, candidates: r.candidates,
+          bench_total: r.bench_total ?? old.bench_total,
+          has_more: r.has_more ?? old.has_more,
+        } : old,
       );
     },
     onError: (e, v) => {
@@ -389,18 +408,53 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     setDropZone(zone);
   };
 
-  // --- keyboard: J/K navigate, Enter add/remove, 1-3 pick section ---
+  // Merge the loaded pages (page 0 lives in board.bench, later pages in
+  // extraBench), then show at most BENCH_PAGE cards at once — the spec
+  // caps the rendered bench at 50.
+  const benchAll = board ? [...board.bench, ...extraBench].sort((a, b) => a.rank - b.rank) : [];
+  const benchMatch = benchFiltered(benchAll, search, sectionFilter);
+  const benchPageCount = Math.max(1, Math.ceil(benchMatch.length / BENCH_PAGE));
+  const benchPageClamped = Math.min(benchPage, benchPageCount - 1);
+  const benchVisible = benchMatch.slice(benchPageClamped * BENCH_PAGE, benchPageClamped * BENCH_PAGE + BENCH_PAGE);
+
+  // Fetch the next bench page from the server and merge its candidates
+  // into the board — in-issue riders are already seated in sections, so
+  // only unseen story_ids join the bench.
+  const loadMoreBench = async () => {
+    if (loadingMore || !board) return;
+    setLoadingMore(true);
+    try {
+      const resp = await api.candidates(issue.id, pagesLoaded);
+      setPagesLoaded((n) => n + 1);
+      setServerHasMore(resp.has_more ?? false);
+      const seen = new Set<number>();
+      for (const c of board.bench) seen.add(c.story_id);
+      for (const c of extraBench) seen.add(c.story_id);
+      for (const items of Object.values(board.sections)) for (const c of items) seen.add(c.story_id);
+      const fresh = resp.candidates.filter((c) => !seen.has(c.story_id) && !c.in_issue);
+      setExtraBench((xs) => [...xs, ...fresh].sort((a, b) => a.rank - b.rank));
+      // jump to the page where the first new card lands
+      const merged = benchFiltered([...benchAll, ...fresh].sort((a, b) => a.rank - b.rank), search, sectionFilter);
+      const firstNew = merged.findIndex((c) => fresh.some((f) => f.story_id === c.story_id));
+      if (firstNew >= 0) setBenchPage(Math.floor(firstNew / BENCH_PAGE));
+    } catch (e) {
+      showToast(errText(t, e));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   const flatCards = useMemo(() => {
     if (!board) return [] as { key: string; cand: Candidate; where: string }[];
     const out: { key: string; cand: Candidate; where: string }[] = [];
-    for (const c of benchFiltered(board.bench, search, sectionFilter)) {
+    for (const c of benchVisible) {
       if (c.available) out.push({ key: `b${c.story_id}`, cand: c, where: "bench" });
     }
     for (const [sec, items] of Object.entries(board.sections)) {
       for (const c of items) out.push({ key: `s${c.story_id}`, cand: c, where: sec });
     }
     return out;
-  }, [board, search, sectionFilter]);
+  }, [board, benchVisible]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -453,7 +507,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const sections = candsQ.data.sections;
   const total = sections.reduce((n, s) => n + board.sections[s.title].length, 0);
   const draftReady = sections.every((s) => board.sections[s.title].length > 0);
-  const bench = benchFiltered(board.bench, search, sectionFilter);
+  const benchTotal = candsQ.data.bench_total ?? benchAll.length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -502,7 +556,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             )}
           >
             {tab === "bench" ? t.board.bench : t.board.issue}
-            {tab === "issue" ? ` (${total})` : ` (${board.bench.length})`}
+            {tab === "issue" ? ` (${total})` : ` (${benchTotal})`}
           </button>
         ))}
       </div>
@@ -518,6 +572,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         >
           <div className="mb-3 flex items-center gap-2">
             <h2 className="text-sm font-semibold">{t.board.bench}</h2>
+            <span className="text-xs text-muted">{benchTotal}</span>
             {candsQ.data?.llm_mode === "off" && <Badge tone="warn">{t.board.aiOff}</Badge>}
             <span className="flex-1" />
             <div className="relative">
@@ -542,8 +597,8 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             </select>
           </div>
           <div className={cn("space-y-2", dropZone === "bench" && "rounded-lg outline-dashed outline-2 outline-teal")}>
-            {bench.length === 0 && <p className="py-6 text-center text-xs text-muted">{t.board.emptyBench}</p>}
-            {bench.map((c, bi) => (
+            {benchVisible.length === 0 && <p className="py-6 text-center text-xs text-muted">{t.board.emptyBench}</p>}
+            {benchVisible.map((c, bi) => (
               <StoryCard
                 key={c.story_id}
                 c={c}
@@ -565,6 +620,36 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
               />
             ))}
           </div>
+          {(benchPageCount > 1 || serverHasMore || benchPageClamped > 0) && (
+            <div className="mt-3 flex items-center justify-center gap-2 text-xs text-muted">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={benchPageClamped === 0}
+                onClick={() => setBenchPage(benchPageClamped - 1)}
+              >
+                {t.board.benchPrev}
+              </Button>
+              <span>
+                {t.board.benchPageOf
+                  .replace("{page}", String(benchPageClamped + 1))
+                  .replace("{pages}", String(benchPageCount))}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={benchPageClamped >= benchPageCount - 1}
+                onClick={() => setBenchPage(benchPageClamped + 1)}
+              >
+                {t.board.benchNext}
+              </Button>
+              {serverHasMore && (
+                <Button variant="outline" size="sm" disabled={loadingMore} onClick={loadMoreBench}>
+                  {loadingMore ? t.board.benchLoading : t.board.benchLoadMore}
+                </Button>
+              )}
+            </div>
+          )}
         </section>
 
         {/* right: the issue's section slots */}
