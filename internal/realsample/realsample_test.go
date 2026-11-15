@@ -1,14 +1,18 @@
 package realsample_test
 
-// The recorded real run replays end to end: captured feeds in, recorded
-// Anthropic replies out — proving the artifacts shipped in the binary are
-// complete and self-consistent.
+// The captured real feeds produce an issue end to end under the
+// deterministic (llm_mode=off) pipeline — proving the artifacts shipped
+// in the binary are complete and self-consistent.
+//
+// The recorded Anthropic replies were removed in KLOX-46: they captured
+// the pre-fix union-find dedupe (one ~140-item mega-cluster), so no
+// bounded-dedupe run can replay them. A fresh recording needs
+// `kloxus record --live` — an owner-only, post-merge action.
 import (
 	"context"
 	"strconv"
 	"testing"
 
-	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/realsample"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
@@ -31,12 +35,12 @@ func TestRecordedRunReplays(t *testing.T) {
 		t.Fatalf("GetPublication: %v", err)
 	}
 	runner := &pipeline.Runner{
-		DB:           db,
-		LLM:          llm.Replay{FS: realsample.FS, Dir: "llm"},
-		Fetcher:      sources.CapturedFetcher{FS: realsample.FS},
-		TriageModel:  "claude-haiku-5-5",
-		DraftModel:   "claude-sonnet-5-5",
-		MaxDeepDives: 3,
+		DB:            db,
+		Deterministic: true,
+		Fetcher:       sources.CapturedFetcher{FS: realsample.FS},
+		TriageModel:   "claude-haiku-5-5",
+		DraftModel:    "claude-sonnet-5-5",
+		MaxDeepDives:  3,
 	}
 	res, err := runner.Run(ctx, pub, t.TempDir())
 	if err != nil {
