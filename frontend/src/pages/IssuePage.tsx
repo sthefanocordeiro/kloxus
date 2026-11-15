@@ -11,7 +11,7 @@ import { Commentary, DocActionsCtx, insideCommentary, IssueDoc, ItemHeading, Sec
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
-import { fmtDate } from "../lib/fmt";
+import { fmtDate, fmtUSD } from "../lib/fmt";
 
 // datetime-local inputs work in local time without a zone; the API gets
 // the same instant as RFC3339 via new Date(v).toISOString().
@@ -378,6 +378,11 @@ export function IssuePage() {
             );
           })}
         </ol>
+        {typeof issue.cost_usd === "number" && (
+          <span className="text-[11px] text-muted" title={t.runCost}>
+            {t.runCost} {fmtUSD(issue.cost_usd)}
+          </span>
+        )}
         <span className="flex-1" />
         {saved && (
           <span className="rounded-full bg-teal-soft px-2 py-0.5 text-[11px] text-teal">

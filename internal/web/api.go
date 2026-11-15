@@ -288,6 +288,11 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 		"missing_required_commentary": missing,
 		"document_version":            docVersion(iss),
 	}
+	// The run's recorded model cost travels with the issue so the
+	// creator always sees what this issue cost (KLOX-44).
+	if cost, err := db(r).IssueCostUSD(ctx, iss.ID); err == nil {
+		m["cost_usd"] = cost
+	}
 	if iss.ScheduledAt != "" {
 		m["scheduled_at"] = iss.ScheduledAt
 	}

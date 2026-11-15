@@ -13,6 +13,7 @@ const dict = {
     sources: "Sources",
     workspace: "Workspace",
     issue: "Issue",
+    runCost: "run cost",
     status: {
       "": "preparing",
       reviewing: "decisions",
@@ -418,6 +419,7 @@ const dict = {
     sources: "Fontes",
     workspace: "Espaço",
     issue: "Edição",
+    runCost: "custo da coleta",
     status: {
       "": "preparando",
       reviewing: "decisões",

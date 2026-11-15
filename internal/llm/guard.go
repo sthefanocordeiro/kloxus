@@ -24,6 +24,9 @@ const (
 	ReasonWorkspaceRuns  BlockedReason = "workspace_run_budget"
 	ReasonWorkspaceToken BlockedReason = "workspace_token_budget"
 	ReasonDailyCap       BlockedReason = "daily_spend_cap"
+	// ReasonRunSpend stops a run whose recorded cost reached the
+	// per-run dollar cap (KLOX-44).
+	ReasonRunSpend BlockedReason = "run_spend_cap"
 )
 
 // BlockedError says a guard refused a model call or a run. It carries a
@@ -71,6 +74,7 @@ const killSetting = "llm_kill"
 type runScope struct {
 	ws   string
 	used int64
+	cost float64 // recorded USD so far inside this run scope
 }
 
 type scopeKey struct{}
@@ -106,6 +110,10 @@ type Guard struct {
 	RunsPerDay int
 	// TokensPerRun caps total input+output tokens inside one run scope.
 	TokensPerRun int64
+	// RunCapUSD caps the recorded cost inside one run scope (KLOX-44):
+	// the next call after the cap is reached is refused and the run
+	// stops.
+	RunCapUSD float64
 	// DailyCapUSD caps the recorded global spend per UTC day.
 	DailyCapUSD float64
 	// KillEnv names the env kill switch (default KLOXUS_LLM_KILL): any
@@ -273,9 +281,19 @@ func (g *Guard) Complete(ctx context.Context, req Request) (Response, error) {
 		return Response{}, &BlockedError{Reason: ReasonKillSwitch,
 			Message: "Model calls are paused by the operator right now — the recorded sample is shown instead."}
 	}
+	// Prompt-size caps bind every request before the provider sees it —
+	// an oversized prompt is a run error, never retried, never swapped
+	// for a bigger call (KLOX-44).
+	if err := CheckSize(req); err != nil {
+		return Response{}, err
+	}
 	if g.TokensPerRun > 0 && scope.used >= 0 && scope.used >= g.TokensPerRun {
 		return Response{}, &BlockedError{Reason: ReasonWorkspaceToken,
 			Message: fmt.Sprintf("This run passed its token budget of %d — the recorded sample is shown instead.", g.TokensPerRun)}
+	}
+	if g.RunCapUSD > 0 && scope.used >= 0 && scope.cost >= g.RunCapUSD {
+		return Response{}, &BlockedError{Reason: ReasonRunSpend,
+			Message: fmt.Sprintf("This run reached its cost limit of $%.2f — the recorded sample is shown instead.", g.RunCapUSD)}
 	}
 	if g.DailyCapUSD > 0 && g.spendToday(ctx) >= g.DailyCapUSD {
 		return Response{}, &BlockedError{Reason: ReasonDailyCap,
@@ -287,6 +305,7 @@ func (g *Guard) Complete(ctx context.Context, req Request) (Response, error) {
 	}
 	if scope.used >= 0 {
 		scope.used += int64(resp.InputTokens + resp.OutputTokens)
+		scope.cost += CostUSD(req.Model, resp.InputTokens, resp.OutputTokens)
 	}
 	if g.Store != nil {
 		if err := g.Store.LLMCall(ctx, scope.ws, req.Model,
