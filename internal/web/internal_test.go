@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 )
 
 // TestRemoveInItemDropsCitationMarker: removing a flagged sentence
@@ -159,7 +161,10 @@ func TestRemoveRawBulk(t *testing.T) {
 // TestInsertRawBatchRestore exercises the multi-entry splice the batch
 // undo performs: entries land at their recorded index in ascending
 // order while the raw sequence is kept in sync between inserts — an
-// original [A,B,C,D] minus {B,D} must come back exactly.
+// original [A,B,C,D] minus {B,D} must come back exactly. The second
+// half covers the mid-line '. ' separator: a newline splice would
+// leave 'X [1].' at line end, where SplitSentences re-attaches the '.'
+// to the raw — the bug the KLOX-47 CI caught.
 func TestInsertRawBatchRestore(t *testing.T) {
 	// the stored body keeps one sentence per line
 	seg := "A.\nC.\n\n**Sources:** [1] x"
@@ -194,5 +199,41 @@ func TestInsertRawBatchRestore(t *testing.T) {
 	i, j := strings.Index(seg, "Z."), strings.Index(seg, "**Sources:**")
 	if i < 0 || i > j {
 		t.Fatalf("overflow index must land before sources: %q", seg)
+	}
+}
+
+// TestInsertRawMidLineSeparator: the drafted body keeps sentences on
+// one line separated by '. ' — restoring a mid-line entry must splice
+// inline so the '. ' keeps bounding the previous piece ('transição [1]'
+// must not come back as 'transição [1].').
+func TestInsertRawMidLineSeparator(t *testing.T) {
+	seg := "S0 [1]. S1 [1]. Duas associações [1]. Especialistas [4]. A norma [1].\n\n**Sources:** x"
+	cur := []string{"S0 [1]", "S1 [1]", "Duas associações [1]", "Especialistas [4]", "A norma [1]."}
+	// restoring 'O texto [1]' at index 3 must be byte-identical to a
+	// segment that never lost it
+	got := insertRaw(seg, cur, 3, "O texto prevê multa [1]")
+	want := "S0 [1]. S1 [1]. Duas associações [1]. O texto prevê multa [1]. Especialistas [4]. A norma [1].\n\n**Sources:** x"
+	if got != want {
+		t.Fatalf("mid-line splice = %q, want %q", got, want)
+	}
+	// and the pieces the parser sees must be exactly the original raws —
+	// 'Duas associações [1]' must not come back as 'Duas associações [1].'
+	line := strings.TrimSpace(strings.SplitN(got, "\n\n", 2)[0])
+	pieces := pipeline.SplitSentences(line)
+	if want := []string{"S0 [1]", "S1 [1]", "Duas associações [1]", "O texto prevê multa [1]", "Especialistas [4]", "A norma [1]."}; !slices.Equal(pieces, want) {
+		t.Fatalf("re-parsed pieces = %#v, want %#v", pieces, want)
+	}
+
+	// restoring at index 0 lands the entry on its own line — the piece
+	// is identical even though the bytes differ from the original
+	got = insertRaw("S1 [1]. S2 [1].", []string{"S1 [1]", "S2 [1]."}, 0, "S0 [1]")
+	if want := "S0 [1]\nS1 [1]. S2 [1]."; got != want {
+		t.Fatalf("index-0 mid-line splice = %q, want %q", got, want)
+	}
+
+	// an interpretation still lands on its own '>' line even mid-item
+	got = insertRaw("A [1]. B [1].", []string{"A [1]", "B [1]."}, 1, "> _Interpretação: boa_")
+	if !strings.Contains(got, "\n> _Interpretação: boa_\n") {
+		t.Fatalf("interpretation not on its own line: %q", got)
 	}
 }

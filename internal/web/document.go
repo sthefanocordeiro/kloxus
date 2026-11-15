@@ -585,15 +585,65 @@ func insertRaw(seg string, raws []string, idx int, raw string) string {
 			pos = i
 		}
 	}
-	// raw is a block of whole lines; splice it in on line boundaries
+	// raw is a block of whole lines; splice it in on sentence boundaries.
+	// The stored body keeps several sentences per line separated by
+	// '. ' — mid-line, that separator belongs to no raw. A '\n' between
+	// the separator and the next piece would leave 'X [1].' at line
+	// end, where SplitSentences re-attaches the '.' to the raw ('X [1]'
+	// becomes 'X [1].'), changing its text, id and flag match.
 	head := seg[:pos]
-	if head != "" && !strings.HasSuffix(head, "\n") {
-		raw = "\n" + raw
+	switch {
+	case pos == len(seg):
+		// append at the segment end: a fact rides the last line so no
+		// separator can re-attach; a '>' block still needs its own line
+		if head != "" && !strings.HasSuffix(head, "\n") {
+			if strings.HasPrefix(raw, ">") {
+				raw = "\n" + raw
+			} else if !strings.HasSuffix(head, " ") {
+				raw = " " + raw
+			}
+		}
+		return head + raw
+	case strings.HasPrefix(raw, ">") || punctTerminated(raw):
+		// interpretation blocks parse only at line start, and a raw that
+		// already ends '.', '!' or '?' must stay at line end to survive
+		// the round-trip — both splice on their own line
+		if head != "" && !strings.HasSuffix(head, "\n") {
+			raw = "\n" + raw
+		}
+		if !strings.HasSuffix(raw, "\n") {
+			raw += "\n"
+		}
+		return head + raw + seg[pos:]
+	case head == "" || strings.HasSuffix(head, "\n"):
+		// line boundary — the entry gets its own line
+		return head + raw + "\n" + seg[pos:]
+	case sentenceSepTail(head):
+		// the previous piece ended with a '. '/'! '/'? ' separator:
+		// splice inline so it keeps bounding the previous piece and a
+		// fresh '. ' bounds the entry — byte-identical to a segment
+		// where the sentence was never removed
+		return head + raw + ". " + seg[pos:]
+	default:
+		// a bare-space separator (post-citation split 'urbana. [1] next')
+		// leaves the '.' inside the previous raw — a line splice keeps
+		// every piece identical
+		raw = "\n" + raw + "\n"
+		return head + raw + seg[pos:]
 	}
-	if pos < len(seg) && !strings.HasSuffix(raw, "\n") {
-		raw += "\n"
-	}
-	return head + raw + seg[pos:]
+}
+
+// punctTerminated reports whether a sentence raw ends in terminal
+// punctuation — such raws only parse identically at end of line.
+func punctTerminated(raw string) bool {
+	return strings.HasSuffix(raw, ".") || strings.HasSuffix(raw, "!") || strings.HasSuffix(raw, "?")
+}
+
+// sentenceSepTail reports whether head ends with a '. '/'! '/'? '
+// separator — the split point SplitSentences consumed between pieces.
+func sentenceSepTail(head string) bool {
+	return len(head) >= 2 && strings.ContainsRune(".!?", rune(head[len(head)-2])) &&
+		(head[len(head)-1] == ' ' || head[len(head)-1] == '\t')
 }
 
 // insertInItem writes composed raw back into the item's span at the
