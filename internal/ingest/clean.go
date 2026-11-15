@@ -7,6 +7,7 @@ package ingest
 import (
 	"html"
 	"net/url"
+	"regexp"
 	"strings"
 
 	xhtml "golang.org/x/net/html"
@@ -108,10 +109,39 @@ func plainText(raw string) string {
 	return normalizeText(html.UnescapeString(b.String()))
 }
 
+// Feed boilerplate (KLOX-48): rendered text still carries publisher
+// chrome that must never become a sentence — WordPress link-back
+// footers, photo credits, affiliate calls and AI-summary blocks.
+var (
+	// "O post <title> apareceu primeiro em <outlet>." — the feed's
+	// link-back footer (Olhar Digital, Startups, others).
+	feedFooterRe = regexp.MustCompile(`(?i)^O post .+ apareceu primeiro em .+\.?$`)
+	// "Participe dos canais de ofertas…" — Tecnoblog's offer-widget call.
+	offerCallRe = regexp.MustCompile(`(?i)participe dos canais de ofertas`)
+	// A trailing photo credit: "| Foto: X", "– Imagem: X", "(foto: X)",
+	// "(imagens originais: X)". Requires the keyword and a colon so a
+	// caption like "| Fotos tiradas de dia" (no colon) is kept.
+	creditTailRe = regexp.MustCompile(`(?i)(?:[|–—-]\s*|\()(?:fotos?|image[mn]s?|ilustra\S*)\b[^)\n:]{0,60}:[^)\n]*\)?\s*$`)
+	// …or a capitalized bare tail, ". Imagem: Lightspring – Shutterstock" —
+	// case-sensitive so a lowercase mid-sentence "a imagem do produto"
+	// is never mistaken for a credit.
+	creditCapRe = regexp.MustCompile(`(?:^|\s)(?:Foto|Imagem|Ilustra\S*)\s*:[^)\n]{0,120}$`)
+	// Tecnoblog's AI-summary box renders as a "Resumo IA" heading
+	// followed by bullet paragraphs and a "Gerado com IA…" tail — the
+	// whole block is model filler, not reporting.
+	resumoHeadRe = regexp.MustCompile(`(?i)^resumo\s+ia\b`)
+	resumoTailRe = regexp.MustCompile(`(?i)^gerado com ia\b`)
+)
+
+// resumoBlockMax bounds how many non-blank lines a "Resumo IA" block
+// may span when its "Gerado com IA" tail never arrives.
+const resumoBlockMax = 12
+
 func normalizeText(s string) string {
 	lines := strings.Split(s, "\n")
 	var out []string
 	blank := false
+	resumo := 0 // non-blank lines still droppable inside a Resumo IA block
 	for _, l := range lines {
 		l = strings.Join(strings.Fields(l), " ")
 		if l == "" {
@@ -119,6 +149,28 @@ func normalizeText(s string) string {
 				out = append(out, "")
 			}
 			blank = true
+			continue
+		}
+		if resumo > 0 {
+			resumo--
+			if resumoTailRe.MatchString(l) {
+				resumo = 0
+			}
+			continue
+		}
+		switch {
+		case resumoHeadRe.MatchString(l):
+			resumo = resumoBlockMax
+			continue
+		case feedFooterRe.MatchString(l), offerCallRe.MatchString(l):
+			continue
+		}
+		for _, re := range []*regexp.Regexp{creditTailRe, creditCapRe} {
+			if c := re.FindString(l); c != "" {
+				l = strings.TrimSpace(l[:len(l)-len(c)])
+			}
+		}
+		if l == "" {
 			continue
 		}
 		blank = false

@@ -276,12 +276,16 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 		t.Fatalf("RenderPrompt draft: %v", err)
 	}
 
-	draftText := `{"entries":[{"ref":1,"headline":"Um","body_md":"Fato um [1]."},{"ref":2,"headline":"Dois","body_md":"Fato dois [1]."}]}`
+	// Item 2's stored text is "Um rumor sobre um gadget que não
+	// existe." — the draft sentence must stay inside its lexicon or
+	// the deterministic support floor adds a flag the test does not
+	// seed.
+	draftText := `{"entries":[{"ref":1,"headline":"Um","body_md":"Fato um [1]."},{"ref":2,"headline":"Dois","body_md":"Rumor de gadget confirmado [1]."}]}`
 	draftByRef := map[int]struct {
 		headline, body string
 	}{
 		1: {headline: "Um", body: "Fato um [1]."},
-		2: {headline: "Dois", body: "Fato dois [1]."},
+		2: {headline: "Dois", body: "Rumor de gadget confirmado [1]."},
 	}
 	sectionOrder := []string{pub.Sections[0].Title}
 	checkBody := assembleIssue(pub, resA.Number, allEntries, draftByRef, allDossiers, sectionOrder)

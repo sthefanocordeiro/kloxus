@@ -2183,7 +2183,7 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 			seen[n] = true
 			composed += fmt.Sprintf(" [%d]", n)
 		}
-		if !s.editSupportedFor(r, loc.item, int64(loc.item.Ref), composed) {
+		if !s.editSupportedFor(r, loc.item, doc.dctx, int64(loc.item.Ref), composed) {
 			apiErr(w, 409, "unsupported_claim",
 				"the citation check still cannot verify this sentence against the cited source — the flag stays",
 				apiReason{Code: "unsupported_claim", Message: "edit could not be verified against the cited source",
@@ -2524,6 +2524,16 @@ func (s *Server) apiSentenceInterpretation(w http.ResponseWriter, r *http.Reques
 	}
 	if text == "" {
 		apiErr(w, 400, "validation", "interpretation text cannot be empty")
+		return
+	}
+	// (KLOX-48) a claim carrying a number, a date or a quotation is a
+	// fact, not an opinion — it may not escape the citation check by
+	// being relabeled; fix the claim or remove it.
+	if pipeline.HasNumberDateOrQuote(loc.sentence.Text) || pipeline.HasNumberDateOrQuote(text) {
+		apiErr(w, 409, "interpretation_restricted",
+			"a claim with a number, a date or a quotation cannot be marked as interpretation — fix it or remove it",
+			apiReason{Code: "interpretation_restricted", Message: "sentence contains a number, a date or a quotation",
+				Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
 		return
 	}
 	ctx := r.Context()
@@ -3334,26 +3344,55 @@ func (s *Server) apiDemoNew(w http.ResponseWriter, r *http.Request) {
 // editSupportedFor re-runs the citation check for an edited sentence
 // against a document item's dossier — already parsed in the document
 // context, no second store lookup.
-func (s *Server) editSupportedFor(r *http.Request, item *docItem, itemRef int64, text string) bool {
+func (s *Server) editSupportedFor(r *http.Request, item *docItem, dc *docContext, itemRef int64, text string) bool {
 	d := item.dossier
 	if d == nil {
 		return false
 	}
-	return s.dossierSupports(r, d, itemRef, text)
+	return s.dossierSupports(r, d, dc, itemRef, text)
 }
 
 var refRe = regexp.MustCompile(`\[\d+\]`)
 
-// dossierSupports is the citation check for one edited sentence: the
-// model verdict when available (real mode), otherwise the deterministic
-// overlap check against the dossier facts that carry the cited refs.
-func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef int64, text string) bool {
-	refs := map[int]bool{}
-	for _, m := range refRe.FindAllString(text, -1) {
-		n, _ := strconv.Atoi(strings.Trim(m, "[]"))
-		refs[n] = true
+// dossierSupports is the citation check for one edited sentence
+// (KLOX-48): every [n] must be a source of the item, and the cited
+// source's stored text must pass the shared lexical floor — the model
+// verdict (real mode) can only tighten that floor, never waive it, so
+// an unrelated [n] can never clear a flag.
+func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docContext, itemRef int64, text string) bool {
+	byRef := map[int]pipeline.DossierSource{}
+	for _, src := range d.Sources {
+		byRef[src.Ref] = src
 	}
-	// model check first (real mode); demo misses fall to the local check.
+	// Lexical floor against the cited sources' stored text. When an
+	// item carries no stored body (a signal row) the dossier facts
+	// attributed to that ref — themselves verbatim excerpts — are the
+	// only corpus left.
+	var corpus []string
+	for _, n := range pipeline.CitationNums(text) {
+		src, ok := byRef[n]
+		if !ok {
+			return false // cites a source that does not exist
+		}
+		if dc != nil {
+			if it, ok := dc.items[src.ItemID]; ok && it.ContentText != "" {
+				corpus = append(corpus, it.ContentText)
+				continue
+			}
+		}
+		for _, f := range append(append([]pipeline.DossierFact{}, d.Facts...), d.DeepFacts...) {
+			if f.Ref == n {
+				corpus = append(corpus, f.Text)
+			}
+		}
+	}
+	if len(corpus) == 0 {
+		corpus = append(corpus, d.Summary)
+	}
+	if !pipeline.SupportedBySource(text, strings.Join(corpus, " ")) {
+		return false
+	}
+	// model check on top of the floor (real mode); demo misses mean ok.
 	// "manual" dossiers (deterministic compose) skip the model entirely —
 	// the manual-compose flow must work with zero model calls, and its
 	// sentences are editor-written, not model claims to re-verify.
@@ -3379,31 +3418,7 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef i
 			}
 		}
 	}
-	// deterministic fallback: ≥60% of content words must appear in a
-	// fact (or the summary) attributed to one of the cited refs.
-	var grounded []string
-	for _, f := range append(append([]pipeline.DossierFact{}, d.Facts...), d.DeepFacts...) {
-		if refs[f.Ref] {
-			grounded = append(grounded, f.Text)
-		}
-	}
-	grounded = append(grounded, d.Summary)
-	corpus := strings.ToLower(strings.Join(grounded, " "))
-	plain := refRe.ReplaceAllString(text, "")
-	words := strings.FieldsFunc(strings.ToLower(plain), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	})
-	var content, hit int
-	for _, w := range words {
-		if len(w) < 3 {
-			continue
-		}
-		content++
-		if strings.Contains(corpus, w) {
-			hit++
-		}
-	}
-	return content > 0 && float64(hit)/float64(content) >= 0.6
+	return true
 }
 
 // sourceURL returns the URL of a source owned by the publication in the
