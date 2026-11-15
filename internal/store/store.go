@@ -79,6 +79,26 @@ func (p *Pool) Close() error { return p.db.Close() }
 // Ping verifies the database answers.
 func (p *Pool) Ping() error { return p.db.Ping() }
 
+// KeepAlive pings the pool on an interval until ctx ends. Supabase's
+// pooler reaps idle connections, so after a quiet stretch every pooled
+// handle is gone and the first query of the next request pays a fresh
+// TCP+TLS+auth handshake on top of the normal RTT — one warm conn
+// avoids that tail on the p95 criteria (KLOX-47).
+func (p *Pool) KeepAlive(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			p.db.PingContext(pctx)
+			cancel()
+		}
+	}
+}
+
 // For returns the repository handle scoped to workspace id. Every query
 // a DB method runs carries that workspace's id — no repo method can
 // read or write another tenant's rows.

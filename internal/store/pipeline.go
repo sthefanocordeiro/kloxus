@@ -658,6 +658,226 @@ func (db *DB) IssueItemDossiers(ctx context.Context, issueID int64) ([]IssueItem
 	return out, rows.Err()
 }
 
+// IssueDocBundle is everything the issue-document path needs, fetched
+// in a single Postgres round-trip: the issue row, its publication, the
+// issue items joined to their dossiers, and every item the dossiers
+// cite. On hosted Postgres each statement pays a real network RTT
+// (~150 ms to the remote pool), so the five-statement chain that used
+// to build a document is collapsed into one JSON-aggregated SELECT
+// (KLOX-47 latency criteria).
+type IssueDocBundle struct {
+	Issue *Issue
+	Pub   *Publication
+	Pairs []IssueItemDossier
+	Items map[int64]*Item
+}
+
+// bundlePair mirrors one issue_items⋈dossiers row as json_agg emits it.
+type bundlePair struct {
+	ID          int64   `json:"id"`
+	IssueID     int64   `json:"issue_id"`
+	StoryID     int64   `json:"story_id"`
+	Section     string  `json:"section"`
+	Score       float64 `json:"score"`
+	Reason      string  `json:"reason"`
+	Status      string  `json:"status"`
+	Origin      string  `json:"origin"`
+	Position    int     `json:"position"`
+	OrigSection string  `json:"orig_section"`
+	Dossier     string  `json:"dossier"`
+}
+
+// bundleItem mirrors one items row with the source/coalesce aliases
+// itemCols produces — nullable columns decode through pointers.
+type bundleItem struct {
+	ID            int64   `json:"id"`
+	SourceID      *int64  `json:"source_id"`
+	CatalogID     *int64  `json:"catalog_id"`
+	SourceName    string  `json:"source_name"`
+	SourceURL     string  `json:"source_url"`
+	SourceType    string  `json:"source_type"`
+	ExternalID    *string `json:"external_id"`
+	URL           string  `json:"url"`
+	CanonicalURL  *string `json:"canonical_url"`
+	Title         string  `json:"title"`
+	Author        *string `json:"author"`
+	PublishedAt   *string `json:"published_at"`
+	ContentText   string  `json:"content_text"`
+	Kind          string  `json:"kind"`
+	Meta          string  `json:"meta_json"`
+	BodyTruncated bool    `json:"body_truncated"`
+	FetchedAt     string  `json:"fetched_at"`
+}
+
+// IssueDocBundle loads the whole document context in one query — see
+// IssueDocBundle for why. sql.ErrNoRows when the issue (or its
+// publication) is missing.
+func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundle, error) {
+	var iss Issue
+	var pub Publication
+	var flags, commentary, sections, paywall, pairsJSON, itemsJSON string
+	err := db.QueryRowContext(ctx, `
+		SELECT i.id, i.publication_id, i.number, i.status, i.subject, i.body_md,
+		       i.flags_json, i.commentary_json, i.created_at, i.scheduled_at,
+		       p.id, p.slug, p.name, p.language, p.topic, p.audience, p.editorial_line,
+		       p.tone, p.frequency, p.sections_json, p.paywall_json, p.ai_disclosure, p.custom,
+		       (SELECT COALESCE(json_agg(row_to_json(x) ORDER BY x.score DESC), '[]')
+		        FROM (
+		            SELECT ii.id, ii.issue_id, ii.story_id, ii.section, ii.score, ii.reason,
+		                   ii.status, ii.origin, ii.position, ii.orig_section,
+		                   COALESCE(d.json, '') AS dossier
+		            FROM issue_items ii
+		            LEFT JOIN dossiers d ON d.workspace_id = ii.workspace_id AND d.issue_item_id = ii.id
+		            WHERE ii.workspace_id = i.workspace_id AND ii.issue_id = i.id
+		            ORDER BY ii.score DESC) x),
+		       (SELECT COALESCE(json_agg(row_to_json(y)), '[]')
+		        FROM (
+		            SELECT it.id, it.source_id, it.catalog_id,
+		                   COALESCE(s.name, c.name, '') AS source_name,
+		                   COALESCE(s.url, c.url, '') AS source_url,
+		                   COALESCE(s.type, 'rss') AS source_type,
+		                   it.external_id, it.url, it.canonical_url, it.title, it.author,
+		                   it.published_at, it.content_text, it.kind, it.meta_json,
+		                   it.body_truncated, it.fetched_at
+		            FROM items it
+		            LEFT JOIN sources s ON s.id = it.source_id
+		            LEFT JOIN source_catalog c ON c.id = it.catalog_id
+		            WHERE (it.workspace_id = i.workspace_id OR it.catalog_id IS NOT NULL)
+		              AND it.id = ANY(
+		                  SELECT DISTINCT NULLIF(el->>'item_id','')::bigint
+		                  FROM issue_items ii2
+		                  JOIN dossiers d2 ON d2.workspace_id = ii2.workspace_id AND d2.issue_item_id = ii2.id
+		                  CROSS JOIN LATERAL jsonb_array_elements(
+		                              COALESCE(NULLIF(d2.json,'')::jsonb -> 'sources', '[]'::jsonb)) el
+		                  WHERE ii2.workspace_id = i.workspace_id AND ii2.issue_id = i.id)) y)
+		FROM issues i
+		JOIN publications p ON p.workspace_id = i.workspace_id AND p.id = i.publication_id
+		WHERE i.workspace_id = $1 AND i.id = $2`, db.ws, issueID).
+		Scan(&iss.ID, &iss.PublicationID, &iss.Number, &iss.Status, &iss.Subject,
+			&iss.BodyMD, &flags, &commentary, &iss.CreatedAt, &iss.ScheduledAt,
+			&pub.ID, &pub.Slug, &pub.Name, &pub.Language, &pub.Topic, &pub.Audience,
+			&pub.EditorialLine, &pub.Tone, &pub.Frequency, &sections, &paywall,
+			&pub.AIDisclosure, &pub.Custom, &pairsJSON, &itemsJSON)
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(flags), &iss.Flags)
+	json.Unmarshal([]byte(commentary), &iss.Commentary)
+	if err := json.Unmarshal([]byte(sections), &pub.Sections); err != nil {
+		return nil, fmt.Errorf("decoding sections for %q: %w", pub.Slug, err)
+	}
+	if err := json.Unmarshal([]byte(paywall), &pub.Paywall); err != nil {
+		return nil, fmt.Errorf("decoding paywall for %q: %w", pub.Slug, err)
+	}
+	b := &IssueDocBundle{Issue: &iss, Pub: &pub, Items: map[int64]*Item{}}
+	var pairs []bundlePair
+	if err := json.Unmarshal([]byte(pairsJSON), &pairs); err != nil {
+		return nil, fmt.Errorf("decoding issue items for %d: %w", issueID, err)
+	}
+	for _, p := range pairs {
+		b.Pairs = append(b.Pairs, IssueItemDossier{
+			Item: IssueItem{
+				ID: p.ID, IssueID: p.IssueID, StoryID: p.StoryID, Section: p.Section,
+				Score: p.Score, Reason: p.Reason, Status: p.Status, Origin: p.Origin,
+				Position: p.Position, OrigSection: p.OrigSection,
+			},
+			Dossier: p.Dossier,
+		})
+	}
+	var items []bundleItem
+	if err := json.Unmarshal([]byte(itemsJSON), &items); err != nil {
+		return nil, fmt.Errorf("decoding cited items for %d: %w", issueID, err)
+	}
+	for _, it := range items {
+		item := &Item{
+			ID: it.ID, SourceName: it.SourceName, SourceURL: it.SourceURL,
+			SourceType: it.SourceType, URL: it.URL, Title: it.Title,
+			ContentText: it.ContentText, Kind: it.Kind,
+			BodyTruncated: it.BodyTruncated, FetchedAt: it.FetchedAt,
+		}
+		if it.SourceID != nil {
+			item.SourceID = *it.SourceID
+		}
+		if it.CatalogID != nil {
+			item.CatalogID = *it.CatalogID
+		}
+		if it.ExternalID != nil {
+			item.ExternalID = *it.ExternalID
+		}
+		if it.CanonicalURL != nil {
+			item.CanonicalURL = *it.CanonicalURL
+		}
+		if it.Author != nil {
+			item.Author = *it.Author
+		}
+		if it.PublishedAt != nil {
+			item.PublishedAt = *it.PublishedAt
+		}
+		if it.Meta != "" && it.Meta != "{}" {
+			json.Unmarshal([]byte(it.Meta), &item.Meta)
+		}
+		b.Items[item.ID] = item
+	}
+	return b, nil
+}
+
+// IssueEdit carries one document mutation's writes so they reach
+// Postgres in a single statement — the body UPDATE, the flag list, the
+// approval revert (status + receipt + queued send) and the decision row
+// all ride one CTE instead of six round-trips (KLOX-47 latency
+// criteria).
+type IssueEdit struct {
+	PubID       int64
+	IssueItemID int64 // decision target; 0 stores NULL
+	Body        string
+	Flags       []Flag // nil leaves flags_json untouched
+	Decision    string // kind; "" skips the decisions insert
+	Reason      string
+	// RevertApproved mirrors revertApproved: when the stored issue is
+	// still 'approved', the edit puts it back to 'drafted', drops its
+	// approval receipt and cancels the queued send — the EXISTS guards
+	// read the pre-statement snapshot, so a stale caller flag cannot
+	// touch a non-approved issue's receipt or jobs.
+	RevertApproved bool
+}
+
+// SaveIssueEdit applies e in one round-trip.
+func (db *DB) SaveIssueEdit(ctx context.Context, issueID int64, e IssueEdit) error {
+	var flagsJSON any
+	if e.Flags != nil {
+		data, err := json.Marshal(e.Flags)
+		if err != nil {
+			return err
+		}
+		flagsJSON = string(data)
+	}
+	var ii any
+	if e.IssueItemID != 0 {
+		ii = e.IssueItemID
+	}
+	_, err := db.ExecContext(ctx, `
+		WITH u AS (
+			UPDATE issues
+			SET body_md = $2, flags_json = COALESCE($3::text, flags_json),
+			    status = CASE WHEN $9 AND status = 'approved' THEN 'drafted' ELSE status END
+			WHERE workspace_id = $1 AND id = $4),
+		d AS (
+			DELETE FROM approval_receipts
+			WHERE workspace_id = $1 AND issue_id = $4 AND $9
+			  AND EXISTS (SELECT 1 FROM issues
+			              WHERE workspace_id = $1 AND id = $4 AND status = 'approved')),
+		j AS (
+			DELETE FROM jobs
+			WHERE workspace_id = $1 AND kind = 'send_issue' AND ref_id = $4
+			  AND status = 'pending' AND $9
+			  AND EXISTS (SELECT 1 FROM issues
+			              WHERE workspace_id = $1 AND id = $4 AND status = 'approved'))
+		INSERT INTO decisions (workspace_id, publication_id, issue_item_id, kind, reason)
+		SELECT $1, $5, $6, $7, $8 WHERE $7 <> ''`,
+		db.ws, e.Body, flagsJSON, issueID, e.PubID, ii, e.Decision, e.Reason, e.RevertApproved)
+	return err
+}
+
 // SetIssueItemPlacement moves an issue item to a section slot. The empty
 // status keeps the current one.
 func (db *DB) SetIssueItemPlacement(ctx context.Context, iiID int64, section string, position int, status string) error {

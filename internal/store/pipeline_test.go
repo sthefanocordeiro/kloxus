@@ -414,3 +414,219 @@ func TestIssueItemDossiersAndGetItems(t *testing.T) {
 		t.Fatalf("GetItems(nil) = %v %v", empty, err)
 	}
 }
+
+// TestIssueDocBundle covers the single-round-trip document context:
+// issue + publication + item/dossier pairs + cited items must equal
+// the multi-query path's results (KLOX-47 hosted latency criteria).
+func TestIssueDocBundle(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+
+	pubID, err := db.SeedPublication(ctx, testPub())
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	srcs, err := db.Sources(ctx, pubID)
+	if err != nil || len(srcs) == 0 {
+		t.Fatalf("Sources: %v len=%d", err, len(srcs))
+	}
+	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "Body [1].")
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	story, err := db.CreateStory(ctx, pubID, "story", 1, "")
+	if err != nil {
+		t.Fatalf("CreateStory: %v", err)
+	}
+	var cited int64
+	if err := db.QueryRowContext(ctx,
+		`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text, author)
+		 VALUES ($1,$2,'ext1','https://x.example/a','t1','body1','me') RETURNING id`,
+		db.ws, srcs[0].ID).Scan(&cited); err != nil {
+		t.Fatalf("insert item: %v", err)
+	}
+	var other int64
+	if err := db.QueryRowContext(ctx,
+		`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text)
+		 VALUES ($1,$2,'ext2','https://x.example/b','t2','body2') RETURNING id`,
+		db.ws, srcs[0].ID).Scan(&other); err != nil {
+		t.Fatalf("insert item: %v", err)
+	}
+	lo, err := db.CreateIssueItem(ctx, IssueItem{
+		IssueID: issueID, StoryID: story, Section: "Lead",
+		Score: 10, Status: "pending", Position: 0,
+	})
+	if err != nil {
+		t.Fatalf("CreateIssueItem lo: %v", err)
+	}
+	hi, err := db.CreateIssueItem(ctx, IssueItem{
+		IssueID: issueID, StoryID: story, Section: "Lead",
+		Score: 20, Status: "approved", Position: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateIssueItem hi: %v", err)
+	}
+	if err := db.SaveDossier(ctx, lo,
+		fmt.Sprintf(`{"ref":3,"sources":[{"ref":1,"item_id":%d}]}`, cited)); err != nil {
+		t.Fatalf("SaveDossier: %v", err)
+	}
+	if err := db.ResolveFlags(ctx, issueID, []Flag{{Item: 3, Sentence: "s", Note: "n"}}); err != nil {
+		t.Fatalf("ResolveFlags: %v", err)
+	}
+
+	b, err := db.IssueDocBundle(ctx, issueID)
+	if err != nil {
+		t.Fatalf("IssueDocBundle: %v", err)
+	}
+	if b.Issue.ID != issueID || b.Issue.BodyMD != "Body [1]." || len(b.Issue.Flags) != 1 {
+		t.Fatalf("issue fields wrong: %+v", b.Issue)
+	}
+	if b.Pub.ID != pubID || b.Pub.Slug == "" || len(b.Pub.Sections) == 0 {
+		t.Fatalf("publication fields wrong: %+v", b.Pub)
+	}
+	if len(b.Pairs) != 2 || b.Pairs[0].Item.ID != hi || b.Pairs[1].Item.ID != lo {
+		t.Fatalf("pairs wrong: %+v", b.Pairs)
+	}
+	if b.Pairs[0].Dossier != "" || b.Pairs[1].Dossier == "" {
+		t.Fatalf("dossier join wrong: %+v", b.Pairs)
+	}
+	if len(b.Items) != 1 || b.Items[cited] == nil {
+		t.Fatalf("cited items = %d, want the one cited id", len(b.Items))
+	}
+	if b.Items[other] != nil {
+		t.Fatalf("uncited item leaked into bundle")
+	}
+	got := b.Items[cited]
+	if got.Title != "t1" || got.Author != "me" || got.ContentText != "body1" ||
+		got.SourceID != srcs[0].ID || got.SourceName == "" || got.FetchedAt == "" {
+		t.Fatalf("cited item fields wrong: %+v", got)
+	}
+
+	// issue without dossiers still resolves with an empty pair/item set
+	empty, err := db.CreateIssue(ctx, pubID, 2, "s2", "")
+	if err != nil {
+		t.Fatalf("CreateIssue 2: %v", err)
+	}
+	b2, err := db.IssueDocBundle(ctx, empty)
+	if err != nil {
+		t.Fatalf("IssueDocBundle empty: %v", err)
+	}
+	if len(b2.Pairs) != 0 || len(b2.Items) != 0 {
+		t.Fatalf("empty issue bundle = %+v", b2)
+	}
+	if _, err := db.IssueDocBundle(ctx, 99999999); err == nil {
+		t.Fatal("missing issue must error")
+	}
+}
+
+// TestSaveIssueEdit covers the single-statement mutation: body + flags +
+// decision row + the approved→drafted revert (receipt delete, queued
+// send cancel) all land atomically in one CTE.
+func TestSaveIssueEdit(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+
+	pubID, err := db.SeedPublication(ctx, testPub())
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "old body")
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	story, err := db.CreateStory(ctx, pubID, "story", 1, "")
+	if err != nil {
+		t.Fatalf("CreateStory: %v", err)
+	}
+	ii, err := db.CreateIssueItem(ctx, IssueItem{
+		IssueID: issueID, StoryID: story, Section: "Lead",
+		Score: 10, Status: "pending", Position: 0,
+	})
+	if err != nil {
+		t.Fatalf("CreateIssueItem: %v", err)
+	}
+
+	// body + flags + decision, no revert
+	err = db.SaveIssueEdit(ctx, issueID, IssueEdit{
+		PubID: pubID, IssueItemID: ii, Body: "new body",
+		Flags:    []Flag{{Item: 1, Sentence: "s", Note: "n"}},
+		Decision: "sentence_edit", Reason: "r",
+	})
+	if err != nil {
+		t.Fatalf("SaveIssueEdit: %v", err)
+	}
+	iss, err := db.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if iss.BodyMD != "new body" || len(iss.Flags) != 1 || iss.Flags[0].Note != "n" {
+		t.Fatalf("issue after edit: %+v", iss)
+	}
+	var nd int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM decisions WHERE workspace_id = $1 AND kind = 'sentence_edit' AND issue_item_id = $2`,
+		db.ws, ii).Scan(&nd); err != nil || nd != 1 {
+		t.Fatalf("decision row: n=%d err=%v", nd, err)
+	}
+
+	// nil flags leave flags_json alone; empty decision inserts nothing
+	err = db.SaveIssueEdit(ctx, issueID, IssueEdit{PubID: pubID, Body: "again"})
+	if err != nil {
+		t.Fatalf("SaveIssueEdit 2: %v", err)
+	}
+	iss, _ = db.GetIssue(ctx, issueID)
+	if iss.BodyMD != "again" || len(iss.Flags) != 1 {
+		t.Fatalf("nil flags must keep flags_json: %+v", iss)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM decisions WHERE workspace_id = $1`,
+		db.ws).Scan(&nd); err != nil || nd != 1 {
+		t.Fatalf("empty decision must not insert: n=%d err=%v", nd, err)
+	}
+
+	// approved issue: revert folds status + receipt + queued send into
+	// the same statement
+	if err := db.SetIssueStatus(ctx, issueID, "approved"); err != nil {
+		t.Fatalf("SetIssueStatus: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO approval_receipts (workspace_id, issue_id, number, document_version, approver)
+		 VALUES ($1,$2,1,'v','tester')`, db.ws, issueID); err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO jobs (workspace_id, kind, ref_id, run_at) VALUES ($1,'send_issue',$2,'x')`,
+		db.ws, issueID); err != nil {
+		t.Fatalf("job: %v", err)
+	}
+	err = db.SaveIssueEdit(ctx, issueID, IssueEdit{
+		PubID: pubID, Body: "post-approval edit", RevertApproved: true,
+	})
+	if err != nil {
+		t.Fatalf("SaveIssueEdit revert: %v", err)
+	}
+	iss, _ = db.GetIssue(ctx, issueID)
+	if iss.Status != "drafted" || iss.BodyMD != "post-approval edit" {
+		t.Fatalf("revert failed: %+v", iss)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM approval_receipts WHERE issue_id = $1`, issueID).Scan(&nd); err != nil || nd != 0 {
+		t.Fatalf("receipt must be deleted: n=%d err=%v", nd, err)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM jobs WHERE ref_id = $1 AND status = 'pending'`, issueID).Scan(&nd); err != nil || nd != 0 {
+		t.Fatalf("queued send must be cancelled: n=%d err=%v", nd, err)
+	}
+
+	// RevertApproved on a non-approved issue is a no-op for status
+	err = db.SaveIssueEdit(ctx, issueID, IssueEdit{
+		PubID: pubID, Body: "still drafted", RevertApproved: true,
+	})
+	if err != nil {
+		t.Fatalf("SaveIssueEdit noop revert: %v", err)
+	}
+	iss, _ = db.GetIssue(ctx, issueID)
+	if iss.Status != "drafted" {
+		t.Fatalf("status = %q, want drafted", iss.Status)
+	}
+}

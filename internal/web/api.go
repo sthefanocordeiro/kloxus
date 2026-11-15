@@ -1055,11 +1055,15 @@ func (s *Server) apiIssueItems(w http.ResponseWriter, r *http.Request) {
 	}
 	items, _ := db(r).IssueItems(r.Context(), iss.ID)
 	out := []apiItem{}
+	pending := 0
 	for _, ii := range items {
+		if ii.Status == "pending" {
+			pending++
+		}
 		out = append(out, s.apiCardFor(r, ii))
 	}
 	apiJSON(w, 200, map[string]any{
-		"items": out, "pending": pendingDecisions(r, iss.ID),
+		"items": out, "pending": pending,
 	})
 }
 
@@ -1592,7 +1596,7 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 		doc, _ = buildIssueDocument(r.Context(), db(r), iss, pub)
 	}
 
-	pending := pendingDecisions(r, iss.ID)
+	pending := doc.dctx.pending
 	c := apiCheck{Code: "pending_decisions", OK: pending == 0, Count: pending,
 		Message: fmt.Sprintf("%d story decision(s) still open", pending)}
 	if !c.OK {
@@ -1678,19 +1682,11 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 }
 
 func (s *Server) apiReadiness(w http.ResponseWriter, r *http.Request) {
-	iss, err := s.apiIssueID(r)
-	if apiDBErr(w, r, err, "issue") {
+	iss, doc, ok := s.issueDoc(w, r)
+	if !ok {
 		return
 	}
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	if apiDBErr(w, r, err, "publication") {
-		return
-	}
-	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
-	if apiDBErr(w, r, err, "document") {
-		return
-	}
-	checks := s.readinessChecks(r, iss, pub, doc)
+	checks := s.readinessChecks(r, iss, doc.pub, doc)
 	ready := true
 	for _, c := range checks {
 		if !c.OK {
@@ -1901,20 +1897,12 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 // content (an uncited addition fails the uncited_sentences check).
 // kind "interpretation" stores an editor-attributed block instead.
 func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
-	iss, err := s.apiIssueID(r)
-	if apiDBErr(w, r, err, "issue") {
+	iss, doc, ok := s.issueDoc(w, r)
+	if !ok {
 		return
 	}
 	if iss.Status == "sent" || iss.Status == "scheduled" {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
-		return
-	}
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	if apiDBErr(w, r, err, "publication") {
-		return
-	}
-	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
-	if apiDBErr(w, r, err, "document") {
 		return
 	}
 	ref, _ := strconv.Atoi(r.PathValue("ref"))
@@ -1998,48 +1986,59 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
+	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
+		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body,
+		Decision: "manual_compose", Reason: raw, RevertApproved: iss.Status == "approved",
+	})
+	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	db(r).RecordDecision(ctx, iss.PublicationID, item.IssueItemID, "manual_compose", raw)
-	revertApproved(r, iss)
+	iss.BodyMD = body
+	if iss.Status == "approved" {
+		iss.Status = "drafted"
+	}
 	s.respondSentence(w, r, iss, doc, map[string]any{"added": len(strings.Split(raw, "\n"))})
 }
 
 // --- document / sentence mutations / commentary ---
 
 func (s *Server) apiDocument(w http.ResponseWriter, r *http.Request) {
-	iss, err := s.apiIssueID(r)
-	if apiDBErr(w, r, err, "issue") {
-		return
-	}
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	if apiDBErr(w, r, err, "publication") {
-		return
-	}
-	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
-	if apiDBErr(w, r, err, "document") {
+	_, doc, ok := s.issueDoc(w, r)
+	if !ok {
 		return
 	}
 	apiJSON(w, 200, map[string]any{"document": doc})
 }
 
+// issueDoc loads the issue, its canonical publication and the parsed
+// document in a single Postgres round-trip. Every remote-DB statement
+// costs ~150 ms on the hosted app, so the issue→publication→dossiers→
+// items chain this replaced could not meet the KLOX-47 latency targets.
+func (s *Server) issueDoc(w http.ResponseWriter, r *http.Request) (*store.Issue, *issueDocument, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		apiDBErr(w, r, err, "issue")
+		return nil, nil, false
+	}
+	b, err := db(r).IssueDocBundle(r.Context(), id)
+	if apiDBErr(w, r, err, "issue") {
+		return nil, nil, false
+	}
+	pub, err := s.canonicalPub(b.Pub, nil)
+	if apiDBErr(w, r, err, "publication") {
+		return nil, nil, false
+	}
+	return b.Issue, parseIssueDocument(b.Issue, pub, dcFromPairs(b.Pairs, b.Items)), true
+}
+
 // apiSentenceCtx loads issue, document and locates a sentence.
 func (s *Server) apiSentenceCtx(w http.ResponseWriter, r *http.Request) (*store.Issue, *issueDocument, *locatedSentence, bool) {
-	iss, err := s.apiIssueID(r)
-	if apiDBErr(w, r, err, "issue") {
+	iss, doc, ok := s.issueDoc(w, r)
+	if !ok {
 		return nil, nil, nil, false
 	}
 	if iss.Status == "sent" || iss.Status == "scheduled" {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
-		return nil, nil, nil, false
-	}
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	if apiDBErr(w, r, err, "publication") {
-		return nil, nil, nil, false
-	}
-	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
-	if apiDBErr(w, r, err, "document") {
 		return nil, nil, nil, false
 	}
 	loc := doc.findSentence(r.PathValue("sid"))
@@ -2050,23 +2049,20 @@ func (s *Server) apiSentenceCtx(w http.ResponseWriter, r *http.Request) (*store.
 	return iss, doc, loc, true
 }
 
-// dropFlag removes the flag matching (item ref, raw sentence); reports
-// whether one was dropped.
-func dropFlag(r *http.Request, iss *store.Issue, itemRef int64, raw string) (bool, error) {
-	flags := iss.Flags
-	out := flags[:0]
+// dropFlagRaw removes the flag matching (item ref, raw sentence) and
+// returns the list the issue should carry after the write — identical
+// to the current flags when nothing matched.
+func dropFlagRaw(iss *store.Issue, itemRef int64, raw string) ([]store.Flag, bool) {
+	out := iss.Flags[:0]
 	dropped := false
-	for _, f := range flags {
+	for _, f := range iss.Flags {
 		if f.Item == itemRef && f.Sentence == raw {
 			dropped = true
 			continue
 		}
 		out = append(out, f)
 	}
-	if !dropped {
-		return false, nil
-	}
-	return true, db(r).ResolveFlags(r.Context(), iss.ID, out)
+	return out, dropped
 }
 
 // revertApproved returns an approved issue to drafted after an edit —
@@ -2201,20 +2197,24 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 409, "sentence_gone", "the sentence is no longer in the body")
 		return
 	}
-	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
-		return
-	}
-	dropped, err := dropFlag(r, iss, int64(loc.item.Ref), loc.sentence.raw)
-	if apiDBErr(w, r, err, "issue") {
-		return
-	}
+	flags, dropped := dropFlagRaw(iss, int64(loc.item.Ref), loc.sentence.raw)
 	kind := "sentence_edit"
 	if dropped {
 		kind = "flag_edit"
 	}
-	db(r).RecordDecision(ctx, iss.PublicationID, loc.item.IssueItemID, kind,
-		loc.sentence.raw+" → "+text)
-	revertApproved(r, iss)
+	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
+		PubID: iss.PublicationID, IssueItemID: loc.item.IssueItemID, Body: body,
+		Flags: flags, Decision: kind, Reason: loc.sentence.raw + " → " + text,
+		RevertApproved: iss.Status == "approved",
+	})
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	iss.BodyMD = body
+	iss.Flags = flags
+	if iss.Status == "approved" {
+		iss.Status = "drafted"
+	}
 	s.respondSentence(w, r, iss, doc, nil)
 }
 
@@ -2258,19 +2258,24 @@ func (s *Server) apiSentenceRemove(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 409, "sentence_gone", "the sentence is no longer in the body")
 		return
 	}
-	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
-		return
-	}
-	dropped, err := dropFlag(r, iss, int64(loc.item.Ref), loc.sentence.raw)
-	if apiDBErr(w, r, err, "issue") {
-		return
-	}
+	flags, dropped := dropFlagRaw(iss, int64(loc.item.Ref), loc.sentence.raw)
 	kind := "sentence_remove"
 	if dropped {
 		kind = "flag_remove"
 	}
-	db(r).RecordDecision(ctx, iss.PublicationID, loc.item.IssueItemID, kind, loc.sentence.raw)
-	revertApproved(r, iss)
+	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
+		PubID: iss.PublicationID, IssueItemID: loc.item.IssueItemID, Body: body,
+		Flags: flags, Decision: kind, Reason: loc.sentence.raw,
+		RevertApproved: iss.Status == "approved",
+	})
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	iss.BodyMD = body
+	iss.Flags = flags
+	if iss.Status == "approved" {
+		iss.Status = "drafted"
+	}
 	s.respondSentence(w, r, iss, doc, map[string]any{"removed": removed})
 }
 
@@ -2291,20 +2296,12 @@ type restoreEntry struct {
 // form at each recorded index inside the item's span and re-attaches
 // the flags they carried, all in one write.
 func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
-	iss, err := s.apiIssueID(r)
-	if apiDBErr(w, r, err, "issue") {
+	iss, doc, ok := s.issueDoc(w, r)
+	if !ok {
 		return
 	}
 	if iss.Status == "sent" || iss.Status == "scheduled" {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
-		return
-	}
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	if apiDBErr(w, r, err, "publication") {
-		return
-	}
-	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
-	if apiDBErr(w, r, err, "document") {
 		return
 	}
 	ref, _ := strconv.Atoi(r.PathValue("ref"))
@@ -2391,9 +2388,6 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	body := iss.BodyMD[:item.spanStart] + seg + iss.BodyMD[item.spanEnd:]
 	ctx := r.Context()
-	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
-		return
-	}
 	flags := append([]store.Flag{}, iss.Flags...)
 	restored := 0
 	for _, oi := range order {
@@ -2402,14 +2396,20 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 			restored++
 		}
 	}
-	if restored > 0 {
-		if apiDBErr(w, r, db(r).ResolveFlags(ctx, iss.ID, flags), "issue") {
-			return
-		}
+	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
+		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body, Flags: flags,
+		Decision:       "sentence_restore",
+		Reason:         fmt.Sprintf("%d sentence(s) restored to item %d", len(entries), ref),
+		RevertApproved: iss.Status == "approved",
+	})
+	if apiDBErr(w, r, err, "issue") {
+		return
 	}
-	db(r).RecordDecision(ctx, iss.PublicationID, item.IssueItemID, "sentence_restore",
-		fmt.Sprintf("%d sentence(s) restored to item %d", len(entries), ref))
-	revertApproved(r, iss)
+	iss.BodyMD = body
+	iss.Flags = flags
+	if iss.Status == "approved" {
+		iss.Status = "drafted"
+	}
 	s.respondSentence(w, r, iss, doc, nil)
 }
 
@@ -2418,20 +2418,12 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 // The response carries the removed payload list so the client can offer
 // Undo: POST /issues/{id}/items/{ref}/sentences restores them.
 func (s *Server) apiItemRemoveFlagged(w http.ResponseWriter, r *http.Request) {
-	iss, err := s.apiIssueID(r)
-	if apiDBErr(w, r, err, "issue") {
+	iss, doc, ok := s.issueDoc(w, r)
+	if !ok {
 		return
 	}
 	if iss.Status == "sent" || iss.Status == "scheduled" {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
-		return
-	}
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	if apiDBErr(w, r, err, "publication") {
-		return
-	}
-	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
-	if apiDBErr(w, r, err, "document") {
 		return
 	}
 	ref, _ := strconv.Atoi(r.PathValue("ref"))
@@ -2483,26 +2475,27 @@ func (s *Server) apiItemRemoveFlagged(w http.ResponseWriter, r *http.Request) {
 	}
 	body := iss.BodyMD[:item.spanStart] + seg + iss.BodyMD[item.spanEnd:]
 	ctx := r.Context()
-	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
-		return
-	}
 	kept := make([]store.Flag, 0, len(iss.Flags))
-	dropped := 0
 	for _, f := range iss.Flags {
 		if f.Item == int64(item.Ref) && removedRaws[f.Sentence] {
-			dropped++
 			continue
 		}
 		kept = append(kept, f)
 	}
-	if dropped > 0 {
-		if apiDBErr(w, r, db(r).ResolveFlags(ctx, iss.ID, kept), "issue") {
-			return
-		}
+	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
+		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body, Flags: kept,
+		Decision:       "flagged_bulk_remove",
+		Reason:         fmt.Sprintf("%d flagged sentence(s) removed from item %d", len(removed), item.Ref),
+		RevertApproved: iss.Status == "approved",
+	})
+	if apiDBErr(w, r, err, "issue") {
+		return
 	}
-	db(r).RecordDecision(ctx, iss.PublicationID, item.IssueItemID, "flagged_bulk_remove",
-		fmt.Sprintf("%d flagged sentence(s) removed from item %d", len(removed), item.Ref))
-	revertApproved(r, iss)
+	iss.BodyMD = body
+	iss.Flags = kept
+	if iss.Status == "approved" {
+		iss.Status = "drafted"
+	}
 	s.respondSentence(w, r, iss, doc, map[string]any{"removed": removed})
 }
 
@@ -2540,19 +2533,24 @@ func (s *Server) apiSentenceInterpretation(w http.ResponseWriter, r *http.Reques
 		apiErr(w, 409, "sentence_gone", "the sentence is no longer in the body")
 		return
 	}
-	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
-		return
-	}
-	dropped, err := dropFlag(r, iss, int64(loc.item.Ref), loc.sentence.raw)
-	if apiDBErr(w, r, err, "issue") {
-		return
-	}
+	flags, dropped := dropFlagRaw(iss, int64(loc.item.Ref), loc.sentence.raw)
 	kind := "mark_interpretation"
 	if dropped {
 		kind = "flag_interpretation"
 	}
-	db(r).RecordDecision(ctx, iss.PublicationID, loc.item.IssueItemID, kind, loc.sentence.raw)
-	revertApproved(r, iss)
+	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
+		PubID: iss.PublicationID, IssueItemID: loc.item.IssueItemID, Body: body,
+		Flags: flags, Decision: kind, Reason: loc.sentence.raw,
+		RevertApproved: iss.Status == "approved",
+	})
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	iss.BodyMD = body
+	iss.Flags = flags
+	if iss.Status == "approved" {
+		iss.Status = "drafted"
+	}
 	s.respondSentence(w, r, iss, doc, nil)
 }
 
@@ -2563,9 +2561,8 @@ func (s *Server) apiSentenceInterpretation(w http.ResponseWriter, r *http.Reques
 // request, not once per build (KLOX-47). extra keys (e.g. "removed"
 // for undo) are merged into the response.
 func (s *Server) respondSentence(w http.ResponseWriter, r *http.Request, iss *store.Issue, doc *issueDocument, extra map[string]any) {
-	if fresh, err := db(r).GetIssue(r.Context(), iss.ID); err == nil {
-		iss = fresh
-	}
+	// no reload: callers update iss in memory after SaveIssueEdit, so the
+	// re-parse sees the post-write state without a second round-trip
 	doc = parseIssueDocument(iss, doc.pub, doc.dctx)
 	resp := map[string]any{"coverage": doc.Coverage, "flags": len(iss.Flags), "version": doc.Version}
 	if loc := doc.findSentence(r.PathValue("sid")); loc != nil {

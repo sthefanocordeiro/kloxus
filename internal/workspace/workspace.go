@@ -351,10 +351,20 @@ func (m *Manager) Get(ctx context.Context, id string) (*Workspace, error) {
 	if !idRE.MatchString(id) {
 		return nil, fmt.Errorf("invalid workspace id %q", id)
 	}
-	if ok, err := m.pool.WorkspaceExists(ctx, id); err != nil {
-		return nil, err
-	} else if !ok {
-		return nil, fmt.Errorf("workspace %s not found", id)
+	// Entries are created only after WorkspaceExists verifies the row,
+	// so a cached entry already proves existence — skip the per-request
+	// lookup (one remote-DB round-trip on every API call, KLOX-47). The
+	// hourly touch keeps last_seen_at fresh, so the idle sweeper cannot
+	// reap the workspace out from under a held entry.
+	m.mu.Lock()
+	_, known := m.entries[id]
+	m.mu.Unlock()
+	if !known {
+		if ok, err := m.pool.WorkspaceExists(ctx, id); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, fmt.Errorf("workspace %s not found", id)
+		}
 	}
 	ws := m.entry(id)
 	// Refresh canonical publication config from the current template so
