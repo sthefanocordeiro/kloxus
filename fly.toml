@@ -7,8 +7,7 @@ primary_region = "gru"
 [build]
 
 # The real app (D27): live feeds + Anthropic. The fixture demo stays on
-# kloxus-demo as the fallback URL. KLOXUS_INGEST_DAILY_JOURNAL lives in
-# Fly secrets, not here — it must toggle without a redeploy (issue risk).
+# kloxus-demo as the fallback URL.
 [env]
 KLOXUS_MODE = "real"
 KLOXUS_INGEST = "true"

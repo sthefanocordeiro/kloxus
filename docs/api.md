@@ -181,8 +181,10 @@ by the canonical sample at run time so fixture replay stays stable.
 ```
 
 ### `GET /api/v1/publications/{id}/sources/catalog`
-The fixture sources not yet added — the "suggested" cards on the sources
-screen.
+The catalog sources not yet added — the "suggested" cards on the sources
+screen. Only fetchable policies (`launch`, `signal`) are listed;
+`hold`/`blocked` catalog rows never appear in user-facing source
+lists.
 ```json
 {"offered": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml",
   "name": "Radar Tech", "items_per_week": 3}]}
@@ -317,8 +319,12 @@ issue — shown on the issue page (KLOX-44).
   issue → `read_only`.
 
 ### `GET /api/v1/issues/{id}/candidates` — the build board
-Every ranked story of the run, best first — the left "Pautas" column
-plus the lineup state in one snapshot:
+The ranked stories of the run, best first — the left "Pautas" column
+plus the lineup state in one snapshot. The pool is capped at the top
+150 candidates and the bench is paginated: `?page=N&page_size=M`
+(`page_size` defaults and clamps to 50). Every page carries all
+in-issue stories plus that page's bench slice, so the lineup is never
+paged away.
 ```json
 {"candidates": [{
   "story_id": 4, "item_id": 9, "title": "…", "outlets": ["Radar Tech"],
@@ -330,8 +336,11 @@ plus the lineup state in one snapshot:
   "dossier": true, "available": true
 }],
  "sections": [{"title": "The big one", "capacity": 1, "commentary": "required"}],
+ "page": 0, "page_size": 50, "bench_total": 137, "has_more": true,
  "demo": true}
 ```
+- `bench_total` counts bench stories only (in-issue stories excluded);
+  `has_more` means another bench page exists.
 - `in_issue` = currently on the board (`pending`/`approved`); stories
   removed without a reason come back `status: "removed"`, rejections
   `status: "rejected"` — neither is in the issue.
@@ -344,8 +353,9 @@ plus the lineup state in one snapshot:
 ### `PUT /api/v1/issues/{id}/lineup` — set the board
 `{"entries": [{"story_id": 4, "section": "Worth knowing"}, …]}` —
 the full desired lineup; order within a section is the array order
-(`position` 0-based). Returns the candidates snapshot (plus `guide`
-when a re-included rejection rebuilt it).
+(`position` 0-based). Returns the first candidates page in the same
+shape as `GET …/candidates` (plus `guide` when a re-included rejection
+rebuilt it).
 - Stories already in the issue keep their row (`manual` adds create
   one); everything in the lineup becomes `approved`.
 - In-issue stories absent from `entries` become `removed` — not

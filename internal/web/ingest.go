@@ -1,9 +1,9 @@
 package web
 
-// Real-mode source catalog + ingestion admin surface (D29/D30/D31).
+// Real-mode source catalog + ingestion admin surface (D29/D30).
 // The catalog is global: picks are launch/signal entries the scheduler
-// already polls; hold/blocked entries are shown with their reason so
-// creators understand why an outlet is absent. The admin view is the
+// already polls; hold/blocked entries never appear in user-facing
+// source lists (owner decision, KLOX-45). The admin view is the
 // operator's fetch-log surface — gated by KLOXUS_MASTER_KEY.
 import (
 	"net/http"
@@ -23,36 +23,30 @@ func (s *Server) apiRealCatalog(w http.ResponseWriter, r *http.Request, pub *sto
 		existing[src.URL] = true
 	}
 	offered := []map[string]any{}
-	unavailable := []map[string]any{}
 	for i := range cat {
 		cs := &cat[i]
-		if cs.Policy == "launch" || cs.Policy == "signal" {
-			if existing[cs.URL] {
-				continue
-			}
-			typ := cs.Kind
-			if typ == "api" {
-				typ = "rss"
-			}
-			row := map[string]any{
-				"type": typ, "url": cs.URL, "name": cs.Name,
-				"policy": cs.Policy, "kind": cs.Kind,
-			}
-			if cs.Suspended {
-				row["suspended"] = true
-				row["note"] = "Paused: " + cs.SuspendReason
-			}
-			if n, err := s.d.Pool.CatalogItemsPerWeek(r.Context(), cs.ID); err == nil {
-				row["items_per_week"] = n
-			}
-			offered = append(offered, row)
+		if cs.Policy != "launch" && cs.Policy != "signal" {
+			// hold/blocked are never fetched — and never listed as
+			// user-facing source options (KLOX-45).
 			continue
 		}
-		unavailable = append(unavailable, map[string]any{
-			"name": cs.Name, "url": cs.URL, "policy": cs.Policy, "note": cs.Note,
-		})
+		if existing[cs.URL] {
+			continue
+		}
+		row := map[string]any{
+			"type": "rss", "url": cs.URL, "name": cs.Name,
+			"policy": cs.Policy, "kind": cs.Kind,
+		}
+		if cs.Suspended {
+			row["suspended"] = true
+			row["note"] = "Paused: " + cs.SuspendReason
+		}
+		if n, err := s.d.Pool.CatalogItemsPerWeek(r.Context(), cs.ID); err == nil {
+			row["items_per_week"] = n
+		}
+		offered = append(offered, row)
 	}
-	apiJSON(w, 200, map[string]any{"offered": offered, "unavailable": unavailable})
+	apiJSON(w, 200, map[string]any{"offered": offered})
 }
 
 // realCatalogPreview serves stored items for a catalog source's site URL.
@@ -72,9 +66,6 @@ func (s *Server) realCatalogPreview(w http.ResponseWriter, r *http.Request, rawU
 			"title": it.Title, "url": it.URL,
 			"outlet": cs.Name, "published_at": it.PublishedAt,
 			"kind": it.Kind,
-		}
-		if cs.Slug == "daily-journal" {
-			row["via"] = "Daily Journal"
 		}
 		out = append(out, row)
 	}

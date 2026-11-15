@@ -7,14 +7,10 @@ package ingest
 // enforced by the throttler regardless of which source is next.
 import (
 	"context"
-	"errors"
 	"log"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
-
-	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
 // DefaultUserAgent identifies us to publishers (D27): name + contact.
@@ -24,30 +20,22 @@ const DefaultUserAgent = "KloxusBot/1.0 (+https://kloxus.fly.dev/about)"
 type Scheduler struct {
 	pool      Store
 	feed      *FeedFetcher
-	http      *http.Client
-	ua        string
 	tick      time.Duration // wake interval between due checks
-	djEnabled bool
 	log       *log.Logger
 	now       func() time.Time
 	lastPurge time.Time
 }
 
-// NewScheduler wires fetcher + DJ client + retention on the pool.
-// djEnabled gates Daily Journal polling — the flag flips without a
-// deploy and defaults off until the operator's written permission is
-// confirmed (D31).
-func NewScheduler(p Store, ua string, djEnabled bool, logger *log.Logger) *Scheduler {
+// NewScheduler wires the feed fetcher + retention on the pool.
+func NewScheduler(p Store, ua string, logger *log.Logger) *Scheduler {
 	throttle := &hostThrottle{last: map[string]time.Time{}}
 	hc := &http.Client{Timeout: 30 * time.Second}
 	return &Scheduler{
 		pool: p,
 		feed: NewFeedFetcher(p, hc, ua, "KloxusBot", throttle),
-		http: hc, ua: ua,
-		tick:      time.Minute,
-		djEnabled: djEnabled,
-		log:       logger,
-		now:       time.Now,
+		tick: time.Minute,
+		log:  logger,
+		now:  time.Now,
 	}
 }
 
@@ -109,11 +97,8 @@ func (s *Scheduler) PollOnce(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if cs.Kind == "api" {
-			if s.djEnabled && cs.Due(s.now()) {
-				s.pollDailyJournal(ctx, cs)
-			}
-			continue
+		if cs.Kind != "rss" {
+			continue // no API-backed sources remain after Daily Journal left (D41)
 		}
 		if !cs.Due(s.now()) {
 			continue
@@ -124,70 +109,6 @@ func (s *Scheduler) PollOnce(ctx context.Context) {
 		}
 	}
 	s.purgeBodies(ctx)
-}
-
-// pollDailyJournal runs the signal source's cursor poll: new stories
-// become shared signal items; the cursor only advances on success.
-func (s *Scheduler) pollDailyJournal(ctx context.Context, cs *store.CatalogSource) {
-	base := cs.FeedURL
-	if u, err := url.Parse(cs.FeedURL); err == nil {
-		base = (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
-	}
-	dj := NewDailyJournal(Counter(s.pool, cs.ID), s.http, s.ua, base)
-	items, cursor, err := dj.Poll(ctx, cs.Cursor, time.Time{}, 4)
-	if err != nil {
-		var rl *ErrRateLimited
-		detail := err.Error()
-		if errors.As(err, &rl) {
-			detail = "429 rate limited, retry after " + rl.RetryAfter.String()
-		}
-		_ = s.pool.CatalogMarkFetched(ctx, cs.ID, "", "", "error")
-		_ = s.pool.LogFetch(ctx, cs.ID, "error", 0, 0, 0, detail)
-		s.logf("%s: %s", cs.Slug, detail)
-		return
-	}
-	raw := make([]store.CatalogItem, 0, len(items))
-	for _, it := range items {
-		raw = append(raw, dj.ToCatalogItem(it))
-	}
-	added, err := s.pool.SaveCatalogItems(ctx, cs.ID, raw)
-	if err != nil {
-		s.logf("%s: save: %v", cs.Slug, err)
-		return
-	}
-	_ = s.pool.CatalogSetCursor(ctx, cs.ID, cursor)
-	_ = s.pool.CatalogMarkFetched(ctx, cs.ID, "", "", "ok")
-	_ = s.pool.LogFetch(ctx, cs.ID, "ok", 200, len(items), added, "cursor="+cursor)
-
-	// Detail calls are on-demand and budgeted by the daily cap: only
-	// multi-outlet stories fetch theirs — those sources[] links are
-	// what merge the signal onto the article it points at. Links
-	// whose domain the catalog blocks are dropped, never fetched.
-	blocked := func(d string) bool {
-		b, _ := s.pool.IsBlockedDomain(ctx, d)
-		return b
-	}
-	fetched := 0
-	for _, it := range items {
-		if it.OutletCount < 2 || fetched >= 10 || ctx.Err() != nil {
-			continue
-		}
-		d, err := dj.Detail(ctx, it.Slug)
-		if err != nil {
-			break // cap/429: the rest waits for the next poll
-		}
-		fetched++
-		cited := make([]string, 0, len(d.Sources))
-		for _, src := range d.Sources {
-			cited = append(cited, CanonicalURL(src.URL))
-		}
-		cited = CitedURLsAllowed(cited, blocked)
-		_ = s.pool.UpdateCatalogItemMeta(ctx, cs.ID, it.ID, map[string]any{
-			"cited_urls":   cited,
-			"outlet_count": d.OutletCount,
-			"source_count": d.SourceCount,
-		})
-	}
 }
 
 // purgeBodies enforces the 30-day retention window hourly.
@@ -205,21 +126,4 @@ func (s *Scheduler) logf(format string, args ...any) {
 	if s.log != nil {
 		s.log.Printf("ingest: "+format, args...)
 	}
-}
-
-// CitedURLsAllowed filters a signal's cited links down to domains the
-// catalog does not block — a signal may cite a blocked outlet (e.g.
-// Canaltech); we keep the link for display but never fetch it.
-func CitedURLsAllowed(cited []string, blocked func(domain string) bool) []string {
-	out := cited[:0:0]
-	for _, u := range cited {
-		host := ""
-		if pu, err := url.Parse(u); err == nil {
-			host = pu.Hostname()
-		}
-		if host == "" || !blocked(host) {
-			out = append(out, u)
-		}
-	}
-	return out
 }

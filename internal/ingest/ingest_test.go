@@ -4,7 +4,6 @@ package ingest
 // httptest servers, nothing leaves the test process.
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,11 +20,10 @@ func fakeNow() string { return time.Now().UTC().Format("2006-01-02 15:04:05") }
 // fakeStore implements the ingest Store in memory so the fetcher and
 // scheduler tests need no Postgres.
 type fakeStore struct {
-	cat       []store.CatalogSource
-	items     map[int64][]store.CatalogItem
-	logs      []fakeLog
-	apiCounts map[string]int
-	purged    int64
+	cat    []store.CatalogSource
+	items  map[int64][]store.CatalogItem
+	logs   []fakeLog
+	purged int64
 }
 
 type fakeLog struct {
@@ -37,7 +35,7 @@ type fakeLog struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{items: map[int64][]store.CatalogItem{}, apiCounts: map[string]int{}}
+	return &fakeStore{items: map[int64][]store.CatalogItem{}}
 }
 
 func (f *fakeStore) Catalog(context.Context) ([]store.CatalogSource, error) { return f.cat, nil }
@@ -68,20 +66,6 @@ func (f *fakeStore) CatalogTouchRobots(_ context.Context, id int64) error {
 	return nil
 }
 
-func (f *fakeStore) CatalogSetCursor(_ context.Context, id int64, cursor string) error {
-	f.entry(id).Cursor = cursor
-	return nil
-}
-
-func (f *fakeStore) CatalogAPICount(_ context.Context, id int64, day string) (int, error) {
-	return f.apiCounts[fmt.Sprintf("%d|%s", id, day)], nil
-}
-
-func (f *fakeStore) CatalogAPIIncr(_ context.Context, id int64, day string) error {
-	f.apiCounts[fmt.Sprintf("%d|%s", id, day)]++
-	return nil
-}
-
 func (f *fakeStore) SaveCatalogItems(_ context.Context, id int64, raw []store.CatalogItem) (int, error) {
 	seen := map[string]bool{}
 	for _, it := range f.items[id] {
@@ -97,33 +81,12 @@ func (f *fakeStore) SaveCatalogItems(_ context.Context, id int64, raw []store.Ca
 	return added, nil
 }
 
-func (f *fakeStore) UpdateCatalogItemMeta(_ context.Context, id int64, ext string, meta map[string]any) error {
-	for i, it := range f.items[id] {
-		if it.ExternalID == ext {
-			for k, v := range meta {
-				it.Meta[k] = v
-			}
-			f.items[id][i] = it
-		}
-	}
-	return nil
-}
-
 func (f *fakeStore) LogFetch(_ context.Context, id int64, status string, httpStatus, items, newItems int, detail string) error {
 	f.logs = append(f.logs, fakeLog{id, status, httpStatus, items, detail})
 	return nil
 }
 
 func (f *fakeStore) PurgeOldBodies(context.Context, time.Time) (int64, error) { return f.purged, nil }
-
-func (f *fakeStore) IsBlockedDomain(_ context.Context, domain string) (bool, error) {
-	for _, c := range f.cat {
-		if c.Policy == "blocked" && c.Domain == domain {
-			return true, nil
-		}
-	}
-	return false, nil
-}
 
 const testFeed = `<?xml version="1.0"?><rss version="2.0"><channel>
 <title>Test Feed</title>
@@ -307,111 +270,6 @@ func TestLinksBodyModeSignals(t *testing.T) {
 	}
 }
 
-// fakeCounter presets APICounter levels for cap tests.
-type fakeCounter struct{ n int }
-
-func (c *fakeCounter) APICount(context.Context, string) (int, error) { return c.n, nil }
-func (c *fakeCounter) APIIncr(context.Context, string) error         { c.n++; return nil }
-
-// TestDailyCapStopsRequests: at 350 requests the client refuses before
-// the wire — the counter reaching the cap means no request is made.
-func TestDailyCapStopsRequests(t *testing.T) {
-	var hits int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&hits, 1)
-		fmt.Fprint(w, `{"items":[],"next_cursor":""}`)
-	}))
-	defer srv.Close()
-
-	ctr := &fakeCounter{n: DailyAPIDailyCap}
-	d := NewDailyJournal(ctr, srv.Client(), "KloxusBot/1.0 (+test)", srv.URL)
-	_, _, err := d.Poll(context.Background(), "", time.Time{}, 1)
-	if err != ErrCapped {
-		t.Fatalf("err=%v want ErrCapped", err)
-	}
-	if atomic.LoadInt64(&hits) != 0 {
-		t.Fatal("request went out after the cap")
-	}
-
-	// Under the cap, the request proceeds and increments the counter.
-	ctr.n = DailyAPIDailyCap - 1
-	_, _, err = d.Poll(context.Background(), "", time.Time{}, 1)
-	if err != nil {
-		t.Fatalf("under-cap poll: %v", err)
-	}
-	if atomic.LoadInt64(&hits) != 1 || ctr.n != DailyAPIDailyCap {
-		t.Fatalf("cap accounting wrong: hits=%d n=%d", hits, ctr.n)
-	}
-}
-
-// TestDaily429HonorsRetryAfter and TestDaily5xxRetriesTwice cover the
-// API retry contract.
-func TestDaily429HonorsRetryAfter(t *testing.T) {
-	var hits int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&hits, 1)
-		w.Header().Set("Retry-After", "900")
-		w.WriteHeader(429)
-	}))
-	defer srv.Close()
-	d := NewDailyJournal(&fakeCounter{}, srv.Client(), "KloxusBot/1.0 (+test)", srv.URL)
-	_, _, err := d.Poll(context.Background(), "", time.Time{}, 1)
-	var rl *ErrRateLimited
-	if err == nil || !errors.As(err, &rl) || rl.RetryAfter != 15*time.Minute {
-		t.Fatalf("err=%v want ErrRateLimited(15m)", err)
-	}
-	if atomic.LoadInt64(&hits) != 1 {
-		t.Fatalf("429 was retried: %d requests", hits)
-	}
-}
-
-func TestDaily5xxRetriesTwice(t *testing.T) {
-	var hits int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&hits, 1)
-		w.WriteHeader(500)
-	}))
-	defer srv.Close()
-	d := NewDailyJournal(&fakeCounter{}, srv.Client(), "KloxusBot/1.0 (+test)", srv.URL)
-	_, _, err := d.Poll(context.Background(), "", time.Time{}, 1)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if atomic.LoadInt64(&hits) != 3 {
-		t.Fatalf("5xx retried %d times, want 3 (initial + 2)", hits)
-	}
-}
-
-// TestDailyPollMapsFields: the list payload lands as signal items with
-// the required metadata — and no body anywhere.
-func TestDailyPollMapsFields(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/public/news" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-		if r.URL.Query().Get("cursor") != "c1" {
-			t.Fatalf("cursor not sent: %s", r.URL.RawQuery)
-		}
-		fmt.Fprint(w, `{"items":[{"id":"u1","slug":"s1","url":"https://dailyjournal.news/news/x/s1",
-			"title":"T","description":"D","published_at":"2026-11-13T10:00:00Z",
-			"categories":["technology"],"topics":[],"source_count":3,"outlet_count":4}],
-			"next_cursor":"c2"}`)
-	}))
-	defer srv.Close()
-	d := NewDailyJournal(&fakeCounter{}, srv.Client(), "KloxusBot/1.0 (+test)", srv.URL)
-	items, cursor, err := d.Poll(context.Background(), "c1", time.Time{}, 1)
-	if err != nil || cursor != "c2" || len(items) != 1 {
-		t.Fatalf("poll: %v cursor=%q n=%d", err, cursor, len(items))
-	}
-	ci := d.ToCatalogItem(items[0])
-	if ci.Kind != "signal" || ci.Meta["outlet_count"] != 4 {
-		t.Fatalf("mapping: %+v", ci)
-	}
-	if ci.Meta["dj_url"] != "https://dailyjournal.news/news/x/s1" {
-		t.Fatalf("dj_url missing: %+v", ci.Meta)
-	}
-}
-
 // TestParseRobots covers the RFC 9309 subset the checker implements.
 func TestParseRobots(t *testing.T) {
 	rules := parseRobots(`User-agent: BadBot
@@ -443,7 +301,7 @@ Disallow: /tmp`, "KloxusBot")
 // the fetch count is bounded by the catalog, not by anything per-
 // workspace (workspaces never reach this code at all).
 func TestSchedulerFetchesEachSourceOnce(t *testing.T) {
-	var feedHits, djHits int64
+	var feedHits int64
 	mux := http.NewServeMux()
 	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) })
 	mux.HandleFunc("/feed", func(w http.ResponseWriter, r *http.Request) {
@@ -451,34 +309,28 @@ func TestSchedulerFetchesEachSourceOnce(t *testing.T) {
 		w.Header().Set("Content-Type", "application/rss+xml")
 		fmt.Fprint(w, testFeed)
 	})
-	mux.HandleFunc("/api/public/news", func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&djHits, 1)
-		fmt.Fprint(w, `{"items":[],"next_cursor":""}`)
-	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	fs := newFakeStore()
 	fs.cat = []store.CatalogSource{
 		*rssSource(srv.URL+"/feed", "launch"),
-		{ID: 2, Slug: "dj", Name: "DJ", Kind: "api", URL: srv.URL, FeedURL: srv.URL + "/api/public/news",
+		{ID: 2, Slug: "api-src", Name: "API", Kind: "api", URL: srv.URL, FeedURL: srv.URL + "/api",
 			Policy: "signal", Domain: srv.URL, Enabled: true},
 		{ID: 3, Slug: "held", Name: "Held", Kind: "rss", URL: srv.URL, FeedURL: srv.URL + "/feed",
 			Policy: "hold", Domain: srv.URL, Enabled: true},
 		{ID: 4, Slug: "blockd", Name: "Blocked", Kind: "rss", URL: srv.URL, FeedURL: srv.URL + "/feed",
 			Policy: "blocked", Domain: srv.URL, Enabled: true},
 	}
-	s := NewScheduler(fs, "KloxusBot/1.0 (+test)", true, nil)
+	s := NewScheduler(fs, "KloxusBot/1.0 (+test)", nil)
 	s.PollOnce(context.Background())
 	if atomic.LoadInt64(&feedHits) != 1 {
 		t.Fatalf("feed fetched %d times, want 1", feedHits)
 	}
-	if atomic.LoadInt64(&djHits) != 1 {
-		t.Fatalf("dj polled %d times, want 1", djHits)
-	}
-	// Second poll: neither is due yet (last_fetch_at was just set).
+	// Second poll: nothing is due yet (last_fetch_at was just set), and
+	// non-RSS/hold/blocked sources are skipped every pass.
 	s.PollOnce(context.Background())
-	if atomic.LoadInt64(&feedHits) != 1 || atomic.LoadInt64(&djHits) != 1 {
-		t.Fatalf("not-due sources re-polled: feed=%d dj=%d", feedHits, djHits)
+	if atomic.LoadInt64(&feedHits) != 1 {
+		t.Fatalf("not-due sources re-polled: feed=%d", feedHits)
 	}
 }

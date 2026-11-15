@@ -107,12 +107,12 @@ func TestRunHeadless(t *testing.T) {
 	}
 }
 
-// TestPhaseACatalogScale reproduces KLOX-41: a fresh publication that
-// confirmed the suggested catalog sees the whole shared item pool on
-// its first run. At ~5k items the deterministic run used to issue
-// ~8–9k sequential remote INSERT/UPDATE calls across dedupe and
-// triage and hit the 15-minute run timeout on the hosted release;
-// with the writes batched the phase must finish far inside it.
+// TestPhaseACatalogScale guards the KLOX-45 bound: no matter how deep
+// the shared pool is, a run's candidate set is capped at 60 items per
+// catalog source within the 7-day window. Seeding ~5k shared items
+// (the pool size that timed out on window #20 before batching) must
+// leave a run that sees exactly 120 — and finishes far inside the
+// timeout because the oversized pool never reaches dedupe.
 func TestPhaseACatalogScale(t *testing.T) {
 	pool := testdb.Pool(t)
 	db := testdb.WSOn(t, pool)
@@ -126,29 +126,29 @@ func TestPhaseACatalogScale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SeedPublication: %v", err)
 	}
-	dj, err := pool.CatalogEntry(ctx, "daily-journal")
+	hn, err := pool.CatalogEntry(ctx, "hacker-news")
 	if err != nil {
-		t.Fatalf("CatalogEntry daily-journal: %v", err)
+		t.Fatalf("CatalogEntry hacker-news: %v", err)
 	}
 	tb, err := pool.CatalogEntry(ctx, "tecnoblog")
 	if err != nil {
 		t.Fatalf("CatalogEntry tecnoblog: %v", err)
 	}
-	if _, err := db.AddCatalogSource(ctx, pubID, dj); err != nil {
-		t.Fatalf("AddCatalogSource dj: %v", err)
+	if _, err := db.AddCatalogSource(ctx, pubID, hn); err != nil {
+		t.Fatalf("AddCatalogSource hn: %v", err)
 	}
 	if _, err := db.AddCatalogSource(ctx, pubID, tb); err != nil {
 		t.Fatalf("AddCatalogSource tb: %v", err)
 	}
-	// ~5k shared items — the pool size that timed out on window #20:
-	// Daily Journal signals (some citing the articles, so
-	// mergeCitedGroups runs) plus a launch feed's articles.
+	// ~5k shared items: signal rows (some citing the articles, so
+	// mergeCitedGroups runs) plus a launch feed's articles. Only the
+	// newest 60 per source may enter the run (KLOX-45).
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO items (catalog_id, external_id, url, canonical_url, title, published_at, content_text, kind, meta_json)
-		SELECT $1, 'dj-' || g, 'https://dj.example/' || g, 'https://dj.example/' || g,
-		       'dj story ' || g, now_utc(), 'signal body ' || g, 'signal',
+		SELECT $1, 'sig-' || g, 'https://sig.example/' || g, 'https://sig.example/' || g,
+		       'signal story ' || g, now_utc(), 'signal body ' || g, 'signal',
 		       json_build_object('cited_urls', json_build_array('https://tb.example/' || (g % 1500)))::text
-		FROM generate_series(1, 3500) g`, dj.ID); err != nil {
+		FROM generate_series(1, 3500) g`, hn.ID); err != nil {
 		t.Fatalf("seed signals: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
@@ -163,9 +163,9 @@ func TestPhaseACatalogScale(t *testing.T) {
 		// workspace cascade that removes it runs after this cleanup.
 		db.ExecContext(context.Background(),
 			`DELETE FROM story_items WHERE item_id IN
-				(SELECT id FROM items WHERE external_id LIKE 'dj-%' OR external_id LIKE 'tb-%')`)
+				(SELECT id FROM items WHERE external_id LIKE 'sig-%' OR external_id LIKE 'tb-%')`)
 		db.ExecContext(context.Background(),
-			`DELETE FROM items WHERE external_id LIKE 'dj-%' OR external_id LIKE 'tb-%'`)
+			`DELETE FROM items WHERE external_id LIKE 'sig-%' OR external_id LIKE 'tb-%'`)
 	})
 
 	pub, err := db.GetPublication(ctx, "p")
@@ -179,9 +179,9 @@ func TestPhaseACatalogScale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunPhaseA at ~5k-item pool: %v", err)
 	}
-	// Shared catalog rows from other tests may add to the pool; assert
-	// the seeded floor, not an exact count.
-	if res.Items < 5000 || res.Stories == 0 || res.IssueID == 0 {
+	// The candidate bounds hold: 60 signal + 60 article = 120 collected,
+	// never the seeded 5000.
+	if res.Items != 120 || res.Stories == 0 || res.IssueID == 0 {
 		t.Fatalf("result: %+v", res)
 	}
 	// Every story that survives lineup merges carries a triage verdict.

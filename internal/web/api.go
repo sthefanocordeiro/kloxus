@@ -15,9 +15,11 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1086,6 +1088,14 @@ type apiCandidate struct {
 // actually draft — replay fixtures only exist for the top of the list.
 const demoCandidateCap = 14
 
+// candidateCap bounds the ranked pool the board can see (KLOX-45):
+// the bench is paginated through the top candidates only.
+const candidateCap = 150
+
+// candidatePageSize is the bench page the board renders — it is also
+// the API's default and maximum page size.
+const candidatePageSize = 50
+
 func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 	iss, err := s.apiIssueID(r)
 	if apiDBErr(w, r, err, "issue") {
@@ -1095,20 +1105,80 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 0 {
+		page = 0
+	}
+	size, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	if size <= 0 || size > candidatePageSize {
+		size = candidatePageSize
+	}
 	cands, err := db(r).RankedCandidates(r.Context(), iss.PublicationID, iss.ID)
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
-	out, err := s.candidateViews(r, cands)
+	views, meta, err := s.candidatePage(r, cands, page, size)
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
-	apiJSON(w, 200, map[string]any{
-		"candidates": out,
+	resp := map[string]any{
+		"candidates": views,
 		"sections":   sectionViews(pub),
 		"demo":       s.d.Cfg.Mode == "demo",
 		"llm_mode":   s.d.Cfg.LLMMode,
-	})
+	}
+	maps.Copy(resp, meta)
+	apiJSON(w, 200, resp)
+}
+
+// candidatePage cuts the ranked pool to the board's window: every
+// in-issue story plus the top candidateCap ranked stories, paged by the
+// bench only — in-issue rows ride along on every page so the lineup
+// column never loses a card. Bench candidates keep their global rank.
+func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, page, size int) ([]apiCandidate, map[string]any, error) {
+	pool := cands
+	if len(pool) > candidateCap {
+		pool = pool[:candidateCap]
+	}
+	inIssue, bench := []store.RankedCandidate{}, []store.RankedCandidate{}
+	for _, c := range pool {
+		if c.Item != nil && (c.Item.Status == "pending" || c.Item.Status == "approved") {
+			inIssue = append(inIssue, c)
+		} else {
+			bench = append(bench, c)
+		}
+	}
+	// An in-issue story ranked beyond the cap must still render on the
+	// board — the bench is bounded, the lineup is not.
+	if len(cands) > candidateCap {
+		for _, c := range cands[candidateCap:] {
+			if c.Item != nil && (c.Item.Status == "pending" || c.Item.Status == "approved") {
+				inIssue = append(inIssue, c)
+			}
+		}
+	}
+	benchTotal := len(bench)
+	if from := page * size; from < benchTotal {
+		to := from + size
+		if to > benchTotal {
+			to = benchTotal
+		}
+		bench = bench[from:to]
+	} else {
+		bench = []store.RankedCandidate{}
+	}
+	visible := make([]store.RankedCandidate, 0, len(inIssue)+len(bench))
+	visible = append(visible, inIssue...)
+	visible = append(visible, bench...)
+	sort.Slice(visible, func(a, b int) bool { return visible[a].Rank < visible[b].Rank })
+	views, err := s.candidateViews(r, visible)
+	if err != nil {
+		return nil, nil, err
+	}
+	return views, map[string]any{
+		"page": page, "page_size": size,
+		"bench_total": benchTotal, "has_more": (page+1)*size < benchTotal,
+	}, nil
 }
 
 func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) ([]apiCandidate, error) {
@@ -1288,11 +1358,12 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		guide = s.guideAfterRebuild(w, r, pub)
 	}
 	cands, _ = db(r).RankedCandidates(ctx, iss.PublicationID, iss.ID)
-	views, err := s.candidateViews(r, cands)
+	views, meta, err := s.candidatePage(r, cands, 0, candidatePageSize)
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
 	resp := map[string]any{"candidates": views}
+	maps.Copy(resp, meta)
 	if guide != nil {
 		resp["guide"] = guide
 	}
@@ -1329,9 +1400,6 @@ func (s *Server) apiStory(w http.ResponseWriter, r *http.Request) {
 			// never as citation evidence (D30).
 			row["signal"] = true
 			row["via"] = n
-			if it.Meta.DJURL != "" {
-				row["via_url"] = it.Meta.DJURL
-			}
 		}
 		items = append(items, row)
 	}
@@ -1714,8 +1782,8 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		runner := &pipeline.Runner{
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
-			MaxDeepDives: s.d.Cfg.MaxDeepDives,
-			DemoMode:     s.d.Cfg.Mode == "demo",
+			MaxDeepDives:  s.d.Cfg.MaxDeepDives,
+			DemoMode:      s.d.Cfg.Mode == "demo",
 			Deterministic: s.d.Cfg.LLMOff(),
 			OnStep: func(step string) {
 				st.mu.Lock()

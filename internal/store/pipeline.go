@@ -33,21 +33,15 @@ type Item struct {
 	FetchedAt     string
 }
 
-// ItemMeta carries signal-source metadata (the Daily Journal fields the
-// catalog keeps: clustering counters and the links the story cites).
+// ItemMeta carries signal-source metadata — the links a signal story
+// cites, used to merge it onto the article it points at.
 type ItemMeta struct {
-	Description string   `json:"description,omitempty"`
-	Categories  []string `json:"categories,omitempty"`
-	Topics      []string `json:"topics,omitempty"`
-	OutletCount int      `json:"outlet_count,omitempty"`
-	SourceCount int      `json:"source_count,omitempty"`
-	DJURL       string   `json:"dj_url,omitempty"`
-	CitedURLs   []string `json:"cited_urls,omitempty"`
+	CitedURLs []string `json:"cited_urls,omitempty"`
 }
 
-// Signal reports whether the item is a link-level signal (Hacker News,
-// Daily Journal) rather than a full-text article: signals rank and
-// attribute stories but never serve as citation evidence.
+// Signal reports whether the item is a link-level signal (Hacker News)
+// rather than a full-text article: signals rank and attribute stories
+// but never serve as citation evidence.
 func (it Item) Signal() bool { return it.Kind == "signal" }
 
 // itemCols is the shared select list for the dual-source item queries:
@@ -82,13 +76,17 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 }
 
 // SaveItems inserts collected items (idempotent per source+external_id).
-// Returns the number of new rows.
+// Workspace-source items are never promo-tagged here: the deals filter
+// is a catalog-ingestion concern (D41) — these items come from the
+// editor's own picks, and tagging them would change the recorded/demo
+// candidate sets the deterministic replays depend on. Returns the
+// number of new rows.
 func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawItem, canonical func(string) string) (int, error) {
 	added := 0
 	for _, r := range raw {
 		res, err := db.ExecContext(ctx, `INSERT INTO items
-			(workspace_id, source_id, external_id, url, canonical_url, title, author, published_at, content_text)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			(workspace_id, source_id, external_id, url, canonical_url, title, author, published_at, content_text, kind)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'article')
 			ON CONFLICT (source_id, external_id) DO NOTHING`,
 			db.ws, sourceID, r.ExternalID, r.URL, canonical(r.URL), r.Title, r.Author, r.PublishedAt, r.ContentText)
 		if err != nil {
@@ -101,13 +99,30 @@ func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawIt
 	return added, nil
 }
 
-// ItemsForPublication returns all items across a publication's sources:
-// the workspace's own fixture items plus the shared catalog items its
-// catalog picks have collected (D29).
+// ItemsForPublication returns the run's candidate items across a
+// publication's sources: the workspace's own items plus the shared
+// catalog items its catalog picks have collected (D29). The candidate
+// set is bounded (owner decision, KLOX-45): kind='promo' items never
+// enter it; catalog items are limited to the last 7 days — published
+// date first, fetched_at when the stored date is unparseable — and to
+// the 60 newest per source. Per-workspace source items pass through
+// unbounded by design: they come from the editor's own picks, and a
+// date window or cap there would age the static demo/recorded fixtures
+// out of every deterministic replay (D41).
 func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT `+itemCols+`
-		FROM items i
+		FROM (
+		  SELECT i.*,
+		    ROW_NUMBER() OVER (
+		      PARTITION BY COALESCE('s' || i.source_id, 'c' || i.catalog_id)
+		      ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
+		               i.id DESC
+		    ) AS rn,
+		    COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) AS eff
+		  FROM items i
+		  WHERE i.kind <> 'promo'
+		) i
 		LEFT JOIN sources s ON s.id = i.source_id
 		LEFT JOIN source_catalog c ON c.id = i.catalog_id
 		WHERE (s.id IS NOT NULL AND s.workspace_id = $1 AND s.publication_id = $2)
@@ -115,6 +130,9 @@ func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, err
 		         SELECT 1 FROM sources ws
 		         WHERE ws.workspace_id = $1 AND ws.publication_id = $2
 		           AND ws.catalog_id = i.catalog_id))
+		  AND (i.catalog_id IS NULL
+		       OR (i.rn <= 60 AND (i.eff IS NULL
+		           OR i.eff >= now() - interval '7 days')))
 		ORDER BY i.id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
@@ -168,8 +186,8 @@ type Story struct {
 	TriageReason  string
 	// DedupeKey is the canonical URL shared by every member item; empty
 	// when the cluster merged on near-identical text (SimHash) alone.
-	DedupeKey     string
-	Items         []Item
+	DedupeKey string
+	Items     []Item
 }
 
 // Outlets returns the distinct source URLs covering this story.

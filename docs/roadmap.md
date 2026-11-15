@@ -80,7 +80,7 @@ to SQLite + Litestream and move on.
 
 - **Source catalog and global ingestion** — seeded catalog with policy,
   scheduler, conditional GET, robots re-check, shared `items`, fetch log;
-  Daily Journal as a signal source. (D29, D31)
+  Hacker News as a signal source. (D29, D31, D41)
 - **LLM guards and second provider** — run budgets, daily cap, kill switch,
   retries, fallback to the recorded sample; OpenAI-compatible provider.
   (D32)
@@ -112,8 +112,8 @@ Anthropic spend.
 
 ## R5 — Discovery and checkout (Nov 21–24)
 
-- **Discover a topic** — query expansion + Firecrawl Search + Daily Journal
-  search, capped per workspace. (D30)
+- **Discover a topic** — query expansion + Firecrawl Search, capped per
+  workspace. (D30, D41)
 - **AbacatePay test-mode checkout** for the paid section. (D34)
 
 **Exit:** typing a niche returns dated candidate stories with sources; a
@@ -154,8 +154,8 @@ The real pipeline and the landing page are never cut.
 ## Risks
 
 - **Schedule.** About 11–14 engineer-days of work in 13 calendar days.
-- **Five external dependencies during evaluation** (Supabase, the LLM
-  provider, Resend, Firecrawl, Daily Journal). Each has a fake or a recorded
+- **Four external dependencies during evaluation** (Supabase, the LLM
+  provider, Resend, Firecrawl). Each has a fake or a recorded
   fallback; the fixture demo stays up as the fallback URL.
 - **LLM spend and quality.** Anonymous visitors trigger real calls; caps and
   the kill switch are mandatory. The zero-cost provider must pass the
@@ -165,4 +165,4 @@ The real pipeline and the landing page are never cut.
   day.
 - **Publisher goodwill.** Four launch sources block AI crawlers by name; we
   read their public feed and publish summaries with links. Ask each for an
-  explicit OK, and get Daily Journal's permission in writing.
+  explicit OK.

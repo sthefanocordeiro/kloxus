@@ -44,7 +44,6 @@ export function SourcesPage() {
   // with that URL exists
   const addedURLs = new Set((sources.data ?? []).map((s) => s.url));
   const offered = (catalog.data?.offered ?? []).filter((o) => !addedURLs.has(o.url));
-  const unavailable = catalog.data?.unavailable ?? [];
   const count = (sources.data?.length ?? 0) + offered.filter((o) => checked(o.url)).length;
   const confirm = useMutation({
     mutationFn: async () => {
@@ -149,27 +148,6 @@ export function SourcesPage() {
                     {previewNote[o.url] && <li className="text-xs text-muted">{previewNote[o.url]}</li>}
                   </ul>
                 )}
-              </Card>
-            ))}
-          </div>
-        </>
-      )}
-
-      {unavailable.length > 0 && (
-        <>
-          <h2 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.unavailable}</h2>
-          <div className="mt-2 grid gap-2">
-            {unavailable.map((u) => (
-              <Card key={u.url} className="flex items-center gap-3 p-3 opacity-70">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{u.name}</p>
-                  <p className="mt-0.5 flex items-center gap-2 text-xs text-muted">
-                    <Badge tone="warn">
-                      {u.policy === "blocked" ? t.sourcesPage.unavailableWhy.blocked : t.sourcesPage.unavailableWhy.hold}
-                    </Badge>
-                  </p>
-                  {u.note && <p className="mt-0.5 text-xs text-muted">{u.note}</p>}
-                </div>
               </Card>
             ))}
           </div>
