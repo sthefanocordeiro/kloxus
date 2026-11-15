@@ -402,10 +402,19 @@ export const api = {
     request<{ coverage: Coverage; flags: number; version: string; removed?: RemovedSentence }>(
       "DELETE", `/api/v1/issues/${issueID}/sentences/${sid}`, { version },
     ),
+  removeFlagged: (issueID: number, ref: number, version: string) =>
+    request<{ coverage: Coverage; flags: number; version: string; removed?: RemovedSentence[] }>(
+      "DELETE", `/api/v1/issues/${issueID}/items/${ref}/sentences`, { version },
+    ),
   restoreSentence: (issueID: number, removed: RemovedSentence, version: string) =>
     request<{ coverage: Coverage; flags: number; version: string }>(
       "POST", `/api/v1/issues/${issueID}/items/${removed.ref}/sentences`,
       { index: removed.index, text: removed.text, kind: removed.kind, citations: removed.citations, flag: removed.flag, version },
+    ),
+  // batch undo for the bulk remove-flagged action: one POST restores the list
+  restoreSentences: (issueID: number, ref: number, removed: RemovedSentence[], version: string) =>
+    request<{ coverage: Coverage; flags: number; version: string }>(
+      "POST", `/api/v1/issues/${issueID}/items/${ref}/sentences`, { sentences: removed, version },
     ),
   markInterpretation: (issueID: number, sid: string, text: string | undefined, version: string) =>
     request<{ coverage: Coverage; flags: number; version: string }>(

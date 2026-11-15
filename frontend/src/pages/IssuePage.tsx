@@ -65,9 +65,9 @@ export function IssuePage() {
     if (doc) versionRef.current = doc.version;
   }, [doc]);
 
-  const [toast, setToast] = useState<{ text: string; undo?: RemovedSentence } | null>(null);
+  const [toast, setToast] = useState<{ text: string; undo?: RemovedSentence[] } | null>(null);
   const toastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showToast = useCallback((text: string, undo?: RemovedSentence) => {
+  const showToast = useCallback((text: string, undo?: RemovedSentence[]) => {
     setToast({ text, undo });
     if (toastRef.current) clearTimeout(toastRef.current);
     toastRef.current = setTimeout(() => setToast(null), 8000);
@@ -108,9 +108,9 @@ export function IssuePage() {
   const [saved, setSaved] = useState<"" | "saving" | "saved">("");
 
   const undoRemove = useCallback(
-    async (removed: RemovedSentence) => {
+    async (removed: RemovedSentence[]) => {
       try {
-        const r = await api.restoreSentence(issueID, removed, versionRef.current);
+        const r = await api.restoreSentences(issueID, removed[0].ref, removed, versionRef.current);
         versionRef.current = r.version;
         setToast(null);
         invalidate();
@@ -160,7 +160,19 @@ export function IssuePage() {
           const r = await api.removeSentence(issueID, sid, versionRef.current);
           versionRef.current = r.version;
           invalidate();
-          showToast(t.doc.removed, r.removed);
+          showToast(t.doc.removed, r.removed ? [r.removed] : undefined);
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      removeFlagged: async (itemRef) => {
+        try {
+          const r = await api.removeFlagged(issueID, itemRef, versionRef.current);
+          versionRef.current = r.version;
+          invalidate();
+          showToast(t.doc.removedFlagged(r.removed?.length ?? 0), r.removed);
           return true;
         } catch (e) {
           resync(e);

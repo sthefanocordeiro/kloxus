@@ -64,6 +64,7 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
         attrs: {
           ref: item.ref, issueItemId: item.issue_item_id, headline: item.headline,
           empty: (item.sentences ?? []).length === 0,
+          flagged: (item.sentences ?? []).filter((s) => s.flag).length,
         },
       });
       for (const s of item.sentences ?? []) {

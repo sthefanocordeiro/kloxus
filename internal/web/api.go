@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1917,14 +1918,7 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref, _ := strconv.Atoi(r.PathValue("ref"))
-	var item *docItem
-	for si := range doc.Sections {
-		for ii := range doc.Sections[si].Items {
-			if doc.Sections[si].Items[ii].Ref == ref {
-				item = &doc.Sections[si].Items[ii]
-			}
-		}
-	}
+	item := doc.findItem(ref)
 	if item == nil {
 		apiErr(w, 404, "not_found", "item not found in the document")
 		return
@@ -1961,7 +1955,7 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 	if kind == "interpretation" {
 		raw = "> _Interpretação: " + text + "_"
 	} else {
-		d, _ := s.itemDossierByID(r, item)
+		d := item.dossier
 		maxRef := 0
 		if d != nil {
 			maxRef = len(d.Sources)
@@ -2009,7 +2003,7 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 	}
 	db(r).RecordDecision(ctx, iss.PublicationID, item.IssueItemID, "manual_compose", raw)
 	revertApproved(r, iss)
-	s.respondSentence(w, r, iss, map[string]any{"added": len(strings.Split(raw, "\n"))})
+	s.respondSentence(w, r, iss, doc, map[string]any{"added": len(strings.Split(raw, "\n"))})
 }
 
 // --- document / sentence mutations / commentary ---
@@ -2151,7 +2145,7 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// fact: citations must point at this item's sources and the new
 		// claim must stay supported by them
-		d, _ := s.itemDossierByID(r, loc.item)
+		d := loc.item.dossier
 		maxRef := 0
 		if d != nil {
 			maxRef = len(d.Sources)
@@ -2221,7 +2215,7 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 	db(r).RecordDecision(ctx, iss.PublicationID, loc.item.IssueItemID, kind,
 		loc.sentence.raw+" → "+text)
 	revertApproved(r, iss)
-	s.respondSentence(w, r, iss, nil)
+	s.respondSentence(w, r, iss, doc, nil)
 }
 
 // apiSentenceRemove deletes a sentence (and its flag when present). The
@@ -2277,13 +2271,25 @@ func (s *Server) apiSentenceRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	db(r).RecordDecision(ctx, iss.PublicationID, loc.item.IssueItemID, kind, loc.sentence.raw)
 	revertApproved(r, iss)
-	s.respondSentence(w, r, iss, map[string]any{"removed": removed})
+	s.respondSentence(w, r, iss, doc, map[string]any{"removed": removed})
 }
 
-// apiSentenceRestore re-inserts a removed sentence into its item —
-// the Undo for apiSentenceRemove. The client sends back the payload
-// DELETE returned; the server composes the stored form at the same
-// index inside the item's span and re-attaches the flag it carried.
+// restoreEntry is one removed sentence the client asks to put back:
+// the undo payload DELETE (or the bulk flagged-removal) returned.
+type restoreEntry struct {
+	Index     int    `json:"index"`
+	Text      string `json:"text"`
+	Kind      string `json:"kind"`
+	Citations []int  `json:"citations"`
+	Flag      string `json:"flag,omitempty"`
+}
+
+// apiSentenceRestore re-inserts removed sentences into their item —
+// the Undo for apiSentenceRemove and apiItemRemoveFlagged. The client
+// sends back the payload(s) DELETE returned — one flat object, or
+// {"sentences": [...]} for a batch; the server composes the stored
+// form at each recorded index inside the item's span and re-attaches
+// the flags they carried, all in one write.
 func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 	iss, err := s.apiIssueID(r)
 	if apiDBErr(w, r, err, "issue") {
@@ -2302,25 +2308,15 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref, _ := strconv.Atoi(r.PathValue("ref"))
-	var item *docItem
-	for si := range doc.Sections {
-		for ii := range doc.Sections[si].Items {
-			if doc.Sections[si].Items[ii].Ref == ref {
-				item = &doc.Sections[si].Items[ii]
-			}
-		}
-	}
+	item := doc.findItem(ref)
 	if item == nil {
 		apiErr(w, 404, "not_found", "item not found in the document")
 		return
 	}
 	var in struct {
-		Index     int    `json:"index"`
-		Text      string `json:"text"`
-		Kind      string `json:"kind"`
-		Citations []int  `json:"citations"`
-		Flag      string `json:"flag,omitempty"`
-		Version   string `json:"version"`
+		restoreEntry
+		Sentences []restoreEntry `json:"sentences"`
+		Version   string         `json:"version"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
@@ -2329,23 +2325,30 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 	if !checkDocVersion(w, doc, in.Version) {
 		return
 	}
-	text := displayText(in.Text)
-	if text == "" {
-		apiErr(w, 400, "validation", "restored sentence cannot be empty")
-		return
+	entries := in.Sentences
+	if len(entries) == 0 {
+		entries = []restoreEntry{in.restoreEntry}
 	}
-	var raw string
-	if in.Kind == "interpretation" {
-		raw = "> _Interpretação: " + text + "_"
-	} else {
-		d, _ := s.itemDossierByID(r, item)
-		maxRef := 0
-		if d != nil {
-			maxRef = len(d.Sources)
+	// compose every entry's stored form first — a bad citation or an
+	// empty text refuses the whole restore, never half of it
+	maxRef := 0
+	if item.dossier != nil {
+		maxRef = len(item.dossier.Sources)
+	}
+	raws := make([]string, len(entries))
+	for i, e := range entries {
+		text := displayText(e.Text)
+		if text == "" {
+			apiErr(w, 400, "validation", "restored sentence cannot be empty")
+			return
 		}
-		raw = text
+		if e.Kind == "interpretation" {
+			raws[i] = "> _Interpretação: " + text + "_"
+			continue
+		}
+		raw := text
 		seen := map[int]bool{}
-		for _, n := range in.Citations {
+		for _, n := range e.Citations {
 			if n < 1 || (maxRef > 0 && n > maxRef) {
 				apiErr(w, 409, "invalid_citation",
 					fmt.Sprintf("source [%d] does not exist for this item", n))
@@ -2357,29 +2360,150 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 			seen[n] = true
 			raw += fmt.Sprintf(" [%d]", n)
 		}
+		raws[i] = raw
 	}
-	if in.Index < 0 {
-		in.Index = 0
-	}
-	body, ok := insertInItem(iss.BodyMD, item, in.Index, raw)
-	if !ok {
+	if item.spanStart < 0 || item.spanEnd > len(iss.BodyMD) || item.spanStart >= item.spanEnd {
 		apiErr(w, 409, "conflict", "the item no longer accepts this sentence")
 		return
 	}
+	// splice in ascending recorded index — each entry lands back at the
+	// position it was removed from, in one body write
+	order := make([]int, len(entries))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return entries[order[a]].Index < entries[order[b]].Index })
+	seg := iss.BodyMD[item.spanStart:item.spanEnd]
+	cur := make([]string, len(item.Sentences))
+	for i, sn := range item.Sentences {
+		cur[i] = sn.raw
+	}
+	for _, oi := range order {
+		idx := entries[oi].Index
+		if idx < 0 {
+			idx = 0
+		}
+		if idx > len(cur) {
+			idx = len(cur)
+		}
+		seg = insertRaw(seg, cur, idx, raws[oi])
+		cur = slices.Insert(cur, idx, raws[oi])
+	}
+	body := iss.BodyMD[:item.spanStart] + seg + iss.BodyMD[item.spanEnd:]
 	ctx := r.Context()
 	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
 		return
 	}
-	if in.Flag != "" {
-		flags := append(append([]store.Flag{}, iss.Flags...),
-			store.Flag{Item: int64(ref), Sentence: raw, Note: in.Flag})
+	flags := append([]store.Flag{}, iss.Flags...)
+	restored := 0
+	for _, oi := range order {
+		if entries[oi].Flag != "" {
+			flags = append(flags, store.Flag{Item: int64(ref), Sentence: raws[oi], Note: entries[oi].Flag})
+			restored++
+		}
+	}
+	if restored > 0 {
 		if apiDBErr(w, r, db(r).ResolveFlags(ctx, iss.ID, flags), "issue") {
 			return
 		}
 	}
-	db(r).RecordDecision(ctx, iss.PublicationID, item.IssueItemID, "sentence_restore", raw)
+	db(r).RecordDecision(ctx, iss.PublicationID, item.IssueItemID, "sentence_restore",
+		fmt.Sprintf("%d sentence(s) restored to item %d", len(entries), ref))
 	revertApproved(r, iss)
-	s.respondSentence(w, r, iss, nil)
+	s.respondSentence(w, r, iss, doc, nil)
+}
+
+// apiItemRemoveFlagged deletes every flagged sentence of one item in a
+// single write — the editor's bulk action for a flagged-heavy item.
+// The response carries the removed payload list so the client can offer
+// Undo: POST /issues/{id}/items/{ref}/sentences restores them.
+func (s *Server) apiItemRemoveFlagged(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.apiIssueID(r)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
+		return
+	}
+	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
+	if apiDBErr(w, r, err, "document") {
+		return
+	}
+	ref, _ := strconv.Atoi(r.PathValue("ref"))
+	item := doc.findItem(ref)
+	if item == nil {
+		apiErr(w, 404, "not_found", "item not found in the document")
+		return
+	}
+	var in struct {
+		Version string `json:"version"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if !checkDocVersion(w, doc, in.Version) {
+		return
+	}
+	if item.spanStart < 0 || item.spanEnd > len(iss.BodyMD) || item.spanStart >= item.spanEnd {
+		apiErr(w, 409, "conflict", "the item is no longer in the body")
+		return
+	}
+	// remove every flagged sentence inside the item's span — one write
+	// for the whole batch, undo payload in document order
+	seg := iss.BodyMD[item.spanStart:item.spanEnd]
+	removedRaws := map[string]bool{}
+	var removed []map[string]any
+	for i := range item.Sentences {
+		sn := &item.Sentences[i]
+		if sn.Flag == nil {
+			continue
+		}
+		ns, ok := removeRaw(seg, sn.raw)
+		if !ok {
+			continue
+		}
+		seg = ns
+		removedRaws[sn.raw] = true
+		entry := map[string]any{
+			"ref": item.Ref, "index": i, "text": sn.Text,
+			"kind": sn.Kind, "citations": orEmpty(sn.Citations),
+			"flag": sn.Flag.Note,
+		}
+		removed = append(removed, entry)
+	}
+	if len(removed) == 0 {
+		apiErr(w, 409, "nothing_flagged", "this item has no flagged sentences")
+		return
+	}
+	body := iss.BodyMD[:item.spanStart] + seg + iss.BodyMD[item.spanEnd:]
+	ctx := r.Context()
+	if apiDBErr(w, r, db(r).SetIssueBody(ctx, iss.ID, body), "issue") {
+		return
+	}
+	kept := make([]store.Flag, 0, len(iss.Flags))
+	dropped := 0
+	for _, f := range iss.Flags {
+		if f.Item == int64(item.Ref) && removedRaws[f.Sentence] {
+			dropped++
+			continue
+		}
+		kept = append(kept, f)
+	}
+	if dropped > 0 {
+		if apiDBErr(w, r, db(r).ResolveFlags(ctx, iss.ID, kept), "issue") {
+			return
+		}
+	}
+	db(r).RecordDecision(ctx, iss.PublicationID, item.IssueItemID, "flagged_bulk_remove",
+		fmt.Sprintf("%d flagged sentence(s) removed from item %d", len(removed), item.Ref))
+	revertApproved(r, iss)
+	s.respondSentence(w, r, iss, doc, map[string]any{"removed": removed})
 }
 
 // apiSentenceInterpretation marks a sentence as interpretation: it is
@@ -2429,22 +2553,20 @@ func (s *Server) apiSentenceInterpretation(w http.ResponseWriter, r *http.Reques
 	}
 	db(r).RecordDecision(ctx, iss.PublicationID, loc.item.IssueItemID, kind, loc.sentence.raw)
 	revertApproved(r, iss)
-	s.respondSentence(w, r, iss, nil)
+	s.respondSentence(w, r, iss, doc, nil)
 }
 
-// respondSentence re-parses the document after a mutation and answers
-// with fresh coverage (and the mutated sentence when it still exists).
-// extra keys (e.g. "removed" for undo) are merged into the response.
-func (s *Server) respondSentence(w http.ResponseWriter, r *http.Request, iss *store.Issue, extra map[string]any) {
-	fresh, err := db(r).GetIssue(r.Context(), iss.ID)
-	if err == nil {
+// respondSentence answers a mutation with the post-write document
+// state: fresh coverage and version, plus the mutated sentence when it
+// still exists. The document re-parses in memory over the request's
+// already-loaded context — the dossier/item queries happen once per
+// request, not once per build (KLOX-47). extra keys (e.g. "removed"
+// for undo) are merged into the response.
+func (s *Server) respondSentence(w http.ResponseWriter, r *http.Request, iss *store.Issue, doc *issueDocument, extra map[string]any) {
+	if fresh, err := db(r).GetIssue(r.Context(), iss.ID); err == nil {
 		iss = fresh
 	}
-	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	doc, err := buildIssueDocument(r.Context(), db(r), iss, pub)
-	if apiDBErr(w, r, err, "document") {
-		return
-	}
+	doc = parseIssueDocument(iss, doc.pub, doc.dctx)
 	resp := map[string]any{"coverage": doc.Coverage, "flags": len(iss.Flags), "version": doc.Version}
 	if loc := doc.findSentence(r.PathValue("sid")); loc != nil {
 		resp["sentence"] = loc.sentence
@@ -3212,28 +3334,12 @@ func (s *Server) apiDemoNew(w http.ResponseWriter, r *http.Request) {
 
 // --- small helpers ---
 
-// itemDossierByID loads the dossier for a document item.
-func (s *Server) itemDossierByID(r *http.Request, item *docItem) (*pipeline.Dossier, error) {
-	if item == nil || item.IssueItemID == 0 {
-		return nil, sql.ErrNoRows
-	}
-
-	dj, err := db(r).Dossier(r.Context(), item.IssueItemID)
-	if err != nil {
-		return nil, err
-	}
-	var d pipeline.Dossier
-	if err := json.Unmarshal([]byte(dj), &d); err != nil {
-		return nil, err
-	}
-	return &d, nil
-}
-
 // editSupportedFor re-runs the citation check for an edited sentence
-// against a document item's dossier.
+// against a document item's dossier — already parsed in the document
+// context, no second store lookup.
 func (s *Server) editSupportedFor(r *http.Request, item *docItem, itemRef int64, text string) bool {
-	d, err := s.itemDossierByID(r, item)
-	if err != nil || d == nil {
+	d := item.dossier
+	if d == nil {
 		return false
 	}
 	return s.dossierSupports(r, d, itemRef, text)
