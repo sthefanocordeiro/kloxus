@@ -351,11 +351,22 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	urls := make([]string, len(items))
 	texts := make([]string, len(items))
+	published := make([]time.Time, len(items))
 	for i, it := range items {
 		urls[i] = it.URL
-		texts[i] = it.Title + "\n" + it.ContentText
+		// SimHash runs over body text only (KLOX-46): a republish's new
+		// headline must not push the pair past the 4-bit threshold.
+		texts[i] = it.ContentText
+		// The 72 h merge window uses the published date first and the
+		// fetched time when it is unparseable — the same fallback the
+		// candidate query applies (safe_ts).
+		if t, ok := parsePublished(it.PublishedAt); ok {
+			published[i] = t
+		} else if t, ok := parsePublished(it.FetchedAt); ok {
+			published[i] = t
+		}
 	}
-	clusters := dedupe.Assign(urls, texts)
+	clusters := dedupe.Assign(urls, texts, published)
 	if err := r.DB.ClearStories(ctx, pub.ID); err != nil {
 		return nil, err
 	}
@@ -371,16 +382,12 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	sort.Slice(ordered, func(a, b int) bool { return ordered[a][0].ID < ordered[b][0].ID })
 	drafts := make([]store.StoryDraft, len(ordered))
 	for i, g := range ordered {
-		title := g[0].Title
 		itemIDs := make([]int64, len(g))
 		for j, it := range g {
 			itemIDs[j] = it.ID
-			if len(it.Title) > len(title) {
-				title = it.Title
-			}
 		}
 		drafts[i] = store.StoryDraft{
-			Title:     title,
+			Title:     earliestTitle(g),
 			Simhash:   int64(dedupe.SimHash(g[0].Title + "\n" + g[0].ContentText)),
 			DedupeKey: dedupeKey(g),
 			ItemIDs:   itemIDs,
@@ -1672,11 +1679,19 @@ func capEntrySources(items []store.Item) []store.Item {
 // mergeCitedGroups folds a signal's cluster into the cluster holding an
 // article the signal cites — a signal item's cited links point at the
 // same reporting our launch feeds carried, so the signal attaches to
-// that story instead of clustering alone.
+// that story instead of clustering alone. Merges respect the same
+// MaxClusterSize cap as SimHash clusters: a merge that would overflow
+// the cap is skipped and the signal keeps its own story. Cluster ids
+// are processed in sorted order so cap decisions are deterministic.
 func mergeCitedGroups(groups map[int][]store.Item) map[int][]store.Item {
+	ids := make([]int, 0, len(groups))
+	for id := range groups {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
 	owner := map[string]int{}
-	for id, g := range groups {
-		for _, it := range g {
+	for _, id := range ids {
+		for _, it := range groups[id] {
 			if !it.Signal() && it.CanonicalURL != "" {
 				if _, ok := owner[it.CanonicalURL]; !ok {
 					owner[it.CanonicalURL] = id
@@ -1684,8 +1699,13 @@ func mergeCitedGroups(groups map[int][]store.Item) map[int][]store.Item {
 			}
 		}
 	}
-	// union-find over cluster ids
+	// union-find over cluster ids, with a per-root member count so a
+	// merge that would push a story past MaxClusterSize never happens.
 	parent := map[int]int{}
+	size := map[int]int{}
+	for _, id := range ids {
+		size[id] = len(groups[id])
+	}
 	var find func(int) int
 	find = func(x int) int {
 		p, ok := parent[x]
@@ -1697,12 +1717,13 @@ func mergeCitedGroups(groups map[int][]store.Item) map[int][]store.Item {
 	}
 	union := func(a, b int) {
 		ra, rb := find(a), find(b)
-		if ra != rb {
+		if ra != rb && size[ra]+size[rb] <= dedupe.MaxClusterSize {
 			parent[rb] = ra
+			size[ra] += size[rb]
 		}
 	}
-	for id, g := range groups {
-		for _, it := range g {
+	for _, id := range ids {
+		for _, it := range groups[id] {
 			if !it.Signal() {
 				continue
 			}

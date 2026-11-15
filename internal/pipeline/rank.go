@@ -46,6 +46,25 @@ type lineupPick struct {
 	Section string
 }
 
+// earliestTitle names a story after its earliest-published member
+// article (owner decision, KLOX-46): the previous longest-title rule
+// let a giant cluster take an unrelated member's name. Signal items
+// (link headlines) are not articles and can't supply the title; with
+// no parseable date the first member's title stands.
+func earliestTitle(g []store.Item) string {
+	title := g[0].Title
+	var best time.Time
+	for _, it := range g {
+		if it.Signal() {
+			continue
+		}
+		if t, ok := parsePublished(it.PublishedAt); ok && (best.IsZero() || t.Before(best)) {
+			best, title = t, it.Title
+		}
+	}
+	return title
+}
+
 // dedupeKey returns the canonical URL shared by every member item —
 // the story's dedupe key — or "" when the cluster merged on
 // near-identical text alone.

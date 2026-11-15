@@ -1,6 +1,10 @@
 // Package realsample carries the recorded real issue (D32): the
-// publication definition, the captured feeds and recorded LLM
-// responses, and the exported sample dossier + issue markdown.
+// publication definition, the captured feeds, and the exported sample
+// dossier + issue markdown.
+//
+// The recorded LLM replies were removed in KLOX-46: they captured the
+// pre-fix union-find dedupe and cannot replay under bounded clustering.
+// `kloxus record --live` regenerates them post-merge (owner-only).
 //
 // Unlike everything under examples/, this content is REAL — real
 // outlets, real stories. It lives outside the fictional fixture tree on
@@ -18,10 +22,10 @@ import (
 //go:embed pub.yaml
 var defFS embed.FS
 
-// feedsFS and llmFS hold the captured inputs that let `kloxus llm-check`
-// replay the recorded run's feed side deterministically.
+// FS holds the captured inputs that let `kloxus llm-check` replay the
+// recorded run's feed side deterministically.
 //
-//go:embed all:feeds all:llm sample.json issue.md
+//go:embed all:feeds sample.json issue.md
 var FS embed.FS
 
 // Def parses the embedded real publication definition.
