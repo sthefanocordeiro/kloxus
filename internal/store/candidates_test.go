@@ -11,6 +11,34 @@ import (
 	"time"
 )
 
+// testCatalogEntry inserts a throwaway catalog row for these tests.
+// Package binaries run in parallel against the same test database and
+// catalog items are global — using a dedicated source keeps other
+// packages' items (e.g. the pipeline scale test's tecnoblog pool) from
+// leaking into the 7-day window or the 60-per-source cap.
+func testCatalogEntry(t *testing.T, pool *Pool, slug string) *CatalogSource {
+	t.Helper()
+	ctx := context.Background()
+	slug = fmt.Sprintf("%s-%d", slug, time.Now().UnixNano())
+	if _, err := pool.db.ExecContext(ctx, `INSERT INTO source_catalog
+		(slug, name, url, feed_url, policy, domain) VALUES
+		($1,$2,$3,$3,'launch',$4)`,
+		slug, "Test "+slug, "https://"+slug+".example/feed", slug+".example"); err != nil {
+		t.Fatalf("test catalog row: %v", err)
+	}
+	cs, err := pool.CatalogEntry(ctx, slug)
+	if err != nil {
+		t.Fatalf("CatalogEntry: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		pool.db.ExecContext(ctx, `DELETE FROM sources WHERE catalog_id = $1`, cs.ID)
+		pool.db.ExecContext(ctx, `DELETE FROM items WHERE catalog_id = $1`, cs.ID)
+		pool.db.ExecContext(ctx, `DELETE FROM source_catalog WHERE id = $1`, cs.ID)
+	})
+	return cs
+}
+
 // seedCatalogItem inserts a catalog item with explicit dates.
 func seedCatalogItem(t *testing.T, pool *Pool, catalogID int64, ext, published, fetched string) {
 	t.Helper()
@@ -44,10 +72,7 @@ func TestCandidateWindow(t *testing.T) {
 	pool := openPool(t)
 	db := openOn(t, pool)
 	ctx := context.Background()
-	cs, err := pool.CatalogEntry(ctx, "tecnoblog")
-	if err != nil {
-		t.Fatalf("CatalogEntry: %v", err)
-	}
+	cs := testCatalogEntry(t, pool, "cand-window")
 	pubID, err := db.SeedPublication(ctx, testPub())
 	if err != nil {
 		t.Fatalf("seed: %v", err)
@@ -85,17 +110,8 @@ func TestCandidateWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CatalogItemsStats: %v", err)
 	}
-	var want int
-	for ext, w := range map[string]bool{
-		"cw-fresh": true, "cw-edge": true, "cw-undated": true,
-		"cw-bad-date": true, "cw-old": false, "cw-undated-old": false, "cw-bad-old": false,
-	} {
-		if w && got[ext] {
-			want++
-		}
-	}
-	if total != want {
-		t.Fatalf("CatalogItemsStats total=%d want %d", total, want)
+	if total != 4 {
+		t.Fatalf("CatalogItemsStats total=%d want 4 (the in-window items)", total)
 	}
 }
 
@@ -105,10 +121,7 @@ func TestCandidateCapPerSource(t *testing.T) {
 	pool := openPool(t)
 	db := openOn(t, pool)
 	ctx := context.Background()
-	cs, err := pool.CatalogEntry(ctx, "olhar-digital")
-	if err != nil {
-		t.Fatalf("CatalogEntry: %v", err)
-	}
+	cs := testCatalogEntry(t, pool, "cand-cap")
 	pubID, err := db.SeedPublication(ctx, testPub())
 	if err != nil {
 		t.Fatalf("seed: %v", err)
@@ -157,10 +170,7 @@ func TestPromoExcluded(t *testing.T) {
 	pool := openPool(t)
 	db := openOn(t, pool)
 	ctx := context.Background()
-	cs, err := pool.CatalogEntry(ctx, "meiobit")
-	if err != nil {
-		t.Fatalf("CatalogEntry: %v", err)
-	}
+	cs := testCatalogEntry(t, pool, "cand-promo")
 	pubID, err := db.SeedPublication(ctx, testPub())
 	if err != nil {
 		t.Fatalf("seed: %v", err)
