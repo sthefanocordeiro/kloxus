@@ -13,6 +13,8 @@ export interface DocActions {
   editSentence: (sid: string, text: string, citations: number[]) => Promise<string | null>;
   interpret: (sid: string, text?: string) => Promise<boolean>;
   removeSentence: (sid: string) => Promise<boolean>;
+  // bulk action: drop every flagged sentence of an item in one call
+  removeFlagged: (itemRef: number) => Promise<boolean>;
   // open the evidence pane on item ref, optionally highlighting a
   // citation's passage and flashing the sentence
   showEvidence: (itemRef: number, opts?: { citeRef?: number; sid?: string; issueItemId?: number }) => void;
@@ -43,6 +45,7 @@ export const DocActionsCtx = createContext<DocActions>({
   editSentence: async () => null,
   interpret: async () => false,
   removeSentence: async () => false,
+  removeFlagged: async () => false,
   showEvidence: () => {},
   addSentence: async () => null,
   readOnly: true,
@@ -255,16 +258,38 @@ function CommentaryView({ node, editor, getPos }: NodeViewProps) {
 function ItemHeadingView({ node, editor }: NodeViewProps) {
   const { t } = useT();
   const actions = useContext(DocActionsCtx);
-  const a = node.attrs as { ref: number; issueItemId: number; headline: string; empty: boolean };
+  const a = node.attrs as { ref: number; issueItemId: number; headline: string; empty: boolean; flagged: number };
+  const [busy, setBusy] = useState(false);
   const open = () => {
     blurEditor(editor);
     actions.showEvidence(a.ref, { issueItemId: a.issueItemId });
   };
   return (
     <NodeViewWrapper className="mt-6" onMouseDown={(e: MouseEvent) => e.preventDefault()} data-item-ref={a.ref}>
-      <h3 className="cursor-pointer font-doc text-lg font-semibold hover:text-teal" onClick={open}>
-        {a.headline}
-      </h3>
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="cursor-pointer font-doc text-lg font-semibold hover:text-teal" onClick={open}>
+          {a.headline}
+        </h3>
+        {a.flagged > 0 && !actions.readOnly && (
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={busy}
+            contentEditable={false}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await actions.removeFlagged(a.ref);
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="shrink-0"
+          >
+            <Trash2 size={12} /> {t.doc.removeFlagged(a.flagged)}
+          </Button>
+        )}
+      </div>
       {a.empty && !actions.readOnly && (
         <button
           type="button"
@@ -359,7 +384,10 @@ export const ItemHeading = Node.create({
   atom: true,
   selectable: false,
   addAttributes() {
-    return { ref: { default: 0 }, issueItemId: { default: 0 }, headline: { default: "" }, empty: { default: false } };
+    return {
+      ref: { default: 0 }, issueItemId: { default: 0 }, headline: { default: "" },
+      empty: { default: false }, flagged: { default: 0 },
+    };
   },
   parseHTML() {
     return [{ tag: "h3[data-item-ref]" }];

@@ -112,6 +112,12 @@ type issueDocument struct {
 	Version  string       `json:"version"`
 	Sections []docSection `json:"sections"`
 	Coverage docCoverage  `json:"coverage"`
+
+	// dctx and pub let a mutation handler re-render the response's
+	// fresh document without paying the dossier/item queries again —
+	// one document context load per request (KLOX-47).
+	dctx *docContext
+	pub  *store.Publication
 }
 
 var (
@@ -180,6 +186,18 @@ type locatedSentence struct {
 	item     *docItem
 }
 
+// findItem locates a document item by its dossier ref.
+func (doc *issueDocument) findItem(ref int) *docItem {
+	for si := range doc.Sections {
+		for ii := range doc.Sections[si].Items {
+			if doc.Sections[si].Items[ii].Ref == ref {
+				return &doc.Sections[si].Items[ii]
+			}
+		}
+	}
+	return nil
+}
+
 // findSentence locates a document sentence by its "item.hash" id.
 func (doc *issueDocument) findSentence(id string) *locatedSentence {
 	for si := range doc.Sections {
@@ -207,14 +225,11 @@ func replaceInItem(body string, item *docItem, raw, repl string) (string, bool) 
 	return body[:item.spanStart] + strings.Replace(seg, raw, repl, 1) + body[item.spanEnd:], true
 }
 
-// removeInItem deletes a sentence within its item's span, taking along
-// any citation marker that trails it and tidying the leftover
-// whitespace — an identical sentence in another item is never touched.
-func removeInItem(body string, item *docItem, raw string) (string, bool) {
-	if item.spanStart < 0 || item.spanEnd > len(body) || item.spanStart >= item.spanEnd {
-		return body, false
-	}
-	seg := body[item.spanStart:item.spanEnd]
+// removeRaw deletes the first occurrence of raw inside a segment,
+// taking along any citation marker that trails it and tidying the
+// leftover whitespace — the segment-level core of removeInItem, shared
+// with the bulk remove-flagged path.
+func removeRaw(seg, raw string) (string, bool) {
 	re := regexp.MustCompile(regexp.QuoteMeta(raw) + `(?:\s*\[\d+\])*\s*[.!?]*`)
 	var newSeg string
 	if loc := re.FindStringIndex(seg); loc != nil {
@@ -222,7 +237,7 @@ func removeInItem(body string, item *docItem, raw string) (string, bool) {
 	} else if i := strings.Index(seg, raw); i >= 0 {
 		newSeg = seg[:i] + seg[i+len(raw):]
 	} else {
-		return body, false
+		return seg, false
 	}
 	newSeg = strings.ReplaceAll(newSeg, "  ", " ")
 	for strings.Contains(newSeg, "\n\n\n") {
@@ -231,6 +246,20 @@ func removeInItem(body string, item *docItem, raw string) (string, bool) {
 	// a sentence's terminal punctuation can survive as ". ." — collapse
 	newSeg = strings.ReplaceAll(newSeg, ". .", ".")
 	newSeg = strings.ReplaceAll(newSeg, " . ", " ")
+	return newSeg, true
+}
+
+// removeInItem deletes a sentence within its item's span, taking along
+// any citation marker that trails it and tidying the leftover
+// whitespace — an identical sentence in another item is never touched.
+func removeInItem(body string, item *docItem, raw string) (string, bool) {
+	if item.spanStart < 0 || item.spanEnd > len(body) || item.spanStart >= item.spanEnd {
+		return body, false
+	}
+	newSeg, ok := removeRaw(body[item.spanStart:item.spanEnd], raw)
+	if !ok {
+		return body, false
+	}
 	return body[:item.spanStart] + newSeg + body[item.spanEnd:], true
 }
 
@@ -271,6 +300,55 @@ func bestEvidence(d *pipeline.Dossier, ref int, sentence, fallback string) strin
 	return truncateStr(best, 320)
 }
 
+// docContext is everything the document parser needs from the store,
+// loaded in two queries for the whole issue: one join for every lineup
+// item and its dossier JSON, one batch load for every cited item —
+// replacing the per-item Dossier call and the per-source GetItem call
+// that made each document build N+1 against remote Postgres (KLOX-47).
+// docItemInfo links one dossier ref to its issue item and parsed dossier.
+type docItemInfo struct {
+	issueItemID int64
+	dossier     *pipeline.Dossier
+}
+
+type docContext struct {
+	// item ref → issue item + dossier (the <!-- item N --> markers the
+	// assembler writes equal dossier refs).
+	byRef map[int]docItemInfo
+	// cited item id → stored item (source excerpt, date, outlet name)
+	items map[int64]*store.Item
+}
+
+// loadDocContext runs the document's only two store queries.
+func loadDocContext(ctx context.Context, d *store.DB, iss *store.Issue) (*docContext, error) {
+	dc := &docContext{byRef: map[int]docItemInfo{}, items: map[int64]*store.Item{}}
+	pairs, err := d.IssueItemDossiers(ctx, iss.ID)
+	if err != nil {
+		return nil, err
+	}
+	var cited []int64
+	seen := map[int64]bool{}
+	for _, p := range pairs {
+		var dd pipeline.Dossier
+		if p.Dossier == "" || json.Unmarshal([]byte(p.Dossier), &dd) != nil {
+			continue
+		}
+		dc.byRef[dd.Ref] = docItemInfo{issueItemID: p.Item.ID, dossier: &dd}
+		for _, ds := range dd.Sources {
+			if ds.ItemID != 0 && !seen[ds.ItemID] {
+				seen[ds.ItemID] = true
+				cited = append(cited, ds.ItemID)
+			}
+		}
+	}
+	items, err := d.GetItems(ctx, cited)
+	if err != nil {
+		return nil, err
+	}
+	dc.items = items
+	return dc, nil
+}
+
 // buildIssueDocument parses the stored issue body into the structured
 // document. Flags are matched to sentences by (item ref, raw text);
 // unmatched flags stay on their item.
@@ -278,29 +356,22 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 	if pub == nil {
 		return nil, fmt.Errorf("publication %d not found", iss.PublicationID)
 	}
+	dc, err := loadDocContext(ctx, d, iss)
+	if err != nil {
+		return nil, err
+	}
+	return parseIssueDocument(iss, pub, dc), nil
+}
+
+// parseIssueDocument renders the structured document from the stored
+// body — a pure transform over the issue and a preloaded context, so a
+// mutation handler can answer with the post-write document without a
+// second round of dossier/item queries.
+func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext) *issueDocument {
 	doc := &issueDocument{
 		IssueID: iss.ID, Number: iss.Number, Status: iss.Status, Subject: iss.Subject,
 		Version: docVersion(iss), Sections: []docSection{},
-	}
-
-	// item ref → issue item + dossier (the <!-- item N --> markers the
-	// assembler writes equal dossier refs).
-	type itemInfo struct {
-		issueItemID int64
-		dossier     *pipeline.Dossier
-	}
-	byRef := map[int]itemInfo{}
-	if iis, err := d.IssueItems(ctx, iss.ID); err == nil {
-		for _, ii := range iis {
-			dj, err := d.Dossier(ctx, ii.ID)
-			if err != nil {
-				continue
-			}
-			var dd pipeline.Dossier
-			if json.Unmarshal([]byte(dj), &dd) == nil {
-				byRef[dd.Ref] = itemInfo{issueItemID: ii.ID, dossier: &dd}
-			}
-		}
+		dctx: dc, pub: pub,
 	}
 
 	// flags by (item ref, raw sentence text), preserving flag order
@@ -403,13 +474,13 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 			ref, _ := strconv.Atoi(m[2])
 			it := docItem{Ref: ref, Headline: m[1], spanStart: pos, openings: map[int]string{},
 				Sentences: []docSentence{}, Sources: []docSource{}}
-			if info, ok := byRef[ref]; ok {
+			if info, ok := dc.byRef[ref]; ok {
 				it.IssueItemID = info.issueItemID
 				it.dossier = info.dossier
 				for _, ds := range info.dossier.Sources {
 					src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
 					if ds.ItemID != 0 {
-						if stored, err := d.GetItem(ctx, ds.ItemID); err == nil {
+						if stored, ok := dc.items[ds.ItemID]; ok {
 							src.Excerpt = truncateStr(stored.ContentText, 320)
 							src.Date = stored.PublishedAt
 							it.openings[ds.Ref] = src.Excerpt
@@ -480,22 +551,21 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 		}
 	}
 	doc.Coverage.Flagged = len(iss.Flags)
-	return doc, nil
+	return doc
 }
 
-// insertInItem writes composed raw back into the item's span at the
-// index-th sentence position (appended before the span end when idx is
-// past the current count). Used by the sentence-restore endpoint.
-func insertInItem(body string, item *docItem, idx int, raw string) (string, bool) {
-	if item.spanStart < 0 || item.spanEnd > len(body) || item.spanStart >= item.spanEnd {
-		return body, false
-	}
-	seg := body[item.spanStart:item.spanEnd]
-	// find the byte offset inside seg where the idx-th sentence starts
+// insertRaw splices raw into a segment at the idx-th sentence position
+// (before raws[idx]; appended before the sources block when idx is past
+// the current count). raws is the segment's sentence sequence — callers
+// that splice several entries keep it in sync between inserts.
+func insertRaw(seg string, raws []string, idx int, raw string) string {
+	// find the byte offset inside seg where the idx-th sentence starts —
+	// walk each sentence in order so a duplicate raw earlier in the item
+	// cannot land the splice on the wrong occurrence
 	pos := 0
-	if idx < len(item.Sentences) {
-		target := item.Sentences[idx].raw
+	if idx < len(raws) {
 		for i := 0; i <= idx; i++ {
+			target := raws[i]
 			j := strings.Index(seg[pos:], target)
 			if j < 0 {
 				pos = len(seg)
@@ -523,9 +593,24 @@ func insertInItem(body string, item *docItem, idx int, raw string) (string, bool
 	if pos < len(seg) && !strings.HasSuffix(raw, "\n") {
 		raw += "\n"
 	}
+	return head + raw + seg[pos:]
+}
+
+// insertInItem writes composed raw back into the item's span at the
+// index-th sentence position (appended before the span end when idx is
+// past the current count). Used by the sentence-restore endpoint.
+func insertInItem(body string, item *docItem, idx int, raw string) (string, bool) {
+	if item.spanStart < 0 || item.spanEnd > len(body) || item.spanStart >= item.spanEnd {
+		return body, false
+	}
+	seg := body[item.spanStart:item.spanEnd]
+	raws := make([]string, len(item.Sentences))
+	for i, sn := range item.Sentences {
+		raws[i] = sn.raw
+	}
 	// body[spanEnd:] carries the rest of the issue — next items and
 	// sections; dropping it here would silently truncate the document
-	return body[:item.spanStart] + head + raw + seg[pos:] + body[item.spanEnd:], true
+	return body[:item.spanStart] + insertRaw(seg, raws, idx, raw) + body[item.spanEnd:], true
 }
 
 // truncateStr shortens s to n runes for excerpts (rune-safe: never

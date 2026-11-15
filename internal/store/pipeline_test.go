@@ -307,3 +307,110 @@ func TestCreateStoriesBatched(t *testing.T) {
 		t.Fatalf("SetStoriesTriage(nil): %v", err)
 	}
 }
+
+// TestIssueItemDossiersAndGetItems covers the document builder's two
+// batch queries (KLOX-47): the issue-items+dossier join must return
+// every lineup item with its dossier JSON in score order, and GetItems
+// must resolve an id list in one query under the same
+// workspace-or-catalog visibility rule as GetItem.
+func TestIssueItemDossiersAndGetItems(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+
+	pubID, err := db.SeedPublication(ctx, testPub())
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	srcs, err := db.Sources(ctx, pubID)
+	if err != nil || len(srcs) == 0 {
+		t.Fatalf("Sources: %v len=%d", err, len(srcs))
+	}
+	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "")
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	story, err := db.CreateStory(ctx, pubID, "story", 1, "")
+	if err != nil {
+		t.Fatalf("CreateStory: %v", err)
+	}
+	lo, err := db.CreateIssueItem(ctx, IssueItem{
+		IssueID: issueID, StoryID: story, Section: "Lead",
+		Score: 10, Status: "pending", Position: 0,
+	})
+	if err != nil {
+		t.Fatalf("CreateIssueItem lo: %v", err)
+	}
+	hi, err := db.CreateIssueItem(ctx, IssueItem{
+		IssueID: issueID, StoryID: story, Section: "Lead",
+		Score: 20, Status: "approved", Position: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateIssueItem hi: %v", err)
+	}
+	if err := db.SaveDossier(ctx, lo, `{"ref":3}`); err != nil {
+		t.Fatalf("SaveDossier: %v", err)
+	}
+
+	pairs, err := db.IssueItemDossiers(ctx, issueID)
+	if err != nil {
+		t.Fatalf("IssueItemDossiers: %v", err)
+	}
+	if len(pairs) != 2 {
+		t.Fatalf("pairs = %d, want 2", len(pairs))
+	}
+	// score desc, like IssueItems
+	if pairs[0].Item.ID != hi || pairs[1].Item.ID != lo {
+		t.Fatalf("pair order = %d,%d, want %d,%d", pairs[0].Item.ID, pairs[1].Item.ID, hi, lo)
+	}
+	if pairs[0].Dossier != "" {
+		t.Fatalf("dossierless item returned %q", pairs[0].Dossier)
+	}
+	if pairs[1].Dossier != `{"ref":3}` {
+		t.Fatalf("dossier json = %q", pairs[1].Dossier)
+	}
+	if pairs[1].Item.Section != "Lead" || pairs[1].Item.Status != "pending" {
+		t.Fatalf("joined item fields wrong: %+v", pairs[1].Item)
+	}
+
+	var i1, i2 int64
+	for i, ext := range []string{"g1", "g2"} {
+		var id int64
+		if err := db.QueryRowContext(ctx,
+			`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text)
+			 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+			db.ws, srcs[0].ID, ext, "https://x.example/"+ext, "item "+ext,
+			fmt.Sprintf("body %d", i)).Scan(&id); err != nil {
+			t.Fatalf("insert item: %v", err)
+		}
+		if i == 0 {
+			i1 = id
+		} else {
+			i2 = id
+		}
+	}
+	got, err := db.GetItems(ctx, []int64{i1, i2, 99999999})
+	if err != nil {
+		t.Fatalf("GetItems: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("GetItems returned %d rows, want 2 (missing id skipped)", len(got))
+	}
+	if got[i1].Title != "item g1" || got[i1].ContentText != "body 0" || got[i1].SourceID != srcs[0].ID {
+		t.Fatalf("GetItems row wrong: %+v", got[i1])
+	}
+	if got[i2].URL != "https://x.example/g2" {
+		t.Fatalf("GetItems row wrong: %+v", got[i2])
+	}
+	// single row equals GetItem's shape
+	one, err := db.GetItem(ctx, i2)
+	if err != nil {
+		t.Fatalf("GetItem: %v", err)
+	}
+	if got[i2].ID != one.ID || got[i2].Title != one.Title || got[i2].URL != one.URL ||
+		got[i2].ContentText != one.ContentText || got[i2].FetchedAt != one.FetchedAt {
+		t.Fatalf("GetItems row differs from GetItem: %+v vs %+v", got[i2], one)
+	}
+	if empty, err := db.GetItems(ctx, nil); err != nil || len(empty) != 0 {
+		t.Fatalf("GetItems(nil) = %v %v", empty, err)
+	}
+}

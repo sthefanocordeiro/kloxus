@@ -23,6 +23,7 @@ function renderBox(actions: Partial<DocActions>, it: DocItem = item(), insert: C
     editSentence: async () => null,
     interpret: async () => false,
     removeSentence: async () => false,
+    removeFlagged: async () => false,
     showEvidence: () => {},
     addSentence: async () => null,
     readOnly: false,

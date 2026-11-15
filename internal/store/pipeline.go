@@ -177,6 +177,37 @@ func (db *DB) GetItem(ctx context.Context, id int64) (*Item, error) {
 		db.ws, id))
 }
 
+// GetItems loads many items by id in one query — the same row shape
+// and visibility rule as GetItem (workspace items or shared catalog
+// rows). The issue document's source excerpts cite tens of items; one
+// round-trip replaces the per-source GetItem loop that made every
+// document build N+1 against remote Postgres (KLOX-47).
+func (db *DB) GetItems(ctx context.Context, ids []int64) (map[int64]*Item, error) {
+	out := map[int64]*Item{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT `+itemCols+`
+		FROM items i
+		LEFT JOIN sources s ON s.id = i.source_id
+		LEFT JOIN source_catalog c ON c.id = i.catalog_id
+		WHERE i.id = ANY($2) AND (i.workspace_id = $1 OR i.catalog_id IS NOT NULL)`,
+		db.ws, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		it, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[it.ID] = it
+	}
+	return out, rows.Err()
+}
+
 // Story is a deduplicated group of items covering the same story.
 type Story struct {
 	ID            int64
@@ -588,6 +619,41 @@ func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error
 			return nil, err
 		}
 		out = append(out, ii)
+	}
+	return out, rows.Err()
+}
+
+// IssueItemDossier pairs an issue item with its stored dossier JSON
+// (empty when the item has no dossier yet).
+type IssueItemDossier struct {
+	Item    IssueItem
+	Dossier string
+}
+
+// IssueItemDossiers lists an issue's items together with their dossier
+// JSON in one query, same order as IssueItems. The issue document
+// builder reads dossiers for every lineup item; the join replaces the
+// per-item Dossier lookups that made every document build N+1 against
+// remote Postgres (KLOX-47).
+func (db *DB) IssueItemDossiers(ctx context.Context, issueID int64) ([]IssueItemDossier, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT ii.id, ii.issue_id, ii.story_id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section,
+		       COALESCE(d.json, '')
+		FROM issue_items ii
+		LEFT JOIN dossiers d ON d.workspace_id = ii.workspace_id AND d.issue_item_id = ii.id
+		WHERE ii.workspace_id = $1 AND ii.issue_id = $2 ORDER BY ii.score DESC`, db.ws, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IssueItemDossier
+	for rows.Next() {
+		var p IssueItemDossier
+		ii := &p.Item
+		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &p.Dossier); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }

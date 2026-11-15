@@ -479,7 +479,27 @@ sentence stay on the item.
 
 ### `DELETE /api/v1/issues/{id}/sentences/{sid}` — remove a sentence
 `{"version": "9f1c04ab22dd77ee"}` — resolves its flag when present →
-`{"coverage": {…}, "flags": 0, "version": "…"}`.
+`{"coverage": {…}, "flags": 0, "version": "…", "removed": {…}}`.
+`removed` is the undo payload: `{ref, index, text, kind, citations,
+flag?}` — `index` is the sentence's position inside its item.
+
+### `DELETE /api/v1/issues/{id}/items/{ref}/sentences` — remove all flagged
+`{"version": "9f1c04ab22dd77ee"}` — the editor's bulk action: removes
+every flagged sentence of item `ref` in one write and resolves their
+flags → `{"coverage": {…}, "flags": 0, "version": "…", "removed": [{…}]}`
+(`removed` entries in document order, same shape as the single-sentence
+undo payload). Unflagged sentences and flags on other items are
+untouched. `409 nothing_flagged` when the item has no flagged
+sentences; `read_only` on sent/scheduled issues.
+
+### `POST /api/v1/issues/{id}/items/{ref}/sentences` — restore sentences
+The undo for both removals. Send one removed payload flat
+(`{"index": 2, "text": "…", "kind": "fact", "citations": [1],
+"flag": "…", "version": "…"}`) or a batch
+(`{"sentences": [{…}], "version": "…"}`) — every entry lands back at
+its recorded `index` inside the item, in one write, and a carried
+`flag` is re-attached. An empty text or a citation the item does not
+have refuses the whole restore; nothing is half-written.
 
 ### `POST /api/v1/issues/{id}/sentences/{sid}/interpretation`
 `{"text": "…", "version": "9f1c04ab22dd77ee"}` (`text` optional —

@@ -126,6 +126,8 @@ const dict = {
       save: "Save",
       cancel: "Cancel",
       removed: "Sentence removed",
+      removeFlagged: (n: number) => `Remove ${n} flagged sentence${n === 1 ? "" : "s"}`,
+      removedFlagged: (n: number) => `${n} flagged sentence${n === 1 ? "" : "s"} removed`,
       undo: "Undo",
     },
     commentary: {
@@ -535,6 +537,8 @@ const dict = {
       save: "Salvar",
       cancel: "Cancelar",
       removed: "Frase removida",
+      removeFlagged: (n: number) => `Remover ${n} frase${n === 1 ? "" : "s"} sinalizada${n === 1 ? "" : "s"}`,
+      removedFlagged: (n: number) => `${n} frase${n === 1 ? "" : "s"} sinalizada${n === 1 ? "" : "s"} removida${n === 1 ? "" : "s"}`,
       undo: "Desfazer",
     },
     commentary: {

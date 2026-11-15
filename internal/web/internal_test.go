@@ -1,6 +1,7 @@
 package web
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -124,5 +125,74 @@ func TestPaywallNoteLocalized(t *testing.T) {
 	}
 	if n := paywallNote("en", 2); !strings.Contains(n, "2 more stories") {
 		t.Fatalf("en counted note expected, got %q", n)
+	}
+}
+
+// TestRemoveRawBulk: removing several sentences from one item segment in
+// sequence — the bulk remove-flagged core — leaves survivors, citation
+// markers of kept sentences and the sources block intact.
+func TestRemoveRawBulk(t *testing.T) {
+	seg := "Primeira frase. [1] Segunda apoiada. [2] Terceira livre.\n\n**Sources:** [1] A [2] B"
+	var ok bool
+	seg, ok = removeRaw(seg, "Primeira frase. [1]")
+	if !ok {
+		t.Fatal("first sentence not removed")
+	}
+	seg, ok = removeRaw(seg, "Terceira livre.")
+	if !ok {
+		t.Fatal("last sentence not removed")
+	}
+	if !strings.Contains(seg, "Segunda apoiada. [2]") {
+		t.Fatalf("kept sentence damaged: %q", seg)
+	}
+	if strings.Contains(seg, "Primeira") || strings.Contains(seg, "Terceira") {
+		t.Fatalf("removed sentence survived: %q", seg)
+	}
+	if strings.Contains(seg, " [1]") && !strings.Contains(seg, "**Sources:**") {
+		t.Fatalf("orphaned citation: %q", seg)
+	}
+	if !strings.Contains(seg, "**Sources:**") {
+		t.Fatalf("sources block lost: %q", seg)
+	}
+}
+
+// TestInsertRawBatchRestore exercises the multi-entry splice the batch
+// undo performs: entries land at their recorded index in ascending
+// order while the raw sequence is kept in sync between inserts — an
+// original [A,B,C,D] minus {B,D} must come back exactly.
+func TestInsertRawBatchRestore(t *testing.T) {
+	// the stored body keeps one sentence per line
+	seg := "A.\nC.\n\n**Sources:** [1] x"
+	cur := []string{"A.", "C."}
+	insert := func(idx int, raw string) {
+		if idx > len(cur) {
+			idx = len(cur)
+		}
+		seg = insertRaw(seg, cur, idx, raw)
+		cur = slices.Insert(cur, idx, raw)
+	}
+	insert(1, "B.") // removed from index 1
+	insert(3, "D.") // removed from index 3 — after B landed;
+	// overflow lands after the item's blank line, before the sources
+	// block (the pre-existing append position)
+	if want := "A.\nB.\nC.\n\nD.\n**Sources:** [1] x"; seg != want {
+		t.Fatalf("restored segment = %q, want %q", seg, want)
+	}
+
+	// an entry recorded at index 0 lands first
+	seg = "B.\nC."
+	cur = []string{"B.", "C."}
+	insert(0, "A.")
+	if !strings.HasPrefix(seg, "A.\nB.\nC.") {
+		t.Fatalf("index-0 restore placed wrong: %q", seg)
+	}
+
+	// an index past the end appends before the sources block
+	seg = "A.\n\n**Sources:** x"
+	cur = []string{"A."}
+	insert(5, "Z.")
+	i, j := strings.Index(seg, "Z."), strings.Index(seg, "**Sources:**")
+	if i < 0 || i > j {
+		t.Fatalf("overflow index must land before sources: %q", seg)
 	}
 }

@@ -36,6 +36,29 @@ reqf() {
 		--data-binary "@$f" "$BASE$p"
 }
 
+# reqms METHOD PATH [json-body] — like req, but also sets HTTP_TIME to
+# curl's %{time_total} for the latency assertions (KLOX-47).
+reqms() {
+	local m="$1" p="$2" d="${3:-}" out
+	if [ -n "$d" ]; then
+		out="$(curl -sS -o "$RESP" -w '%{http_code} %{time_total}' -b "$JAR" -c "$JAR" -X "$m" \
+			-H 'Content-Type: application/json' --connect-timeout 15 --max-time 60 \
+			--data-binary "$d" "$BASE$p")"
+	else
+		out="$(curl -sS -o "$RESP" -w '%{http_code} %{time_total}' -b "$JAR" -c "$JAR" -X "$m" \
+			-H 'Content-Type: application/json' --connect-timeout 15 --max-time 60 "$BASE$p")"
+	fi
+	HTTP_CODE="${out%% *}"; HTTP_TIME="${out##* }"
+	printf '%s' "$HTTP_CODE"
+}
+
+# assert_fast <label> — fails when the last reqms call took over 1.5 s.
+assert_fast() {
+	awk "BEGIN{exit !($HTTP_TIME > 1.5)}" \
+		&& die "$1 took ${HTTP_TIME}s (> 1.5 s — KLOX-47 latency bound)"
+	say "$1 ${HTTP_TIME}s (under 1.5 s)"
+}
+
 # jget <dotted.path> → extracts a JSON value from $RESP ("" when absent)
 jget() {
 	node -e '
@@ -173,8 +196,16 @@ wait_run "$DRID" "draft"
 # Real drafts flag far more sentences than the fixture's handful and can
 # leave fact sentences uncited — both block readiness the same way an
 # editor would resolve them: remove the sentence. Cap stays a loop guard.
+# The first document fetch and the first sentence mutation are timed:
+# the KLOX-47 bound fails the smoke above 1.5 s (sentence mutations used
+# to take ~9 s on the hosted app — the N+1 document build).
 for i in $(seq 1 300); do
-	[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
+	if [ "$i" = "1" ]; then
+		[ "$(reqms GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
+		assert_fast "document fetch"
+	else
+		[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
+	fi
 	SIDVER="$(node -e '
 		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).document;
 		for (const s of d.sections)
@@ -186,8 +217,14 @@ for i in $(seq 1 300); do
 		console.log("");' "$RESP")"
 	[ -z "$SIDVER" ] && break
 	SID="${SIDVER%%|*}"; VER="${SIDVER##*|}"
-	[ "$(req DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}")" = "200" ] \
-		|| die "sentence remove $SID: $(cat "$RESP")"
+	if [ "$i" = "1" ]; then
+		[ "$(reqms DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}")" = "200" ] \
+			|| die "sentence remove $SID: $(cat "$RESP")"
+		assert_fast "sentence remove"
+	else
+		[ "$(req DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}")" = "200" ] \
+			|| die "sentence remove $SID: $(cat "$RESP")"
+	fi
 done
 say "flags resolved"
 
