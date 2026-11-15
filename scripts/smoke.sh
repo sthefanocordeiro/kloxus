@@ -201,7 +201,10 @@ wait_run "$DRID" "draft"
 # to take ~9 s on the hosted app — the N+1 document build).
 for i in $(seq 1 300); do
 	if [ "$i" = "1" ]; then
-		[ "$(reqms GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
+		# reqms must run outside $(...) — a subshell would discard the
+		# HTTP_CODE/HTTP_TIME it sets for assert_fast
+		reqms GET "/api/v1/issues/$IID/document" >/dev/null
+		[ "$HTTP_CODE" = "200" ] || die "document fetch failed"
 		assert_fast "document fetch"
 	else
 		[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
@@ -218,8 +221,8 @@ for i in $(seq 1 300); do
 	[ -z "$SIDVER" ] && break
 	SID="${SIDVER%%|*}"; VER="${SIDVER##*|}"
 	if [ "$i" = "1" ]; then
-		[ "$(reqms DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}")" = "200" ] \
-			|| die "sentence remove $SID: $(cat "$RESP")"
+		reqms DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}" >/dev/null
+		[ "$HTTP_CODE" = "200" ] || die "sentence remove $SID: $(cat "$RESP")"
 		assert_fast "sentence remove"
 	else
 		[ "$(req DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}")" = "200" ] \
