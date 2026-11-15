@@ -286,6 +286,9 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		Monitor: monitor, Mailer: mailer, Seed: seed, Pool: pool,
 	})
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
+	// one pooled conn stays warm so the remote pooler never reaps
+	// every handle between requests (KLOX-47 p95 latency criteria)
+	go pool.KeepAlive(context.Background(), time.Minute)
 	if cfg.IngestEnabled {
 		// The global feed scheduler — feeds fetch once for every
 		// workspace (D29).

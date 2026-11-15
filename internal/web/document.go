@@ -317,11 +317,33 @@ type docContext struct {
 	byRef map[int]docItemInfo
 	// cited item id → stored item (source excerpt, date, outlet name)
 	items map[int64]*store.Item
+	// issue items whose board decision is still open — counted from the
+	// pairs the document already loaded, not a separate query
+	pending int
+}
+
+// dcFromPairs builds the document context from already-loaded
+// item/dossier pairs and cited items.
+func dcFromPairs(pairs []store.IssueItemDossier, items map[int64]*store.Item) *docContext {
+	dc := &docContext{byRef: map[int]docItemInfo{}, items: items}
+	if dc.items == nil {
+		dc.items = map[int64]*store.Item{}
+	}
+	for _, p := range pairs {
+		if p.Item.Status == "pending" {
+			dc.pending++
+		}
+		var dd pipeline.Dossier
+		if p.Dossier == "" || json.Unmarshal([]byte(p.Dossier), &dd) != nil {
+			continue
+		}
+		dc.byRef[dd.Ref] = docItemInfo{issueItemID: p.Item.ID, dossier: &dd}
+	}
+	return dc
 }
 
 // loadDocContext runs the document's only two store queries.
 func loadDocContext(ctx context.Context, d *store.DB, iss *store.Issue) (*docContext, error) {
-	dc := &docContext{byRef: map[int]docItemInfo{}, items: map[int64]*store.Item{}}
 	pairs, err := d.IssueItemDossiers(ctx, iss.ID)
 	if err != nil {
 		return nil, err
@@ -333,7 +355,6 @@ func loadDocContext(ctx context.Context, d *store.DB, iss *store.Issue) (*docCon
 		if p.Dossier == "" || json.Unmarshal([]byte(p.Dossier), &dd) != nil {
 			continue
 		}
-		dc.byRef[dd.Ref] = docItemInfo{issueItemID: p.Item.ID, dossier: &dd}
 		for _, ds := range dd.Sources {
 			if ds.ItemID != 0 && !seen[ds.ItemID] {
 				seen[ds.ItemID] = true
@@ -345,8 +366,7 @@ func loadDocContext(ctx context.Context, d *store.DB, iss *store.Issue) (*docCon
 	if err != nil {
 		return nil, err
 	}
-	dc.items = items
-	return dc, nil
+	return dcFromPairs(pairs, items), nil
 }
 
 // buildIssueDocument parses the stored issue body into the structured
