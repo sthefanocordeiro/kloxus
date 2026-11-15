@@ -189,7 +189,8 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const [search, setSearch] = useState("");
   const [sectionFilter, setSectionFilter] = useState("");
   const [sheet, setSheet] = useState<Candidate | null>(null);
-  const [swapFor, setSwapFor] = useState<{ story: Candidate; section: string } | null>(null);
+  const [swapFor, setSwapFor] = useState<{ story: Candidate; section: string; out?: Candidate } | null>(null);
+  const [swapReason, setSwapReason] = useState("");
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [draftRun, setDraftRun] = useState<string | null>(null);
   const [draftBlocked, setDraftBlocked] = useState<string | null>(null);
@@ -328,7 +329,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     applyBoard(toBench(b, cand), t.board.removed(short(cand.title)));
   };
 
-  const swapWith = (storyID: number, section: string, outStoryID: number) => {
+  const swapWith = (storyID: number, section: string, outStoryID: number, reason?: string) => {
     if (!board) return;
     const loc = findCard(outStoryID);
     const { b, cand: out } = removeFrom(board, outStoryID);
@@ -337,7 +338,29 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     nb = insertTo(nb, inCand, section, loc?.idx);
     nb = toBench(nb, out);
     setSwapFor(null);
+    setSwapReason("");
     applyBoard(nb, t.board.moved(short(inCand.title)));
+    // a reason turns the swap into a rejection the guide learns from —
+    // the swapped-out story keeps its issue item, so the decision
+    // records like any other rejection (KLOX-49)
+    if (reason && out.item_id) {
+      const itemID = out.item_id;
+      decide.mutate(
+        { itemID, reason },
+        {
+          onSuccess: (r) => {
+            const added = r.guide?.added ?? [];
+            const rule = added[0]?.replace(/^-\s*/, "");
+            showToast(
+              rule ? t.board.ruleLearned(rule) : t.board.moved(short(inCand.title)),
+              { kind: "reject", itemID },
+              rule ? { text: t.board.viewGuide, url: `/publications/${issue.publication_id}/guide` } : undefined,
+            );
+            qc.invalidateQueries({ queryKey: ["candidates", issue.id] });
+          },
+        },
+      );
+    }
   };
 
   const rejectWith = (cand: Candidate, reason?: string) => {
@@ -536,7 +559,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           <button
             className="absolute right-3 top-3 z-10 text-xs text-muted hover:text-ink"
             onClick={() => setDraftBlocked(null)}
-            aria-label="dismiss"
+            aria-label={t.dismiss}
           >
             ✕
           </button>
@@ -741,8 +764,9 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         </section>
       </div>
 
-      {/* swap chooser: adding to a full section picks what goes out */}
-      <KDialog open={!!swapFor} onOpenChange={() => setSwapFor(null)} title={swapFor?.section || t.board.add}>
+      {/* swap chooser: adding to a full section picks what goes out,
+          then asks why — the reason feeds the editorial guide */}
+      <KDialog open={!!swapFor} onOpenChange={() => { setSwapFor(null); setSwapReason(""); }} title={swapFor?.section || t.board.add}>
         {swapFor && !swapFor.section && (
           <div className="space-y-1">
             {sections.map((s) => (
@@ -760,7 +784,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             ))}
           </div>
         )}
-        {swapFor && swapFor.section && (
+        {swapFor && swapFor.section && !swapFor.out && (
           <>
             <p className="mb-3 text-sm text-muted">{t.board.sectionFull(swapFor.section, board.sections[swapFor.section].length)}</p>
             <div className="space-y-1">
@@ -768,12 +792,51 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 <button
                   key={c.story_id}
                   className="block w-full rounded-[var(--radius-btn)] border border-line px-3 py-2 text-left text-sm hover:bg-paper"
-                  onClick={() => swapWith(swapFor.story.story_id, swapFor.section, c.story_id)}
+                  onClick={() => {
+                    if (c.item_id) setSwapFor({ ...swapFor, out: c });
+                    else swapWith(swapFor.story.story_id, swapFor.section, c.story_id);
+                  }}
                 >
                   {c.title}
                 </button>
               ))}
             </div>
+          </>
+        )}
+        {swapFor?.out && (
+          <>
+            <p className="mb-2 text-sm text-muted">{t.board.swapWhy(short(swapFor.out.title))}</p>
+            <div className="flex flex-wrap gap-1">
+              {t.board.reasonChips.map((chip) => (
+                <button
+                  key={chip}
+                  className="rounded-full border border-line px-2.5 py-1 text-xs hover:border-teal hover:text-teal"
+                  onClick={() => swapWith(swapFor.story.story_id, swapFor.section, swapFor.out!.story_id, chip)}
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 flex gap-1">
+              <input
+                value={swapReason}
+                onChange={(e) => setSwapReason(e.target.value)}
+                placeholder={t.board.reasonOther}
+                className="h-7 min-w-0 flex-1 rounded-[var(--radius-input)] border border-line bg-paper px-2 text-xs"
+              />
+              <Button
+                size="sm" variant="teal" className="h-7" disabled={!swapReason.trim()}
+                onClick={() => swapWith(swapFor.story.story_id, swapFor.section, swapFor.out!.story_id, swapReason.trim())}
+              >
+                {t.board.swapAction}
+              </Button>
+            </div>
+            <button
+              className="mt-2 text-xs text-muted underline"
+              onClick={() => swapWith(swapFor.story.story_id, swapFor.section, swapFor.out!.story_id)}
+            >
+              {t.board.justSwap}
+            </button>
           </>
         )}
       </KDialog>

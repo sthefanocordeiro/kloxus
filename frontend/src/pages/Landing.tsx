@@ -17,10 +17,10 @@ const STACK = [
   { id: "abacatepay", name: "AbacatePay", status: "coming" },
 ] as const;
 
-// The landing page: product promise, the loop, a real cited dossier from
-// the sample issue (fetched workspace-free), the rules, the stack and a
-// short FAQ. Start resolves-or-creates the visitor's workspace through
-// the signed-cookie flow (D17), then lands on onboarding.
+// The landing page: product promise, the loop, a cited dossier from the
+// fictional sample issue (fetched workspace-free), the rules, the stack
+// and a short FAQ. Start resolves-or-creates the visitor's workspace
+// through the signed-cookie flow (D17), then lands on onboarding.
 export function Landing() {
   const { t } = useT();
   const nav = useNavigate();

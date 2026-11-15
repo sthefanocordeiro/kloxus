@@ -47,7 +47,7 @@ async function llmOff(page: Page) {
 async function onboard(page: Page) {
   await page.goto("/");
   // the landing renders the cited sample dossier before any workspace
-  await expect(page.getByText(/dossier from the sample issue/i)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/dossier from the (fictional )?sample issue/i)).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Get started without login/ }).first().click();
   await page.waitForURL(/\/new/);
 
@@ -101,10 +101,12 @@ async function settleBenchAdd(page: Page) {
   if ((await open.count()) > 0) {
     await open.first().click();
   } else {
-    // every section full: picking one opens the swap picker
+    // every section full: picking one opens the swap picker — the pick
+  // then asks why it leaves; "just swap" settles without a reason
     await picks.first().click();
     await expect(chooser.getByText(/pick a story to swap out/)).toBeVisible();
     await picks.first().click();
+    await chooser.getByRole("button", { name: "just swap" }).click();
   }
   await expect(settled).toBeVisible({ timeout: 15000 });
 }
@@ -153,6 +155,9 @@ async function boardOps(page: Page, isPhone: boolean) {
     const swap = page.getByRole("dialog").filter({ hasText: /pick a story to swap out/ });
     await expect(swap).toBeVisible({ timeout: 15000 });
     await swap.getByRole("button").filter({ hasNotText: "✕" }).first().click();
+    // picking the story that leaves asks why — "just swap" skips the
+    // reason and the guide stays quiet
+    await swap.getByRole("button", { name: "just swap" }).click();
   }
   await expect(page.getByText(/^Moved “/)).toBeVisible({ timeout: 15000 });
 

@@ -23,6 +23,7 @@ import { Badge, Button } from "../ui";
 import { KDialog, KPopover } from "../ui-overlays";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
 import { BlockedCard, BoardSkeleton, BuildBoard, StepRail } from "./Board";
+import { NotFound } from "./ErrorPage";
 
 // scroll the editor pane to a sentence/item element and flash it —
 // constrained to the pane so other panes don't move
@@ -350,6 +351,14 @@ export function IssuePage() {
   };
 
   if (issueQ.isLoading || !issueQ.data) {
+    // a missing issue settles as a 404 — show "not found", never an
+    // endless loader (KLOX-49)
+    if (issueQ.error instanceof ApiRequestError && issueQ.error.status === 404) {
+      return <NotFound />;
+    }
+    if (issueQ.isError && !issueQ.isLoading) {
+      return <p className="p-6 text-sm text-danger">{errText(t, issueQ.error)}</p>;
+    }
     return <p className="p-6 text-sm text-muted">…</p>;
   }
   const issue = issueQ.data;
@@ -473,7 +482,7 @@ export function IssuePage() {
                 <button
                   className="absolute right-3 top-3 z-10 text-xs text-muted hover:text-ink"
                   onClick={() => setRunBlocked(null)}
-                  aria-label="dismiss"
+                  aria-label={t.dismiss}
                 >
                   ✕
                 </button>
@@ -594,7 +603,7 @@ export function IssuePage() {
             </button>
           )}
           {toast.undo && (
-            <button className="text-muted" aria-label="dismiss" onClick={() => setToast(null)}>
+            <button className="text-muted" aria-label={t.dismiss} onClick={() => setToast(null)}>
               ✕
             </button>
           )}
