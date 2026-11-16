@@ -29,6 +29,21 @@ const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
 
+// A supported claim: content words of the source excerpt picked at
+// non-consecutive positions — the citation floor verifies it and no
+// copied run can form (KLOX-51).
+function supportedSentence(excerpt: string): string {
+  const words = (excerpt.match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length >= 4);
+  return words.filter((_, i) => i % 3 === 0).slice(0, 6).join(" ") + ".";
+}
+
+// The audit's first-sentence paste: the excerpt's opening words copied
+// one for one — long enough to trip the consecutive-word copy rule.
+function verbatimPaste(excerpt: string): string {
+  const words = (excerpt.match(/[\p{L}\p{N}]+/gu) ?? []);
+  return words.slice(0, 12).join(" ") + ".";
+}
+
 // same onboarding as the demo journey: landing → /new → sources → the
 // first run lands on the build board
 async function onboard(page: Page) {
@@ -135,14 +150,73 @@ test("manual compose journey", async ({ page }) => {
   const total = await emptySlot.count();
   expect(total).toBeGreaterThan(0);
 
+  // The citation floor verifies every composed sentence against the
+  // cited source's stored text (KLOX-51) — supported claims are built
+  // from each item's own source excerpt.
+  const iid = page.url().match(/\/issues\/(\d+)/)![1];
+  const doc0 = await (
+    await page.request.get(`/api/v1/issues/${iid}/document`)
+  ).json();
+  const supported = new Map<number, { text: string; cite: number; excerpt: string }>();
+  for (const s of doc0.sections) {
+    for (const it of s.items) {
+      const src = (it.sources ?? []).find((x: { excerpt?: string; ref: number }) => x.excerpt);
+      supported.set(it.ref, {
+        text: supportedSentence(src.excerpt),
+        cite: src.ref,
+        excerpt: src.excerpt,
+      });
+    }
+  }
+  const box = page.locator('section[aria-label="Write this item"]');
+  const itemRefOf = async () =>
+    Number(
+      await emptySlot
+        .first()
+        .evaluate((el) => (el.closest("[data-item-ref]") as HTMLElement).dataset.itemRef),
+    );
+
+  // audit reproduction (KLOX-51): a fabricated claim carrying an
+  // unrelated [n] lands flagged with a visible reason — never as
+  // "sourced" — and the same goes for a verbatim source paste.
+  const firstRef = await itemRefOf();
+  const firstSrc = supported.get(firstRef)!;
+  const firstChip = new RegExp(`^\\[${firstSrc.cite}\\] `);
+  await emptySlot.first().click();
+  await expect(box).toBeVisible();
+  await box
+    .getByRole("textbox")
+    .fill("The Central Bank will end Pix in March 2027 and charge 9 reais per transfer.");
+  await box.getByRole("button", { name: firstChip }).click();
+  await box.getByRole("button", { name: "Add to item" }).click();
+  await expect(page.getByText(/not supported by \[\d+\]/).first()).toBeVisible({ timeout: 15000 });
+  // the flag carries Edit/Remove actions — removing resolves it
+  const fabricated = page.locator("[data-sid]").filter({ hasText: "Central Bank" });
+  await fabricated.getByRole("button", { name: "Remove" }).click();
+  await expect(fabricated).toHaveCount(0);
+  // verbatim first-sentence paste with its citation
+  await box.getByRole("textbox").fill(verbatimPaste(firstSrc.excerpt));
+  await box.getByRole("button", { name: firstChip }).click();
+  await box.getByRole("button", { name: "Add to item" }).click();
+  await expect(page.getByText("too close to the source").first()).toBeVisible({ timeout: 15000 });
+  await page
+    .locator("[data-sid]")
+    .last()
+    .getByRole("button", { name: "Remove" })
+    .click();
+  await expect(page.getByText("too close to the source")).toHaveCount(0);
+
   // write each item by hand: click the slot → compose box in the
-  // evidence pane → type → cite source [1] → add
+  // evidence pane → type a supported claim → cite its source → add
+  let firstWritten = "";
   for (let i = 0; i < total; i++) {
+    const itemRef = await itemRefOf();
+    const { text, cite } = supported.get(itemRef)!;
+    if (i === 0) firstWritten = text;
     await emptySlot.first().click();
-    const box = page.locator('section[aria-label="Write this item"]');
     await expect(box).toBeVisible();
-    await box.getByRole("textbox").fill(`Editor-written paragraph ${i + 1} for the issue.`);
-    await box.getByRole("button", { name: /^\[1\] / }).click();
+    await box.getByRole("textbox").fill(text);
+    await box.getByRole("button", { name: new RegExp(`^\\[${cite}\\] `) }).click();
     await box.getByRole("button", { name: "Add to item" }).click();
     // the sentence lands in the document as a cited fact
     await expect(page.locator("[data-sid]")).toHaveCount(i + 1, { timeout: 15000 });
@@ -179,7 +253,7 @@ test("manual compose journey", async ({ page }) => {
     const last = reqs.requests.at(-1)!;
     expect(last.to).toEqual(["smoke@kloxus.dev"]);
     expect(last.auth).toBe("Bearer re_local_verify_synthetic");
-    expect(last.text).toContain("Editor-written paragraph 1");
+    expect(last.text).toContain(firstWritten);
     expect(last.text).toMatch(/\/a\/\d+/); // the citation link survives to the wire
   } else {
     expect(sendBody.delivery).toBe("outbox");
@@ -188,7 +262,7 @@ test("manual compose journey", async ({ page }) => {
   const mail = await (
     await page.request.get(`/api/v1/outbox/${sendBody.outbox_email_id}`)
   ).json();
-  expect(mail.email.body_md).toContain("Editor-written paragraph 1");
+  expect(mail.email.body_md).toContain(firstWritten);
   if (fakeLive) {
     // the owner test send is ungated — citation links ship in the copy
     expect(mail.email.body_md).toMatch(/\/a\/\d+/);
@@ -206,7 +280,7 @@ test("manual compose journey", async ({ page }) => {
       await page.request.get(`/api/v1/issues/${iid}/preview?reader=subscriber`)
     ).json();
     expect(prev.gated).toBe(false);
-    expect(prev.body_md).toContain("Editor-written paragraph 1");
+    expect(prev.body_md).toContain(firstWritten);
     expect(prev.body_md).toMatch(/\/a\/\d+/);
   }
 });
