@@ -74,11 +74,11 @@ func TestGuardRunCapUSD(t *testing.T) {
 	ms := &memSpend{}
 	g := &Guard{
 		Store: ms, RunCapUSD: 0.10, Now: fakeClock(time.Now()),
-		Inner: stubProvider{resp: Response{Text: "{}", InputTokens: 20000, OutputTokens: 2000}},
+		Inner: stubProvider{resp: Response{Text: "{}", InputTokens: 200000, OutputTokens: 20000}},
 	}
-	// haiku pricing: 20k in + 2k out = $0.03 per call. Calls pass while
-	// recorded cost < $0.10; once the ledger reaches $0.12 the next
-	// call is refused.
+	// haiku pricing ($0.10/$0.50 per MTok): 200k in + 20k out = $0.03
+	// per call. Calls pass while recorded cost < $0.10; once the
+	// ledger reaches $0.12 the next call is refused.
 	ctx := WithRunScope(context.Background(), "ws1")
 	for i := 0; i < 4; i++ {
 		if _, err := g.Complete(ctx, Request{Model: "claude-haiku-5-5"}); err != nil {
