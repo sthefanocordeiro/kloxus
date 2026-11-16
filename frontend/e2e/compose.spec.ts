@@ -210,11 +210,13 @@ test("manual compose journey", async ({ page }) => {
 
   // write each item by hand: click the slot → compose box in the
   // evidence pane → type a supported claim → cite its source → add
+  // rendered markdown places the citation inside final punctuation —
+  // "… quando [1]." — so compare without the trailing '.'
   let firstWritten = "";
   for (let i = 0; i < total; i++) {
     const itemRef = await itemRefOf();
     const { text, cite } = supported.get(itemRef)!;
-    if (i === 0) firstWritten = text;
+    if (i === 0) firstWritten = text.replace(/\.$/, "");
     await emptySlot.first().click();
     await expect(box).toBeVisible();
     await box.getByRole("textbox").fill(text);
