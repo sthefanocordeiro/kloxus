@@ -29,6 +29,14 @@ const apiPost = async (page: Page, path: string, data?: unknown, status = 200) =
   return res.json();
 };
 
+// A supported claim: content words of the source excerpt picked at
+// non-consecutive positions — the citation floor verifies it and no
+// copied run can form (KLOX-51). Same helper as compose.spec.ts.
+function supportedSentence(excerpt: string): string {
+  const words = (excerpt.match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length >= 4);
+  return words.filter((_, i) => i % 3 === 0).slice(0, 6).join(" ") + ".";
+}
+
 // waitRun polls a pipeline run to completion and returns the issue id.
 async function waitRun(page: Page, rid: number) {
   for (let i = 0; i < 90; i++) {
@@ -71,6 +79,41 @@ async function approvedIssue(page: Page): Promise<number> {
   const iid = await waitRun(page, run.run.id);
   const draft = await apiPost(page, `/api/v1/issues/${iid}/draft`, {}, 202);
   await waitRun(page, draft.run.id);
+  // Under llm off the draft is KLOX-48's honest skeleton: items with
+  // sources and empty body slots, so empty_items blocks approval
+  // (KLOX-58). Fill each empty item the way the editor does — the
+  // excerpt-derived supported fill compose/journey use: a claim built
+  // from the item's own source excerpt, cited through the same compose
+  // endpoint the "Write this item" box calls. A dossierless item with
+  // no usable excerpt gets the editor's own take instead (no citation
+  // needed), the same escape hatch journey.spec.ts uses.
+  for (let i = 0; i < 40; i++) {
+    const { document: doc } = await apiGet(page, `/api/v1/issues/${iid}/document`);
+    const empty = doc.sections
+      .flatMap(
+        (s: {
+          items: {
+            ref: number;
+            sentences: unknown[];
+            sources?: { ref: number; excerpt?: string }[];
+          }[];
+        }) => s.items,
+      )
+      .find((it) => it.sentences.length === 0);
+    if (!empty) break;
+    const src = (empty.sources ?? []).find(
+      (x): x is { ref: number; excerpt: string } => !!x.excerpt,
+    );
+    const text = src ? supportedSentence(src.excerpt) : "";
+    const payload =
+      src && text.length > 1
+        ? { text, citations: [src.ref] }
+        : { text: "Editor's reading of the sources.", kind: "interpretation" };
+    await apiPost(page, `/api/v1/issues/${iid}/items/${empty.ref}/compose`, {
+      ...payload,
+      version: doc.version,
+    });
+  }
   // resolve flagged sentences and required commentary like the editor
   for (let i = 0; i < 30; i++) {
     const { document: doc } = await apiGet(page, `/api/v1/issues/${iid}/document`);
