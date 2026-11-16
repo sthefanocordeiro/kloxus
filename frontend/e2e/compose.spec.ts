@@ -154,18 +154,20 @@ test("manual compose journey", async ({ page }) => {
   // cited source's stored text (KLOX-51) — supported claims are built
   // from each item's own source excerpt.
   const iid = page.url().match(/\/issues\/(\d+)/)![1];
-  const doc0 = await (
-    await page.request.get(`/api/v1/issues/${iid}/document`)
-  ).json();
+  const doc0 = (
+    await (await page.request.get(`/api/v1/issues/${iid}/document`)).json()
+  ).document;
   const supported = new Map<number, { text: string; cite: number; excerpt: string }>();
   for (const s of doc0.sections) {
     for (const it of s.items) {
       const src = (it.sources ?? []).find((x: { excerpt?: string; ref: number }) => x.excerpt);
-      supported.set(it.ref, {
-        text: supportedSentence(src.excerpt),
-        cite: src.ref,
-        excerpt: src.excerpt,
-      });
+      if (src) {
+        supported.set(it.ref, {
+          text: supportedSentence(src.excerpt),
+          cite: src.ref,
+          excerpt: src.excerpt,
+        });
+      }
     }
   }
   const box = page.locator('section[aria-label="Write this item"]');
