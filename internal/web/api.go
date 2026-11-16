@@ -172,12 +172,14 @@ func (s *Server) localizeReaderMD(md string, pub *store.Publication) string {
 	if strings.HasPrefix(strings.ToLower(pub.Language), "pt") {
 		// the sample publication's own sections carry canonical English
 		// titles for fixture compatibility — a pt reader sees pt names
-		// (KLOX-56). gating already ran on the canonical headings.
-		if !pub.Custom {
-			for _, swap := range canonicalSectionPT {
-				md = regexp.MustCompile(`(?m)^##\s+`+regexp.QuoteMeta(swap[0])+`$`).
-					ReplaceAllString(md, "## "+swap[1])
-			}
+		// (KLOX-56). gating already ran on the canonical headings. This
+		// runs for custom publications too: API-created pubs are stored
+		// custom=TRUE while replaying the canonical pipeline, so a
+		// creator who kept the canonical titles still leaks "The big
+		// one" unless the swap applies after the custom-title pass.
+		for _, swap := range canonicalSectionPT {
+			md = regexp.MustCompile(`(?m)^##\s+`+regexp.QuoteMeta(swap[0])+`$`).
+				ReplaceAllString(md, "## "+swap[1])
 		}
 		md = strings.ReplaceAll(md, " — issue ", " — edição ")
 		md = strings.ReplaceAll(md, "**Sources:**", "**Fontes:**")
@@ -202,6 +204,17 @@ func localizeEditorialLine(line, lang string) string {
 		return line
 	}
 	return strings.ReplaceAll(line, canonicalEditorialLineSwap, ptEditorialLineSwap)
+}
+
+// localizeSubject renders a stored issue subject for a pt reader —
+// subjects written before the body heading localized keep the
+// canonical "— issue N" (KLOX-56). Display-only; the stored value is
+// untouched.
+func localizeSubject(subject, lang string) string {
+	if !strings.HasPrefix(strings.ToLower(lang), "pt") {
+		return subject
+	}
+	return strings.Replace(subject, " — issue ", " — edição ", 1)
 }
 
 // canonicalSectionPT maps the sample publication's canonical English
@@ -313,7 +326,12 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 		}
 	}
 	missing := 0
-	if pub, err := s.canonicalPub(db(r).GetPublication(ctx, fmt.Sprint(iss.PublicationID))); err == nil {
+	subject := iss.Subject
+	rawPub, pubErr := db(r).GetPublication(ctx, fmt.Sprint(iss.PublicationID))
+	if pubErr == nil {
+		subject = localizeSubject(subject, rawPub.Language)
+	}
+	if pub, err := s.canonicalPub(rawPub, pubErr); err == nil {
 		for _, sc := range pub.Sections {
 			if sc.Commentary == "required" && strings.TrimSpace(iss.Commentary[sc.Title]) == "" {
 				missing++
@@ -322,7 +340,7 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	}
 	m := map[string]any{
 		"id": iss.ID, "publication_id": iss.PublicationID, "number": iss.Number,
-		"status": iss.Status, "subject": iss.Subject, "created_at": iss.CreatedAt,
+		"status": iss.Status, "subject": subject, "created_at": iss.CreatedAt,
 		"items":                       counts,
 		"flags":                       len(iss.Flags),
 		"missing_required_commentary": missing,
@@ -2902,7 +2920,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		}
 		apiJSON(w, 200, map[string]any{
 			"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
-			"to": to, "subject": iss.Subject, "delivery": "outbox",
+			"to": to, "subject": localizeSubject(iss.Subject, pub.Language), "delivery": "outbox",
 		})
 		return
 	}
@@ -2939,7 +2957,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		}
 		apiJSON(w, 200, map[string]any{
 			"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
-			"to": to, "subject": iss.Subject, "delivery": "outbox",
+			"to": to, "subject": localizeSubject(iss.Subject, pub.Language), "delivery": "outbox",
 		})
 		return
 	}
@@ -3004,7 +3022,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{
 		"issue": s.issueSummary(r, iss), "outbox_email_id": sum.FirstID, "audience": in.Audience,
-		"to": sum.To, "subject": iss.Subject, "delivery": deliv,
+		"to": sum.To, "subject": localizeSubject(iss.Subject, pub.Language), "delivery": deliv,
 		"sent": sum.Sent, "refused": sum.Refused, "deduped": sum.Deduped,
 	}
 	if sum.Fallback > 0 {
@@ -3065,7 +3083,7 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=issue-%d.html", iss.Number))
-		w.Write([]byte(delivery.RenderHTML(iss.Subject, md, s.publicBase(r))))
+		w.Write([]byte(delivery.RenderHTML(localizeSubject(iss.Subject, rawPub.Language), md, s.publicBase(r))))
 	default:
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=issue-%d.md", iss.Number))
@@ -3314,7 +3332,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	md = s.localizeReaderMD(md, rawPub)
 	apiJSON(w, 200, map[string]any{
 		"publication": map[string]any{"name": rawPub.Name, "slug": rawPub.Slug, "language": rawPub.Language},
-		"issue":       map[string]any{"number": iss.Number, "subject": iss.Subject, "created_at": iss.CreatedAt},
+		"issue":       map[string]any{"number": iss.Number, "subject": localizeSubject(iss.Subject, rawPub.Language), "created_at": iss.CreatedAt},
 		"body_md":     md, "gated": !unlocked, "subscribed": active,
 		"reader":        map[string]string{"name": demoReaderName},
 		"paid_sections": pub.Paywall.PaidSections,

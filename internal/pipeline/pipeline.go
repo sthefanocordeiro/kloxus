@@ -410,8 +410,15 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return nil, err
 	}
 	res.Number = number
+	// the stored subject mirrors assembleIssue's body heading — the
+	// issue chrome, mail subject, and export title all render it as-is
+	// (KLOX-56).
+	word := "issue"
+	if ptLang(pub.Language) {
+		word = "edição"
+	}
 	issueID, err := r.DB.CreateIssue(ctx, pub.ID, number,
-		fmt.Sprintf("%s — issue %d", pub.Name, number), "")
+		fmt.Sprintf("%s — %s %d", pub.Name, word, number), "")
 	if err != nil {
 		return nil, err
 	}

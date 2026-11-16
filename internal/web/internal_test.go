@@ -337,6 +337,47 @@ func TestLocalizeReaderMD(t *testing.T) {
 	if en != md {
 		t.Fatalf("en body mangled:\n%s", en)
 	}
+
+	// API-created publications are stored custom=TRUE while replaying
+	// the canonical pipeline — canonical headings still swap to pt, and
+	// a creator's renamed section is untouched by the canonical swap
+	// (KLOX-56 QA rework).
+	custom := s.localizeReaderMD(md, &store.Publication{
+		Language: "pt-BR", Custom: true,
+		Sections: []config.Section{
+			{Title: "The big one"}, {Title: "Meus favoritos"}, {Title: "Quick links"},
+		},
+	})
+	if !strings.Contains(custom, "## O destaque") {
+		t.Fatalf("custom pub canonical heading not swapped:\n%s", custom)
+	}
+	if strings.Contains(custom, "The big one") {
+		t.Fatalf("custom pub leaked canonical heading:\n%s", custom)
+	}
+	// creator-renamed section: the custom pass swapped canonical→creator
+	// title first, so the canonical→pt swap must not mangle it
+	renamed := s.localizeReaderMD(
+		"# Futuro Próximo — issue 3\n\n## The big one\n\nFact. [1]\n\n## Worth knowing\n\nMore. [2]\n",
+		&store.Publication{Language: "pt-BR", Custom: true,
+			Sections: []config.Section{{Title: "Meus favoritos"}, {Title: "Vale saber"}, {Title: "Quick links"}}})
+	if !strings.Contains(renamed, "## Meus favoritos") || !strings.Contains(renamed, "## Vale saber") {
+		t.Fatalf("creator section titles not honored:\n%s", renamed)
+	}
+}
+
+// TestLocalizeSubject: pt publications render "edição N" in issue
+// chrome, mail subject and export title; English stays "issue N"
+// (KLOX-56 QA rework).
+func TestLocalizeSubject(t *testing.T) {
+	if got := localizeSubject("Futuro Próximo — issue 3", "pt-BR"); got != "Futuro Próximo — edição 3" {
+		t.Fatalf("pt subject = %q", got)
+	}
+	if got := localizeSubject("Some Letter — issue 3", "en"); got != "Some Letter — issue 3" {
+		t.Fatalf("en subject = %q", got)
+	}
+	if got := localizeSubject("Futuro Próximo — edição 3", "pt-BR"); got != "Futuro Próximo — edição 3" {
+		t.Fatalf("already-pt subject = %q", got)
+	}
 }
 
 // TestRobotsAndSecurityHeaders: /robots.txt answers without minting a

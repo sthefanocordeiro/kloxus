@@ -59,11 +59,12 @@ func (s *Server) issueMessage(ctx context.Context, wdb *store.DB, wsID string, i
 	if idemNS != "" {
 		idem = idemNS + "/" + idem
 	}
+	subject := localizeSubject(iss.Subject, pub.Language)
 	return &delivery.Message{
 		To:      []string{email},
-		Subject: iss.Subject,
+		Subject: subject,
 		Text:    md,
-		HTML:    delivery.RenderHTML(iss.Subject, md, base),
+		HTML:    delivery.RenderHTML(subject, md, base),
 		Kind:    kind,
 		Headers: map[string]string{
 			"List-Unsubscribe":      "<" + unsub + ">",
