@@ -2168,6 +2168,16 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var replacement string
 	if loc.sentence.Kind == "interpretation" {
+		// (KLOX-48/51) same guard as compose and mark-as-interpretation:
+		// a claim carrying a number, a date or a quotation is a fact —
+		// editing its text may not sneak it past the citation check.
+		if pipeline.HasNumberDateOrQuote(text) {
+			apiErr(w, 409, "interpretation_restricted",
+				"a claim with a number, a date or a quotation cannot be marked as interpretation — cite a source instead",
+				apiReason{Code: "interpretation_restricted", Message: "sentence contains a number, a date or a quotation",
+					Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
+			return
+		}
 		replacement = "> _Interpretação: " + text + "_"
 	} else {
 		// fact: citations must point at this item's sources and the new
@@ -3459,7 +3469,14 @@ func (s *Server) composeFlagNotes(item *docItem, dc *docContext, line string) []
 			notes = append(notes, fmt.Sprintf("cites source [%d] that does not exist", n))
 			continue
 		}
-		if !pipeline.SupportedBySource(line, s.citedCorpus(d, dc, src)) {
+		// when the source carries no stored text at all the dossier
+		// summary is the last-resort corpus — same fallback as
+		// dossierSupports on the edit path.
+		corpus := s.citedCorpus(d, dc, src)
+		if corpus == "" {
+			corpus = d.Summary
+		}
+		if !pipeline.SupportedBySource(line, corpus) {
 			notes = append(notes, fmt.Sprintf("not supported by [%d]", n))
 		}
 	}

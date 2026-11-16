@@ -563,4 +563,65 @@ func TestComposeClaimEnforcement(t *testing.T) {
 	if c := apiErrCode(t, rr); c != "interpretation_restricted" {
 		t.Fatalf("interpretation with numbers: code = %q", c)
 	}
+
+	// --- multi-citation flag attachment (CTO blocker on PR #37) ---
+	// a flagged claim stored as "claim. [1] [2]" must re-parse with both
+	// markers attached, so the flag hangs on the sentence — not in the
+	// item's unmatched-flags list — and Remove clears it so approval
+	// can unblock.
+	multiRef := 0
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	version = doc["version"].(string)
+	for _, it := range docItems(doc) {
+		if len(it["sources"].([]any)) >= 2 {
+			multiRef = int(it["ref"].(float64))
+			break
+		}
+	}
+	if multiRef == 0 {
+		t.Fatal("no fixture item with >= 2 sources for the multi-citation case")
+	}
+	rr = apiCall(t, srv, "POST", fmt.Sprintf("%s/items/%d/compose", issueURL, multiRef), map[string]any{
+		"text":      "O Banco Central vai encerrar o Pix em março de 2027 e cobrar 9 reais por transferência.",
+		"citations": []int{1, 2}, "version": version})
+	if rr.Code != 200 {
+		t.Fatalf("compose multi-cite = %d: %s", rr.Code, shortBody(rr))
+	}
+	version = apiJSON(t, rr)["version"].(string)
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	version = doc["version"].(string)
+	var multiSID string
+	for _, it := range docItems(doc) {
+		if int(it["ref"].(float64)) != multiRef {
+			continue
+		}
+		if fl, ok := it["flags"].([]any); ok && len(fl) != 0 {
+			t.Fatalf("multi-citation flag orphaned onto the item: %v", fl)
+		}
+		for _, sn := range it["sentences"].([]any) {
+			s := sn.(map[string]any)
+			if _, ok := s["flag"].(map[string]any); !ok {
+				continue
+			}
+			multiSID = s["id"].(string)
+			if n := len(s["citations"].([]any)); n != 2 {
+				t.Fatalf("re-parsed sentence kept %d citation(s), want 2", n)
+			}
+		}
+	}
+	if multiSID == "" {
+		t.Fatal("multi-citation claim carries no sentence flag")
+	}
+	rr = apiCall(t, srv, "DELETE", issueURL+"/sentences/"+multiSID, map[string]any{"version": version})
+	if rr.Code != 200 {
+		t.Fatalf("remove multi-cite = %d: %s", rr.Code, shortBody(rr))
+	}
+	version = apiJSON(t, rr)["version"].(string)
+	if iss, _ := db.GetIssue(ctx, issueID); len(iss.Flags) != 0 {
+		t.Fatalf("removing the multi-citation claim should clear the flag, %d remain", len(iss.Flags))
+	}
+	rd = apiGet(t, srv, issueURL+"/readiness")
+	if c := readinessCheck(rd, "flags_unresolved"); !c["ok"].(bool) {
+		t.Fatalf("flags_unresolved must unblock after removal: %v", c)
+	}
 }
