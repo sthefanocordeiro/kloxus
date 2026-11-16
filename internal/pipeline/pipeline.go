@@ -702,9 +702,9 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	if r.Deterministic {
 		// the rank note is reader-facing — it speaks the publication's
 		// language like every other deterministic string (KLOX-56).
-		rankNote := "Ranked %.1f/10 by the deterministic pipeline."
+		rankNote := "Relevance score: %.1f/10."
 		if ptLang(pub.Language) {
-			rankNote = "Ranqueado %.1f/10 pelo pipeline determinístico."
+			rankNote = "Nota de relevância: %.1f/10."
 		}
 		for _, e := range entries {
 			dossierByRef[e.ref] = synthDossier(e.ref, e.title,

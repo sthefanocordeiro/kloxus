@@ -124,7 +124,7 @@ export function AppShell() {
             onChange={(e) => e.target.value && nav(`/publications/${e.target.value}`)}
             className="h-10 w-full truncate rounded-[var(--radius-input)] border border-line bg-paper-raised px-2 text-sm font-medium text-ink"
           >
-            {!pub && <option value="">{t.publications}</option>}
+            <option value="">{t.publications}</option>
             {(pubs.data ?? []).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}

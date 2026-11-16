@@ -402,7 +402,7 @@ export function IssuePage() {
             : issue.status === "approved" || issue.status === "sent" || issue.status === "scheduled" ? 3
             : 1
           }
-          className="w-56 shrink-0"
+          className="w-full shrink-0 sm:w-96"
         />
         <span className="flex-1" />
         {saved && (

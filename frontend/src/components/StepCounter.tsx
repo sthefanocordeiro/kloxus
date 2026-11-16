@@ -24,13 +24,13 @@ export function StepCounter({
   return (
     <div className={cn("min-w-0", className)}>
       <div className="flex items-center gap-2">
-        <ol className="flex min-w-0 items-center gap-1.5 text-xs" aria-label={t.steps.of(current, total)}>
+        <ol className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-xs" aria-label={t.steps.of(current, total)}>
           {steps.map((label, i) => {
             const done = i + 1 < current;
             const active = i + 1 === current;
             const revisitable = done && !!onStep;
             return (
-              <li key={label} className="flex items-center gap-1.5">
+              <li key={label} className="flex shrink-0 items-center gap-1.5">
                 {i > 0 && <span className="text-muted/40" aria-hidden>·</span>}
                 <span
                   className={cn(
@@ -45,12 +45,14 @@ export function StepCounter({
                   <button
                     type="button"
                     onClick={() => onStep(i)}
-                    className="font-medium text-teal hover:underline"
+                    className="hidden font-medium text-teal hover:underline sm:inline"
                   >
                     {label}
                   </button>
                 ) : (
-                  <span className={active ? "font-semibold text-ink" : done ? "text-teal" : "text-muted"}>
+                  <span className={cn(
+                    active ? "font-semibold text-ink" : done ? "hidden text-teal sm:inline" : "hidden text-muted sm:inline",
+                  )}>
                     {label}
                   </span>
                 )}
