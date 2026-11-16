@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
 // TestRemoveInItemDropsCitationMarker: removing a flagged sentence
@@ -235,5 +237,72 @@ func TestInsertRawMidLineSeparator(t *testing.T) {
 	got = insertRaw("A [1]. B [1].", []string{"A [1]", "B [1]."}, 1, "> _Interpretação: boa_")
 	if !strings.Contains(got, "\n> _Interpretação: boa_\n") {
 		t.Fatalf("interpretation not on its own line: %q", got)
+	}
+}
+
+// TestParseUncitedFactFlag: an uncited fact that reaches the stored
+// body without a flag row must still get the flag treatment — the
+// editor's Edit / interpretation / Remove affordances render off the
+// flag, and the uncited_sentences check already blocks approval, so a
+// flagless uncited fact is a dead-end (the owner's v88 report,
+// KLOX-52). Stored flags count against readiness only while they
+// describe the current body: a flag on gone text is stale.
+func TestParseUncitedFactFlag(t *testing.T) {
+	pub := &store.Publication{Sections: []config.Section{{Title: "Top", Commentary: "none"}}}
+	dc := dcFromPairs(nil, nil)
+	parse := func(body string, flags []store.Flag) *issueDocument {
+		return parseIssueDocument(&store.Issue{BodyMD: body, Flags: flags}, pub, dc)
+	}
+	sentences := func(doc *issueDocument) []docSentence {
+		return doc.Sections[0].Items[0].Sentences
+	}
+	uncited := "## Top\n### H <!-- item 1 -->\n\nA claim nobody can trace.\n\n**Sources:** [1] x"
+	cited := "## Top\n### H <!-- item 1 -->\n\nA claim with support [1].\n\n**Sources:** [1] x"
+
+	// legacy body: uncited fact, zero flag rows — the flag is derived
+	doc := parse(uncited, nil)
+	if sn := sentences(doc)[0]; sn.Flag == nil || sn.Flag.Note != "sentence has no citation" {
+		t.Fatalf("uncited fact flag = %+v, want 'sentence has no citation'", sn.Flag)
+	}
+	// the derived flag is affordance only — uncited_sentences carries
+	// the readiness block, so coverage.flagged must not double-count it
+	if doc.Coverage.Flagged != 0 {
+		t.Fatalf("coverage.flagged = %d with only a derived flag", doc.Coverage.Flagged)
+	}
+
+	// a stored flag matching the live sentence wins and counts once
+	doc = parse(uncited, []store.Flag{
+		{Item: 1, Sentence: "A claim nobody can trace.", Note: "not supported by [1]"},
+	})
+	if sn := sentences(doc)[0]; sn.Flag == nil || sn.Flag.Note != "not supported by [1]" {
+		t.Fatalf("stored flag = %+v, want 'not supported by [1]'", sn.Flag)
+	}
+	if doc.Coverage.Flagged != 1 {
+		t.Fatalf("coverage.flagged = %d, want 1", doc.Coverage.Flagged)
+	}
+
+	// "entry has no citations" stays live — and blocks — while the item
+	// still carries an uncited fact
+	doc = parse(uncited, []store.Flag{
+		{Item: 1, Sentence: "The item once lacked citations.", Note: "entry has no citations"},
+	})
+	if doc.Coverage.Flagged != 1 || len(doc.Sections[0].Items[0].Flags) != 1 {
+		t.Fatalf("live entry flag: flagged=%d item.flags=%d", doc.Coverage.Flagged, len(doc.Sections[0].Items[0].Flags))
+	}
+
+	// once every fact is cited the same flags describe nothing — stale
+	// sentence flags, stale item flags and flags on vanished items must
+	// not count: nothing exists for the UI to act on (KLOX-52)
+	doc = parse(cited, []store.Flag{
+		{Item: 1, Sentence: "A claim nobody can trace.", Note: "not supported by [1]"},
+		{Item: 9, Sentence: "On an item that no longer exists.", Note: "sentence has no citation"},
+		{Item: 1, Sentence: "The item once lacked citations.", Note: "entry has no citations"},
+	})
+	if sn := sentences(doc)[0]; sn.Flag != nil || len(sn.Citations) != 1 {
+		t.Fatalf("cited fact = flag %+v citations %v", sn.Flag, sn.Citations)
+	}
+	if doc.Coverage.Flagged != 0 || len(doc.Sections[0].Items[0].Flags) != 0 {
+		t.Fatalf("stale flags counted: flagged=%d item.flags=%d",
+			doc.Coverage.Flagged, len(doc.Sections[0].Items[0].Flags))
 	}
 }

@@ -41,6 +41,11 @@ function blurEditor(editor: NodeViewProps["editor"]) {
   editor.commands.blur();
 }
 
+// FIX_SENTENCE_EVENT is dispatched on a sentence's wrapper element by
+// "Fix now" and the readiness checklist — the sentence opens its edit
+// affordance instead of only flashing (KLOX-52).
+export const FIX_SENTENCE_EVENT = "kloxus:fix-sentence";
+
 export const DocActionsCtx = createContext<DocActions>({
   editSentence: async () => null,
   interpret: async () => false,
@@ -89,6 +94,22 @@ function SentenceView({ node }: NodeViewProps) {
       ref.current.dataset.sid = a.sid;
     }
   }, [a.sid]);
+
+  // ...and can open this sentence's fix affordance — the edit box with
+  // its citation chips is where an uncited or unsupported claim is fixed
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const open = () => {
+      if (actions.readOnly) return;
+      setDraft(text);
+      setCites(a.citations);
+      setEditErr("");
+      setEditing(true);
+    };
+    el.addEventListener(FIX_SENTENCE_EVENT, open);
+    return () => el.removeEventListener(FIX_SENTENCE_EVENT, open);
+  }, [actions.readOnly, text, a.citations]);
 
   const interpretation = a.kind === "interpretation";
   const itemRef = Number(a.sid.split(".")[0]);

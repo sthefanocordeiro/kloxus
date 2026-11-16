@@ -7,6 +7,7 @@ package web_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -623,5 +624,187 @@ func TestComposeClaimEnforcement(t *testing.T) {
 	rd = apiGet(t, srv, issueURL+"/readiness")
 	if c := readinessCheck(rd, "flags_unresolved"); !c["ok"].(bool) {
 		t.Fatalf("flags_unresolved must unblock after removal: %v", c)
+	}
+}
+
+// TestUncitedSentenceTreatment reproduces the owner's v88 dead-end
+// (KLOX-52): an uncited fact that reaches the document without a
+// stored flag must surface the same flag treatment as a citecheck flag
+// — visible reason and Edit / interpretation / Remove — and resolve
+// through the same write paths. A flag keyed to text the body no
+// longer carries is stale and must not keep blocking approval.
+func TestUncitedSentenceTreatment(t *testing.T) {
+	ctx := context.Background()
+	srv, db, pub, _ := composeServer(t)
+	pubID := fmt.Sprint(pub.ID)
+
+	rr := apiCall(t, srv, "POST", "/api/v1/publications/"+pubID+"/runs", nil)
+	if rr.Code != 202 {
+		t.Fatalf("start run = %d", rr.Code)
+	}
+	run := waitRun(t, srv, apiJSON(t, rr)["run"].(map[string]any)["id"].(string))
+	if run["status"] != "done" {
+		t.Fatalf("run status = %v err=%v", run["status"], run["error"])
+	}
+	issueID := int64(run["issue_id"].(float64))
+	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
+
+	rr = apiCall(t, srv, "POST", issueURL+"/compose", nil)
+	if rr.Code != 200 {
+		t.Fatalf("compose = %d: %s", rr.Code, shortBody(rr))
+	}
+	doc := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	items := docItems(doc)
+	it0 := items[0]
+	ref := int(it0["ref"].(float64))
+
+	// the v88 body: an uncited fact written before flags were persisted
+	// on compose — zero flag rows on the issue
+	iss, _ := db.GetIssue(ctx, issueID)
+	legacy := strings.Replace(iss.BodyMD, "**Sources:**",
+		"A claim nobody can trace back.\n\n**Sources:**", 1)
+	if legacy == iss.BodyMD {
+		t.Fatal("compose skeleton body has no sources block to splice into")
+	}
+	if err := db.UpdateIssue(ctx, issueID, "drafted", legacy, "[]"); err != nil {
+		t.Fatalf("UpdateIssue: %v", err)
+	}
+
+	// the document surfaces the flag treatment anyway — the sentence
+	// carries the same note citecheck writes, so Edit/Remove exist
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	version := doc["version"].(string)
+	var sid, note string
+	for _, it := range docItems(doc) {
+		for _, sn := range it["sentences"].([]any) {
+			s := sn.(map[string]any)
+			if f, ok := s["flag"].(map[string]any); ok {
+				sid, note = s["id"].(string), f["note"].(string)
+			}
+		}
+	}
+	if sid == "" || note != "sentence has no citation" {
+		t.Fatalf("uncited sentence flag = (%q, %q), want 'sentence has no citation'", sid, note)
+	}
+	rd := apiGet(t, srv, issueURL+"/readiness")
+	if c := readinessCheck(rd, "uncited_sentences"); c == nil || c["ok"].(bool) {
+		t.Fatalf("uncited fact must still fail readiness: %v", c)
+	}
+	if rr = apiCall(t, srv, "POST", issueURL+"/approve", nil); rr.Code != 409 {
+		t.Fatalf("approve over an uncited fact = %d, want 409", rr.Code)
+	}
+
+	// the same edit that resolves a citecheck flag resolves this one —
+	// a supported claim carrying its citation
+	excerpt, cite := citedExcerpt(t, it0)
+	rr = apiCall(t, srv, "PATCH", issueURL+"/sentences/"+sid,
+		map[string]any{"text": supportedSentence(excerpt), "citations": []int{cite}, "version": version})
+	if rr.Code != 200 {
+		t.Fatalf("edit uncited sentence = %d: %s", rr.Code, shortBody(rr))
+	}
+	version = apiJSON(t, rr)["version"].(string)
+	rd = apiGet(t, srv, issueURL+"/readiness")
+	if c := readinessCheck(rd, "uncited_sentences"); !c["ok"].(bool) {
+		t.Fatalf("uncited check must clear after the edit: %v", c)
+	}
+
+	// the restore path produces the same treatment: a fact restored
+	// without citations lands uncited and unflagged in storage, yet the
+	// document must flag it — and Remove clears it, the path the owner
+	// could not reach on v88
+	rr = apiCall(t, srv, "POST", fmt.Sprintf("%s/items/%d/sentences", issueURL, ref),
+		map[string]any{"index": 0, "text": "Another claim nobody can trace.",
+			"kind": "fact", "citations": []int{}, "version": version})
+	if rr.Code != 200 {
+		t.Fatalf("restore uncited = %d: %s", rr.Code, shortBody(rr))
+	}
+	version = apiJSON(t, rr)["version"].(string)
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	version = doc["version"].(string)
+	var restoredSID string
+	for _, it := range docItems(doc) {
+		for _, sn := range it["sentences"].([]any) {
+			s := sn.(map[string]any)
+			if s["text"] == "Another claim nobody can trace." {
+				if f, ok := s["flag"].(map[string]any); !ok || f["note"] != "sentence has no citation" {
+					t.Fatalf("restored uncited sentence flag = %v", s["flag"])
+				}
+				restoredSID = s["id"].(string)
+			}
+		}
+	}
+	if restoredSID == "" {
+		t.Fatal("restored sentence not in the document")
+	}
+	rr = apiCall(t, srv, "DELETE", issueURL+"/sentences/"+restoredSID, map[string]any{"version": version})
+	if rr.Code != 200 {
+		t.Fatalf("remove restored = %d: %s", rr.Code, shortBody(rr))
+	}
+	version = apiJSON(t, rr)["version"].(string)
+	rd = apiGet(t, srv, issueURL+"/readiness")
+	if c := readinessCheck(rd, "uncited_sentences"); !c["ok"].(bool) {
+		t.Fatalf("uncited check must clear after removal: %v", c)
+	}
+
+	// stale flags — keyed to text the body no longer carries — must not
+	// block approval: "entry has no citations" holds only while an
+	// uncited fact remains; an unmatched sentence flag points at a
+	// sentence that is gone (KLOX-52, the dead-end's other half)
+	iss, _ = db.GetIssue(ctx, issueID)
+	stale, _ := json.Marshal([]store.Flag{
+		{Item: int64(ref), Sentence: "Body text the draft once wrote.", Note: "entry has no citations"},
+		{Item: int64(ref), Sentence: "A sentence since removed.", Note: "not supported by [1]"},
+		{Item: 999, Sentence: "On an item that no longer exists.", Note: "sentence has no citation"},
+	})
+	if err := db.UpdateIssue(ctx, issueID, "drafted", iss.BodyMD, string(stale)); err != nil {
+		t.Fatalf("UpdateIssue stale flags: %v", err)
+	}
+	rd = apiGet(t, srv, issueURL+"/readiness")
+	if c := readinessCheck(rd, "flags_unresolved"); c == nil || !c["ok"].(bool) {
+		t.Fatalf("stale flags must not block readiness: %v", c)
+	}
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	if got := doc["coverage"].(map[string]any)["flagged"].(float64); got != 0 {
+		t.Fatalf("coverage.flagged = %v with only stale flags", got)
+	}
+
+	// a live "entry has no citations" flag still blocks — while the
+	// item carries an uncited fact the flag describes a real problem.
+	// Resolving that fact must let the flag go stale: before KLOX-52 it
+	// stayed forever, unmatched to any sentence, with no UI path out.
+	iss, _ = db.GetIssue(ctx, issueID)
+	withUncited := strings.Replace(iss.BodyMD, "**Sources:**",
+		"Yet another claim nobody can trace.\n\n**Sources:**", 1)
+	entryFlag, _ := json.Marshal([]store.Flag{
+		{Item: int64(ref), Sentence: "Two claims nobody could trace, once.", Note: "entry has no citations"},
+	})
+	if err := db.UpdateIssue(ctx, issueID, "drafted", withUncited, string(entryFlag)); err != nil {
+		t.Fatalf("UpdateIssue entry flag: %v", err)
+	}
+	rd = apiGet(t, srv, issueURL+"/readiness")
+	if c := readinessCheck(rd, "flags_unresolved"); c == nil || c["ok"].(bool) {
+		t.Fatalf("a live entry flag must still block readiness: %v", c)
+	}
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	version = doc["version"].(string)
+	var lastSID string
+	for _, it := range docItems(doc) {
+		for _, sn := range it["sentences"].([]any) {
+			s := sn.(map[string]any)
+			if s["text"] == "Yet another claim nobody can trace." {
+				lastSID = s["id"].(string)
+			}
+		}
+	}
+	if lastSID == "" {
+		t.Fatal("uncited sentence missing after entry-flag setup")
+	}
+	rr = apiCall(t, srv, "DELETE", issueURL+"/sentences/"+lastSID, map[string]any{"version": version})
+	if rr.Code != 200 {
+		t.Fatalf("remove last uncited = %d: %s", rr.Code, shortBody(rr))
+	}
+	rd = apiGet(t, srv, issueURL+"/readiness")
+	if c := readinessCheck(rd, "flags_unresolved"); c == nil || !c["ok"].(bool) {
+		t.Fatalf("entry flag must go stale once the item is fully cited: %v", c)
 	}
 }

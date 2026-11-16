@@ -228,6 +228,30 @@ test("manual compose journey", async ({ page }) => {
   // every slot filled — the empty affordance is gone
   await expect(emptySlot).toHaveCount(0);
 
+  // audit reproduction (KLOX-52): a sentence added without picking a
+  // source must land flagged exactly like an unsupported [n] — with a
+  // visible reason and Edit/Remove — and "Fix now" must open the fix
+  // affordance, not only flash the sentence.
+  await page.locator("[data-item-ref] h3").first().click();
+  await expect(box).toBeVisible();
+  await box
+    .getByRole("textbox")
+    .fill("A claim nobody can trace back to a source.");
+  await box.getByRole("button", { name: "Add to item" }).click();
+  const uncited = page.locator("[data-sid]").filter({ hasText: "nobody can trace" });
+  await expect(uncited.getByText("sentence has no citation")).toBeVisible({ timeout: 15000 });
+  await expect(uncited.getByRole("button", { name: "Edit" })).toBeVisible();
+  await expect(uncited.getByRole("button", { name: "Remove" })).toBeVisible();
+  // "Fix now" opens the sentence's edit box — the citation chips are
+  // the way out; resolving through them unblocks approval entirely in
+  // the UI
+  await page.getByRole("button", { name: "Fix now" }).first().click();
+  await expect(uncited.getByRole("textbox")).toBeVisible({ timeout: 15000 });
+  await uncited.getByRole("textbox").fill(firstSrc.text);
+  await uncited.getByRole("button", { name: firstChip }).click();
+  await uncited.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("sentence has no citation")).toHaveCount(0, { timeout: 15000 });
+
   await typeCommentary(page);
   await approveIssue(page);
 

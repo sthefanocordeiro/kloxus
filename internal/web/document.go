@@ -417,15 +417,33 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 	var sec *docSection
 	var item *docItem
 	usedIDs := map[string]int{}
+	// liveFlags counts the stored flags that still describe the
+	// document: a flag keyed to a sentence is live while that sentence
+	// exists; an "entry has no citations" flag is live while the item
+	// still has an uncited fact. A flag matching nothing would block
+	// approval with no UI path to clear it — it is stale and must not
+	// count (KLOX-52).
+	liveFlags := 0
 	finishItem := func(end int) {
 		if item == nil {
 			return
 		}
 		item.spanEnd = end
-		// attach flags that matched no sentence to the item itself
+		uncited := 0
+		for _, sn := range item.Sentences {
+			if sn.Kind == "fact" && len(sn.Citations) == 0 {
+				uncited++
+			}
+		}
+		// attach flags that matched no sentence to the item itself —
+		// only while they still hold (see liveFlags above)
 		for _, f := range flagOrder[int64(item.Ref)] {
-			if _, still := flags[int64(item.Ref)][f.Sentence]; still {
+			if _, still := flags[int64(item.Ref)][f.Sentence]; !still {
+				continue
+			}
+			if f.Note == "entry has no citations" && uncited > 0 {
 				item.Flags = append(item.Flags, docItemFlag{Sentence: f.Sentence, Note: f.Note})
+				liveFlags++
 			}
 		}
 		item = nil
@@ -465,6 +483,14 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 		if f, ok := flags[int64(item.Ref)][raw]; ok {
 			sn.Flag = &docFlag{Note: f.Note}
 			delete(flags[int64(item.Ref)], raw)
+			liveFlags++
+		} else if kind == "fact" && len(sn.Citations) == 0 {
+			// an uncited fact blocks approval whether or not a stored
+			// flag reached it (legacy bodies, restores without
+			// citations, drafts written before the flag rule) — give it
+			// the same flag treatment so the editor always has
+			// Edit / interpretation / Remove to clear it (KLOX-52)
+			sn.Flag = &docFlag{Note: "sentence has no citation"}
 		}
 		item.Sentences = append(item.Sentences, sn)
 	}
@@ -570,7 +596,7 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			}
 		}
 	}
-	doc.Coverage.Flagged = len(iss.Flags)
+	doc.Coverage.Flagged = liveFlags
 	return doc
 }
 

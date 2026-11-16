@@ -1617,8 +1617,12 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	}
 	checks = append(checks, c)
 
-	c = apiCheck{Code: "flags_unresolved", OK: len(iss.Flags) == 0, Count: len(iss.Flags),
-		Message: fmt.Sprintf("%d flagged sentence(s) unresolved — edit, mark as interpretation or remove each", len(iss.Flags))}
+	// coverage.flagged counts live flags only — a stored flag matching
+	// no sentence gives the editor nothing to act on, so it must not
+	// keep blocking approval (KLOX-52)
+	live := doc.Coverage.Flagged
+	c = apiCheck{Code: "flags_unresolved", OK: live == 0, Count: live,
+		Message: fmt.Sprintf("%d flagged sentence(s) unresolved — edit, mark as interpretation or remove each", live)}
 	if !c.OK {
 		// point at the first flagged sentence we can locate
 		ref := ""
