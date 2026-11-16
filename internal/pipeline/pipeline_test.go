@@ -280,6 +280,225 @@ func TestPhaseASelectedCountsCreatedItems(t *testing.T) {
 	}
 }
 
+// TestPhaseASignalOnlyLeadLeavesNoEmptySection is the KLOX-60 hosted
+// reproducer: the freshest catalog entry is a signal-only link — it
+// outscores every article, so before the fix it took the lead pick and
+// produced no issue item, leaving "Lead" empty while "Radar" filled;
+// the draft gate then refused the issue (409 section_empty). Now the
+// slot goes to the best draftable story and every section fills.
+func TestPhaseASignalOnlyLeadLeavesNoEmptySection(t *testing.T) {
+	pool := testdb.Pool(t)
+	db := testdb.WSOn(t, pool)
+	ctx := context.Background()
+
+	def := &config.Publication{
+		Slug: "p", Name: "Pub",
+		Sections: []config.Section{
+			{Title: "Lead", Items: 1, Commentary: "none"},
+			{Title: "Radar", Items: 1, Commentary: "none"},
+		},
+	}
+	pubID, err := db.SeedPublication(ctx, def)
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	hn, err := pool.CatalogEntry(ctx, "hacker-news")
+	if err != nil {
+		t.Fatalf("CatalogEntry hacker-news: %v", err)
+	}
+	tb, err := pool.CatalogEntry(ctx, "tecnoblog")
+	if err != nil {
+		t.Fatalf("CatalogEntry tecnoblog: %v", err)
+	}
+	if _, err := db.AddCatalogSource(ctx, pubID, hn); err != nil {
+		t.Fatalf("AddCatalogSource hn: %v", err)
+	}
+	if _, err := db.AddCatalogSource(ctx, pubID, tb); err != nil {
+		t.Fatalf("AddCatalogSource tb: %v", err)
+	}
+	if _, err := pool.SaveCatalogItems(ctx, hn.ID, []store.CatalogItem{
+		{ExternalID: "sig1", URL: "https://sig.example/1", CanonicalURL: "https://sig.example/1",
+			Title: "Signal-only link", PublishedAt: "2030-01-03T00:00:00Z", Kind: "signal"},
+	}); err != nil {
+		t.Fatalf("save signal: %v", err)
+	}
+	if _, err := pool.SaveCatalogItems(ctx, tb.ID, []store.CatalogItem{
+		{ExternalID: "art1", URL: "https://art.example/1", CanonicalURL: "https://art.example/1",
+			Title: "Regulador abre consulta", PublishedAt: "2030-01-02T00:00:00Z",
+			ContentText: "O regulador abriu consulta pública.", Kind: "article"},
+		{ExternalID: "art2", URL: "https://art.example/2", CanonicalURL: "https://art.example/2",
+			Title: "Nova linha de crédito", PublishedAt: "2030-01-01T00:00:00Z",
+			ContentText: "Banco anunciou linha de crédito.", Kind: "article"},
+	}); err != nil {
+		t.Fatalf("save articles: %v", err)
+	}
+	t.Cleanup(func() {
+		db.ExecContext(context.Background(),
+			`DELETE FROM story_items WHERE item_id IN
+				(SELECT id FROM items WHERE external_id IN ('sig1','art1','art2'))`)
+		db.ExecContext(context.Background(),
+			`DELETE FROM items WHERE external_id IN ('sig1','art1','art2')`)
+	})
+
+	pub, err := db.GetPublication(ctx, "p")
+	if err != nil {
+		t.Fatalf("GetPublication: %v", err)
+	}
+	runner := &Runner{DB: db, Deterministic: true, MaxDeepDives: 3}
+	res, err := runner.RunPhaseA(ctx, pub)
+	if err != nil {
+		t.Fatalf("RunPhaseA: %v", err)
+	}
+	iis, err := db.IssueItems(ctx, res.IssueID)
+	if err != nil {
+		t.Fatalf("IssueItems: %v", err)
+	}
+	filled := map[string]int{}
+	for _, ii := range iis {
+		filled[ii.Section]++
+	}
+	for _, sec := range def.Sections {
+		if filled[sec.Title] == 0 {
+			t.Fatalf("section %q has no issue items — the draft gate will refuse this issue", sec.Title)
+		}
+	}
+	// The signal-only story ranked first but produced no item; both
+	// slots went to the two draftable articles.
+	if len(iis) != 2 || res.Selected != 2 {
+		t.Fatalf("items = %d selected = %d, want 2/2", len(iis), res.Selected)
+	}
+	for _, ii := range iis {
+		story, err := db.StoryWithItems(ctx, ii.StoryID)
+		if err != nil {
+			t.Fatalf("StoryWithItems: %v", err)
+		}
+		if story.Title == "Signal-only link" {
+			t.Fatalf("issue item %d points at the signal-only story", ii.ID)
+		}
+	}
+}
+
+// TestPhaseAReslotsSectionWhenPickYieldsNoItem covers the model
+// storylist path behind the same defect: the storylist picks a
+// signal-only story for the lead section, the pick yields no item,
+// and the section must be re-slotted with the best remaining
+// draftable story rather than left empty (KLOX-60).
+func TestPhaseAReslotsSectionWhenPickYieldsNoItem(t *testing.T) {
+	pool := testdb.Pool(t)
+	db := testdb.WSOn(t, pool)
+	ctx := context.Background()
+
+	def := &config.Publication{
+		Slug: "p", Name: "Pub",
+		Sections: []config.Section{
+			{Title: "Lead", Items: 1, Commentary: "none"},
+			{Title: "Radar", Items: 1, Commentary: "none"},
+		},
+	}
+	pubID, err := db.SeedPublication(ctx, def)
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	hn, err := pool.CatalogEntry(ctx, "hacker-news")
+	if err != nil {
+		t.Fatalf("CatalogEntry hacker-news: %v", err)
+	}
+	tb, err := pool.CatalogEntry(ctx, "tecnoblog")
+	if err != nil {
+		t.Fatalf("CatalogEntry tecnoblog: %v", err)
+	}
+	if _, err := db.AddCatalogSource(ctx, pubID, hn); err != nil {
+		t.Fatalf("AddCatalogSource hn: %v", err)
+	}
+	if _, err := db.AddCatalogSource(ctx, pubID, tb); err != nil {
+		t.Fatalf("AddCatalogSource tb: %v", err)
+	}
+	// Seeded first → lowest item id → story 1 → storylist ref 1.
+	if _, err := pool.SaveCatalogItems(ctx, hn.ID, []store.CatalogItem{
+		{ExternalID: "sig1", URL: "https://sig.example/1", CanonicalURL: "https://sig.example/1",
+			Title: "Signal-only link", PublishedAt: "2030-01-03T00:00:00Z", Kind: "signal"},
+	}); err != nil {
+		t.Fatalf("save signal: %v", err)
+	}
+	if _, err := pool.SaveCatalogItems(ctx, tb.ID, []store.CatalogItem{
+		{ExternalID: "art1", URL: "https://art.example/1", CanonicalURL: "https://art.example/1",
+			Title: "Regulador abre consulta", PublishedAt: "2030-01-02T00:00:00Z",
+			ContentText: "O regulador abriu consulta pública.", Kind: "article"},
+		{ExternalID: "art2", URL: "https://art.example/2", CanonicalURL: "https://art.example/2",
+			Title: "Nova linha de crédito", PublishedAt: "2030-01-01T00:00:00Z",
+			ContentText: "Banco anunciou linha de crédito.", Kind: "article"},
+	}); err != nil {
+		t.Fatalf("save articles: %v", err)
+	}
+	t.Cleanup(func() {
+		db.ExecContext(context.Background(),
+			`DELETE FROM story_items WHERE item_id IN
+				(SELECT id FROM items WHERE external_id IN ('sig1','art1','art2'))`)
+		db.ExecContext(context.Background(),
+			`DELETE FROM items WHERE external_id IN ('sig1','art1','art2')`)
+	})
+
+	pub, err := db.GetPublication(ctx, "p")
+	if err != nil {
+		t.Fatalf("GetPublication: %v", err)
+	}
+	canned := map[string]string{
+		"triage": `[{"ref":1,"score":9.0,"reason":"freshest"},{"ref":2,"score":8.0,"reason":"a"},{"ref":3,"score":7.0,"reason":"b"}]`,
+		// the model slots the signal-only story into Lead and story 2
+		// into Radar; story 3 is left on the bench
+		"storylist": `{"items":[{"refs":[1],"title":"sig","theme":"t","why":"w","section":"Lead"},{"refs":[2],"title":"a","theme":"t","why":"w","section":"Radar"}]}`,
+		// entries are the Radar pick (ref 2) and the re-slotted Lead
+		// story (ref 3 = len(picks)+1)
+		"dossier": `[
+			{"ref":2,"summary":"Resumo a [1].","facts":[{"text":"Fato a","ref":1}],"interpretation":["i"],"sources":[{"ref":1,"url":"https://art.example/1"}]},
+			{"ref":3,"summary":"Resumo b [1].","facts":[{"text":"Fato b","ref":1}],"interpretation":["i"],"sources":[{"ref":1,"url":"https://art.example/2"}]}
+		]`,
+		"deepdive": `[]`,
+	}
+	runner := &Runner{
+		DB: db, TriageModel: "haiku", DraftModel: "sonnet", MaxDeepDives: 3,
+		LLM: llm.Func(func(_ context.Context, req llm.Request) (llm.Response, error) {
+			return llm.Response{Text: canned[req.Template], InputTokens: 1, OutputTokens: 1}, nil
+		}),
+	}
+	res, err := runner.RunPhaseA(ctx, pub)
+	if err != nil {
+		t.Fatalf("RunPhaseA: %v", err)
+	}
+	iis, err := db.IssueItems(ctx, res.IssueID)
+	if err != nil {
+		t.Fatalf("IssueItems: %v", err)
+	}
+	filled := map[string]int{}
+	for _, ii := range iis {
+		filled[ii.Section]++
+	}
+	for _, sec := range def.Sections {
+		if filled[sec.Title] == 0 {
+			t.Fatalf("section %q has no issue items — the draft gate will refuse this issue", sec.Title)
+		}
+	}
+	var lead *store.IssueItem
+	for i := range iis {
+		if iis[i].Section == "Lead" {
+			lead = &iis[i]
+		}
+	}
+	if lead == nil {
+		t.Fatal("no item in Lead")
+	}
+	story, err := db.StoryWithItems(ctx, lead.StoryID)
+	if err != nil {
+		t.Fatalf("StoryWithItems: %v", err)
+	}
+	if story.Title != "Nova linha de crédito" {
+		t.Fatalf("Lead story = %q, want the re-slotted article", story.Title)
+	}
+	if !strings.Contains(lead.Reason, "re-slotted") {
+		t.Fatalf("Lead item reason = %q, want the re-slot marker", lead.Reason)
+	}
+}
+
 func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.WS(t)
