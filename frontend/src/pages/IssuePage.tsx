@@ -340,7 +340,15 @@ export function IssuePage() {
   const fixNow = () => {
     if (!doc) return;
     const sid = nextPendingSentence(doc);
-    if (sid) goToSentence(`[data-sid="${sid}"]`, { fix: true });
+    if (sid) {
+      goToSentence(`[data-sid="${sid}"]`, { fix: true });
+      return;
+    }
+    // nothing sentence-shaped is pending — point at the first failing
+    // check's own affordance (an empty item's compose box, a missing
+    // commentary) instead of a dead-end flash (KLOX-56)
+    const check = readinessQ.data?.checks.find((c) => !c.ok && c.target);
+    if (check) onCheckTarget(check);
   };
 
   const onCheckTarget = (c: Check) => {
@@ -424,7 +432,9 @@ export function IssuePage() {
           </span>
         )}
         {!BOARD_STATUSES.has(issue.status) && doc && (
-          <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />
+          <span className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+            <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />
+          </span>
         )}
         {issue.status === "approved" && (
           <KPopover
@@ -778,7 +788,7 @@ function ApproveBar({
           )}
           <div className="flex justify-between">
             <dt>{t.send.sender}</dt>
-            <dd>{pub?.name} &lt;{pub?.slug}@kloxus.demo&gt;</dd>
+            <dd>{pub?.name} &lt;demo@trendfi.com.br&gt;</dd>
           </div>
         </dl>
         <div className="flex justify-end gap-2">
@@ -879,7 +889,7 @@ function SendRow({ issue, onDone, onToast }: {
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.sender}</dt>
-            <dd>{pub?.name} &lt;{pub?.slug}@kloxus.demo&gt;</dd>
+            <dd>{pub?.name} &lt;demo@trendfi.com.br&gt;</dd>
           </div>
           {confirmSend?.when === "schedule" && (
             <div className="flex justify-between gap-4">

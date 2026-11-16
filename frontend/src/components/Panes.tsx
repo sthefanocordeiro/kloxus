@@ -5,7 +5,7 @@ import { api, type Check, type Coverage, type DocItem, type IssueDocument, type 
 import { coverageDone, coverageLabel, readyFromChecks } from "../docModel";
 import { DocActionsCtx } from "../editor/nodes";
 import { ComposeBox, type ComposeInsert } from "./Compose";
-import { useT } from "../i18n";
+import { sectionTitle, useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { fmtDate } from "../lib/fmt";
 import { Markdown } from "../markdown";
@@ -24,7 +24,7 @@ export function PautasPane({
   selectedRef: number | null;
   onSelect: (ref: number, issueItemId: number) => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const statusOf = (iid: number) => items?.find((i) => i.id === iid)?.status ?? "pending";
   const statusLabel = (s: string) => (t.itemStatus as Record<string, string>)[s] ?? s;
   return (
@@ -32,7 +32,7 @@ export function PautasPane({
       {(doc.sections ?? []).map((sec) => (
         <div key={sec.title || "_"}>
           <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
-            {sec.title || t.pautas}
+            {sec.title ? sectionTitle(lang, sec.title) : t.pautas}
           </p>
           <div className="space-y-1">
             {(sec.items ?? []).map((it) => (
@@ -67,6 +67,16 @@ export function PautasPane({
 export function CoverageCounter({ coverage, onFixNow }: { coverage: Coverage; onFixNow: () => void }) {
   const { t } = useT();
   const done = coverageDone(coverage);
+  // an empty document has nothing to cite — "0/0" reads as a failure
+  // it isn't, so it shows a neutral label and no dead-end button
+  // (KLOX-56)
+  if (coverage.total === 0) {
+    return (
+      <div className="flex items-center gap-2">
+        <Badge>{t.coverage.empty}</Badge>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-2">
       <Badge tone={done ? "teal" : "warn"}>
@@ -92,14 +102,14 @@ export function ReadinessList({
   coverage: Coverage;
   onTarget: (c: Check) => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   // every check is translated here; the server's message stays a
   // fallback for codes this UI doesn't know yet
   const labelFor = (c: Check): string => {
     const entry = (t.readiness.check as Record<string, { ok: string; fail: string }>)[c.code];
     let label = entry ? (c.ok ? entry.ok : entry.fail) : (c.message || c.code);
     if (!c.ok && c.count && c.count > 0 && !/^\d/.test(label)) label = `${c.count} ${label}`;
-    if (!c.ok && c.target?.kind === "section") label += ` — ${c.target.ref}`;
+    if (!c.ok && c.target?.kind === "section") label += ` — ${sectionTitle(lang, c.target.ref)}`;
     return label;
   };
   return (

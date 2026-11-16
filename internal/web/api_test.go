@@ -479,6 +479,11 @@ outer0:
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "<h1>") {
 		t.Fatalf("export html = %d", rr.Code)
 	}
+	// ?format= is the spelling the audit reached for — same file (KLOX-56)
+	rr = apiCall(t, srv, "GET", issueURL+"/export?format=html", nil)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "<h1>") {
+		t.Fatalf("export html via ?format= = %d %s", rr.Code, rr.Header().Get("Content-Type"))
+	}
 
 	// --- preview switches ---
 	pv := apiGet(t, srv, issueURL+"/preview?reader=non-subscriber&surface=email")

@@ -12,8 +12,8 @@ import { Badge, Button, Card } from "../ui";
 // live in the i18n dict under landing.stackDesc.
 const STACK = [
   { id: "firecrawl", name: "Firecrawl", status: "live" },
-  { id: "resend", name: "Resend", status: "coming" },
-  { id: "supabase", name: "Supabase", status: "coming" },
+  { id: "resend", name: "Resend", status: "live" },
+  { id: "supabase", name: "Supabase", status: "live" },
   { id: "abacatepay", name: "AbacatePay", status: "coming" },
 ] as const;
 

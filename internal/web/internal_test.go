@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -304,5 +305,132 @@ func TestParseUncitedFactFlag(t *testing.T) {
 	if doc.Coverage.Flagged != 0 || len(doc.Sections[0].Items[0].Flags) != 0 {
 		t.Fatalf("stale flags counted: flagged=%d item.flags=%d",
 			doc.Coverage.Flagged, len(doc.Sections[0].Items[0].Flags))
+	}
+}
+
+// TestLocalizeReaderMD: a pt-BR reader never sees canonical English
+// chrome — section headings, "issue N" and the AI disclosure swap to
+// pt, while an English publication passes through unchanged (KLOX-56).
+func TestLocalizeReaderMD(t *testing.T) {
+	s := &Server{d: Deps{Cfg: &config.Config{Mode: "demo"}}}
+	md := "# Futuro Próximo — issue 3\n\n## The big one\n\nFact. [1]\n\n## Worth knowing\n\nMore. [2]\n\n**Sources:** [1] A.\n\n_Prepared with AI assistance and reviewed by the editor._"
+
+	pt := s.localizeReaderMD(md, &store.Publication{Language: "pt-BR"})
+	for _, want := range []string{
+		"## O destaque", "## Vale saber", " — edição 3", "**Fontes:**",
+		"_Preparado com auxílio de IA e revisado pelo editor._",
+	} {
+		if !strings.Contains(pt, want) {
+			t.Fatalf("pt body missing %q:\n%s", want, pt)
+		}
+	}
+	if strings.Contains(pt, "The big one") || strings.Contains(pt, "AI assistance") {
+		t.Fatalf("pt body leaked English:\n%s", pt)
+	}
+	// untouched mid-word headings stay: the swap is full-line only
+	if strings.Contains(pt, "Quick links") {
+		// present in input? no — but ensure no partial mangling happened
+		t.Fatalf("unexpected partial heading:\n%s", pt)
+	}
+
+	en := s.localizeReaderMD(md, &store.Publication{Language: "en"})
+	if en != md {
+		t.Fatalf("en body mangled:\n%s", en)
+	}
+
+	// API-created publications are stored custom=TRUE while replaying
+	// the canonical pipeline — canonical headings still swap to pt, and
+	// a creator's renamed section is untouched by the canonical swap
+	// (KLOX-56 QA rework).
+	custom := s.localizeReaderMD(md, &store.Publication{
+		Language: "pt-BR", Custom: true,
+		Sections: []config.Section{
+			{Title: "The big one"}, {Title: "Meus favoritos"}, {Title: "Quick links"},
+		},
+	})
+	if !strings.Contains(custom, "## O destaque") {
+		t.Fatalf("custom pub canonical heading not swapped:\n%s", custom)
+	}
+	if strings.Contains(custom, "The big one") {
+		t.Fatalf("custom pub leaked canonical heading:\n%s", custom)
+	}
+	// creator-renamed section: the custom pass swapped canonical→creator
+	// title first, so the canonical→pt swap must not mangle it
+	renamed := s.localizeReaderMD(
+		"# Futuro Próximo — issue 3\n\n## The big one\n\nFact. [1]\n\n## Worth knowing\n\nMore. [2]\n",
+		&store.Publication{Language: "pt-BR", Custom: true,
+			Sections: []config.Section{{Title: "Meus favoritos"}, {Title: "Vale saber"}, {Title: "Quick links"}}})
+	if !strings.Contains(renamed, "## Meus favoritos") || !strings.Contains(renamed, "## Vale saber") {
+		t.Fatalf("creator section titles not honored:\n%s", renamed)
+	}
+}
+
+// TestLocalizeSubject: pt publications render "edição N" in issue
+// chrome, mail subject and export title; English stays "issue N"
+// (KLOX-56 QA rework).
+func TestLocalizeSubject(t *testing.T) {
+	if got := localizeSubject("Futuro Próximo — issue 3", "pt-BR"); got != "Futuro Próximo — edição 3" {
+		t.Fatalf("pt subject = %q", got)
+	}
+	if got := localizeSubject("Some Letter — issue 3", "en"); got != "Some Letter — issue 3" {
+		t.Fatalf("en subject = %q", got)
+	}
+	if got := localizeSubject("Futuro Próximo — edição 3", "pt-BR"); got != "Futuro Próximo — edição 3" {
+		t.Fatalf("already-pt subject = %q", got)
+	}
+}
+
+// TestRobotsAndSecurityHeaders: /robots.txt answers without minting a
+// workspace cookie, and baseline security headers ride every response
+// (KLOX-56).
+func TestRobotsAndSecurityHeaders(t *testing.T) {
+	srv := New(Deps{Cfg: &config.Config{Mode: "demo"}})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/robots.txt", nil))
+	if rr.Code != 200 {
+		t.Fatalf("robots = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"Disallow: /api/", "Disallow: /outbox/", "Disallow: /a/"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("robots missing %q:\n%s", want, body)
+		}
+	}
+	if c := rr.Header().Get("Set-Cookie"); c != "" {
+		t.Fatalf("robots minted a workspace cookie: %q", c)
+	}
+	for k, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "SAMEORIGIN",
+		"Referrer-Policy":        "strict-origin-when-cross-origin",
+	} {
+		if got := rr.Header().Get(k); got != want {
+			t.Fatalf("%s = %q, want %q", k, got, want)
+		}
+	}
+	if csp := rr.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
+		t.Fatalf("CSP missing: %q", csp)
+	}
+}
+
+// TestLocalizeEditorialLine: the sample's editorial line stores the
+// recorded English sentence so replay prompts stay stable — pt
+// publications see the pt sentence in API responses (KLOX-56).
+func TestLocalizeEditorialLine(t *testing.T) {
+	canonical := "Priorize adoção.\n\nSkip deals, coupons and buying guides.\n\nSem hype."
+	pt := localizeEditorialLine(canonical, "pt-BR")
+	if !strings.Contains(pt, "Pule ofertas, cupons e guias de compra.") {
+		t.Fatalf("pt line missing swap:\n%s", pt)
+	}
+	if strings.Contains(pt, "Skip deals") {
+		t.Fatalf("pt line leaked English:\n%s", pt)
+	}
+	if en := localizeEditorialLine(canonical, "en"); en != canonical {
+		t.Fatal("en publication line mangled")
+	}
+	// a creator's own English line is never rewritten — only the
+	// canonical sentence swaps
+	if custom := localizeEditorialLine("Only English here.", "pt-BR"); custom != "Only English here." {
+		t.Fatal("custom editorial line rewritten")
 	}
 }

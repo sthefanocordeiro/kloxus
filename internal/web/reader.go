@@ -21,7 +21,8 @@ const demoReaderName = "Demo Reader"
 // decides the gating). Live sends go through issueMessage + sendMail.
 func (s *Server) sendIssueMail(ctx context.Context, wdb *store.DB, wsID string, iss *store.Issue, pub *store.Publication, to []string, kind, base string) (string, error) {
 	cpub, _ := s.canonicalPub(pub, nil)
-	md := delivery.ReaderBody(iss, cpub, base)
+	aiUsed, _ := wdb.IssueUsedAI(ctx, iss.ID)
+	md := delivery.ReaderBody(iss, cpub, base, aiUsed)
 	rid, _ := wdb.UpsertReader(ctx, pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := wdb.HasActiveSubscription(ctx, rid)
 	msg := s.issueMessage(ctx, wdb, wsID, iss, pub, cpub, rid, demoReaderEmail, active, kind, base, md, "")
@@ -58,11 +59,12 @@ func (s *Server) issueMessage(ctx context.Context, wdb *store.DB, wsID string, i
 	if idemNS != "" {
 		idem = idemNS + "/" + idem
 	}
+	subject := localizeSubject(iss.Subject, pub.Language)
 	return &delivery.Message{
 		To:      []string{email},
-		Subject: iss.Subject,
+		Subject: subject,
 		Text:    md,
-		HTML:    delivery.RenderHTML(iss.Subject, md, base),
+		HTML:    delivery.RenderHTML(subject, md, base),
 		Kind:    kind,
 		Headers: map[string]string{
 			"List-Unsubscribe":      "<" + unsub + ">",
@@ -87,7 +89,8 @@ type sendSummary struct {
 // idempotent retries, outbox fallback on provider failure.
 func (s *Server) sendIssueLive(ctx context.Context, wdb *store.DB, wsID string, iss *store.Issue, pub *store.Publication, kind, owner, base, idemNS string, readers []store.Reader) (*sendSummary, error) {
 	cpub, _ := s.canonicalPub(pub, nil)
-	md := delivery.ReaderBody(iss, cpub, base)
+	aiUsed, _ := wdb.IssueUsedAI(ctx, iss.ID)
+	md := delivery.ReaderBody(iss, cpub, base, aiUsed)
 	sum := &sendSummary{}
 	send := func(rid int64, email string, active bool) error {
 		msg := s.issueMessage(ctx, wdb, wsID, iss, pub, cpub, rid, email, active, kind, base, md, idemNS)

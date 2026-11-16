@@ -410,8 +410,15 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return nil, err
 	}
 	res.Number = number
+	// the stored subject mirrors assembleIssue's body heading — the
+	// issue chrome, mail subject, and export title all render it as-is
+	// (KLOX-56).
+	word := "issue"
+	if ptLang(pub.Language) {
+		word = "edição"
+	}
 	issueID, err := r.DB.CreateIssue(ctx, pub.ID, number,
-		fmt.Sprintf("%s — issue %d", pub.Name, number), "")
+		fmt.Sprintf("%s — %s %d", pub.Name, word, number), "")
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +466,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	var detScores []float64
 	var detReasons []string
 	if r.Deterministic {
-		detScores, detReasons = scoreStories(stories)
+		detScores, detReasons = scoreStories(stories, pub.Language)
 		updates := make([]store.StoryTriage, len(stories))
 		for i := range stories {
 			scoreByRef[i+1] = struct {
@@ -693,9 +700,15 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	dossierByRef := map[int]*Dossier{}
 	if r.Deterministic {
+		// the rank note is reader-facing — it speaks the publication's
+		// language like every other deterministic string (KLOX-56).
+		rankNote := "Ranked %.1f/10 by the deterministic pipeline."
+		if ptLang(pub.Language) {
+			rankNote = "Ranqueado %.1f/10 pelo pipeline determinístico."
+		}
 		for _, e := range entries {
 			dossierByRef[e.ref] = synthDossier(e.ref, e.title,
-				"Ranked "+fmt.Sprintf("%.1f/10", e.score)+" by the deterministic pipeline.", e.sources)
+				fmt.Sprintf(rankNote, e.score), e.sources)
 		}
 		r.emit("dossier", map[string]int{"dossiers": len(entries)})
 		r.record(ctx, pub.ID, issueID, "dossier", "deterministic", start, llm.Response{})
@@ -1452,7 +1465,11 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 	headline, body string
 }, dossiers map[int]*Dossier, sectionOrder []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s — issue %d\n\n", pub.Name, number)
+	word := "issue"
+	if ptLang(pub.Language) {
+		word = "edição"
+	}
+	fmt.Fprintf(&b, "# %s — %s %d\n\n", pub.Name, word, number)
 	bySection := map[string][]entry{}
 	for _, e := range entries {
 		bySection[e.section] = append(bySection[e.section], e)
@@ -1556,6 +1573,9 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 // synthesized from the story's items when no replay fixture exists.
 func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication, cand *store.Story, ref int) *Dossier {
 	interpretation := "Picked by the editor as an alternative to the previous item."
+	if ptLang(pub.Language) {
+		interpretation = "Escolhida pelo editor como alternativa à pauta anterior."
+	}
 	items := capEntrySources(cand.Items)
 	if r.Deterministic {
 		return synthDossier(ref, cand.Title, interpretation, items)

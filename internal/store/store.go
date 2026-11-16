@@ -612,6 +612,18 @@ func (db *DB) CostReport(ctx context.Context, pubID int64, lastN int) ([]CostRow
 	return out, rows.Err()
 }
 
+// IssueUsedAI reports whether any non-deterministic model step ran for
+// the issue — the signal the AI disclosure keys on (KLOX-56). A fully
+// deterministic or manual-compose issue must not carry the disclosure.
+func (db *DB) IssueUsedAI(ctx context.Context, issueID int64) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM runs WHERE workspace_id = $1 AND issue_id = $2
+		   AND model <> '' AND model <> 'deterministic'`,
+		db.ws, issueID).Scan(&n)
+	return n > 0, err
+}
+
 // IssueCostUSD returns the recorded model cost of the run steps
 // attached to an issue — the number the issue page shows (KLOX-44).
 func (db *DB) IssueCostUSD(ctx context.Context, issueID int64) (float64, error) {

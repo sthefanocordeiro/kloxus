@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { GripVertical, Minus, Plus, Search } from "lucide-react";
 import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dossier, type IssueSummary, type LineupEntry, type Run, type RunEvent } from "../api";
-import { useT } from "../i18n";
+import { sectionTitle, useT } from "../i18n";
 import { SampleCard } from "../components/SampleCard";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
@@ -167,7 +167,7 @@ function lineupOf(board: Board): LineupEntry[] {
 // --- the build board ---
 
 export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafted?: () => void }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const qc = useQueryClient();
   const candsQ = useQuery({ queryKey: ["candidates", issue.id], queryFn: () => api.candidates(issue.id) });
   const [board, setBoard] = useState<Board | null>(null);
@@ -597,7 +597,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           onDrop={onDropBench}
           aria-label={t.board.bench}
         >
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold">{t.board.bench}</h2>
             <span className="text-xs text-muted">{benchTotal}</span>
             {candsQ.data?.llm_mode === "off" && <Badge tone="warn">{t.board.aiOff}</Badge>}
@@ -619,7 +619,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             >
               <option value="">{t.board.allSections}</option>
               {sections.map((s) => (
-                <option key={s.title} value={s.title}>{s.title}</option>
+                <option key={s.title} value={s.title}>{sectionTitle(lang, s.title)}</option>
               ))}
             </select>
           </div>
@@ -684,7 +684,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           className={cn("min-h-0 flex-col overflow-y-auto p-4 md:flex", boardTab === "issue" ? "flex" : "hidden md:flex")}
           aria-label={t.board.issue}
         >
-          <div className="sticky -top-4 z-10 -mx-4 -mt-4 mb-3 flex items-center gap-2 border-b border-line bg-paper px-4 pb-3 pt-4">
+          <div className="sticky -top-4 z-10 -mt-4 mb-3 flex items-center gap-2 border-b border-line bg-paper pb-3 pt-4">
             <h2 className="text-sm font-semibold">{t.board.issue}</h2>
             <span className="flex-1" />
             <Button
@@ -712,7 +712,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 onDrop={onDrop(s.title)}
               >
                 <div className="mb-1.5 flex items-baseline gap-2 px-1">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">{s.title}</h3>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">{sectionTitle(lang, s.title)}</h3>
                   <span className={cn("text-[11px]", full ? "text-warn" : "text-muted")}>
                     {items.length}/{s.capacity}
                     {full ? ` · ${t.board.full}` : ""}
@@ -770,7 +770,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
 
       {/* swap chooser: adding to a full section picks what goes out,
           then asks why — the reason feeds the editorial guide */}
-      <KDialog open={!!swapFor} onOpenChange={() => { setSwapFor(null); setSwapReason(""); }} title={swapFor?.section || t.board.add}>
+      <KDialog open={!!swapFor} onOpenChange={() => { setSwapFor(null); setSwapReason(""); }} title={(swapFor?.section && sectionTitle(lang, swapFor.section)) || t.board.add}>
         {swapFor && !swapFor.section && (
           <div className="space-y-1">
             {sections.map((s) => (
@@ -779,7 +779,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 className="block w-full rounded-[var(--radius-btn)] border border-line px-3 py-2 text-left text-sm hover:bg-paper"
                 onClick={() => moveTo(swapFor.story.story_id, s.title)}
               >
-                {s.title}
+                {sectionTitle(lang, s.title)}
                 <span className="ml-2 text-xs text-muted">
                   {board.sections[s.title].length}/{s.capacity}
                   {sectionFull(s.title) ? ` · ${t.board.full}` : ""}
@@ -790,7 +790,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         )}
         {swapFor && swapFor.section && !swapFor.out && (
           <>
-            <p className="mb-3 text-sm text-muted">{t.board.sectionFull(swapFor.section, board.sections[swapFor.section].length)}</p>
+            <p className="mb-3 text-sm text-muted">{t.board.sectionFull(sectionTitle(lang, swapFor.section), board.sections[swapFor.section].length)}</p>
             <div className="space-y-1">
               {board.sections[swapFor.section].map((c) => (
                 <button
@@ -1064,6 +1064,7 @@ function MoveMenu({
   onMoveTo: (s: string) => void;
   exclude?: string;
 }) {
+  const { lang } = useT();
   return (
     <KPopover
       trigger={
@@ -1086,7 +1087,7 @@ function MoveMenu({
               )}
               onClick={() => onMoveTo(s.title)}
             >
-              {s.title}
+              {sectionTitle(lang, s.title)}
               {full && !same && <span className="ml-2 text-xs">· {board.full}</span>}
             </button>
           );
@@ -1190,13 +1191,16 @@ function DossierView({ d }: { d: Dossier }) {
     <div className="space-y-3 text-sm">
       {d.summary && <p className="font-doc leading-6">{d.summary}</p>}
       {d.facts.length > 0 && (
-        <ul className="list-disc space-y-1 pl-5">
-          {d.facts.map((f, i) => (
-            <li key={i}>
-              {f.text} <span className="text-muted">[{f.ref}]</span>
-            </li>
-          ))}
-        </ul>
+        <div>
+          <p className="mb-1 text-xs font-semibold uppercase text-muted">{t.evidence.facts}</p>
+          <ul className="list-disc space-y-1 pl-5">
+            {d.facts.map((f, i) => (
+              <li key={i}>
+                {f.text} <span className="text-muted">[{f.ref}]</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {d.unknowns.length > 0 && (
         <div>
