@@ -403,6 +403,11 @@ async function sendTestKeepsEditable(page: Page) {
   // the after-sending surface + test-sent marker appear without `sent`
   await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible({ timeout: 15000 });
   await expect(page.getByText(/Test send recorded/)).toBeVisible();
+  // the send popover is uncontrolled (no Popover.Close on action) —
+  // dismiss it or the next "Send" click would toggle the still-open
+  // popover shut instead of opening it
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Send a test" })).toBeHidden();
 }
 
 async function sendToReaders(page: Page) {
