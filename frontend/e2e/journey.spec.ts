@@ -156,8 +156,13 @@ async function boardOps(page: Page, isPhone: boolean) {
     await expect(swap).toBeVisible({ timeout: 15000 });
     await swap.getByRole("button").filter({ hasNotText: "✕" }).first().click();
     // picking the story that leaves asks why — "just swap" skips the
-    // reason and the guide stays quiet
-    await swap.getByRole("button", { name: "just swap" }).click();
+    // reason and the guide stays quiet. The pick re-renders the dialog
+    // ("Why does … leave?"), so the `swap` locator above no longer
+    // matches — look the button up inside whatever dialog is open
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "just swap" })
+      .click();
   }
   await expect(page.getByText(/^Moved “/)).toBeVisible({ timeout: 15000 });
 
@@ -168,11 +173,41 @@ async function boardOps(page: Page, isPhone: boolean) {
   await expect(benchCol(page).getByText(removedTitle)).toBeVisible({ timeout: 30000 });
   if (isPhone) await tabIssue.click();
 
-  // 5) draft — the step rail runs, then the editor lands
+  // 5) draft — the step rail runs, then the editor lands. Under llm
+  //    off the draft is KLOX-48's honest compose skeleton with 0/0
+  //    sentences, so [data-sid] never appears: wait for the editor
+  //    itself, then fill each empty item slot by hand the way
+  //    compose.spec.ts does — a real draft lands with sentences and
+  //    skips the fill
   await page.getByRole("button", { name: /Draft the issue/ }).click();
-  await expect(page.locator("[data-sid]").first()).toBeVisible({
+  await expect(page.locator(".ProseMirror").first()).toBeVisible({
     timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000,
   });
+  const emptySlot = page.getByRole("button", { name: /Empty — write this item/ });
+  for (let filled = 0, tries = 0; tries < 24; tries++) {
+    if ((await emptySlot.count()) === 0) break;
+    // each add refetches the document and remounts every node view — a
+    // slot counted before the refetch lands detaches mid-click, so a
+    // failed click just means "look again" (KLOX-49)
+    try {
+      await emptySlot.first().click({ timeout: 10_000 });
+    } catch {
+      continue;
+    }
+    const box = page.locator('section[aria-label="Write this item"]');
+    await expect(box).toBeVisible();
+    await box.getByRole("textbox").fill(`Editor-written paragraph ${filled + 1} for the issue.`);
+    await box.getByRole("button", { name: /^\[1\] / }).click();
+    await box.getByRole("button", { name: "Add to item" }).click();
+    // wait for the remounted document — the count check above is only
+    // trustworthy once the refetch has landed (compose.spec.ts does the
+    // same through [data-sid])
+    await expect(page.locator("[data-sid]")).toHaveCount(filled + 1, { timeout: 15000 });
+    filled++;
+    // on phone the compose box lives behind the evidence tab — reopen
+    // the issue tab so the next slot is reachable
+    if (isPhone) await page.getByRole("button", { name: /^Issue$/ }).click();
+  }
 
   // 6) the document is sealed: clicking a section or item heading and
   //    typing must not create free text anywhere — the schema only

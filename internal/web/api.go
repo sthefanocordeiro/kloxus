@@ -587,9 +587,8 @@ func (s *Server) apiSourceDelete(w http.ResponseWriter, r *http.Request) {
 
 // apiSourceCatalog lists the sources a publication can pick. Demo mode
 // offers the sample fixture sources; real mode serves the global
-// catalog — launch/signal entries as picks, hold/blocked entries as
-// unavailable rows with their reason (D29/D31: the UI must show why a
-// known outlet is absent).
+// catalog — launch/signal entries only; hold/blocked entries are never
+// listed to users (D29/D31/KLOX-49).
 func (s *Server) apiSourceCatalog(w http.ResponseWriter, r *http.Request) {
 	pub, err := s.apiPub(r)
 	if apiDBErr(w, r, err, "publication") {
