@@ -196,6 +196,90 @@ func TestPhaseACatalogScale(t *testing.T) {
 	}
 }
 
+// TestPhaseASelectedCountsCreatedItems is the KLOX-55 header contract:
+// the "selected" number — res.Selected and the storylist event the run
+// screen renders as "N selecionadas" — must equal the issue items
+// actually created, not the raw picks. The newest story here is a
+// signal-only link (no evidence body): the lineup picks it, but no
+// issue item can be created from it, so it must not count.
+func TestPhaseASelectedCountsCreatedItems(t *testing.T) {
+	pool := testdb.Pool(t)
+	db := testdb.WSOn(t, pool)
+	ctx := context.Background()
+
+	def := &config.Publication{
+		Slug: "p", Name: "Pub",
+		Sections: []config.Section{{Title: "Lead", Items: 2, Commentary: "none"}},
+	}
+	pubID, err := db.SeedPublication(ctx, def)
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	hn, err := pool.CatalogEntry(ctx, "hacker-news")
+	if err != nil {
+		t.Fatalf("CatalogEntry hacker-news: %v", err)
+	}
+	tb, err := pool.CatalogEntry(ctx, "tecnoblog")
+	if err != nil {
+		t.Fatalf("CatalogEntry tecnoblog: %v", err)
+	}
+	if _, err := db.AddCatalogSource(ctx, pubID, hn); err != nil {
+		t.Fatalf("AddCatalogSource hn: %v", err)
+	}
+	if _, err := db.AddCatalogSource(ctx, pubID, tb); err != nil {
+		t.Fatalf("AddCatalogSource tb: %v", err)
+	}
+	if _, err := pool.SaveCatalogItems(ctx, hn.ID, []store.CatalogItem{
+		{ExternalID: "sig1", URL: "https://sig.example/1", CanonicalURL: "https://sig.example/1",
+			Title: "Signal-only link", PublishedAt: "2030-01-02T00:00:00Z", Kind: "signal"},
+	}); err != nil {
+		t.Fatalf("save signal: %v", err)
+	}
+	if _, err := pool.SaveCatalogItems(ctx, tb.ID, []store.CatalogItem{
+		{ExternalID: "art1", URL: "https://art.example/1", CanonicalURL: "https://art.example/1",
+			Title: "Regulador abre consulta", PublishedAt: "2030-01-01T00:00:00Z",
+			ContentText: "O regulador abriu consulta pública.", Kind: "article"},
+	}); err != nil {
+		t.Fatalf("save article: %v", err)
+	}
+	t.Cleanup(func() {
+		db.ExecContext(context.Background(),
+			`DELETE FROM story_items WHERE item_id IN
+				(SELECT id FROM items WHERE external_id IN ('sig1','art1'))`)
+		db.ExecContext(context.Background(),
+			`DELETE FROM items WHERE external_id IN ('sig1','art1')`)
+	})
+
+	pub, err := db.GetPublication(ctx, "p")
+	if err != nil {
+		t.Fatalf("GetPublication: %v", err)
+	}
+	var emitted int
+	runner := &Runner{DB: db, Deterministic: true, MaxDeepDives: 3}
+	runner.OnEvent = func(ev StepEvent) {
+		if ev.Step == "storylist" {
+			emitted = ev.Counts["selected"]
+		}
+	}
+	res, err := runner.RunPhaseA(ctx, pub)
+	if err != nil {
+		t.Fatalf("RunPhaseA: %v", err)
+	}
+	iis, err := db.IssueItems(ctx, res.IssueID)
+	if err != nil {
+		t.Fatalf("IssueItems: %v", err)
+	}
+	if len(iis) != 1 {
+		t.Fatalf("issue items = %d, want 1 — the signal-only story has no evidence body", len(iis))
+	}
+	if res.Selected != len(iis) {
+		t.Fatalf("res.Selected = %d, want %d — count must match the rendered lineup", res.Selected, len(iis))
+	}
+	if emitted != len(iis) {
+		t.Fatalf("storylist event selected = %d, want %d", emitted, len(iis))
+	}
+}
+
 func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.WS(t)

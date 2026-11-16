@@ -543,6 +543,9 @@ func cmdGuideRebuild(args []string) error {
 	if err != nil {
 		return err
 	}
+	if cfg.LLMOff() {
+		provider = nil // deterministic fallback — never touch the model
+	}
 	content, version, err := editorial.Rebuild(ctx, db, pub, provider, cfg.ModelTriage)
 	if err != nil {
 		return err

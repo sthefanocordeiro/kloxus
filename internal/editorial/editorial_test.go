@@ -57,3 +57,17 @@ func TestRebuildFallbackOnMissingFixture(t *testing.T) {
 		t.Fatalf("fallback content=%q version=%d", content, version)
 	}
 }
+
+// TestRebuildDeterministicNoProvider is the llm_mode=off contract
+// (KLOX-55): a nil provider is never invoked — Rebuild condenses the
+// recorded reasons locally and persists a real, versioned guide.
+func TestRebuildDeterministicNoProvider(t *testing.T) {
+	db, pub := setup(t)
+	content, version, err := Rebuild(context.Background(), db, pub, nil, "m")
+	if err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+	if version != 1 || content != "- Fora da minha linha editorial" {
+		t.Fatalf("deterministic guide content=%q version=%d", content, version)
+	}
+}

@@ -36,6 +36,13 @@ import (
 // occupy (first pass; relaxed when capacity would otherwise go unused).
 const detMaxPerOutlet = 2
 
+// nonEditorialPenalty sinks obvious non-editorial feed content —
+// release lists, where-to-watch guides, the outlet's own supporter
+// campaigns (KLOX-55) — below real coverage. It exceeds the recency +
+// diversity maximum (10), so a noisy title never outranks a story;
+// demoted rows still fill slots when nothing else remains.
+const nonEditorialPenalty = 12.0
+
 // lineupPick is the deterministic equivalent of a storylist pick: the
 // story refs to merge (1-based positions into the run's stories), a
 // working title, a provenance reason and the target section.
@@ -147,8 +154,27 @@ func scoreStories(stories []store.Story) (scores []float64, reasons []string) {
 			date = t.Format("2006-01-02")
 		}
 		reasons[i] = fmt.Sprintf("deterministic rank: %s, %d source(s)", date, len(stories[i].Outlets()))
+		if nonEditorial(&stories[i]) {
+			scores[i] -= nonEditorialPenalty
+			reasons[i] += "; non-editorial (demoted)"
+		}
 	}
 	return scores, reasons
+}
+
+// nonEditorial reports whether the story title or any member headline
+// is obvious non-editorial feed noise: a release list, a
+// where-to-watch guide or the source's own supporter campaign.
+func nonEditorial(s *store.Story) bool {
+	if store.IsNonEditorialTitle(s.Title, primaryOutlet(s)) {
+		return true
+	}
+	for i := range s.Items {
+		if store.IsNonEditorialTitle(s.Items[i].Title, s.Items[i].SourceName) {
+			return true
+		}
+	}
+	return false
 }
 
 // storyOrder sorts story indices by (score desc, story id asc) — the

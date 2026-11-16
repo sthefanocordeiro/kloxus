@@ -50,6 +50,41 @@ func TestScoreStoriesStableOrder(t *testing.T) {
 	}
 }
 
+// TestNonEditorialDemotion is the KLOX-55 noise contract: release
+// lists, where-to-watch guides and the outlet's own supporter campaign
+// sink below real coverage even when newer — llm_mode=off has no
+// triage model to weigh them, so the demotion is deterministic.
+func TestNonEditorialDemotion(t *testing.T) {
+	stories := []store.Story{
+		detStory(1, "Onde assistir ao clássico deste sábado", "2025-01-05", 1),
+		detStory(2, "Estreias da semana: o que chega ao streaming", "2025-01-05", 3),
+		detStory(3, "Apoie o src0: jornalismo independente precisa de você", "2025-01-05", 1),
+		detStory(4, "Where to watch the final this Sunday", "2025-01-05", 1),
+		detStory(5, "Regulador abre consulta pública sobre IA", "2025-01-01", 1),
+	}
+	// member-headline match: a clean story title can't hide a noisy
+	// member item (the feed headline carries the flag too)
+	stories[0].Title = "Cobertura completa da rodada"
+	stories[0].Items[0].Title = "Onde assistir aos jogos da rodada"
+	scores, reasons := scoreStories(stories)
+	for i := 0; i < 4; i++ {
+		if scores[i] >= scores[4] {
+			t.Fatalf("non-editorial story %d scored %.1f ≥ real story %.1f", i, scores[i], scores[4])
+		}
+		if !strings.Contains(reasons[i], "non-editorial") {
+			t.Errorf("demoted story %d reason lacks the marker: %q", i, reasons[i])
+		}
+	}
+	if strings.Contains(reasons[4], "non-editorial") {
+		t.Errorf("real story wrongly demoted: %q", reasons[4])
+	}
+	picks := pickLineup(stories, scores, reasons,
+		[]config.Section{{Title: "Lead", Items: 1, Commentary: "none"}})
+	if len(picks) != 1 || picks[0].Refs[0] != 5 {
+		t.Fatalf("picks = %+v, want only the real story", picks)
+	}
+}
+
 func TestDedupeKey(t *testing.T) {
 	same := []store.Item{
 		{URL: "https://a.example/x?utm_source=rss", CanonicalURL: "https://a.example/x"},

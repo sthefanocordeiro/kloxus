@@ -105,16 +105,99 @@ func TestDeterministicModeJourney(t *testing.T) {
 	}
 }
 
+// TestDetRejectionLearnsGuideRule is the KLOX-55 audit repro: under
+// llm_mode=off a reasoned rejection must persist a real, versioned
+// guide rule — the API response, the guide endpoint and the bench all
+// reflect it — with zero provider calls (detServer fails on any).
+func TestDetRejectionLearnsGuideRule(t *testing.T) {
+	ctx := context.Background()
+	srv, db, pub := detServer(t)
+	issueID := runPhaseA(t, srv, db, pub.ID)
+	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
+	iis, err := db.IssueItems(ctx, issueID)
+	if err != nil || len(iis) == 0 {
+		t.Fatalf("IssueItems = %d, err %v", len(iis), err)
+	}
+
+	rejectedStory := iis[0].StoryID
+	rr := apiCall(t, srv, "POST", issueURL+"/items/"+fmt.Sprint(iis[0].ID)+"/decisions",
+		map[string]string{"kind": "reject", "reason": "não é para meu público"})
+	if rr.Code != 200 {
+		t.Fatalf("reject = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	resp := apiJSON(t, rr)
+	guide, ok := resp["guide"].(map[string]any)
+	if !ok {
+		t.Fatalf("reject response carries no guide payload: %v", resp)
+	}
+	if v, _ := guide["version"].(float64); v < 1 {
+		t.Fatalf("guide version = %v, want ≥1 — the rule must persist", guide["version"])
+	}
+	if added, _ := guide["added"].([]any); len(added) == 0 {
+		t.Fatalf("guide added = %v, want the recorded rule", guide["added"])
+	}
+
+	// the guide screen/API shows what was learned — version and content
+	g := apiGet(t, srv, "/api/v1/publications/"+fmt.Sprint(pub.ID)+"/guide")["guide"].(map[string]any)
+	if v, _ := g["version"].(float64); v < 1 {
+		t.Fatalf("guide API version = %v, want ≥1", g["version"])
+	}
+	if content, _ := g["content"].(string); !strings.Contains(content, "público") {
+		t.Fatalf("guide content lacks the learned rule: %q", content)
+	}
+
+	// the rejected story must not resurface as a bench suggestion
+	for _, c := range apiGet(t, srv, issueURL+"/candidates")["candidates"].([]any) {
+		if int64(c.(map[string]any)["story_id"].(float64)) == rejectedStory {
+			t.Fatalf("rejected story %d resurfaced in candidates", rejectedStory)
+		}
+	}
+
+	// manual rebuild takes the same deterministic path — 200, no model
+	if rr := apiCall(t, srv, "POST", "/api/v1/publications/"+fmt.Sprint(pub.ID)+"/guide/rebuild", nil); rr.Code != 200 {
+		t.Fatalf("guide/rebuild = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+}
+
+// TestDetAfterLearnsOnlyRecordedRules: the after-sending "learned" block
+// may only name rules the guide actually recorded (KLOX-55). With no
+// persisted guide — e.g. rejections whose rebuild ran before the fix —
+// it must report nothing rather than infer rules from raw reasons.
+func TestDetAfterLearnsOnlyRecordedRules(t *testing.T) {
+	ctx := context.Background()
+	srv, db, pub := detServer(t)
+	issueID := runPhaseA(t, srv, db, pub.ID)
+	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
+	iis, err := db.IssueItems(ctx, issueID)
+	if err != nil || len(iis) == 0 {
+		t.Fatalf("IssueItems = %d, err %v", len(iis), err)
+	}
+	// simulate the pre-fix state: a recorded rejection reason with no
+	// persisted guide (the guide table stays at version 0)
+	if err := db.RecordDecision(ctx, pub.ID, iis[0].ID, "reject", "não é para meu público"); err != nil {
+		t.Fatalf("RecordDecision: %v", err)
+	}
+	if err := db.SetIssueStatus(ctx, issueID, "sent"); err != nil {
+		t.Fatalf("SetIssueStatus: %v", err)
+	}
+	af := apiGet(t, srv, issueURL+"/after")
+	if learned, _ := af["learned"].([]any); len(learned) != 0 {
+		t.Fatalf("after.learned = %v, want empty — the guide recorded nothing", learned)
+	}
+}
+
 // TestAIEndpointsBlockedOffMode: AI-only actions answer 409 with a clear
 // code, never a 500.
 func TestAIEndpointsBlockedOffMode(t *testing.T) {
 	srv, _, pub := detServer(t)
 
+	// no recorded rejections: even the deterministic rebuild cannot
+	// fabricate a guide — a clear 409, never a 500, never the model
 	rr := apiCall(t, srv, "POST", "/api/v1/publications/"+fmt.Sprint(pub.ID)+"/guide/rebuild", nil)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("guide/rebuild = %d, want 409", rr.Code)
 	}
-	if code := apiJSON(t, rr)["error"].(map[string]any)["code"]; code != "ai_disabled" {
-		t.Fatalf("guide/rebuild error code = %v, want ai_disabled", code)
+	if code := apiJSON(t, rr)["error"].(map[string]any)["code"]; code != "conflict" {
+		t.Fatalf("guide/rebuild error code = %v, want conflict", code)
 	}
 }

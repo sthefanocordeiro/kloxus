@@ -1143,9 +1143,14 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 	}
 	inIssue, bench := []store.RankedCandidate{}, []store.RankedCandidate{}
 	for _, c := range pool {
-		if c.Item != nil && (c.Item.Status == "pending" || c.Item.Status == "approved") {
+		switch {
+		case c.Item != nil && (c.Item.Status == "pending" || c.Item.Status == "approved"):
 			inIssue = append(inIssue, c)
-		} else {
+		case c.Item != nil && c.Item.Status == "rejected":
+			// A reasoned rejection is an editorial decision, not a
+			// bench slot — the story must not resurface as a
+			// suggestion (KLOX-55). Undo restores it to the lineup.
+		default:
 			bench = append(bench, c)
 		}
 	}
@@ -1551,14 +1556,23 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 	finish(ii.ID)
 }
 
+// guideProvider is the provider the guide rebuild may call: nil under
+// llm_mode=off so editorial.Rebuild takes its deterministic fallback
+// without ever invoking the model (KLOX-55).
+func (s *Server) guideProvider() llm.Provider {
+	if s.d.Cfg.LLMOff() {
+		return nil
+	}
+	return s.d.LLM
+}
+
 // guideAfterRebuild rebuilds the editorial guide and reports what it
-// learned ("Rule learned: …" toasts in the new interface).
+// learned ("Rule learned: …" toasts in the new interface). Under
+// llm_mode=off a nil provider runs Rebuild's deterministic fallback, so
+// a reasoned rejection persists a guide version with no model call.
 func (s *Server) guideAfterRebuild(w http.ResponseWriter, r *http.Request, pub *store.Publication) any {
 	prevV, prevC, _ := db(r).LatestGuide(r.Context(), pub.ID)
-	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
-	if errors.Is(err, llm.ErrDisabled) {
-		return nil // deterministic mode: guide rebuild is an AI action — skip
-	}
+	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.guideProvider(), s.d.Cfg.ModelTriage)
 	if err != nil {
 		return nil
 	}
@@ -3275,9 +3289,16 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
 		return
 	}
-	rawReasons, _ := db(r).IssueRejectionReasons(r.Context(), iss.ID)
-	learned := editorial.RulesFrom(rawReasons)
-	version, _, _ := db(r).LatestGuide(r.Context(), pub.ID)
+	// "Learned" rules must be rules the guide actually recorded
+	// (KLOX-55): rejection reasons only feed this block when a
+	// non-empty guide exists — otherwise the after-sending screen
+	// claimed learning while the guide sat at version 0.
+	version, guideContent, _ := db(r).LatestGuide(r.Context(), pub.ID)
+	var learned []string
+	if strings.TrimSpace(guideContent) != "" {
+		rawReasons, _ := db(r).IssueRejectionReasons(r.Context(), iss.ID)
+		learned = editorial.RulesFrom(rawReasons)
+	}
 	publicURL := fmt.Sprintf("%s/p/%s/%d", s.publicBase(r), pub.Slug, iss.Number)
 	if tok := s.readerToken(r); tok != "" {
 		publicURL += "?tok=" + url.QueryEscape(tok)
@@ -3369,13 +3390,11 @@ func (s *Server) apiGuideRebuild(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	if s.d.Cfg.LLMOff() {
-		// Guide rebuild is an AI action — blocked outright in
-		// deterministic mode, never reaching the provider.
-		apiErr(w, 409, "ai_disabled", "guide rebuild needs a model — model calls are disabled (KLOXUS_LLM_MODE=off)")
-		return
-	}
-	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
+	// Under llm_mode=off Rebuild runs its deterministic fallback on a
+	// nil provider — the same condensation a rejection-triggered
+	// rebuild uses — so the manual rebuild stays available with zero
+	// model calls (KLOX-55).
+	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.guideProvider(), s.d.Cfg.ModelTriage)
 	if errors.Is(err, llm.ErrDisabled) {
 		apiErr(w, 409, "ai_disabled", "guide rebuild needs a model — model calls are disabled (KLOXUS_LLM_MODE=off)")
 		return
