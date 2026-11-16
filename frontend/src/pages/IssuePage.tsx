@@ -7,7 +7,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { ArrowLeft, BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
 import { api, ApiRequestError, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
 import { docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
-import { Commentary, DocActionsCtx, insideCommentary, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
+import { Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideCommentary, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
@@ -26,14 +26,16 @@ import { BlockedCard, BoardSkeleton, BuildBoard, StepRail } from "./Board";
 import { NotFound } from "./ErrorPage";
 
 // scroll the editor pane to a sentence/item element and flash it —
-// constrained to the pane so other panes don't move
-function flashEl(docEl: HTMLElement | null, sel: string) {
+// constrained to the pane so other panes don't move. Returns the
+// element so callers can open its fix affordance too (KLOX-52).
+function flashEl(docEl: HTMLElement | null, sel: string): HTMLElement | null {
   const el = docEl?.querySelector<HTMLElement>(sel);
-  if (!el || !docEl) return;
+  if (!el || !docEl) return null;
   scrollInPane(docEl, el);
   el.classList.remove("flash");
   void el.offsetWidth;
   el.classList.add("flash");
+  return el;
 }
 
 // statuses before the draft exists — the build board owns them; a
@@ -323,9 +325,14 @@ export function IssuePage() {
   }, [editor]);
 
   const goToSentence = useCallback(
-    (selStr: string) => {
+    (selStr: string, opts?: { fix?: boolean; click?: boolean }) => {
       if (window.innerWidth < 768) setMobileTab("doc");
-      setTimeout(() => flashEl(editorWrapRef.current, selStr), 60);
+      setTimeout(() => {
+        const el = flashEl(editorWrapRef.current, selStr);
+        if (!el) return;
+        if (opts?.fix) el.dispatchEvent(new CustomEvent(FIX_SENTENCE_EVENT));
+        else if (opts?.click) el.click();
+      }, 60);
     },
     [setMobileTab],
   );
@@ -333,7 +340,7 @@ export function IssuePage() {
   const fixNow = () => {
     if (!doc) return;
     const sid = nextPendingSentence(doc);
-    if (sid) goToSentence(`[data-sid="${sid}"]`);
+    if (sid) goToSentence(`[data-sid="${sid}"]`, { fix: true });
   };
 
   const onCheckTarget = (c: Check) => {
@@ -341,10 +348,16 @@ export function IssuePage() {
       fixNow();
       return;
     }
-    if (c.target.kind === "sentence") goToSentence(`[data-sid="${c.target.ref}"]`);
-    else if (c.target.kind === "item") goToSentence(`[data-item-ref="${c.target.ref}"]`);
-    else if (c.target.kind === "section") goToSentence(`[data-commentary="${c.target.ref}"]`);
-    else if (c.target.kind === "issue") {
+    if (c.target.kind === "sentence") goToSentence(`[data-sid="${c.target.ref}"]`, { fix: true });
+    else if (c.target.kind === "item") {
+      goToSentence(`[data-item-ref="${c.target.ref}"]`);
+      // the fix surface for an item is its evidence pane — the compose
+      // box lives there, so select the item instead of only flashing
+      actions.showEvidence(Number(c.target.ref));
+    } else if (c.target.kind === "section") {
+      // the commentary card is the affordance — a click focuses it
+      goToSentence(`[data-commentary="${c.target.ref}"]`, { click: true });
+    } else if (c.target.kind === "issue") {
       // open story decisions live in the list pane
       if (window.innerWidth < 768) setMobileTab("list");
     }
