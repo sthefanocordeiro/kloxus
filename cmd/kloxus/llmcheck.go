@@ -246,8 +246,8 @@ func plantedCitecheck(ctx context.Context, provider llm.Provider, pub *store.Pub
 }
 
 // exportSample writes the sample artifacts for a recorded issue:
-// sample.json (the dossier payload /api/v1/sample serves) and issue.md
-// (the drafted body for human review).
+// sample.json (the exported dossier payload) and issue.md (the drafted
+// body for human review).
 func exportSample(ctx context.Context, db *store.DB, pub *store.Publication, res *pipeline.Result, dir string) error {
 	if res.IssueID == 0 {
 		return errors.New("the run produced no issue — nothing to export")

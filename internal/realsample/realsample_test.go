@@ -58,8 +58,8 @@ func TestRecordedRunReplays(t *testing.T) {
 	}
 }
 
-func TestSamplePayloadLoads(t *testing.T) {
-	if len(realsample.Sample()) == 0 {
-		t.Fatal("embedded sample.json is missing or empty")
+func TestDefLoads(t *testing.T) {
+	if _, err := realsample.Def(); err != nil {
+		t.Fatalf("realsample.Def: %v", err)
 	}
 }

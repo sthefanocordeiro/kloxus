@@ -216,9 +216,12 @@ func svixRequest(t *testing.T, srv *web.Server, secret string, body []byte, badS
 
 // --- tests ---
 
-// TestLiveSendNeedsClaimAndTestGoesToOwner covers the gate: sends fail
-// while the workspace is anonymous; once claimed the test send reaches
-// the owner only — and a reused claim link is rejected.
+// TestLiveSendNeedsClaimAndTestGoesToOwner covers the gate: reader
+// sends fail while the workspace is anonymous, but an unclaimed "send
+// a test" still writes the outbox and completes the journey (sent
+// status, after-sending data, public page) — KLOX-49. Once claimed the
+// test send reaches the owner only — and a reused claim link is
+// rejected.
 func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	fake := &fakeSender{}
 	deps, db, pub, _ := liveDeps(t, fake, nil)
@@ -227,11 +230,33 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	issueID := approvedIssue(t, db, pub.ID, 1, "Edição 1")
 	sendURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10) + "/send"
 
-	for _, aud := range []string{"test", "readers"} {
-		rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": aud})
-		if rr.Code != 409 || apiErrCode(t, rr) != "unclaimed_workspace" {
-			t.Fatalf("send %s unclaimed = %d %s, want 409 unclaimed_workspace", aud, rr.Code, rr.Body.String()[:200])
-		}
+	// reader sends still require a claimed workspace
+	rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "readers"})
+	if rr.Code != 409 || apiErrCode(t, rr) != "unclaimed_workspace" {
+		t.Fatalf("send readers unclaimed = %d %s, want 409 unclaimed_workspace", rr.Code, rr.Body.String()[:200])
+	}
+	// an unclaimed test send lands in the outbox and finishes the
+	// journey: the issue turns sent, the after-sending screen and the
+	// public page unlock — no live delivery, no provider call
+	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
+	if rr.Code != 200 {
+		t.Fatalf("unclaimed test send = %d %s", rr.Code, rr.Body.String()[:300])
+	}
+	body := apiJSON(t, rr)
+	if body["delivery"] != "outbox" || body["outbox_email_id"] == nil {
+		t.Fatalf("unclaimed test send = %v, want outbox delivery", body)
+	}
+	if iss := body["issue"].(map[string]any); iss["status"] != "sent" {
+		t.Fatalf("issue status after unclaimed test send = %v, want sent", iss["status"])
+	}
+	if msgs := fake.messages(); len(msgs) != 0 {
+		t.Fatalf("unclaimed test send touched the sender %d times, want 0", len(msgs))
+	}
+	if rr := apiCall(t, srv, "GET", "/api/v1/issues/"+strconv.FormatInt(issueID, 10)+"/after", nil); rr.Code != 200 {
+		t.Fatalf("after-sending screen = %d, want 200", rr.Code)
+	}
+	if rr := apiCall(t, srv, "GET", "/api/v1/p/"+pub.Slug+"/1", nil); rr.Code != 200 {
+		t.Fatalf("public page after unclaimed test send = %d, want 200", rr.Code)
 	}
 
 	claimWorkspace(t, srv, db, owner)
@@ -245,8 +270,11 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 		t.Fatalf("claim email = %+v", msgs)
 	}
 
-	// a test send goes to the claimed address only
-	rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
+	// a claimed test send goes to the claimed address only — a fresh
+	// issue, since the unclaimed test above already sent the first
+	issueID2 := approvedIssue(t, db, pub.ID, 2, "Edição 2")
+	sendURL2 := "/api/v1/issues/" + strconv.FormatInt(issueID2, 10) + "/send"
+	rr = apiCall(t, srv, "POST", sendURL2, map[string]string{"audience": "test"})
 	if rr.Code != 200 {
 		t.Fatalf("test send = %d %s", rr.Code, rr.Body.String()[:300])
 	}
@@ -256,7 +284,7 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 		t.Fatalf("test send went to %q, want owner %q", last.To[0], owner)
 	}
 	// an explicit different address is rejected
-	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test", "to": "other@x.dev"})
+	rr = apiCall(t, srv, "POST", sendURL2, map[string]string{"audience": "test", "to": "other@x.dev"})
 	if rr.Code != 400 {
 		t.Fatalf("test send to other = %d, want 400", rr.Code)
 	}

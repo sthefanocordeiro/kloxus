@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Tabs from "@radix-ui/react-tabs";
 import * as Popover from "@radix-ui/react-popover";
 import { cn } from "./lib/cn";
+import { useT } from "./i18n";
 
 // Radix-backed primitives live apart from ui.tsx: only lazy-loaded
 // routes use them, so this module stays out of the landing bundle.
@@ -19,6 +20,7 @@ export function KDialog({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const { t } = useT();
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -32,7 +34,7 @@ export function KDialog({
         >
           <Dialog.Title className="text-lg font-semibold mb-4">{title}</Dialog.Title>
           {children}
-          <Dialog.Close className="absolute right-4 top-4 text-muted hover:text-ink" aria-label="Close">
+          <Dialog.Close className="absolute right-4 top-4 text-muted hover:text-ink" aria-label={t.close}>
             ✕
           </Dialog.Close>
         </Dialog.Content>

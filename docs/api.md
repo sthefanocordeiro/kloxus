@@ -564,9 +564,13 @@ A scheduled send answers `{"issue": {…}, "scheduled": true,
 
 **Live delivery** (`mail: "live"`): every rule below also holds for the
 scheduled dispatch.
-- Unclaimed workspaces answer `409 unclaimed_workspace` — claim first.
-- `"test"` mails the claimed creator address only; any other `"to"`
-  is rejected (`400`). The issue stays `approved`.
+- `"test"` on an unclaimed workspace records to the outbox and marks
+  the issue `sent` — it completes the journey (after-sending screen,
+  public page) without touching the provider. `"readers"` unclaimed
+  still answers `409 unclaimed_workspace` — claim first.
+- `"test"` on a claimed workspace mails the claimed creator address
+  only; any other `"to"` is rejected (`400`). The issue stays
+  `approved`.
 - `"readers"` mails confirmed (double opt-in, not unsubscribed) readers
   only. Addresses on the suppression list or sends over the daily caps
   (global and per-workspace, counted from the outbox ledger so they

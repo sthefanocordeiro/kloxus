@@ -4,7 +4,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LangProvider } from "./i18n";
 import { AppShell } from "./AppShell";
-import { ErrorPage } from "./pages/ErrorPage";
+import { ErrorPage, NotFound } from "./pages/ErrorPage";
 import { Publications } from "./pages/Publications";
 import { Landing } from "./pages/Landing";
 import { PublicIssue, ReaderShell, UnsubPage } from "./pages/ReaderPage";
@@ -40,8 +40,10 @@ const router = createBrowserRouter([
       { path: "/publications/:id", lazy: () => import("./pages/PublicationPage").then((m) => ({ Component: m.PublicationPage })) },
       { path: "/publications/:id/sources", lazy: () => import("./pages/Sources").then((m) => ({ Component: m.SourcesPage })) },
       { path: "/publications/:id/outbox", lazy: () => import("./pages/OutboxPage").then((m) => ({ Component: m.OutboxPage })) },
+      { path: "/publications/:id/guide", lazy: () => import("./pages/GuidePage").then((m) => ({ Component: m.GuidePage })) },
       { path: "/issues/:id", lazy: () => import("./pages/IssuePage").then((m) => ({ Component: m.IssuePage })) },
       { path: "/runs/:runID", lazy: () => import("./pages/Board").then((m) => ({ Component: m.RunLanding })) },
+      { path: "*", element: <NotFound /> },
     ],
   },
   // reader-facing pages live outside the editor shell — no app nav

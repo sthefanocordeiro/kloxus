@@ -486,6 +486,12 @@ export const api = {
     request<{ sources: SourceRow[] }>("POST", `/api/v1/publications/${pubID}/sources/confirm`, { include }).then((r) => r.sources),
   sourceDelete: (pubID: number | string, sid: number) =>
     request<{ ok: boolean }>("DELETE", `/api/v1/publications/${pubID}/sources/${sid}`),
+  guide: (pubID: number | string) =>
+    request<{ guide: { version: number; content: string } }>("GET", `/api/v1/publications/${pubID}/guide`).then((r) => r.guide),
+  guideSave: (pubID: number | string, content: string) =>
+    request<{ guide: { version: number; content: string } }>("PUT", `/api/v1/publications/${pubID}/guide`, { content }).then((r) => r.guide),
+  guideRebuild: (pubID: number | string) =>
+    request<{ guide: { version: number; content: string } }>("POST", `/api/v1/publications/${pubID}/guide/rebuild`, {}).then((r) => r.guide),
   demoReset: () => request<{ ok: boolean }>("POST", "/api/v1/demo/reset", {}),
   demoNew: () =>
     request<{ workspace: { id: string; label: string } }>("POST", "/api/v1/demo/new", {}),

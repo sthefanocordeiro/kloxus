@@ -33,7 +33,7 @@ const sectionBox = (page: Page, name: string) =>
 // first run lands on the build board
 async function onboard(page: Page) {
   await page.goto("/");
-  await expect(page.getByText(/dossier from the sample issue/i)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/dossier from the (fictional )?sample issue/i)).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Get started without login/ }).first().click();
   await page.waitForURL(/\/new/);
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
@@ -70,10 +70,12 @@ async function settleBenchAdd(page: Page) {
   if ((await open.count()) > 0) {
     await open.first().click();
   } else {
-    // every section full: picking one opens the swap picker
+    // every section full: picking one opens the swap picker — the pick
+    // then asks why it leaves; "just swap" settles without a reason
     await picks.first().click();
     await expect(chooser.getByText(/pick a story to swap out/)).toBeVisible();
     await picks.first().click();
+    await chooser.getByRole("button", { name: "just swap" }).click();
   }
   await expect(settled).toBeVisible({ timeout: 15000 });
 }

@@ -33,7 +33,6 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
-	"github.com/sthefanocordeiro/kloxus/internal/realsample"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -588,9 +587,8 @@ func (s *Server) apiSourceDelete(w http.ResponseWriter, r *http.Request) {
 
 // apiSourceCatalog lists the sources a publication can pick. Demo mode
 // offers the sample fixture sources; real mode serves the global
-// catalog — launch/signal entries as picks, hold/blocked entries as
-// unavailable rows with their reason (D29/D31: the UI must show why a
-// known outlet is absent).
+// catalog — launch/signal entries only; hold/blocked entries are never
+// listed to users (D29/D31/KLOX-49).
 func (s *Server) apiSourceCatalog(w http.ResponseWriter, r *http.Request) {
 	pub, err := s.apiPub(r)
 	if apiDBErr(w, r, err, "publication") {
@@ -729,20 +727,15 @@ func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiSample serves the landing page's cited dossier — workspace-free, so
-// the first screen doesn't create a demo workspace before Start. In real
-// mode it is the recorded real issue (also the fallback blocked runs
-// point at); demo keeps the fictional Valdória sample.
+// the first screen doesn't create a demo workspace before Start. It is
+// always the fictional Valdória sample (KLOX-49): the landing shows only
+// content we are allowed to display — the recorded real issue carried
+// dossiers from outlets outside the catalog (g1), so it no longer ships.
 func (s *Server) apiSample(w http.ResponseWriter, r *http.Request) {
-	var data []byte
-	var err error
-	if s.d.Cfg.Mode == "real" {
-		data = realsample.Sample()
-	}
-	if data == nil {
-		if data, err = examples.FS.ReadFile("landing/sample.json"); err != nil {
-			apiErr(w, 500, "internal", "sample dossier unavailable")
-			return
-		}
+	data, err := examples.FS.ReadFile("landing/sample.json")
+	if err != nil {
+		apiErr(w, 500, "internal", "sample dossier unavailable")
+		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Write(data)
@@ -2794,14 +2787,39 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Live delivery (D33): the workspace must be claimed; test sends go
-	// to the claimed address only; reader sends go to confirmed readers.
+	// Live delivery (D33): reader sends go to confirmed readers of a
+	// claimed workspace; test sends go to the claimed address only. An
+	// unclaimed workspace may still "send a test" — it writes to the
+	// outbox and completes the journey: the issue turns sent so the
+	// after-sending screen and the public page unlock (KLOX-49). Real
+	// email still requires a claimed address.
 	ctx := r.Context()
 	wdb := db(r)
 	owner := s.workspaceOwner(ctx, wdb)
 	if owner == "" {
-		apiErr(w, 409, "unclaimed_workspace",
-			"claim the workspace before sending — verify the creator email in workspace settings")
+		if in.Audience != "test" {
+			apiErr(w, 409, "unclaimed_workspace",
+				"claim the workspace before sending — verify the creator email in workspace settings")
+			return
+		}
+		to := []string{demoReaderEmail}
+		if addr := strings.TrimSpace(in.To); addr != "" {
+			to = []string{addr}
+		}
+		emailID, err := s.sendIssueMail(ctx, wdb, reqWS(r).ID, iss, pub, to, "test", s.publicBase(r))
+		if apiDBErr(w, r, err, "send") {
+			return
+		}
+		if apiDBErr(w, r, wdb.SetIssueStatus(ctx, iss.ID, "sent"), "issue") {
+			return
+		}
+		if fresh, _ := wdb.GetIssue(ctx, iss.ID); fresh != nil {
+			iss = fresh
+		}
+		apiJSON(w, 200, map[string]any{
+			"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
+			"to": to, "subject": iss.Subject, "delivery": "outbox",
+		})
 		return
 	}
 	kind := "issue"

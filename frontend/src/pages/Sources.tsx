@@ -24,6 +24,10 @@ export function SourcesPage() {
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id!) });
   const sources = useQuery({ queryKey: ["sources", id], queryFn: () => api.sources(id!) });
   const catalog = useQuery({ queryKey: ["catalog", id], queryFn: () => api.sourceCatalog(id!) });
+  const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
+  // real mode is catalog-only: the server refuses pasted URLs, so the
+  // "add your own" form would only fail — explain instead (KLOX-49)
+  const catalogOnly = ws.data?.mode === "real";
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["sources", id] });
     qc.invalidateQueries({ queryKey: ["catalog", id] });
@@ -154,6 +158,12 @@ export function SourcesPage() {
         </>
       )}
 
+      {catalogOnly ? (
+        <Card className="mt-6 p-4">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
+          <p className="mt-2 text-sm text-muted">{t.sourcesPage.ownCatalogOnly}</p>
+        </Card>
+      ) : (
       <Card className="mt-6 p-4">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -197,6 +207,7 @@ export function SourcesPage() {
         )}
         {add.error && <p className="mt-2 text-xs text-danger">{errText(t, add.error)}</p>}
       </Card>
+      )}
 
       <div className="mt-6 flex items-center gap-3">
         <Button

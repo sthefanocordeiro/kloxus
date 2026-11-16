@@ -1,9 +1,10 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiRequestError } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
+import { NotFound } from "./ErrorPage";
 
 export function PublicationPage() {
   const { id = "" } = useParams();
@@ -22,6 +23,11 @@ export function PublicationPage() {
     onSuccess: (r) => nav(`/runs/${r.id}`),
   });
 
+  if (pub.isError) {
+    if (pub.error instanceof ApiRequestError && pub.error.status === 404) return <NotFound />;
+    return <p className="p-6 text-sm text-danger">{errText(t, pub.error)}</p>;
+  }
+
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-8">
       <Link to="/" className="text-sm text-muted hover:text-ink">
@@ -32,6 +38,9 @@ export function PublicationPage() {
           <h1 className="font-doc text-2xl font-semibold">{pub.data?.publication.name ?? "…"}</h1>
           <Link to={`/publications/${id}/outbox`} className="text-xs text-muted underline hover:text-ink">
             {t.outbox}
+          </Link>
+          <Link to={`/publications/${id}/guide`} className="text-xs text-muted underline hover:text-ink">
+            {t.guide.title}
           </Link>
         </div>
         <Button onClick={() => start.mutate()} disabled={start.isPending}>

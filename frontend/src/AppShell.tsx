@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link, Outlet } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { api } from "./api";
 import { useT, type Lang } from "./i18n";
 import { Button } from "./ui";
@@ -46,10 +46,13 @@ export function AppShell() {
 }
 
 // Live mail needs a verified owner: until the workspace is claimed this
-// banner mails the creator a single-use claim link. Outbox mode and
-// claimed workspaces see nothing here.
+// banner mails the creator a single-use claim link. Outbox mode,
+// claimed workspaces and the landing page see nothing here. The app
+// palette is light-only, so no dark: overrides — under a dark system
+// theme the banner keeps its readable light colors, always on one line.
 function ClaimBanner() {
   const { t } = useT();
+  const { pathname } = useLocation();
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState<{ email: string; claim_url?: string } | null>(null);
@@ -58,11 +61,11 @@ function ClaimBanner() {
     onSuccess: (r) => setSent({ email: r.email, claim_url: r.claim_url }),
   });
   const w = ws.data;
-  if (!w || w.mail !== "live" || w.claimed) return null;
+  if (pathname === "/" || !w || w.mail !== "live" || w.claimed) return null;
   return (
-    <div className="border-b border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950">
-      <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-3 px-4 py-2 text-sm">
-        <span>{t.claim.banner}</span>
+    <div className="border-b border-amber-300 bg-amber-50 text-ink">
+      <div className="mx-auto flex max-w-[1400px] flex-nowrap items-center gap-3 overflow-x-auto whitespace-nowrap px-4 py-2 text-sm">
+        <span className="truncate">{t.claim.banner}</span>
         {sent ? (
           <span className="text-muted">
             {t.claim.sent(sent.email)}
@@ -74,7 +77,7 @@ function ClaimBanner() {
           </span>
         ) : (
           <form
-            className="flex items-center gap-2"
+            className="flex shrink-0 items-center gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               if (email.trim()) claim.mutate();
