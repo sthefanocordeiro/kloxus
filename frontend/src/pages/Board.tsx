@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { GripVertical, Minus, Plus, Search } from "lucide-react";
 import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dossier, type IssueSummary, type LineupEntry, type Run, type RunEvent } from "../api";
 import { sectionTitle, useT } from "../i18n";
-import { SampleCard } from "../components/SampleCard";
+
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
@@ -92,22 +92,15 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
 }
 
 // BlockedCard is the guard-refused run view (D32): a clear creator-facing
-// message plus the recorded sample — never a bare error.
+// message — never a bare error.
 export function BlockedCard({ message }: { message?: string }) {
   const { t } = useT();
-  const sample = useQuery({ queryKey: ["sample"], queryFn: api.sample });
   return (
     <div className="mx-auto w-full max-w-md space-y-4 p-6">
       <Card className="border-warn/50 p-5">
         <p className="text-sm font-semibold">{t.run.blockedTitle}</p>
         <p className="mt-1 text-sm text-muted">{message || t.run.blocked}</p>
       </Card>
-      {sample.data && sample.data.dossiers.length > 0 && (
-        <div>
-          <p className="mb-2 text-xs uppercase tracking-wide text-muted">{t.run.sampleCaption}</p>
-          <SampleCard d={sample.data.dossiers[0]} />
-        </div>
-      )}
     </div>
   );
 }
@@ -600,7 +593,6 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold">{t.board.bench}</h2>
             <span className="text-xs text-muted">{benchTotal}</span>
-            {candsQ.data?.llm_mode === "off" && <Badge tone="warn">{t.board.aiOff}</Badge>}
             <span className="flex-1" />
             <div className="relative">
               <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
@@ -695,7 +687,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             >
               {composeMut.isPending ? t.board.composing : t.board.composeAction}
             </Button>
-            <Button variant="teal" size="sm" disabled={!draftReady || draftMut.isPending || composeMut.isPending || !!draftRun} onClick={() => draftMut.mutate()}>
+            <Button size="sm" disabled={!draftReady || draftMut.isPending || composeMut.isPending || !!draftRun} onClick={() => draftMut.mutate()}>
               {t.board.draftAction(total)}
             </Button>
           </div>
@@ -829,7 +821,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 className="h-7 min-w-0 flex-1 rounded-[var(--radius-input)] border border-line bg-paper px-2 text-xs"
               />
               <Button
-                size="sm" variant="teal" className="h-7" disabled={!swapReason.trim()}
+                size="sm" className="h-7" disabled={!swapReason.trim()}
                 onClick={() => swapWith(swapFor.story.story_id, swapFor.section, swapFor.out!.story_id, swapReason.trim())}
               >
                 {t.board.swapAction}
@@ -912,8 +904,7 @@ export function RunLanding() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-center gap-3 border-b border-line px-4 py-2">
-        <Link to="/" className="text-muted hover:text-ink">←</Link>
-        <h1 className="text-lg font-semibold">{t.board.title}</h1>
+        <h1 className="font-display text-lg font-bold">{t.board.title}</h1>
         <Badge tone="warn">{(t.status as Record<string, string>).reviewing ?? "reviewing"}</Badge>
       </header>
       {done?.blocked ? (
@@ -927,8 +918,8 @@ export function RunLanding() {
                 {reset.isPending ? "…" : t.demo.reset}
               </Button>
             )}
-            <Link to="/" className="mt-4 block text-sm text-teal underline">
-              ← {t.publications}
+            <Link to="/publications" className="mt-4 block text-sm text-teal underline">
+              {t.publications}
             </Link>
           </Card>
         </div>

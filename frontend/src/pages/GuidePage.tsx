@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api, ApiRequestError } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
@@ -43,9 +43,8 @@ export function GuidePage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      <Link to={`/publications/${id}`} className="text-xs text-muted hover:text-ink">←</Link>
       <div className="mt-1 flex items-baseline gap-3">
-        <h1 className="font-doc text-2xl font-semibold">{t.guide.title}</h1>
+        <h1 className="font-display text-2xl font-bold">{t.guide.title}</h1>
         {g.version > 0 && <Badge>{t.guide.version(g.version)}</Badge>}
       </div>
       <p className="mt-1 text-sm text-muted">{t.guide.hint}</p>
@@ -60,7 +59,7 @@ export function GuidePage() {
           />
           {save.error && <p className="mt-2 text-xs text-danger">{errText(t, save.error)}</p>}
           <div className="mt-3 flex gap-2">
-            <Button size="sm" variant="teal" disabled={save.isPending} onClick={() => save.mutate(draft)}>
+            <Button size="sm" disabled={save.isPending} onClick={() => save.mutate(draft)}>
               {t.guide.save}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>

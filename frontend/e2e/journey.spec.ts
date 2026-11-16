@@ -57,13 +57,13 @@ async function llmOff(page: Page) {
 async function onboard(page: Page) {
   await page.goto("/");
   // the landing renders the cited sample dossier before any workspace
-  await expect(page.getByText(/dossier from the (fictional )?sample issue/i)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/(dossier|research( file)?) from the (fictional )?sample issue/i)).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Get started without login/ }).first().click();
   await page.waitForURL(/\/new/);
 
   // the sample proposal pre-fills the five editable blocks
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
-  await page.getByRole("button", { name: "Create newsletter", exact: true }).click();
+  await page.getByRole("button", { name: "Continue to sources", exact: true }).click();
   await page.waitForURL(/\/publications\/\d+\/sources/);
 
   // the sources screen offers the fixture sources — preview one, then
@@ -138,10 +138,6 @@ async function boardOps(page: Page, isPhone: boolean) {
   await wk.getByRole("button", { name: "Remove", exact: true }).first().click();
   await page.getByRole("button", { name: "not for my audience" }).click();
   await expect(page.getByText(/Rule learned/)).toBeVisible({ timeout: 15000 });
-  if (off) {
-    await expect(page.getByText(/AI off — deterministic ranking/)).toHaveCount(1);
-  }
-
   // 2) add a story from the bench with the "+" button (nth(1): the
   //    rejected story is off the bench entirely — pick the second
   //    suggestion so the persistence check below stays meaningful). A
@@ -603,7 +599,7 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   // demo-only: on the real app it does not render, and the second-
   // prepare check above already proved the hosted path.
   await page.goto("/publications");
-  const reset = page.getByRole("button", { name: "Reset demo" });
+  const reset = page.getByRole("button", { name: "Reset test data" });
   if (!(await reset.isVisible())) return;
   await reset.click();
   await expect(page.getByRole("button", { name: /Get started without login/ }).first()).toBeVisible({

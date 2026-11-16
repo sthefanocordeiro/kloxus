@@ -96,7 +96,7 @@ export function PublicIssue() {
           <Badge tone="ink">{t.reader.forPaying}</Badge>
           <p className="mt-2 text-sm text-muted">{t.reader.unlockHint}</p>
           {!simDone ? (
-            <Button className="mt-3" variant="teal" disabled={sim.isPending} onClick={() => sim.mutate()}>
+            <Button className="mt-3" disabled={sim.isPending} onClick={() => sim.mutate()}>
               {t.reader.subscribe}
             </Button>
           ) : (
@@ -162,7 +162,7 @@ function SubscribeCard({ slug, tokQuery }: { slug: string; tokQuery: string }) {
             placeholder={t.reader.emailPlaceholder}
             className="w-64 rounded border border-line bg-paper px-2 py-1.5 text-sm text-ink"
           />
-          <Button size="sm" variant="teal" disabled={sub.isPending}>
+          <Button size="sm" disabled={sub.isPending}>
             {sub.isPending ? t.reader.subscribing : t.reader.subscribeEmailAction}
           </Button>
         </form>

@@ -2,18 +2,29 @@ import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type ReactN
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "./lib/cn";
 
+// Buttons (§4.3): one primary per screen — filled deep green, white
+// text. Accent is the lime highlight reserved for the hero CTA.
+// Secondary = outline, destructive = red text. Touch targets never go
+// under 44 px on mobile / 40 px on desktop (the 36 px "sm" spec row is
+// overridden by the min-target rule — recorded in decisions.md).
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-[var(--radius-input)] text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none cursor-pointer",
+  "inline-flex items-center justify-center gap-2 rounded-[var(--radius-btn)] font-medium transition-colors duration-150 disabled:opacity-50 disabled:pointer-events-none cursor-pointer",
   {
     variants: {
       variant: {
-        primary: "bg-ink text-paper hover:bg-ink-soft",
-        teal: "bg-teal text-paper hover:opacity-90",
-        outline: "border border-line bg-paper-raised hover:bg-paper text-ink",
-        ghost: "hover:bg-line/50 text-ink",
-        danger: "bg-danger-soft text-danger hover:bg-danger hover:text-paper",
+        primary: "bg-teal text-white hover:bg-ink-soft",
+        accent: "bg-accent text-teal hover:brightness-95",
+        outline: "border border-line bg-paper-raised hover:bg-surface text-ink",
+        ghost: "hover:bg-surface text-ink",
+        danger: "bg-danger-soft text-danger hover:bg-danger hover:text-white",
+        dangerGhost: "text-danger hover:bg-danger-soft",
       },
-      size: { sm: "h-8 px-3 text-xs", md: "h-9 px-4", lg: "h-11 px-6" },
+      size: {
+        sm: "h-11 px-3 text-sm md:h-10",
+        md: "h-11 px-4 text-[15px]",
+        lg: "h-13 px-6 text-base",
+        icon: "h-11 w-11 md:h-10 md:w-10",
+      },
     },
     defaultVariants: { variant: "primary", size: "md" },
   },
@@ -36,12 +47,13 @@ export function Badge({
   children,
 }: {
   className?: string;
-  tone?: "muted" | "teal" | "danger" | "warn" | "ink";
+  tone?: "muted" | "teal" | "danger" | "warn" | "ink" | "chip";
   children: ReactNode;
 }) {
   const tones = {
     muted: "bg-line/60 text-muted",
     teal: "bg-teal-soft text-teal",
+    chip: "bg-teal-soft text-chip",
     danger: "bg-danger-soft text-danger",
     warn: "bg-warn-soft text-warn",
     ink: "bg-ink text-paper",

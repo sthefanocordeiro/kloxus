@@ -4,7 +4,6 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api, type Sample } from "../api";
 import { LangProvider } from "../i18n";
-import { AppShell } from "../AppShell";
 import { Landing } from "../pages/Landing";
 
 vi.mock("../api", async (importOriginal) => {
@@ -35,10 +34,8 @@ function renderApp() {
       <LangProvider>
         <MemoryRouter initialEntries={["/"]}>
           <Routes>
-            <Route element={<AppShell />}>
-              <Route path="/" element={<Landing />} />
-              <Route path="/new" element={<div>onboarding screen</div>} />
-            </Route>
+            <Route path="/" element={<Landing />} />
+            <Route path="/new" element={<div>onboarding screen</div>} />
           </Routes>
         </MemoryRouter>
       </LangProvider>
