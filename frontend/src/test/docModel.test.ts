@@ -122,6 +122,18 @@ describe("docToTiptap", () => {
     expect(s?.attrs?.sid).toBe("1.a");
     expect(s?.attrs?.citations).toEqual([1]);
   });
+
+  it("counts item-level flags in the item heading's flagged attr (KLOX-52)", () => {
+    const d = doc();
+    d.sections[0].items[0].flags = [{ sentence: "whole entry", note: "entry has no citations" }];
+    const tiptap = docToTiptap(d) as {
+      content: { type: string; attrs?: { flagged?: number } }[];
+    };
+    const item = tiptap.content.find((n) => n.type === "itemHeading");
+    // one flagged sentence? none stored — the item-level flag alone
+    // must still surface the bulk-clear affordance
+    expect(item?.attrs?.flagged).toBe(1);
+  });
 });
 
 // keep Coverage import used

@@ -417,6 +417,7 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 	var sec *docSection
 	var item *docItem
 	usedIDs := map[string]int{}
+	synthFlags := 0
 	finishItem := func(end int) {
 		if item == nil {
 			return
@@ -465,6 +466,14 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 		if f, ok := flags[int64(item.Ref)][raw]; ok {
 			sn.Flag = &docFlag{Note: f.Note}
 			delete(flags[int64(item.Ref)], raw)
+		} else if kind == "fact" && len(sn.Citations) == 0 {
+			// (KLOX-52) an uncited fact carries the citecheck's own flag
+			// even when nothing is stored — restored sentences, bodies
+			// written before the compose path flagged uncited text and
+			// flag-match misses would otherwise leave it unapprovable
+			// with no Edit / interpretation / Remove affordance.
+			sn.Flag = &docFlag{Note: "sentence has no citation"}
+			synthFlags++
 		}
 		item.Sentences = append(item.Sentences, sn)
 	}
@@ -570,7 +579,9 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			}
 		}
 	}
-	doc.Coverage.Flagged = len(iss.Flags)
+	// Flagged counts every flag the document surfaces — the stored ones
+	// plus the flags synthesized for uncited facts above.
+	doc.Coverage.Flagged = len(iss.Flags) + synthFlags
 	return doc
 }
 

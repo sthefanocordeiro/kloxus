@@ -6,7 +6,64 @@ import (
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
+
+// TestParseDocumentFlagsUncitedFacts: an uncited fact sentence must
+// carry the flag treatment even when the store holds no flag for it —
+// restored sentences and bodies written before the compose path
+// flagged uncited text would otherwise leave no Edit / interpretation /
+// Remove affordance (KLOX-52). A stored flag's own note always wins.
+func TestParseDocumentFlagsUncitedFacts(t *testing.T) {
+	iss := &store.Issue{
+		Status: "drafted",
+		BodyMD: "## Lead\n\n### Story A <!-- item 1 -->\n\n" +
+			"Supported claim. [1] Uncited claim.\n\n" +
+			"> _Interpretação: editor words_\n\n" +
+			"**Sources:** [1] X",
+	}
+	pub := &store.Publication{}
+	doc := parseIssueDocument(iss, pub, dcFromPairs(nil, nil))
+	it := doc.Sections[0].Items[0]
+	if len(it.Sentences) != 3 {
+		t.Fatalf("sentences = %d, want 3", len(it.Sentences))
+	}
+	var cited, uncited, interp *docSentence
+	for i := range it.Sentences {
+		s := &it.Sentences[i]
+		switch {
+		case s.Kind == "interpretation":
+			interp = s
+		case len(s.Citations) > 0:
+			cited = s
+		default:
+			uncited = s
+		}
+	}
+	if cited == nil || cited.Flag != nil {
+		t.Fatalf("cited fact should be clean: %+v", cited)
+	}
+	if uncited == nil || uncited.Flag == nil || uncited.Flag.Note != "sentence has no citation" {
+		t.Fatalf("uncited fact must carry the flag treatment: %+v", uncited)
+	}
+	if interp == nil || interp.Flag != nil {
+		t.Fatalf("interpretation needs no citation: %+v", interp)
+	}
+	if doc.Coverage.Flagged != 1 {
+		t.Fatalf("coverage.flagged = %d, want 1 (synthesized)", doc.Coverage.Flagged)
+	}
+
+	// a stored flag's own note wins over the synthesized one
+	iss.Flags = []store.Flag{{Item: 1, Sentence: "Uncited claim.", Note: "stored note"}}
+	doc = parseIssueDocument(iss, pub, dcFromPairs(nil, nil))
+	sn := doc.Sections[0].Items[0].Sentences[1]
+	if sn.Flag == nil || sn.Flag.Note != "stored note" {
+		t.Fatalf("stored flag should win: %+v", sn.Flag)
+	}
+	if doc.Coverage.Flagged != 1 {
+		t.Fatalf("coverage.flagged = %d, want 1 (stored)", doc.Coverage.Flagged)
+	}
+}
 
 // TestRemoveInItemDropsCitationMarker: removing a flagged sentence
 // must take its trailing "[n]" too — no orphaned citation left behind.

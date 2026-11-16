@@ -208,6 +208,30 @@ test("manual compose journey", async ({ page }) => {
     .click();
   await expect(page.getByText("too close to the source")).toHaveCount(0);
 
+  // audit reproduction (KLOX-52): a fact added without picking a source
+  // lands flagged with Edit/Remove — never a dead-end. "Fix now"
+  // navigates to it, and the whole fix happens through the UI.
+  await box.getByRole("textbox").fill("A claim nobody can trace back.");
+  await box.getByRole("button", { name: "Add to item" }).click();
+  const uncited = page.locator("[data-sid]").filter({ hasText: "nobody can trace" });
+  await expect(uncited.getByText("sentence has no citation")).toBeVisible({ timeout: 15000 });
+  await expect(uncited.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await expect(uncited.getByRole("button", { name: "Remove" })).toBeVisible();
+  await page.getByRole("button", { name: /Fix now/ }).click();
+  await expect(uncited.getByText("sentence has no citation")).toBeVisible();
+  // resolve it in the UI alone: edit into a supported, cited claim
+  await uncited.getByRole("button", { name: "Edit", exact: true }).click();
+  await uncited.getByRole("textbox").fill(firstSrc.text);
+  await uncited.getByRole("button", { name: new RegExp(`^\\[${firstSrc.cite}\\] `) }).click();
+  await uncited.getByRole("button", { name: "Save" }).click();
+  const resolved = page.locator("[data-sid]").filter({ hasText: firstSrc.text });
+  await expect(resolved).toBeVisible({ timeout: 15000 });
+  await expect(resolved.getByText("sentence has no citation")).toHaveCount(0);
+  // the flag is gone and the sentence is cited — remove it so the
+  // hand-written pass below starts from empty slots again
+  await resolved.getByRole("button", { name: "Remove" }).click();
+  await expect(page.locator("[data-sid]")).toHaveCount(0);
+
   // write each item by hand: click the slot → compose box in the
   // evidence pane → type a supported claim → cite its source → add
   // rendered markdown places the citation inside final punctuation —

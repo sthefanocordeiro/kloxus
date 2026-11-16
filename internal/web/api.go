@@ -1620,8 +1620,11 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	c = apiCheck{Code: "flags_unresolved", OK: len(iss.Flags) == 0, Count: len(iss.Flags),
 		Message: fmt.Sprintf("%d flagged sentence(s) unresolved — edit, mark as interpretation or remove each", len(iss.Flags))}
 	if !c.OK {
-		// point at the first flagged sentence we can locate
-		ref := ""
+		// aim at the first flagged sentence; when the only flags are
+		// item-level (no sentence matched — e.g. "entry has no
+		// citations") the target is the item itself, where the bulk
+		// remove-flagged action clears them (KLOX-52)
+		kind, ref := "sentence", ""
 	search:
 		for _, sec := range doc.Sections {
 			for _, it := range sec.Items {
@@ -1631,9 +1634,15 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 						break search
 					}
 				}
+				if len(it.Flags) > 0 {
+					kind, ref = "item", fmt.Sprint(it.Ref)
+					break search
+				}
 			}
 		}
-		c.Target = &apiTarget{Kind: "sentence", Ref: ref}
+		if ref != "" {
+			c.Target = &apiTarget{Kind: kind, Ref: ref}
+		}
 	}
 	checks = append(checks, c)
 
@@ -2517,23 +2526,42 @@ func (s *Server) apiItemRemoveFlagged(w http.ResponseWriter, r *http.Request) {
 		}
 		removed = append(removed, entry)
 	}
-	if len(removed) == 0 {
+	// a flag annotates stored text: flags on this item that match no
+	// surviving sentence raw are stale — the item-level "entry has no
+	// citations" flag, or a flag whose sentence was edited away — and
+	// must go with the write, or the item would keep an unapprovable
+	// flag with no UI recourse (KLOX-52)
+	still := map[string]bool{}
+	for _, sn := range item.Sentences {
+		if !removedRaws[sn.raw] {
+			still[sn.raw] = true
+		}
+	}
+	kept := make([]store.Flag, 0, len(iss.Flags))
+	droppedOrphans := 0
+	for _, f := range iss.Flags {
+		if f.Item == int64(item.Ref) && !still[f.Sentence] {
+			if !removedRaws[f.Sentence] {
+				droppedOrphans++
+			}
+			continue
+		}
+		kept = append(kept, f)
+	}
+	if len(removed) == 0 && droppedOrphans == 0 {
 		apiErr(w, 409, "nothing_flagged", "this item has no flagged sentences")
 		return
 	}
 	body := iss.BodyMD[:item.spanStart] + seg + iss.BodyMD[item.spanEnd:]
 	ctx := r.Context()
-	kept := make([]store.Flag, 0, len(iss.Flags))
-	for _, f := range iss.Flags {
-		if f.Item == int64(item.Ref) && removedRaws[f.Sentence] {
-			continue
-		}
-		kept = append(kept, f)
+	reason := fmt.Sprintf("%d flagged sentence(s) removed from item %d", len(removed), item.Ref)
+	if droppedOrphans > 0 {
+		reason += fmt.Sprintf("; %d stale flag(s) cleared", droppedOrphans)
 	}
 	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
 		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body, Flags: kept,
 		Decision:       "flagged_bulk_remove",
-		Reason:         fmt.Sprintf("%d flagged sentence(s) removed from item %d", len(removed), item.Ref),
+		Reason:         reason,
 		RevertApproved: iss.Status == "approved",
 	})
 	if apiDBErr(w, r, err, "issue") {

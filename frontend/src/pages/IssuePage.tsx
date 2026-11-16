@@ -173,7 +173,11 @@ export function IssuePage() {
           const r = await api.removeFlagged(issueID, itemRef, versionRef.current);
           versionRef.current = r.version;
           invalidate();
-          showToast(t.doc.removedFlagged(r.removed?.length ?? 0), r.removed);
+          // removed is empty when the call only cleared stale item-level
+          // flags — no sentences means no undo to offer (KLOX-52)
+          if (r.removed?.length) {
+            showToast(t.doc.removedFlagged(r.removed.length), r.removed);
+          }
           return true;
         } catch (e) {
           resync(e);
