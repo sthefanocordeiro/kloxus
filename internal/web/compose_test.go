@@ -297,7 +297,10 @@ func TestManualComposeJourney(t *testing.T) {
 	// write every item: a cited multi-sentence block lands one sentence
 	// per line, each carrying the markers; an interpretation needs no
 	// citation. The text is built from the item's own source excerpt so
-	// the citation floor verifies it (KLOX-51).
+	// the citation floor verifies it (KLOX-51). The second sentence must
+	// open with a capital — SplitSentences only accepts a ". " boundary
+	// before a rune that can start a sentence, so a lowercase continuation
+	// would fold both into one line.
 	var firstWritten string
 	for i, it := range items {
 		ref := int(it["ref"].(float64))
@@ -306,8 +309,11 @@ func TestManualComposeJourney(t *testing.T) {
 		if i == 0 {
 			firstWritten = text
 		}
+		second := supportedSentence(excerpt)
+		rs := []rune(second)
+		rs[0] = unicode.ToUpper(rs[0])
 		fill(ref, map[string]any{
-			"text":      text + " " + supportedSentence(excerpt),
+			"text":      text + " " + string(rs),
 			"citations": []int{cite},
 		})
 		if i == 0 {
