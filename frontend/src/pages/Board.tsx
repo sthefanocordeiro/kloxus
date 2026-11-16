@@ -336,7 +336,9 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     let nb = removeFrom(b, storyID).b;
     const inCand = { ...findCard(storyID)!.cand, section };
     nb = insertTo(nb, inCand, section, loc?.idx);
-    nb = toBench(nb, out);
+    // a reasoned swap rejects the outgoing story — the bench drops it
+    // instead of offering the rejected story back as a suggestion
+    if (!(reason && out.item_id)) nb = toBench(nb, out);
     setSwapFor(null);
     setSwapReason("");
     applyBoard(nb, t.board.moved(short(inCand.title)));
@@ -365,11 +367,13 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
 
   const rejectWith = (cand: Candidate, reason?: string) => {
     if (reason && cand.item_id && board) {
-      // reason-fed removal: rejection, and the guide learns
+      // reason-fed removal: rejection, and the guide learns — the
+      // rejected story leaves the board, it must not resurface on the
+      // bench as a suggestion
       const loc = findCard(cand.story_id);
       if (loc) {
         const { b } = removeFrom(board, cand.story_id);
-        setBoard(toBench(b, cand));
+        setBoard(b);
       }
       decide.mutate(
         { itemID: cand.item_id, reason },

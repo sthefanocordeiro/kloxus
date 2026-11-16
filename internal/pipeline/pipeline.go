@@ -525,8 +525,6 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	var picks []lineupPick
 	if r.Deterministic {
 		picks = pickLineup(stories, detScores, detReasons, pub.Sections)
-		res.Selected = len(picks)
-		r.emit("storylist", map[string]int{"selected": res.Selected})
 		r.record(ctx, pub.ID, issueID, "storylist", "deterministic", start, llm.Response{})
 	} else {
 		var picked struct {
@@ -550,8 +548,6 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			return nil, fmt.Errorf("storylist: %w", err)
 		}
 		res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
-		res.Selected = len(picked.Items)
-		r.emit("storylist", map[string]int{"selected": res.Selected})
 		r.record(ctx, pub.ID, issueID, "storylist", r.TriageModel, start, resp)
 		for _, p := range picked.Items {
 			picks = append(picks, lineupPick{Refs: p.Refs, Title: p.Title, Why: p.Why, Section: p.Section})
@@ -609,6 +605,11 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			score: sc.score, sources: memberItems,
 		})
 	}
+	// The "selected" count the header shows is the lineup the issue
+	// actually renders: picks with no evidence body (signal-only
+	// stories) create no issue item and don't count (KLOX-55).
+	res.Selected = len(entries)
+	r.emit("storylist", map[string]int{"selected": res.Selected})
 
 	// --- dossier ---
 	r.stepStart("dossier")

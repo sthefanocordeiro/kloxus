@@ -37,9 +37,11 @@ function supportedSentence(excerpt: string): string {
 }
 
 // KLOXUS_LLM_MODE=off runs the whole pipeline deterministically — zero
-// model calls, so AI artifacts (the guide rebuild behind "Rule learned")
-// cannot appear. The workspace endpoint reports the mode; a server that
-// predates the flag returns no field and behaves like "auto".
+// model calls. The guide rebuild behind "Rule learned" is not a model
+// call: reasons condense deterministically, so the rule persists in
+// every mode (KLOX-55). The workspace endpoint reports the mode; a
+// server that predates the flag returns no field and behaves like
+// "auto".
 async function llmOff(page: Page) {
   const res = await page.request.get("/api/v1/workspace");
   if (!res.ok()) return false;
@@ -125,26 +127,26 @@ async function boardOps(page: Page, isPhone: boolean) {
   const tabBench = page.getByRole("button", { name: /^Pautas/ });
   if (isPhone) await tabIssue.click();
 
-  // 1) remove a Worth-knowing story giving a reason — with a model the
-  //    guide learns a rule; under llm off the rebuild is an AI action and
-  //    is skipped, so the toast reports the removal and the bench badge
-  //    marks the deterministic run (attached-asserted: the bench column
-  //    is hidden behind its tab on phone)
+  // 1) remove a Worth-knowing story giving a reason — the guide learns
+  //    a rule in every mode: under llm off the reason condenses
+  //    deterministically with no model call (KLOX-55), so the toast
+  //    always reads "Rule learned". The bench badge still marks the
+  //    deterministic run (attached-asserted: the bench column is hidden
+  //    behind its tab on phone)
   const wk = sectionBox(page, "Worth knowing");
   const removedTitle = (await wk.locator("p.font-doc").first().textContent())!.trim();
   await wk.getByRole("button", { name: "Remove", exact: true }).first().click();
   await page.getByRole("button", { name: "not for my audience" }).click();
+  await expect(page.getByText(/Rule learned/)).toBeVisible({ timeout: 15000 });
   if (off) {
-    await expect(page.getByText(/^Removed “/)).toBeVisible({ timeout: 15000 });
     await expect(page.getByText(/AI off — deterministic ranking/)).toHaveCount(1);
-  } else {
-    await expect(page.getByText(/Rule learned/)).toBeVisible({ timeout: 15000 });
   }
 
-  // 2) add a story from the bench with the "+" button (nth(1): the just-
-  //    removed story re-ranks first on the bench — pick a different one
-  //    so the persistence check below stays meaningful). A full suggested
-  //    section opens the section chooser instead of failing.
+  // 2) add a story from the bench with the "+" button (nth(1): the
+  //    rejected story is off the bench entirely — pick the second
+  //    suggestion so the persistence check below stays meaningful). A
+  //    full suggested section opens the section chooser instead of
+  //    failing.
   if (isPhone) await tabBench.click();
   await benchCol(page).getByRole("button", { name: "Add to issue", exact: true }).nth(1).click();
   await settleBenchAdd(page);
@@ -174,11 +176,12 @@ async function boardOps(page: Page, isPhone: boolean) {
   }
   await expect(page.getByText(/^Moved “/)).toBeVisible({ timeout: 15000 });
 
-  // 4) the lineup persists across a reload — the rejected story stays
-  //    benched instead of snapping back into its section
+  // 4) the lineup persists across a reload — and the rejected story is
+  //    gone from both the issue and the bench: a reasoned rejection is
+  //    an editorial decision, not a suggestion (KLOX-55)
   await page.reload();
   await boardReady(page, isPhone);
-  await expect(benchCol(page).getByText(removedTitle)).toBeVisible({ timeout: 30000 });
+  await expect(benchCol(page).getByText(removedTitle)).toHaveCount(0);
   if (isPhone) await tabIssue.click();
 
   // 5) draft — the step rail runs, then the editor lands. Under llm
