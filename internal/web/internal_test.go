@@ -371,3 +371,25 @@ func TestRobotsAndSecurityHeaders(t *testing.T) {
 		t.Fatalf("CSP missing: %q", csp)
 	}
 }
+
+// TestLocalizeEditorialLine: the sample's editorial line stores the
+// recorded English sentence so replay prompts stay stable — pt
+// publications see the pt sentence in API responses (KLOX-56).
+func TestLocalizeEditorialLine(t *testing.T) {
+	canonical := "Priorize adoção.\n\nSkip deals, coupons and buying guides.\n\nSem hype."
+	pt := localizeEditorialLine(canonical, "pt-BR")
+	if !strings.Contains(pt, "Pule ofertas, cupons e guias de compra.") {
+		t.Fatalf("pt line missing swap:\n%s", pt)
+	}
+	if strings.Contains(pt, "Skip deals") {
+		t.Fatalf("pt line leaked English:\n%s", pt)
+	}
+	if en := localizeEditorialLine(canonical, "en"); en != canonical {
+		t.Fatal("en publication line mangled")
+	}
+	// a creator's own English line is never rewritten — only the
+	// canonical sentence swaps
+	if custom := localizeEditorialLine("Only English here.", "pt-BR"); custom != "Only English here." {
+		t.Fatal("custom editorial line rewritten")
+	}
+}

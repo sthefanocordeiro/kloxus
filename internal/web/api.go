@@ -188,6 +188,22 @@ func (s *Server) localizeReaderMD(md string, pub *store.Publication) string {
 	return md
 }
 
+// canonicalEditorialLineSwap is the pt rendering of the one English
+// sentence in the sample publication's editorial line (KLOX-56). Like
+// canonicalSectionPT it is presentation-only: the stored block keeps
+// the recorded text so replay-fixture prompt hashes stay stable, and
+// API responses localize it when the publication speaks pt.
+const canonicalEditorialLineSwap = "Skip deals, coupons and buying guides."
+
+const ptEditorialLineSwap = "Pule ofertas, cupons e guias de compra."
+
+func localizeEditorialLine(line, lang string) string {
+	if !strings.HasPrefix(strings.ToLower(lang), "pt") {
+		return line
+	}
+	return strings.ReplaceAll(line, canonicalEditorialLineSwap, ptEditorialLineSwap)
+}
+
 // canonicalSectionPT maps the sample publication's canonical English
 // section titles to the pt names readers see — the same names the app
 // interface shows (KLOX-56). Stored bodies keep the canonical titles.
@@ -263,7 +279,10 @@ type apiPaywall struct {
 func publicationView(p *store.Publication) apiPublication {
 	v := apiPublication{
 		ID: p.ID, Slug: p.Slug, Name: p.Name, Custom: p.Custom, Language: p.Language,
-		Topic: p.Topic, Audience: p.Audience, EditorialLine: p.EditorialLine,
+		Topic: p.Topic, Audience: p.Audience,
+		// the stored line stays canonical for fixture-stable prompts —
+		// the response localizes the one English sentence (KLOX-56)
+		EditorialLine: localizeEditorialLine(p.EditorialLine, p.Language),
 		Tone: p.Tone, Frequency: p.Frequency, AIDisclosure: p.AIDisclosure,
 		Paywall: apiPaywall{
 			Enabled: p.Paywall.Enabled, PaidSections: p.Paywall.PaidSections,
@@ -781,7 +800,7 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 	}
 	apiJSON(w, 200, map[string]any{"proposal": map[string]any{
 		"name": def.Name, "topic": def.Topic, "audience": def.Audience,
-		"editorial_line": def.EditorialLine, "tone": def.Tone,
+		"editorial_line": localizeEditorialLine(def.EditorialLine, def.Language), "tone": def.Tone,
 		"language": def.Language, "frequency": def.Frequency,
 		"ai_disclosure": def.AIDisclosure,
 		"sections":      secs, "sources": srcs,
