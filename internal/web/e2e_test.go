@@ -273,9 +273,10 @@ outer0:
 		t.Fatal("unchanged edit cleared the flag")
 	}
 	flagCount := len(iss.Flags)
-	// supported edit resolves it (grounded in a dossier fact for [1])
+	// supported edit resolves it — the words come from the dossier fact
+	// for [1] but are reworded enough to stay under the copy threshold
 	if rr := apiCall(t, srv, "PATCH", sents+flaggedID, map[string]any{
-		"text":      "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
+		"text":      "Comentários podem ser enviados até 15 de dezembro pelo novo portal do órgão",
 		"citations": []int{1}, "version": ver}); rr.Code != 200 {
 		t.Fatalf("supported edit = %d: %s", rr.Code, rr.Body.String()[:300])
 	}

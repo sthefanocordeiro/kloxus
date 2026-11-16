@@ -1933,7 +1933,18 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var raw string
+	var newFlags []store.Flag
 	if kind == "interpretation" {
+		// (KLOX-48/51) an opinion carrying a number, a date or a
+		// quotation is a fact, not a take — it may not bypass the
+		// citation check, same guard as mark-as-interpretation.
+		if pipeline.HasNumberDateOrQuote(text) {
+			apiErr(w, 409, "interpretation_restricted",
+				"a claim with a number, a date or a quotation cannot be marked as interpretation — cite a source instead",
+				apiReason{Code: "interpretation_restricted", Message: "sentence contains a number, a date or a quotation",
+					Target: &apiTarget{Kind: "item", Ref: fmt.Sprint(ref)}})
+			return
+		}
 		raw = "> _Interpretação: " + text + "_"
 	} else {
 		d := item.dossier
@@ -1971,6 +1982,25 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		raw = strings.Join(lines, "\n")
+		// (KLOX-51) a composed fact must be verifiable exactly like a
+		// drafted sentence: every line the citation floor cannot verify —
+		// or that copies the source — lands flagged, and the flag blocks
+		// approval until the editor fixes or removes the sentence.
+		seenFlags := map[string]bool{}
+		for _, f := range iss.Flags {
+			if f.Item == int64(ref) {
+				seenFlags[f.Sentence] = true
+			}
+		}
+		for _, line := range lines {
+			notes := s.composeFlagNotes(item, doc.dctx, line)
+			if len(notes) == 0 || seenFlags[line] {
+				continue
+			}
+			seenFlags[line] = true
+			newFlags = append(newFlags, store.Flag{
+				Item: int64(ref), Sentence: line, Note: strings.Join(notes, "; ")})
+		}
 	}
 	// append at the end of the item's body (before its sources block)
 	body, ok := insertInItem(iss.BodyMD, item, len(item.Sentences), raw)
@@ -1979,18 +2009,26 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	flags := iss.Flags
+	if len(newFlags) > 0 {
+		flags = append(append([]store.Flag{}, iss.Flags...), newFlags...)
+	}
 	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
 		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body,
-		Decision: "manual_compose", Reason: raw, RevertApproved: iss.Status == "approved",
+		Flags: flags, Decision: "manual_compose", Reason: raw, RevertApproved: iss.Status == "approved",
 	})
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
 	iss.BodyMD = body
+	iss.Flags = flags
 	if iss.Status == "approved" {
 		iss.Status = "drafted"
 	}
-	s.respondSentence(w, r, iss, doc, map[string]any{"added": len(strings.Split(raw, "\n"))})
+	s.respondSentence(w, r, iss, doc, map[string]any{
+		"added":   len(strings.Split(raw, "\n")),
+		"flagged": len(newFlags),
+	})
 }
 
 // --- document / sentence mutations / commentary ---
@@ -2130,6 +2168,16 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var replacement string
 	if loc.sentence.Kind == "interpretation" {
+		// (KLOX-48/51) same guard as compose and mark-as-interpretation:
+		// a claim carrying a number, a date or a quotation is a fact —
+		// editing its text may not sneak it past the citation check.
+		if pipeline.HasNumberDateOrQuote(text) {
+			apiErr(w, 409, "interpretation_restricted",
+				"a claim with a number, a date or a quotation cannot be marked as interpretation — cite a source instead",
+				apiReason{Code: "interpretation_restricted", Message: "sentence contains a number, a date or a quotation",
+					Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
+			return
+		}
 		replacement = "> _Interpretação: " + text + "_"
 	} else {
 		// fact: citations must point at this item's sources and the new
@@ -2180,6 +2228,13 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, 409, "unsupported_claim",
 				"the citation check still cannot verify this sentence against the cited source — the flag stays",
 				apiReason{Code: "unsupported_claim", Message: "edit could not be verified against the cited source",
+					Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
+			return
+		}
+		if s.tooCloseToSources(loc.item, doc.dctx, composed) {
+			apiErr(w, 409, "too_close_to_source",
+				"the sentence copies the source almost word for word — rewrite it in the editor's own words",
+				apiReason{Code: "too_close_to_source", Message: "sentence copies a run of source words",
 					Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
 			return
 		}
@@ -3368,6 +3423,88 @@ func (s *Server) editSupportedFor(r *http.Request, item *docItem, dc *docContext
 		return false
 	}
 	return s.dossierSupports(r, d, dc, itemRef, text)
+}
+
+// citedCorpus is the stored text the citation floor and the originality
+// rule verify against for one dossier source: the catalog item's stored
+// body when it exists, else the dossier facts attributed to that ref —
+// the same corpus the pipeline's citecheck loads.
+func (s *Server) citedCorpus(d *pipeline.Dossier, dc *docContext, src pipeline.DossierSource) string {
+	if dc != nil {
+		if it, ok := dc.items[src.ItemID]; ok && it.ContentText != "" {
+			return it.ContentText
+		}
+	}
+	var b strings.Builder
+	for _, f := range append(append([]pipeline.DossierFact{}, d.Facts...), d.DeepFacts...) {
+		if f.Ref == src.Ref {
+			b.WriteString(f.Text)
+			b.WriteString(" ")
+		}
+	}
+	return b.String()
+}
+
+// composeFlagNotes applies the deterministic half of citecheck to one
+// composed (editor-written) line (KLOX-51): an uncited fact, a claim
+// the cited source's stored text does not support, or a ≥10-word run
+// copied from a source each produce a flag note identical to the ones
+// the pipeline writes — the flag then blocks approval.
+func (s *Server) composeFlagNotes(item *docItem, dc *docContext, line string) []string {
+	var notes []string
+	d := item.dossier
+	byRef := map[int]pipeline.DossierSource{}
+	if d != nil {
+		for _, src := range d.Sources {
+			byRef[src.Ref] = src
+		}
+	}
+	nums := pipeline.CitationNums(line)
+	if len(nums) == 0 {
+		notes = append(notes, "sentence has no citation")
+	}
+	for _, n := range nums {
+		src, ok := byRef[n]
+		if !ok {
+			notes = append(notes, fmt.Sprintf("cites source [%d] that does not exist", n))
+			continue
+		}
+		// when the source carries no stored text at all the dossier
+		// summary is the last-resort corpus — same fallback as
+		// dossierSupports on the edit path.
+		corpus := s.citedCorpus(d, dc, src)
+		if corpus == "" {
+			corpus = d.Summary
+		}
+		if !pipeline.SupportedBySource(line, corpus) {
+			notes = append(notes, fmt.Sprintf("not supported by [%d]", n))
+		}
+	}
+	if d != nil {
+		for _, src := range d.Sources {
+			if pipeline.TooCloseToSource(line, s.citedCorpus(d, dc, src)) {
+				notes = append(notes, "too close to the source")
+				break
+			}
+		}
+	}
+	return notes
+}
+
+// tooCloseToSources applies the originality rule to an edited sentence:
+// it must not copy a run of source words — the write-time counterpart
+// of citecheck's "too close to the source" flag.
+func (s *Server) tooCloseToSources(item *docItem, dc *docContext, text string) bool {
+	d := item.dossier
+	if d == nil {
+		return false
+	}
+	for _, src := range d.Sources {
+		if pipeline.TooCloseToSource(text, s.citedCorpus(d, dc, src)) {
+			return true
+		}
+	}
+	return false
 }
 
 var refRe = regexp.MustCompile(`\[\d+\]`)

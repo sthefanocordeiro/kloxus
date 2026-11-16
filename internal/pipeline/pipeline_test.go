@@ -499,3 +499,25 @@ func TestCitationAfterPeriodStaysAttached(t *testing.T) {
 		t.Fatalf("sentence 1 = %q", recs[1].text)
 	}
 }
+
+// consecutive markers after terminal punctuation all belong to the
+// sentence that precedes them — dropping a trailing "[n]" would orphan
+// it from the stored line (and from any flag keyed on that line).
+func TestCitationsAfterPeriodAllStayAttached(t *testing.T) {
+	recs := extractSentences("### H <!-- item 3 -->\n\nO custo segue três vezes o da banda larga urbana. [1] [2] Outra afirmação sem fonte.")
+	if len(recs) != 2 {
+		t.Fatalf("extractSentences = %d sentences, want 2: %#v", len(recs), recs)
+	}
+	if recs[0].refs != "[1][2]" {
+		t.Fatalf("sentence 0 refs = %q, want [1][2] (sentence: %q)", recs[0].refs, recs[0].text)
+	}
+	if recs[0].text != "O custo segue três vezes o da banda larga urbana. [1] [2]" {
+		t.Fatalf("sentence 0 = %q, want both markers attached", recs[0].text)
+	}
+	if recs[1].refs != "" {
+		t.Fatalf("sentence 1 refs = %q, want uncited", recs[1].refs)
+	}
+	if recs[1].text != "Outra afirmação sem fonte." {
+		t.Fatalf("sentence 1 = %q", recs[1].text)
+	}
+}

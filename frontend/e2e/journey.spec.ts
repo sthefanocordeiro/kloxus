@@ -28,6 +28,14 @@ const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
 
+// A supported claim: content words of the source excerpt picked at
+// non-consecutive positions — the citation floor verifies it and no
+// copied run can form (KLOX-51). Same helper as compose.spec.ts.
+function supportedSentence(excerpt: string): string {
+  const words = (excerpt.match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length >= 4);
+  return words.filter((_, i) => i % 3 === 0).slice(0, 6).join(" ") + ".";
+}
+
 // KLOXUS_LLM_MODE=off runs the whole pipeline deterministically — zero
 // model calls, so AI artifacts (the guide rebuild behind "Rule learned")
 // cannot appear. The workspace endpoint reports the mode; a server that
@@ -183,22 +191,51 @@ async function boardOps(page: Page, isPhone: boolean) {
   await expect(page.locator(".ProseMirror").first()).toBeVisible({
     timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000,
   });
+  // The citation floor verifies every hand-written sentence against the
+  // cited source's stored text (KLOX-51) — supported claims are built
+  // from each item's own source excerpt, the same way compose.spec.ts
+  // fills its slots.
+  const iid = page.url().match(/\/issues\/(\d+)/)![1];
+  const doc0 = (
+    await (await page.request.get(`/api/v1/issues/${iid}/document`)).json()
+  ).document;
+  const supported = new Map<number, { text: string; cite: number }>();
+  for (const s of doc0.sections ?? []) {
+    for (const it of s.items ?? []) {
+      const src = (it.sources ?? []).find((x: { excerpt?: string; ref: number }) => x.excerpt);
+      if (src) supported.set(it.ref, { text: supportedSentence(src.excerpt), cite: src.ref });
+    }
+  }
   const emptySlot = page.getByRole("button", { name: /Empty — write this item/ });
   for (let filled = 0, tries = 0; tries < 24; tries++) {
     if ((await emptySlot.count()) === 0) break;
     // each add refetches the document and remounts every node view — a
     // slot counted before the refetch lands detaches mid-click, so a
     // failed click just means "look again" (KLOX-49)
+    let itemRef: number | undefined;
     try {
+      itemRef = Number(
+        await emptySlot
+          .first()
+          .evaluate((el) => (el.closest("[data-item-ref]") as HTMLElement).dataset.itemRef),
+      );
       await emptySlot.first().click({ timeout: 10_000 });
     } catch {
       continue;
     }
+    const fill = itemRef != null ? supported.get(itemRef) : undefined;
     const box = page.locator('section[aria-label="Write this item"]');
     await expect(box).toBeVisible();
-    await box.getByRole("textbox").fill(`Editor-written paragraph ${filled + 1} for the issue.`);
-    await box.getByRole("button", { name: /^\[1\] / }).click();
-    await box.getByRole("button", { name: "Add to item" }).click();
+    await box.getByRole("textbox").fill(fill?.text ?? "Editor's reading of the sources.");
+    if (fill) {
+      await box.getByRole("button", { name: new RegExp(`^\\[${fill.cite}\\] `) }).click();
+      await box.getByRole("button", { name: "Add to item" }).click();
+    } else {
+      // no source excerpt to verify against — write the item as the
+      // editor's own take so the slot still fills without a citation
+      await box.getByRole("checkbox", { name: /my take/i }).check();
+      await box.getByRole("button", { name: "Add to item" }).click();
+    }
     // wait for the remounted document — the count check above is only
     // trustworthy once the refetch has landed (compose.spec.ts does the
     // same through [data-sid])

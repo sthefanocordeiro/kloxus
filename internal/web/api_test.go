@@ -371,9 +371,10 @@ func TestAPIJourney(t *testing.T) {
 	if c := apiErrCode(t, rr); c != "unsupported_claim" {
 		t.Fatalf("unrelated citation edit: code = %q", c)
 	}
-	// supported edit resolves the flag (grounded in a dossier fact)
+	// supported edit resolves the flag — the words come from the dossier
+	// fact but are reworded enough to stay under the copy threshold
 	rr = apiCall(t, srv, "PATCH", sents+flaggedID,
-		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
+		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo novo portal do órgão",
 			"citations": []int{1}, "version": ver})
 	if rr.Code != 200 {
 		t.Fatalf("supported edit = %d: %s", rr.Code, rr.Body.String()[:300])
@@ -391,7 +392,7 @@ outer0:
 		}
 	}
 	rr = apiCall(t, srv, "PATCH", sents+anySID,
-		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
+		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo novo portal do órgão",
 			"citations": []int{1}, "version": ver})
 	if c := apiErrCode(t, rr); c != "conflict" {
 		t.Fatalf("stale version: code = %q", c)

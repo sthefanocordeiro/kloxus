@@ -1305,10 +1305,12 @@ func lastToken(s string) string {
 // accepted at terminal punctuation followed by whitespace when the next
 // rune can start a sentence and the previous token is not a common
 // abbreviation (avoids splitting on "Dr.", "e.g.", decimals, etc.).
-// citeLeadRe matches a citation marker at the start of a text run — a
-// "[n]" left dangling after a sentence-final period belongs to the
-// sentence that precedes it, not to whatever comes next.
-var citeLeadRe = regexp.MustCompile(`^\[\d+\]`)
+// citeLeadRe matches the citation markers at the start of a text run —
+// the "[n] [m]" left dangling after a sentence-final period all belong
+// to the sentence that precedes them, not to whatever comes next. Every
+// consecutive marker must be consumed: dropping a trailing one would
+// orphan it (and any flag keyed on the full stored line).
+var citeLeadRe = regexp.MustCompile(`^(\[\d+\]\s*)+`)
 
 func SplitSentences(line string) []string {
 	var out []string
