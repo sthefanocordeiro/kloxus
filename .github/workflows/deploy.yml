@@ -36,11 +36,14 @@ jobs:
       # script preflights the server's own /api/v1/workspace evidence
       # and fails closed unless the target reports a no-AI posture —
       # the deterministic demo pipeline, or real mode with
-      # llm_mode=off — plus the outbox mail transport. Hosted
-      # verification is outbox-only under the freeze — a live or
-      # unknown mail transport, or a real target with the model
-      # enabled, makes the script refuse before any mail- or
-      # model-capable request, so this job can never send real email
-      # or spend on a model.
-      - name: smoke check (outbox-only — server-side transport evidence)
+      # llm_mode=off. Mail posture selects the send checks (KLOX-59):
+      # outbox targets run the full claim-and-send journey; a live-mail
+      # target is verified through the paths that cannot send — the
+      # claim gate must refuse a readers send (409) and the unclaimed
+      # test send must land in the outbox ledger (provider=outbox).
+      # A claimed workspace, an unknown transport, or a real target
+      # with the model enabled makes the script refuse before any
+      # mail- or model-capable request, so this job can never send
+      # real email or spend on a model.
+      - name: smoke check (posture-aware — server-side transport evidence)
         run: bash scripts/smoke.sh https://kloxus.fly.dev
