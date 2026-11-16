@@ -511,7 +511,15 @@ async function sendToReaders(page: Page) {
       const resp = await page.request.get(href);
       expect(resp.status(), `export ${href}`).toBe(200);
       expect(resp.headers()["content-type"]).toContain("text/html");
-      expect(await resp.text()).toContain("<h1>");
+      const html = await resp.text();
+      expect(html).toContain("<h1>");
+      // the pt-BR reader sees localized chrome, never the canonical
+      // English names the body stores for fixture compatibility
+      // (KLOX-56); the deterministic run must not claim AI assistance
+      expect(html).toContain("O destaque");
+      expect(html).not.toContain("The big one");
+      expect(html).not.toContain("auxílio de IA");
+      expect(html).not.toContain("AI assistance");
     }
   }
 }
