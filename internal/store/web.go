@@ -20,6 +20,7 @@ type Issue struct {
 	Commentary    map[string]string
 	CreatedAt     string
 	ScheduledAt   string
+	TestSentAt    string
 }
 
 // Flag is a citation-check flag stored in issues.flags_json.
@@ -33,7 +34,7 @@ func (db *DB) scanIssue(row *sql.Row) (*Issue, error) {
 	var i Issue
 	var flags, commentary string
 	err := row.Scan(&i.ID, &i.PublicationID, &i.Number, &i.Status, &i.Subject,
-		&i.BodyMD, &flags, &commentary, &i.CreatedAt, &i.ScheduledAt)
+		&i.BodyMD, &flags, &commentary, &i.CreatedAt, &i.ScheduledAt, &i.TestSentAt)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +43,7 @@ func (db *DB) scanIssue(row *sql.Row) (*Issue, error) {
 	return &i, nil
 }
 
-const issueCols = `id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at, scheduled_at`
+const issueCols = `id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at, scheduled_at, test_sent_at`
 
 // GetIssue loads an issue by id.
 func (db *DB) GetIssue(ctx context.Context, id int64) (*Issue, error) {
@@ -63,7 +64,7 @@ func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
 		var i Issue
 		var flags, commentary string
 		if err := rows.Scan(&i.ID, &i.PublicationID, &i.Number, &i.Status,
-			&i.Subject, &i.BodyMD, &flags, &commentary, &i.CreatedAt, &i.ScheduledAt); err != nil {
+			&i.Subject, &i.BodyMD, &flags, &commentary, &i.CreatedAt, &i.ScheduledAt, &i.TestSentAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(flags), &i.Flags)
@@ -101,6 +102,16 @@ func (db *DB) SetIssueStatus(ctx context.Context, id int64, status string) error
 	_, err := db.ExecContext(ctx,
 		`UPDATE issues SET status = $1, scheduled_at = CASE WHEN $2 = 'scheduled' THEN scheduled_at ELSE '' END
 		 WHERE workspace_id = $3 AND id = $4`, status, status, db.ws, id)
+	return err
+}
+
+// MarkIssueTestSent stamps a test send on the issue without touching
+// its status — the after-sending screen and public page read the
+// marker, the lifecycle stays editable (KLOX-53).
+func (db *DB) MarkIssueTestSent(ctx context.Context, id int64) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE issues SET test_sent_at = $1 WHERE workspace_id = $2 AND id = $3`,
+		NowUTC(), db.ws, id)
 	return err
 }
 
@@ -213,11 +224,13 @@ func (db *DB) GetIssueItem(ctx context.Context, id int64) (*IssueItem, error) {
 	return &ii, nil
 }
 
-// LatestPublicIssue returns the newest sent or scheduled issue — what a
-// public issue URL may resolve (sql.ErrNoRows when none is out yet).
+// LatestPublicIssue returns the newest sent, scheduled or test-sent
+// issue — what a public issue URL may resolve (sql.ErrNoRows when none
+// is out yet).
 func (db *DB) LatestPublicIssue(ctx context.Context, pubID int64) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,
-		`SELECT `+issueCols+` FROM issues WHERE workspace_id = $1 AND publication_id = $2 AND status IN ('sent','scheduled')
+		`SELECT `+issueCols+` FROM issues WHERE workspace_id = $1 AND publication_id = $2
+		 AND (status IN ('sent','scheduled') OR test_sent_at <> '')
 		 ORDER BY number DESC LIMIT 1`, db.ws, pubID))
 }
 

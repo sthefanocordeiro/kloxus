@@ -44,6 +44,9 @@ export interface IssueSummary {
   cost_usd?: number;
   document_version?: string;
   scheduled_at?: string;
+  // stamped by a test send — the issue stays in its lifecycle status
+  // (approved/editable); the marker unlocks the after-sending surface
+  test_sent_at?: string;
   receipt?: ApprovalReceipt;
 }
 

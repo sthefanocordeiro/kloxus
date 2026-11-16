@@ -218,17 +218,20 @@ func svixRequest(t *testing.T, srv *web.Server, secret string, body []byte, badS
 
 // TestLiveSendNeedsClaimAndTestGoesToOwner covers the gate: reader
 // sends fail while the workspace is anonymous, but an unclaimed "send
-// a test" still writes the outbox and completes the journey (sent
-// status, after-sending data, public page) — KLOX-49. Once claimed the
-// test send reaches the owner only — and a reused claim link is
-// rejected.
+// a test" still writes the outbox and completes the journey (the
+// test_sent_at marker unlocks after-sending data and the public page)
+// — KLOX-49, corrected by KLOX-53: a test send never marks the issue
+// sent. Once claimed the test send reaches the owner only — and a
+// reused claim link is rejected.
 func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	fake := &fakeSender{}
 	deps, db, pub, _ := liveDeps(t, fake, nil)
 	srv := web.New(deps)
+	ctx := context.Background()
 	owner := "criador@hackbrazil.dev"
 	issueID := approvedIssue(t, db, pub.ID, 1, "Edição 1")
-	sendURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10) + "/send"
+	issueURL := "/api/v1/issues/" + strconv.FormatInt(issueID, 10)
+	sendURL := issueURL + "/send"
 
 	// reader sends still require a claimed workspace
 	rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "readers"})
@@ -236,8 +239,9 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 		t.Fatalf("send readers unclaimed = %d %s, want 409 unclaimed_workspace", rr.Code, rr.Body.String()[:200])
 	}
 	// an unclaimed test send lands in the outbox and finishes the
-	// journey: the issue turns sent, the after-sending screen and the
-	// public page unlock — no live delivery, no provider call
+	// journey: the test_sent_at marker unlocks the after-sending screen
+	// and the public page while the issue stays approved — never sent
+	// (KLOX-53). No live delivery, no provider call.
 	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
 	if rr.Code != 200 {
 		t.Fatalf("unclaimed test send = %d %s", rr.Code, rr.Body.String()[:300])
@@ -246,17 +250,45 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	if body["delivery"] != "outbox" || body["outbox_email_id"] == nil {
 		t.Fatalf("unclaimed test send = %v, want outbox delivery", body)
 	}
-	if iss := body["issue"].(map[string]any); iss["status"] != "sent" {
-		t.Fatalf("issue status after unclaimed test send = %v, want sent", iss["status"])
+	sent := body["issue"].(map[string]any)
+	if sent["status"] != "approved" || sent["test_sent_at"] == nil || sent["test_sent_at"] == "" {
+		t.Fatalf("issue after unclaimed test send = %v, want approved + test_sent_at", sent)
 	}
 	if msgs := fake.messages(); len(msgs) != 0 {
 		t.Fatalf("unclaimed test send touched the sender %d times, want 0", len(msgs))
 	}
-	if rr := apiCall(t, srv, "GET", "/api/v1/issues/"+strconv.FormatInt(issueID, 10)+"/after", nil); rr.Code != 200 {
+	if rr := apiCall(t, srv, "GET", issueURL+"/after", nil); rr.Code != 200 {
 		t.Fatalf("after-sending screen = %d, want 200", rr.Code)
 	}
 	if rr := apiCall(t, srv, "GET", "/api/v1/p/"+pub.Slug+"/1", nil); rr.Code != 200 {
 		t.Fatalf("public page after unclaimed test send = %d, want 200", rr.Code)
+	}
+
+	// a test-sent issue is still editable: a commentary write lands
+	// (flipping it back to drafted like every post-approval edit), it
+	// re-approves, schedules and Holds like any other approved issue —
+	// the send lifecycle is untouched by the marker
+	docVer := sent["document_version"].(string)
+	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
+		map[string]string{"section": "The big one", "text": "post-test edit", "version": docVer})
+	if rr.Code != 200 {
+		t.Fatalf("commentary on a test-sent issue = %d, want 200", rr.Code)
+	}
+	if rr := apiCall(t, srv, "POST", issueURL+"/approve", nil); rr.Code != 200 {
+		t.Fatalf("re-approve test-sent issue = %d", rr.Code)
+	}
+	at := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	rr = apiCall(t, srv, "POST", sendURL,
+		map[string]string{"audience": "readers", "when": "schedule", "at": at})
+	if rr.Code != 200 {
+		t.Fatalf("schedule test-sent issue = %d: %s", rr.Code, rr.Body.String()[:200])
+	}
+	if rr := apiCall(t, srv, "POST", issueURL+"/hold", nil); rr.Code != 200 {
+		t.Fatalf("hold test-sent issue = %d", rr.Code)
+	}
+	if fresh, _ := db.GetIssue(ctx, issueID); fresh.Status != "drafted" || fresh.TestSentAt == "" {
+		t.Fatalf("after hold: status=%q test_sent_at=%q, want drafted + marker kept",
+			fresh.Status, fresh.TestSentAt)
 	}
 
 	claimWorkspace(t, srv, db, owner)

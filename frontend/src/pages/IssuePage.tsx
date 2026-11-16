@@ -606,7 +606,9 @@ export function IssuePage() {
         )
       )}
 
-      {(issue.status === "sent" || issue.status === "scheduled") && <AfterSend issue={issue} />}
+      {(issue.status === "sent" || issue.status === "scheduled" || !!issue.test_sent_at) && (
+        <AfterSend issue={issue} />
+      )}
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink px-4 py-2 text-xs text-paper shadow-lg">
           {toast.text}
@@ -957,6 +959,11 @@ function AfterSend({ issue }: { issue: IssueSummary }) {
           {issue.status === "scheduled" && issue.scheduled_at && (
             <span className="font-semibold text-ink">
               {t.send.scheduledFor} {fmtDate(issue.scheduled_at, lang, true)}
+            </span>
+          )}
+          {issue.test_sent_at && issue.status !== "sent" && (
+            <span className="text-muted">
+              {t.after.testSent} · {fmtDate(issue.test_sent_at, lang, true)}
             </span>
           )}
           {a && (

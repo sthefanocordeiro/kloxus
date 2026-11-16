@@ -298,6 +298,9 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	if iss.ScheduledAt != "" {
 		m["scheduled_at"] = iss.ScheduledAt
 	}
+	if iss.TestSentAt != "" {
+		m["test_sent_at"] = iss.TestSentAt
+	}
 	if rec, err := db(r).ApprovalReceipt(ctx, iss.ID); err == nil {
 		m["receipt"] = receiptView(rec)
 	}
@@ -2835,9 +2838,15 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 			if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
 				return
 			}
-			if fresh, _ := db(r).GetIssue(r.Context(), iss.ID); fresh != nil {
-				iss = fresh
+		} else {
+			// a test send stamps the marker but never enters the
+			// lifecycle — the issue stays approved and editable (KLOX-53)
+			if apiDBErr(w, r, db(r).MarkIssueTestSent(r.Context(), iss.ID), "issue") {
+				return
 			}
+		}
+		if fresh, _ := db(r).GetIssue(r.Context(), iss.ID); fresh != nil {
+			iss = fresh
 		}
 		apiJSON(w, 200, map[string]any{
 			"issue": s.issueSummary(r, iss), "outbox_email_id": emailID, "audience": in.Audience,
@@ -2849,9 +2858,10 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	// Live delivery (D33): reader sends go to confirmed readers of a
 	// claimed workspace; test sends go to the claimed address only. An
 	// unclaimed workspace may still "send a test" — it writes to the
-	// outbox and completes the journey: the issue turns sent so the
-	// after-sending screen and the public page unlock (KLOX-49). Real
-	// email still requires a claimed address.
+	// outbox and completes the journey: the test_sent_at marker unlocks
+	// the after-sending screen and the public page while the issue stays
+	// approved and editable (KLOX-49, KLOX-53). Real email still
+	// requires a claimed address.
 	ctx := r.Context()
 	wdb := db(r)
 	owner := s.workspaceOwner(ctx, wdb)
@@ -2869,7 +2879,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		if apiDBErr(w, r, err, "send") {
 			return
 		}
-		if apiDBErr(w, r, wdb.SetIssueStatus(ctx, iss.ID, "sent"), "issue") {
+		if apiDBErr(w, r, wdb.MarkIssueTestSent(ctx, iss.ID), "issue") {
 			return
 		}
 		if fresh, _ := wdb.GetIssue(ctx, iss.ID); fresh != nil {
@@ -2910,10 +2920,19 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 429, "send_refused", "test send refused: "+strings.Join(sum.Refused, "; "))
 		return
 	}
-	// A test send only records the mail — the issue stays approved so
-	// it can still go to readers. A readers send marks it sent only
-	// when something left the app: an all-refused, all-fallback or
-	// empty send keeps it approved so it can go out once deliverable.
+	// A test send stamps the test_sent_at marker but never enters the
+	// lifecycle — the issue stays approved so it can still go to
+	// readers (KLOX-53). A readers send marks it sent only when
+	// something left the app: an all-refused, all-fallback or empty
+	// send keeps it approved so it can go out once deliverable.
+	if kind == "test" {
+		if apiDBErr(w, r, wdb.MarkIssueTestSent(ctx, iss.ID), "issue") {
+			return
+		}
+		if fresh, _ := wdb.GetIssue(ctx, iss.ID); fresh != nil {
+			iss = fresh
+		}
+	}
 	if kind == "issue" && sum.Sent+sum.Deduped > 0 {
 		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
 			return
@@ -3210,7 +3229,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status != "sent" && iss.Status != "scheduled" {
+	if iss.Status != "sent" && iss.Status != "scheduled" && iss.TestSentAt == "" {
 		apiErr(w, 404, "not_found", "issue not found")
 		return
 	}
@@ -3250,8 +3269,8 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	if iss.Status != "sent" && iss.Status != "scheduled" {
-		apiErr(w, 409, "blocked", "the public page exists once the issue is sent or scheduled",
+	if iss.Status != "sent" && iss.Status != "scheduled" && iss.TestSentAt == "" {
+		apiErr(w, 409, "blocked", "the public page exists once the issue is sent, scheduled or test-sent",
 			apiReason{Code: "not_sent", Message: "issue is not sent",
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
 		return
