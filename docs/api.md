@@ -545,8 +545,10 @@ fresh one.
 Safe audience by default: `audience` is required — sending needs an
 explicit choice. Requires `approved` (`blocked`/`not_approved`
 otherwise). In demo mode every send lands in the outbox.
-- `"test"` only records the outbox email — the issue stays `approved`
-  and can still go to readers.
+- `"test"` only records the outbox email and stamps
+  `issue.test_sent_at` — the issue stays `approved` and editable, and
+  can still go to readers. The marker unlocks `/after` and the public
+  page (a test-sent issue shows "Test send recorded" there).
 - `"readers"` + `"when":"now"` marks the issue `sent`; sent issues are
   read-only.
 - `"readers"` + `"when":"schedule"` requires `"at"`, an RFC3339 time in
@@ -564,13 +566,14 @@ A scheduled send answers `{"issue": {…}, "scheduled": true,
 
 **Live delivery** (`mail: "live"`): every rule below also holds for the
 scheduled dispatch.
-- `"test"` on an unclaimed workspace records to the outbox and marks
-  the issue `sent` — it completes the journey (after-sending screen,
-  public page) without touching the provider. `"readers"` unclaimed
-  still answers `409 unclaimed_workspace` — claim first.
+- `"test"` on an unclaimed workspace records to the outbox and stamps
+  `issue.test_sent_at` — it completes the journey (after-sending
+  screen, public page) without touching the provider and without
+  marking the issue `sent`. `"readers"` unclaimed still answers
+  `409 unclaimed_workspace` — claim first.
 - `"test"` on a claimed workspace mails the claimed creator address
   only; any other `"to"` is rejected (`400`). The issue stays
-  `approved`.
+  `approved` — stamped `test_sent_at`, never `sent`.
 - `"readers"` mails confirmed (double opt-in, not unsubscribed) readers
   only. Addresses on the suppression list or sends over the daily caps
   (global and per-workspace, counted from the outbox ledger so they
@@ -605,8 +608,8 @@ Hold is an un-approval).
 ```
 
 ### `GET /api/v1/issues/{id}/after`
-The post-send summary. Requires `sent` or `scheduled` (`blocked`/
-`not_sent` otherwise).
+The post-send summary. Requires `sent`, `scheduled` or a stamped test
+send (`issue.test_sent_at` — KLOX-53); `blocked`/`not_sent` otherwise.
 ```json
 {"issue": {…}, "public_url": "https://demo.example/p/futuro-proximo/1?tok=…",
  "learned": ["Skip stories that just broke, with no confirmed outcome yet"],

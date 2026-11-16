@@ -287,6 +287,7 @@ const dict = {
       learnedEmpty: "No new rules — nothing was rejected on this issue.",
       next: "Start next issue",
       scheduledNext: "Scheduled — Hold to edit or unschedule",
+      testSent: "Test send recorded — still approved and editable",
     },
     reader: {
       forPaying: "For paying readers",
@@ -734,6 +735,7 @@ const dict = {
       learnedEmpty: "Nenhuma regra nova — nada foi rejeitado nesta edição.",
       next: "Preparar próxima edição",
       scheduledNext: "Agendada — Segurar para editar ou desagendar",
+      testSent: "Envio de teste registrado — continua aprovada e editável",
     },
     reader: {
       forPaying: "Para assinantes",

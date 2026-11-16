@@ -511,6 +511,20 @@ outer0:
 	if iss.Status != "approved" {
 		t.Fatalf("test send marked issue %q — it must stay approved", iss.Status)
 	}
+	if iss.TestSentAt == "" {
+		t.Error("a test send must stamp test_sent_at")
+	}
+	// the marker unlocks the after-sending data and the public page
+	// without mutating the lifecycle (KLOX-53)
+	if v := apiGet(t, srv, issueURL)["issue"].(map[string]any); v["test_sent_at"] == nil || v["test_sent_at"] == "" {
+		t.Error("issue summary must carry test_sent_at")
+	}
+	if rr := apiCall(t, srv, "GET", issueURL+"/after", nil); rr.Code != 200 {
+		t.Fatalf("after-sending screen on a test-sent issue = %d, want 200", rr.Code)
+	}
+	if rr := apiCall(t, srv, "GET", "/api/v1/p/futuro-proximo/"+fmt.Sprint(iss.Number), nil); rr.Code != 200 {
+		t.Fatalf("public page on a test-sent issue = %d, want 200", rr.Code)
+	}
 
 	// --- schedule locks the issue; Hold returns it to draft ---
 	// a test send cannot be scheduled

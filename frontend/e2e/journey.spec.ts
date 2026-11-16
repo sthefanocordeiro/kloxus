@@ -377,6 +377,39 @@ async function scheduleAndHold(page: Page) {
   await expect(page.getByRole("button", { name: "Approve issue" }).first()).toBeVisible({ timeout: 15000 });
 }
 
+async function sendTestKeepsEditable(page: Page) {
+  // KLOX-53: "Send a test" must not lock the issue — the send records
+  // to the outbox, stamps test_sent_at and leaves the issue approved,
+  // editable and schedulable. The after-sending surface (reader page
+  // link, test marker) still appears. Runs before the claim, so in
+  // fake-live mode this exercises the unclaimed path that once flipped
+  // the issue to sent.
+  const ws = await workspaceInfo(page);
+  neverRealMail(ws);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const [resp] = await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().endsWith("/send") && r.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Send a test" }).click(),
+  ]);
+  const body = await resp.json();
+  expect(body.audience).toBe("test");
+  expect(body.issue.status).toBe("approved");
+  expect(body.issue.test_sent_at).toBeTruthy();
+  // still editable and still sendable — the lock never engaged
+  await expect(page.locator(".ProseMirror").first()).toHaveAttribute("contenteditable", "true");
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+  // the after-sending surface + test-sent marker appear without `sent`
+  await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/Test send recorded/)).toBeVisible();
+  // the send popover is uncontrolled (no Popover.Close on action) —
+  // dismiss it or the next "Send" click would toggle the still-open
+  // popover shut instead of opening it
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Send a test" })).toBeHidden();
+}
+
 async function sendToReaders(page: Page) {
   // the send action is its own header button post-approval; readers get
   // a confirmation dialog (count, subject, sender) — never one-click
@@ -512,6 +545,9 @@ for (const vp of viewports) {
     });
 
     await approveIssue(page);
+    // a test send first: the issue must stay editable, approvable and
+    // schedulable (KLOX-53) — the schedule+hold below proves the last
+    await sendTestKeepsEditable(page);
     await scheduleAndHold(page);
     await approveIssue(page);
     await claimIfSynthetic(page);
