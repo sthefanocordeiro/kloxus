@@ -252,10 +252,25 @@ func synthBody(d *Dossier) string {
 	return body
 }
 
+// hasEvidence reports whether the story can back an issue item: at
+// least one member must carry a body. An all-signal cluster (a bare
+// HN/DJ link) ranks and attributes but yields no issue item, so it
+// must never occupy a section slot (KLOX-60).
+func hasEvidence(s *store.Story) bool {
+	for i := range s.Items {
+		if !s.Items[i].Signal() {
+			return true
+		}
+	}
+	return false
+}
+
 // pickLineup slots the best-scored stories into the publication's
 // section capacities. Round-robin across sections preserves section
 // order; the per-outlet cap applies on the first pass, and a second
-// pass fills any slots left empty by it.
+// pass fills any slots left empty by it. Evidence-less stories are
+// skipped outright — they produce no issue item, so slotting one
+// would strand the section.
 func pickLineup(stories []store.Story, scores []float64, reasons []string, sections []config.Section) []lineupPick {
 	order := storyOrder(stories, scores)
 	slots := make([]int, len(sections))
@@ -273,7 +288,7 @@ func pickLineup(stories []store.Story, scores []float64, reasons []string, secti
 					continue
 				}
 				for _, idx := range order {
-					if placed[idx] {
+					if placed[idx] || !hasEvidence(&stories[idx]) {
 						continue
 					}
 					outlet := primaryOutlet(&stories[idx])

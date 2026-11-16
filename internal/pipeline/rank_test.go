@@ -85,6 +85,41 @@ func TestNonEditorialDemotion(t *testing.T) {
 	}
 }
 
+// TestPickLineupSkipsSignalOnlyStory is the KLOX-60 regression: the
+// highest-scored candidate for the lead section is a signal-only
+// cluster (a bare HN link) — it ranks, but it can never produce an
+// issue item. Before the fix it took the lead pick, the section ended
+// with zero items while the others filled, and apiDraft refused the
+// issue with 409 section_empty.
+func TestPickLineupSkipsSignalOnlyStory(t *testing.T) {
+	stories := []store.Story{
+		{ID: 1, Title: "signal-only link", Items: []store.Item{{
+			Kind: "signal", PublishedAt: "2025-01-05",
+			SourceURL: "https://hn.example/item/1", SourceName: "hn",
+		}}},
+		detStory(2, "best article", "2025-01-04", 1),
+		detStory(3, "second article", "2025-01-03", 1),
+		detStory(4, "third article", "2025-01-02", 1),
+	}
+	scores, reasons := scoreStories(stories)
+	picks := pickLineup(stories, scores, reasons, []config.Section{
+		{Title: "The big one", Items: 1},
+		{Title: "Worth knowing", Items: 1},
+		{Title: "Quick links", Items: 1},
+	})
+	if len(picks) != 3 {
+		t.Fatalf("picks = %d, want 3 — every section gets a draftable story", len(picks))
+	}
+	for _, p := range picks {
+		if p.Refs[0] == 1 {
+			t.Fatalf("signal-only story slotted into %q — it yields no issue item", p.Section)
+		}
+	}
+	if picks[0].Section != "The big one" || picks[0].Refs[0] != 2 {
+		t.Fatalf("lead pick = %+v, want story 2 (best draftable) in The big one", picks[0])
+	}
+}
+
 func TestDedupeKey(t *testing.T) {
 	same := []store.Item{
 		{URL: "https://a.example/x?utm_source=rss", CanonicalURL: "https://a.example/x"},

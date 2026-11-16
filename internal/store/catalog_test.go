@@ -25,11 +25,13 @@ func TestCatalogSeeded(t *testing.T) {
 		byPolicy[c.Policy]++
 		slugSeen[c.Slug] = true
 	}
-	if byPolicy["launch"] != 6 {
-		t.Fatalf("launch sources=%d want 6", byPolicy["launch"])
+	// Floors, not exact counts: the catalog table is global and
+	// parallel test binaries insert their own throwaway rows.
+	if byPolicy["launch"] < 6 {
+		t.Fatalf("launch sources=%d want at least 6", byPolicy["launch"])
 	}
-	if byPolicy["signal"] != 1 { // hacker-news
-		t.Fatalf("signal sources=%d want 1", byPolicy["signal"])
+	if byPolicy["signal"] < 1 { // hacker-news
+		t.Fatalf("signal sources=%d want at least 1", byPolicy["signal"])
 	}
 	for _, slug := range []string{"tecnoblog", "olhar-digital", "tabnews", "macmagazine", "meiobit", "startups", "hacker-news", "canaltech", "techcrunch"} {
 		if !slugSeen[slug] {
@@ -53,10 +55,7 @@ func TestSharedItemsAcrossWorkspaces(t *testing.T) {
 	pool := openPool(t)
 	ctx := context.Background()
 
-	cs, err := pool.CatalogEntry(ctx, "tecnoblog")
-	if err != nil {
-		t.Fatalf("CatalogEntry: %v", err)
-	}
+	cs := testCatalogEntry(t, pool, "shared-items")
 	added, err := pool.SaveCatalogItems(ctx, cs.ID, []CatalogItem{{
 		ExternalID: "test-shared-1", URL: "https://tecnoblog.net/x",
 		CanonicalURL: "https://tecnoblog.net/x", Title: "Shared",
@@ -72,10 +71,6 @@ func TestSharedItemsAcrossWorkspaces(t *testing.T) {
 	if err != nil || again != 0 {
 		t.Fatalf("re-save: added=%d err=%v", again, err)
 	}
-	t.Cleanup(func() {
-		pool.db.ExecContext(context.Background(),
-			`DELETE FROM items WHERE external_id = 'test-shared-1'`)
-	})
 	if added != 1 {
 		t.Fatalf("added=%d want 1", added)
 	}
@@ -99,7 +94,7 @@ func TestSharedItemsAcrossWorkspaces(t *testing.T) {
 				found = &items[i]
 			}
 		}
-		if found == nil || found.SourceName != "Tecnoblog" || found.CatalogID != cs.ID {
+		if found == nil || found.SourceName != cs.Name || found.CatalogID != cs.ID {
 			t.Fatalf("shared item missing or misattributed: %+v", found)
 		}
 		total, fresh, err := ws.CatalogItemsStats(ctx, pubID)
@@ -113,10 +108,7 @@ func TestSharedItemsAcrossWorkspaces(t *testing.T) {
 func TestFetchLogRecords(t *testing.T) {
 	pool := openPool(t)
 	ctx := context.Background()
-	cs, err := pool.CatalogEntry(ctx, "tecnoblog")
-	if err != nil {
-		t.Fatalf("CatalogEntry: %v", err)
-	}
+	cs := testCatalogEntry(t, pool, "fetch-log")
 	if err := pool.LogFetch(ctx, cs.ID, "ok", 200, 12, 3, "test"); err != nil {
 		t.Fatalf("LogFetch: %v", err)
 	}
@@ -134,10 +126,7 @@ func TestFetchLogRecords(t *testing.T) {
 func TestRetentionPurgesBodies(t *testing.T) {
 	pool := openPool(t)
 	ctx := context.Background()
-	cs, err := pool.CatalogEntry(ctx, "tecnoblog")
-	if err != nil {
-		t.Fatalf("CatalogEntry: %v", err)
-	}
+	cs := testCatalogEntry(t, pool, "retention")
 	old := time.Now().Add(-31 * 24 * time.Hour)
 	if _, err := pool.db.ExecContext(ctx, `INSERT INTO items
 		(catalog_id, external_id, url, title, content_text, fetched_at)
@@ -146,10 +135,6 @@ func TestRetentionPurgesBodies(t *testing.T) {
 		cs.ID, TSUTC(old), NowUTC()); err != nil {
 		t.Fatalf("seed items: %v", err)
 	}
-	t.Cleanup(func() {
-		pool.db.ExecContext(context.Background(),
-			`DELETE FROM items WHERE external_id IN ('ret-old','ret-new')`)
-	})
 	n, err := pool.PurgeOldBodies(ctx, time.Now().Add(-30*24*time.Hour))
 	if err != nil || n != 1 {
 		t.Fatalf("PurgeOldBodies: n=%d err=%v", n, err)
