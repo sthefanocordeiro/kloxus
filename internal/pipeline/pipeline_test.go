@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -107,6 +108,42 @@ func TestRunHeadless(t *testing.T) {
 	}
 }
 
+// testCatalogSource inserts a throwaway source_catalog row for the
+// test to attach, then removes it and its items at cleanup. Package
+// binaries run in parallel against the same test database and catalog
+// items are global (workspace_id NULL) — seeding the shared
+// hacker-news/tecnoblog entries lets a concurrent test's candidate set
+// pull these rows, and lets that test's cleanup delete a row this run
+// already collected (the story_items FK flake of CI run 43935756030,
+// KLOX-60 rework). A dedicated catalog isolates the fixture both ways:
+// nothing else collects it, and its cleanup only touches its own rows.
+func testCatalogSource(t *testing.T, db *store.DB, pool *store.Pool, slug string) *store.CatalogSource {
+	t.Helper()
+	ctx := context.Background()
+	slug = fmt.Sprintf("%s-%d", slug, time.Now().UnixNano())
+	if _, err := db.ExecContext(ctx, `INSERT INTO source_catalog
+		(slug, name, url, feed_url, policy, domain) VALUES
+		($1,$2,$3,$3,'launch',$4)`,
+		slug, "Test "+slug, "https://"+slug+".example/feed", slug+".example"); err != nil {
+		t.Fatalf("insert catalog row: %v", err)
+	}
+	cs, err := pool.CatalogEntry(ctx, slug)
+	if err != nil {
+		t.Fatalf("CatalogEntry: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		// story_items.item_id is a hard FK — unlink before deleting
+		// the shared rows (same ordering as the store tests).
+		db.ExecContext(ctx, `DELETE FROM story_items WHERE item_id IN
+			(SELECT id FROM items WHERE catalog_id = $1)`, cs.ID)
+		db.ExecContext(ctx, `DELETE FROM sources WHERE catalog_id = $1`, cs.ID)
+		db.ExecContext(ctx, `DELETE FROM items WHERE catalog_id = $1`, cs.ID)
+		db.ExecContext(ctx, `DELETE FROM source_catalog WHERE id = $1`, cs.ID)
+	})
+	return cs
+}
+
 // TestPhaseACatalogScale guards the KLOX-45 bound: no matter how deep
 // the shared pool is, a run's candidate set is capped at 60 items per
 // catalog source within the 7-day window. Seeding ~5k shared items
@@ -126,14 +163,8 @@ func TestPhaseACatalogScale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SeedPublication: %v", err)
 	}
-	hn, err := pool.CatalogEntry(ctx, "hacker-news")
-	if err != nil {
-		t.Fatalf("CatalogEntry hacker-news: %v", err)
-	}
-	tb, err := pool.CatalogEntry(ctx, "tecnoblog")
-	if err != nil {
-		t.Fatalf("CatalogEntry tecnoblog: %v", err)
-	}
+	hn := testCatalogSource(t, db, pool, "scale-signals")
+	tb := testCatalogSource(t, db, pool, "scale-articles")
 	if _, err := db.AddCatalogSource(ctx, pubID, hn); err != nil {
 		t.Fatalf("AddCatalogSource hn: %v", err)
 	}
@@ -158,15 +189,6 @@ func TestPhaseACatalogScale(t *testing.T) {
 		FROM generate_series(1, 1500) g`, tb.ID); err != nil {
 		t.Fatalf("seed articles: %v", err)
 	}
-	t.Cleanup(func() {
-		// Links go first: story_items.item_id is a hard FK and the
-		// workspace cascade that removes it runs after this cleanup.
-		db.ExecContext(context.Background(),
-			`DELETE FROM story_items WHERE item_id IN
-				(SELECT id FROM items WHERE external_id LIKE 'sig-%' OR external_id LIKE 'tb-%')`)
-		db.ExecContext(context.Background(),
-			`DELETE FROM items WHERE external_id LIKE 'sig-%' OR external_id LIKE 'tb-%'`)
-	})
 
 	pub, err := db.GetPublication(ctx, "p")
 	if err != nil {
@@ -215,14 +237,8 @@ func TestPhaseASelectedCountsCreatedItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SeedPublication: %v", err)
 	}
-	hn, err := pool.CatalogEntry(ctx, "hacker-news")
-	if err != nil {
-		t.Fatalf("CatalogEntry hacker-news: %v", err)
-	}
-	tb, err := pool.CatalogEntry(ctx, "tecnoblog")
-	if err != nil {
-		t.Fatalf("CatalogEntry tecnoblog: %v", err)
-	}
+	hn := testCatalogSource(t, db, pool, "sel-signals")
+	tb := testCatalogSource(t, db, pool, "sel-articles")
 	if _, err := db.AddCatalogSource(ctx, pubID, hn); err != nil {
 		t.Fatalf("AddCatalogSource hn: %v", err)
 	}
@@ -242,13 +258,6 @@ func TestPhaseASelectedCountsCreatedItems(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save article: %v", err)
 	}
-	t.Cleanup(func() {
-		db.ExecContext(context.Background(),
-			`DELETE FROM story_items WHERE item_id IN
-				(SELECT id FROM items WHERE external_id IN ('sig1','art1'))`)
-		db.ExecContext(context.Background(),
-			`DELETE FROM items WHERE external_id IN ('sig1','art1')`)
-	})
 
 	pub, err := db.GetPublication(ctx, "p")
 	if err != nil {
@@ -302,14 +311,8 @@ func TestPhaseASignalOnlyLeadLeavesNoEmptySection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SeedPublication: %v", err)
 	}
-	hn, err := pool.CatalogEntry(ctx, "hacker-news")
-	if err != nil {
-		t.Fatalf("CatalogEntry hacker-news: %v", err)
-	}
-	tb, err := pool.CatalogEntry(ctx, "tecnoblog")
-	if err != nil {
-		t.Fatalf("CatalogEntry tecnoblog: %v", err)
-	}
+	hn := testCatalogSource(t, db, pool, "k60-signals")
+	tb := testCatalogSource(t, db, pool, "k60-articles")
 	if _, err := db.AddCatalogSource(ctx, pubID, hn); err != nil {
 		t.Fatalf("AddCatalogSource hn: %v", err)
 	}
@@ -332,13 +335,6 @@ func TestPhaseASignalOnlyLeadLeavesNoEmptySection(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save articles: %v", err)
 	}
-	t.Cleanup(func() {
-		db.ExecContext(context.Background(),
-			`DELETE FROM story_items WHERE item_id IN
-				(SELECT id FROM items WHERE external_id IN ('sig1','art1','art2'))`)
-		db.ExecContext(context.Background(),
-			`DELETE FROM items WHERE external_id IN ('sig1','art1','art2')`)
-	})
 
 	pub, err := db.GetPublication(ctx, "p")
 	if err != nil {
@@ -399,14 +395,8 @@ func TestPhaseAReslotsSectionWhenPickYieldsNoItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SeedPublication: %v", err)
 	}
-	hn, err := pool.CatalogEntry(ctx, "hacker-news")
-	if err != nil {
-		t.Fatalf("CatalogEntry hacker-news: %v", err)
-	}
-	tb, err := pool.CatalogEntry(ctx, "tecnoblog")
-	if err != nil {
-		t.Fatalf("CatalogEntry tecnoblog: %v", err)
-	}
+	hn := testCatalogSource(t, db, pool, "k60r-signals")
+	tb := testCatalogSource(t, db, pool, "k60r-articles")
 	if _, err := db.AddCatalogSource(ctx, pubID, hn); err != nil {
 		t.Fatalf("AddCatalogSource hn: %v", err)
 	}
@@ -430,13 +420,6 @@ func TestPhaseAReslotsSectionWhenPickYieldsNoItem(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save articles: %v", err)
 	}
-	t.Cleanup(func() {
-		db.ExecContext(context.Background(),
-			`DELETE FROM story_items WHERE item_id IN
-				(SELECT id FROM items WHERE external_id IN ('sig1','art1','art2'))`)
-		db.ExecContext(context.Background(),
-			`DELETE FROM items WHERE external_id IN ('sig1','art1','art2')`)
-	})
 
 	pub, err := db.GetPublication(ctx, "p")
 	if err != nil {
