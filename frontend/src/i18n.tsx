@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 // The interface ships in English and Brazilian Portuguese: it follows
 // the browser language and offers a switch. Publication content stays
@@ -142,7 +142,7 @@ const dict = {
       saved: "Saved",
       saving: "Saving…",
     },
-    coverage: { ok: "sentences sourced", fixNow: "Fix now" },
+    coverage: { ok: "sentences sourced", fixNow: "Fix now", empty: "no sentences yet" },
     evidence: {
       title: "Evidence",
       facts: "Facts",
@@ -424,6 +424,7 @@ const dict = {
     sourcesPage: {
       title: "Sources",
       subtitle: "Where the newsletter reads. Confirm to run the first collection.",
+      loading: "Loading sources…",
       added: "Your sources",
       offered: "Suggested sources",
       add: "Add",
@@ -590,7 +591,7 @@ const dict = {
       saved: "Salvo",
       saving: "Salvando…",
     },
-    coverage: { ok: "frases com fonte", fixNow: "Corrigir agora" },
+    coverage: { ok: "frases com fonte", fixNow: "Corrigir agora", empty: "ainda sem frases" },
     evidence: {
       title: "Evidência",
       facts: "Fatos",
@@ -872,6 +873,7 @@ const dict = {
     sourcesPage: {
       title: "Fontes",
       subtitle: "De onde a newsletter lê. Confirme para rodar a primeira coleta.",
+      loading: "Carregando fontes…",
       added: "Suas fontes",
       offered: "Fontes sugeridas",
       add: "Adicionar",
@@ -916,7 +918,47 @@ export function LangProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Lang>(() =>
     (navigator.language || "").toLowerCase().startsWith("pt") ? "pt" : "en",
   );
+  // <html lang> follows the interface language, not the static
+  // index.html attribute (KLOX-56).
+  useEffect(() => {
+    document.documentElement.lang = lang === "pt" ? "pt-BR" : "en";
+  }, [lang]);
   return <LangCtx.Provider value={{ lang, t: dict[lang] as T, setLang }}>{children}</LangCtx.Provider>;
+}
+
+// Canonical section titles of the sample publication — stored bodies
+// keep the English names for fixture compatibility; a pt interface
+// shows the pt names, the same swap reader output applies (KLOX-56).
+const SECTIONS_PT: Record<string, string> = {
+  "The big one": "O destaque",
+  "Worth knowing": "Vale saber",
+  "Quick links": "Links rápidos",
+};
+
+// sectionTitle is display-only: refs, attrs and API values stay
+// canonical so readiness targets and e2e selectors keep working.
+export function sectionTitle(lang: Lang, title: string): string {
+  return lang === "pt" ? (SECTIONS_PT[title] ?? title) : title;
+}
+
+// Stored flag notes are canonical English; the pt interface shows the
+// pt wording for the deterministic checker's notes (KLOX-56). Notes a
+// model wrote pass through — free text is never re-translated.
+const FLAG_NOTES_PT: [RegExp, string][] = [
+  [/^sentence has no citation$/, "frase sem fonte"],
+  [/^entry has no citations$/, "bloco sem fontes"],
+  [/^too close to the source$/, "muito próxima da fonte"],
+  [/^cites source \[(\d+)\] that does not exist$/, "cita a fonte [$1], que não existe"],
+  [/^not supported by \[(\d+)\]$/, "sem suporte de [$1]"],
+];
+
+export function flagNote(lang: Lang, note: string): string {
+  if (lang !== "pt") return note;
+  for (const [re, pt] of FLAG_NOTES_PT) {
+    const m = note.match(re);
+    if (m) return pt.replace(/\$(\d)/g, (_x, d) => m[Number(d)]);
+  }
+  return note;
 }
 
 export function useT() {

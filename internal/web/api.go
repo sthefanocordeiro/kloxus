@@ -170,12 +170,31 @@ func (s *Server) localizeReaderMD(md string, pub *store.Publication) string {
 		}
 	}
 	if strings.HasPrefix(strings.ToLower(pub.Language), "pt") {
+		// the sample publication's own sections carry canonical English
+		// titles for fixture compatibility — a pt reader sees pt names
+		// (KLOX-56). gating already ran on the canonical headings.
+		if !pub.Custom {
+			for _, swap := range canonicalSectionPT {
+				md = regexp.MustCompile(`(?m)^##\s+`+regexp.QuoteMeta(swap[0])+`$`).
+					ReplaceAllString(md, "## "+swap[1])
+			}
+		}
+		md = strings.ReplaceAll(md, " — issue ", " — edição ")
 		md = strings.ReplaceAll(md, "**Sources:**", "**Fontes:**")
 		md = strings.ReplaceAll(md,
 			"_Prepared with AI assistance and reviewed by the editor._",
 			"_Preparado com auxílio de IA e revisado pelo editor._")
 	}
 	return md
+}
+
+// canonicalSectionPT maps the sample publication's canonical English
+// section titles to the pt names readers see — the same names the app
+// interface shows (KLOX-56). Stored bodies keep the canonical titles.
+var canonicalSectionPT = [][2]string{
+	{"The big one", "O destaque"},
+	{"Worth knowing", "Vale saber"},
+	{"Quick links", "Links rápidos"},
 }
 
 func (s *Server) apiIssueID(r *http.Request) (*store.Issue, error) {
@@ -3003,7 +3022,8 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
+	rawPub, loadErr := db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))
+	pub, err := s.canonicalPub(rawPub, loadErr)
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -3013,8 +3033,16 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
 		return
 	}
-	md := delivery.ReaderBody(iss, pub, s.publicBase(r))
-	switch r.URL.Query().Get("fmt") {
+	aiUsed, _ := db(r).IssueUsedAI(r.Context(), iss.ID)
+	md := delivery.ReaderBody(iss, pub, s.publicBase(r), aiUsed)
+	md = s.localizeReaderMD(md, rawPub)
+	// both spellings ship the same file — ?format= is the spelling the
+	// audit reached for; ?fmt= is the documented one (KLOX-56).
+	f := r.URL.Query().Get("fmt")
+	if f == "" {
+		f = r.URL.Query().Get("format")
+	}
+	switch f {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=issue-%d.html", iss.Number))
@@ -3055,7 +3083,8 @@ func (s *Server) apiPreview(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "surface must be email | web | phone")
 		return
 	}
-	md := delivery.ReaderBody(iss, pub, s.publicBase(r))
+	aiUsed, _ := db(r).IssueUsedAI(r.Context(), iss.ID)
+	md := delivery.ReaderBody(iss, pub, s.publicBase(r), aiUsed)
 	gated := false
 	if reader == "non-subscriber" {
 		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
@@ -3258,7 +3287,8 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	forceFree := r.URL.Query().Get("view") == "free"
 	unlocked := active && !forceFree
-	md := delivery.ReaderBody(iss, pub, s.publicBase(r))
+	aiUsed, _ := db(r).IssueUsedAI(ctx, iss.ID)
+	md := delivery.ReaderBody(iss, pub, s.publicBase(r), aiUsed)
 	if !unlocked {
 		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
 	}

@@ -49,6 +49,10 @@ export function SourcesPage() {
   const addedURLs = new Set((sources.data ?? []).map((s) => s.url));
   const offered = (catalog.data?.offered ?? []).filter((o) => !addedURLs.has(o.url));
   const count = (sources.data?.length ?? 0) + offered.filter((o) => checked(o.url)).length;
+  // while the catalog is in flight the lists are unknown — render a
+  // loading line instead of flashing an empty state + "no sources"
+  // hint that the arriving data contradicts a moment later (KLOX-56)
+  const loading = sources.isLoading || catalog.isLoading;
   const confirm = useMutation({
     mutationFn: async () => {
       await api.sourceConfirm(id!, offered.filter((o) => checked(o.url)).map((o) => o.url));
@@ -77,7 +81,9 @@ export function SourcesPage() {
       </h1>
       <p className="mt-1 text-sm text-muted">{t.sourcesPage.subtitle}</p>
 
-      {(sources.data?.length ?? 0) > 0 && (
+      {loading && <p className="mt-6 text-sm text-muted">{t.sourcesPage.loading}</p>}
+
+      {!loading && (sources.data?.length ?? 0) > 0 && (
         <>
           <h2 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.added}</h2>
           <div className="mt-2 grid gap-2">
@@ -107,7 +113,7 @@ export function SourcesPage() {
         </>
       )}
 
-      {offered.length > 0 && (
+      {!loading && offered.length > 0 && (
         <>
           <h2 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.offered}</h2>
           <div className="mt-2 grid gap-2">
@@ -118,6 +124,7 @@ export function SourcesPage() {
                     <input
                       type="checkbox"
                       className="h-4 w-4 accent-teal"
+                      aria-label={o.name || o.url}
                       checked={checked(o.url)}
                       onChange={(e) => setSel((s) => ({ ...s, [o.url]: e.target.checked }))}
                     />
@@ -217,7 +224,7 @@ export function SourcesPage() {
         >
           {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(count)}
         </Button>
-        {count === 0 && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
+        {count === 0 && !loading && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
       </div>
       {confirm.error && <p className="mt-2 text-xs text-danger">{errText(t, confirm.error)}</p>}
     </div>

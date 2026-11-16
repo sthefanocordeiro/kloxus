@@ -32,8 +32,8 @@ func TestScoreStoriesStableOrder(t *testing.T) {
 		detStory(1, "new multi", "2025-01-03", 3),
 		detStory(2, "new single", "2025-01-03", 1),
 	}
-	s1, _ := scoreStories(stories)
-	s2, _ := scoreStories(stories)
+	s1, _ := scoreStories(stories, "")
+	s2, _ := scoreStories(stories, "")
 	o1 := storyOrder(stories, s1)
 	o2 := storyOrder(stories, s2)
 	for i := range o1 {
@@ -66,7 +66,7 @@ func TestNonEditorialDemotion(t *testing.T) {
 	// member item (the feed headline carries the flag too)
 	stories[0].Title = "Cobertura completa da rodada"
 	stories[0].Items[0].Title = "Onde assistir aos jogos da rodada"
-	scores, reasons := scoreStories(stories)
+	scores, reasons := scoreStories(stories, "")
 	for i := 0; i < 4; i++ {
 		if scores[i] >= scores[4] {
 			t.Fatalf("non-editorial story %d scored %.1f ≥ real story %.1f", i, scores[i], scores[4])
@@ -101,7 +101,7 @@ func TestPickLineupSkipsSignalOnlyStory(t *testing.T) {
 		detStory(3, "second article", "2025-01-03", 1),
 		detStory(4, "third article", "2025-01-02", 1),
 	}
-	scores, reasons := scoreStories(stories)
+	scores, reasons := scoreStories(stories, "")
 	picks := pickLineup(stories, scores, reasons, []config.Section{
 		{Title: "The big one", Items: 1},
 		{Title: "Worth knowing", Items: 1},
@@ -117,6 +117,26 @@ func TestPickLineupSkipsSignalOnlyStory(t *testing.T) {
 	}
 	if picks[0].Section != "The big one" || picks[0].Refs[0] != 2 {
 		t.Fatalf("lead pick = %+v, want story 2 (best draftable) in The big one", picks[0])
+	}
+}
+
+// TestScoreStoriesPTReasons: the deterministic rank reason is
+// reader-facing — a pt-BR publication reads pt strings, English stays
+// the default (KLOX-56).
+func TestScoreStoriesPTReasons(t *testing.T) {
+	stories := []store.Story{
+		detStory(1, "Pauta sem data", "", 2),
+	}
+	_, en := scoreStories(stories, "")
+	if !strings.Contains(en[0], "deterministic rank") || !strings.Contains(en[0], "undated") {
+		t.Fatalf("en reason = %q", en[0])
+	}
+	_, pt := scoreStories(stories, "pt-BR")
+	if !strings.Contains(pt[0], "ranqueamento determinístico") || !strings.Contains(pt[0], "sem data") {
+		t.Fatalf("pt reason = %q", pt[0])
+	}
+	if strings.Contains(pt[0], "deterministic rank") {
+		t.Fatalf("pt reason leaked English: %q", pt[0])
 	}
 }
 
@@ -153,7 +173,7 @@ func TestPickLineupSectionCapsAndOutletCap(t *testing.T) {
 		mk(3, "2025-01-03", "a.example"),
 		mk(4, "2025-01-02", "b.example"),
 	}
-	scores, reasons := scoreStories(stories)
+	scores, reasons := scoreStories(stories, "")
 	picks := pickLineup(stories, scores, reasons, sections)
 	if len(picks) != 3 {
 		t.Fatalf("picks = %d, want 3 (capacity 1+2)", len(picks))

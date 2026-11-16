@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -304,5 +305,69 @@ func TestParseUncitedFactFlag(t *testing.T) {
 	if doc.Coverage.Flagged != 0 || len(doc.Sections[0].Items[0].Flags) != 0 {
 		t.Fatalf("stale flags counted: flagged=%d item.flags=%d",
 			doc.Coverage.Flagged, len(doc.Sections[0].Items[0].Flags))
+	}
+}
+
+// TestLocalizeReaderMD: a pt-BR reader never sees canonical English
+// chrome — section headings, "issue N" and the AI disclosure swap to
+// pt, while an English publication passes through unchanged (KLOX-56).
+func TestLocalizeReaderMD(t *testing.T) {
+	s := &Server{d: Deps{Cfg: &config.Config{Mode: "demo"}}}
+	md := "# Futuro Próximo — issue 3\n\n## The big one\n\nFact. [1]\n\n## Worth knowing\n\nMore. [2]\n\n**Sources:** [1] A.\n\n_Prepared with AI assistance and reviewed by the editor._"
+
+	pt := s.localizeReaderMD(md, &store.Publication{Language: "pt-BR"})
+	for _, want := range []string{
+		"## O destaque", "## Vale saber", " — edição 3", "**Fontes:**",
+		"_Preparado com auxílio de IA e revisado pelo editor._",
+	} {
+		if !strings.Contains(pt, want) {
+			t.Fatalf("pt body missing %q:\n%s", want, pt)
+		}
+	}
+	if strings.Contains(pt, "The big one") || strings.Contains(pt, "AI assistance") {
+		t.Fatalf("pt body leaked English:\n%s", pt)
+	}
+	// untouched mid-word headings stay: the swap is full-line only
+	if strings.Contains(pt, "Quick links") {
+		// present in input? no — but ensure no partial mangling happened
+		t.Fatalf("unexpected partial heading:\n%s", pt)
+	}
+
+	en := s.localizeReaderMD(md, &store.Publication{Language: "en"})
+	if en != md {
+		t.Fatalf("en body mangled:\n%s", en)
+	}
+}
+
+// TestRobotsAndSecurityHeaders: /robots.txt answers without minting a
+// workspace cookie, and baseline security headers ride every response
+// (KLOX-56).
+func TestRobotsAndSecurityHeaders(t *testing.T) {
+	srv := New(Deps{Cfg: &config.Config{Mode: "demo"}})
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/robots.txt", nil))
+	if rr.Code != 200 {
+		t.Fatalf("robots = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"Disallow: /api/", "Disallow: /outbox/", "Disallow: /a/"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("robots missing %q:\n%s", want, body)
+		}
+	}
+	if c := rr.Header().Get("Set-Cookie"); c != "" {
+		t.Fatalf("robots minted a workspace cookie: %q", c)
+	}
+	for k, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "SAMEORIGIN",
+		"Referrer-Policy":        "strict-origin-when-cross-origin",
+	} {
+		if got := rr.Header().Get(k); got != want {
+			t.Fatalf("%s = %q, want %q", k, got, want)
+		}
+	}
+	if csp := rr.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
+		t.Fatalf("CSP missing: %q", csp)
 	}
 }

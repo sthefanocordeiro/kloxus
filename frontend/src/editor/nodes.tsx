@@ -3,7 +3,7 @@ import { mergeAttributes, Node } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { createContext, useContext } from "react";
 import { AlertTriangle, PenLine, Quote, Trash2 } from "lucide-react";
-import { useT } from "../i18n";
+import { flagNote, sectionTitle, useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { Button } from "../ui";
 // What the sentence/commentary node views can ask the issue page to do.
@@ -70,7 +70,7 @@ interface Src {
 // treatment with its three actions — Edit / Mark as interpretation /
 // Remove, no "dismiss".
 function SentenceView({ node }: NodeViewProps) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const actions = useContext(DocActionsCtx);
   const a = node.attrs as {
     sid: string;
@@ -175,7 +175,7 @@ function SentenceView({ node }: NodeViewProps) {
         <div className="mt-1 flex flex-wrap items-center gap-2" contentEditable={false}>
           <span className="inline-flex items-center gap-1 text-xs text-warn">
             <AlertTriangle size={13} />
-            {a.flag}
+            {flagNote(lang, a.flag)}
           </span>
           <span className="flex-1" />
           <Button size="sm" variant="outline" disabled={busy}
@@ -328,6 +328,7 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
 // SectionHeadingView — the section title atom; clicking it only defocuses
 // the editor, it is never a text target.
 function SectionHeadingView({ node, editor }: NodeViewProps) {
+  const { lang } = useT();
   const a = node.attrs as { title: string };
   return (
     <NodeViewWrapper
@@ -335,7 +336,7 @@ function SectionHeadingView({ node, editor }: NodeViewProps) {
       onClick={() => blurEditor(editor)}
       data-section-title="1"
     >
-      <h2 className="mb-1 mt-8 font-doc text-xl font-semibold">{a.title}</h2>
+      <h2 className="mb-1 mt-8 font-doc text-xl font-semibold">{sectionTitle(lang, a.title)}</h2>
     </NodeViewWrapper>
   );
 }

@@ -502,6 +502,18 @@ async function sendToReaders(page: Page) {
   // the after-sending surface replaces the editor chrome
   await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible({ timeout: 15000 });
   await expect(page.getByText(/guide learned|guide/i).first()).toBeVisible();
+
+  // exports ship under both spellings — ?fmt= is the documented one,
+  // ?format= is what the audit reached for (KLOX-56)
+  const htmlHref = await page.getByRole("link", { name: "HTML", exact: true }).getAttribute("href");
+  if (htmlHref) {
+    for (const href of [htmlHref, htmlHref.replace("fmt=html", "format=html")]) {
+      const resp = await page.request.get(href);
+      expect(resp.status(), `export ${href}`).toBe(200);
+      expect(resp.headers()["content-type"]).toContain("text/html");
+      expect(await resp.text()).toContain("<h1>");
+    }
+  }
 }
 
 async function readerJourney(page: Page) {

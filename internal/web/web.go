@@ -70,6 +70,7 @@ func New(d Deps) *Server {
 	s := &Server{d: d, mux: http.NewServeMux()}
 	m := s.mux
 	m.HandleFunc("GET /healthz", s.healthz)
+	m.HandleFunc("GET /robots.txt", s.robots)
 	m.HandleFunc("GET /sample/a", s.sampleArticle)
 	m.HandleFunc("GET /sample/a/", s.sampleArticle) // tolerate a stray trailing slash
 	m.HandleFunc("GET /a/{id}", s.articlePage)
@@ -183,6 +184,16 @@ const dispatchTimeout = 10 * time.Minute
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rid := newReqID()
 	w.Header().Set("X-Request-Id", rid)
+	// baseline hardening on every response (KLOX-56): no sniffing, no
+	// foreign framing, trimmed referrers, and a self-scoped CSP. The
+	// frame-src covers the outbox preview's sandboxed srcdoc iframe.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+			"img-src 'self' data:; connect-src 'self'; frame-src 'self' about:; "+
+			"frame-ancestors 'self'; base-uri 'self'; form-action 'self'")
 	r = r.WithContext(context.WithValue(r.Context(), ctxReqID, rid))
 
 	if !isEventStream(r) {
@@ -191,7 +202,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(ctx)
 	}
 
-	if r.URL.Path == "/healthz" ||
+	if r.URL.Path == "/healthz" || r.URL.Path == "/robots.txt" ||
 		r.URL.Path == "/api/v1/sample" || strings.HasPrefix(r.URL.Path, "/sample/a") {
 		s.mux.ServeHTTP(w, r)
 		return
@@ -277,6 +288,13 @@ func requestBase(r *http.Request) string {
 		}
 	}
 	return proto + "://" + r.Host
+}
+
+// robots.txt keeps crawlers off the API and outbox internals while
+// leaving the app and public issue pages indexable (KLOX-56).
+func (s *Server) robots(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte("User-agent: *\nDisallow: /api/\nDisallow: /outbox/\nDisallow: /a/\n"))
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

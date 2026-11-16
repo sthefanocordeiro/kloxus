@@ -120,9 +120,18 @@ func storyNewest(s *store.Story) (time.Time, bool) {
 	return newest, ok
 }
 
+// ptLang reports whether the publication speaks Portuguese — reader-
+// facing deterministic strings localize on it (KLOX-56).
+func ptLang(lang string) bool {
+	return strings.HasPrefix(strings.ToLower(lang), "pt")
+}
+
 // scoreStories is the deterministic replacement for the triage model:
 // (score 0–10, reason) per story, stable for identical input.
-func scoreStories(stories []store.Story) (scores []float64, reasons []string) {
+// scoreStories ranks deterministically. The reason strings are
+// reader-facing — they speak the publication's language (KLOX-56).
+func scoreStories(stories []store.Story, lang string) (scores []float64, reasons []string) {
+	pt := ptLang(lang)
 	scores = make([]float64, len(stories))
 	reasons = make([]string, len(stories))
 	var lo, hi time.Time
@@ -150,13 +159,24 @@ func scoreStories(stories []store.Story) (scores []float64, reasons []string) {
 		}
 		scores[i] = recency + div
 		date := "undated"
+		if pt {
+			date = "sem data"
+		}
 		if t, ok := storyNewest(&stories[i]); ok {
 			date = t.Format("2006-01-02")
 		}
-		reasons[i] = fmt.Sprintf("deterministic rank: %s, %d source(s)", date, len(stories[i].Outlets()))
+		if pt {
+			reasons[i] = fmt.Sprintf("ranqueamento determinístico: %s, %d fonte(s)", date, len(stories[i].Outlets()))
+		} else {
+			reasons[i] = fmt.Sprintf("deterministic rank: %s, %d source(s)", date, len(stories[i].Outlets()))
+		}
 		if nonEditorial(&stories[i]) {
 			scores[i] -= nonEditorialPenalty
-			reasons[i] += "; non-editorial (demoted)"
+			if pt {
+				reasons[i] += "; não editorial (rebaixado)"
+			} else {
+				reasons[i] += "; non-editorial (demoted)"
+			}
 		}
 	}
 	return scores, reasons

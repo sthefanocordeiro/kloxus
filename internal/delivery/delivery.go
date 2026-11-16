@@ -64,34 +64,47 @@ func EML(e *store.OutboxEmail) string {
 	}
 	subject := mime.QEncoding.Encode("utf-8", e.Subject)
 	return fmt.Sprintf(
-		"From: Kloxus Demo <demo@kloxus.example>\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
+		"From: Kloxus Demo <demo@trendfi.com.br>\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
 		e.To, subject, when.Format("Mon, 02 Jan 2006 15:04:05 +0000"), e.BodyHTML)
 }
 
 // aiDisclosure returns the disclosure line for approved output, or "".
+// The line speaks the publication's own language (KLOX-56).
 func aiDisclosure(pub *store.Publication) string {
+	pt := strings.HasPrefix(strings.ToLower(pub.Language), "pt")
 	switch pub.AIDisclosure {
 	case "short":
+		if pt {
+			return "_Preparado com auxílio de IA e revisado pelo editor._"
+		}
 		return "_Prepared with AI assistance and reviewed by the editor._"
 	case "detailed":
+		if pt {
+			return "_Esta edição foi preparada por um assistente editorial de IA a partir das fontes listadas abaixo; cada fato remete à sua fonte. Todo comentário e a revisão final são do editor._"
+		}
 		return "_This issue was prepared by an AI editorial assistant from the sources listed below; every fact links to its source. All commentary and final review are the editor's._"
 	}
 	return ""
 }
 
 var (
-	itemMarkerRe = regexp.MustCompile(`\s*<!--\s*item \d+\s*-->`)
-	relLinkRe    = regexp.MustCompile(`\]\((/a/\d+)\)`)
-	sectionRe    = regexp.MustCompile(`^## (.+)$`)
+	itemMarkerRe  = regexp.MustCompile(`\s*<!--\s*item \d+\s*-->`)
+	relLinkRe     = regexp.MustCompile(`\]\((/a/\d+)\)`)
+	sectionRe     = regexp.MustCompile(`^## (.+)$`)
+	blankRunRe    = regexp.MustCompile(`\n{3,}`)
+	trailSpacesRe = regexp.MustCompile(`[ \t]+\n`)
 )
 
 // ReaderBody renders the reader-facing markdown for an issue:
-//   - the AI disclosure is prepended only once the issue is approved/sent;
+//   - the AI disclosure is prepended once the issue is approved/sent —
+//     and only when a model actually ran for it (KLOX-56);
 //   - the editor's commentary is appended at the end of its section,
 //     clearly attributed;
 //   - internal item markers are stripped;
+//   - collapsed runs of blank lines and a full stop on the Sources
+//     line keep the export clean;
 //   - relative /a/<id> source links become absolute when base is given.
-func ReaderBody(iss *store.Issue, pub *store.Publication, base string) string {
+func ReaderBody(iss *store.Issue, pub *store.Publication, base string, aiUsed bool) string {
 	lines := strings.Split(iss.BodyMD, "\n")
 	var out []string
 	inFirstSection := false
@@ -112,11 +125,22 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string) string {
 			inFirstSection = true
 			current = m[1]
 		}
-		out = append(out, itemMarkerRe.ReplaceAllString(line, ""))
+		line = itemMarkerRe.ReplaceAllString(line, "")
+		// the sources footer is a sentence — it earns its full stop
+		// like every other line in the export (KLOX-56).
+		if strings.HasPrefix(strings.TrimSpace(line), "**Sources:**") &&
+			!strings.HasSuffix(strings.TrimSpace(line), ".") {
+			line = strings.TrimRight(line, " \t") + "."
+		}
+		out = append(out, line)
 	}
 	flush(current)
 	body := strings.Join(out, "\n")
-	if iss.Status == "approved" || iss.Status == "sent" {
+	// empty item bodies and marker strips can leave blank runs —
+	// collapse them so exports show no stray empty lines (KLOX-56).
+	body = trailSpacesRe.ReplaceAllString(body, "\n")
+	body = blankRunRe.ReplaceAllString(body, "\n\n")
+	if (iss.Status == "approved" || iss.Status == "sent") && aiUsed {
 		if d := aiDisclosure(pub); d != "" {
 			if i := strings.Index(body, "\n"); i >= 0 {
 				body = body[:i+1] + "\n" + d + "\n" + body[i+1:]
