@@ -84,20 +84,25 @@ describe("pt locale ≠ en locale (KLOX-64)", () => {
     // has no boundary after it, so \b-based patterns miss the exact
     // words §2 bans. Patterns ending in a possible accent close with a
     // (?![\wÀ-ÿ]) lookahead instead, and every inflection is covered
-    // (reivindique, sinais, escalações, evidências).
+    // (reivindique, sinais, escalações, evidências). Plurals of -al
+    // words swap l→is (sinal → sinais), so sina(?:l|is) matches both —
+    // no trailing boundary, so sinalização/sinaleiro are caught too.
+    // ranque covers the whole ranquear family (ranqueada, ranqueamento,
+    // ranqueia); simula covers simulação/simular/simulado — "simule"
+    // (rare subjunctive) is scoped out; "simultâneo" must not match.
     const banned = [
       /\bespaços?\b/i,
       /dossi[eê]s?(?![\wÀ-ÿ])/i,
       /evid[êe]ncias?(?![\wÀ-ÿ])/i,
       /\breivindic|\breivindiqu/i,
       /escala[çc](?:[ãa]o|[õo]es)(?![\wÀ-ÿ])/i,
-      /\bsinal/i,
+      /\bsina(?:l|is)/i,
       /fonte\(s\)/i,
       /\bdetermin[íi]st/i,
-      /\branquead/i,
+      /\branque/i,
       /\bworkspace\b/i,
       /\bdemo\b/i,
-      /\bsimulad/i,
+      /\bsimula/i,
       /\bpipeline\b/i,
       /\bissues?\b/i,
     ];
@@ -124,15 +129,17 @@ describe("pt locale ≠ en locale (KLOX-64)", () => {
       /\bdemo session\b/i,
       /source\(s\)/i,
       // pt glossary words leaking into the en dictionary — same
-      // accent-aware boundaries as the pt scan above
+      // accent-aware boundaries as the pt scan above; -ão nouns also
+      // match the -ões plural (edições, seções)
       /\bpautas?\b/i,
-      /edi[çc][ãa]o(?![\wÀ-ÿ])/i,
+      /edi[çc](?:[ãa]o|[õo]es)(?![\wÀ-ÿ])/i,
       /ve[íi]culos?(?![\wÀ-ÿ])/i,
       /\bfontes?\b/i,
       /\bassinantes?\b/i,
-      /se[çc][ãa]o(?![\wÀ-ÿ])/i,
+      /se[çc](?:[ãa]o|[õo]es)(?![\wÀ-ÿ])/i,
       /dossi[eê]s?(?![\wÀ-ÿ])/i,
       /\breivindic|\breivindiqu/i,
+      /\bsina(?:l|is)/i,
     ];
     const hits: string[] = [];
     for (const { path, value } of leaves(en)) {
