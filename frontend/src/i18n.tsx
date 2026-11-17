@@ -809,11 +809,11 @@ export const dict = {
       ],
       closingTitle: "Sua próxima edição começa aqui.",
       footerProduct: "Produto",
-      footerLegal: "Legal",
+      footerLegal: "Jurídico",
       footerTerms: "Termos",
       footerPrivacy: "Privacidade",
       footerContact: "Contato",
-      menu: "Menu",
+      menu: "Menu de navegação",
       sourcesStrip: "Lê fontes reais como",
       mock: {
         docTitle: "O destaque",
