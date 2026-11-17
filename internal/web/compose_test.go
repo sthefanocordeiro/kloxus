@@ -63,6 +63,22 @@ func docItems(doc map[string]any) []map[string]any {
 	return out
 }
 
+// writableItems is docItems minus links-format sections — the link is
+// the source there, so the written-text checks skip them (KLOX-65).
+func writableItems(doc map[string]any) []map[string]any {
+	var out []map[string]any
+	for _, s := range doc["sections"].([]any) {
+		sv := s.(map[string]any)
+		if sv["format"] == "links" {
+			continue
+		}
+		for _, i := range sv["items"].([]any) {
+			out = append(out, i.(map[string]any))
+		}
+	}
+	return out
+}
+
 func readinessCheck(rd map[string]any, code string) map[string]any {
 	for _, c := range rd["checks"].([]any) {
 		cm := c.(map[string]any)
@@ -221,14 +237,16 @@ func TestManualComposeJourney(t *testing.T) {
 	if iss.Status != "drafted" {
 		t.Fatalf("status after compose = %q, want drafted", iss.Status)
 	}
-	// readiness blocks on empty items
+	// readiness blocks on empty items — links-format sections are
+	// exempt (the link is the source), so the check counts the
+	// writable items only (KLOX-65)
 	rd := apiGet(t, srv, issueURL+"/readiness")
 	c := readinessCheck(rd, "empty_items")
 	if c == nil {
 		t.Fatal("readiness has no empty_items check")
 	}
-	if c["ok"].(bool) || c["count"].(float64) != float64(len(items)) {
-		t.Fatalf("empty_items check = %v, want %d empty", c, len(items))
+	if want := len(writableItems(doc)); c["ok"].(bool) || c["count"].(float64) != float64(want) {
+		t.Fatalf("empty_items check = %v, want %d empty", c, want)
 	}
 	if rd["ready"].(bool) {
 		t.Fatal("issue with all-empty items must not be ready")
@@ -295,15 +313,16 @@ func TestManualComposeJourney(t *testing.T) {
 	}
 	version = apiJSON(t, rr)["version"].(string)
 
-	// write every item: a cited multi-sentence block lands one sentence
-	// per line, each carrying the markers; an interpretation needs no
-	// citation. The text is built from the item's own source excerpt so
-	// the citation floor verifies it (KLOX-51). The second sentence must
-	// open with a capital — SplitSentences only accepts a ". " boundary
-	// before a rune that can start a sentence, so a lowercase continuation
-	// would fold both into one line.
+	// write every writable item: a cited multi-sentence block lands one
+	// sentence per line, each carrying the markers; an interpretation
+	// needs no citation. Links-format items stay empty — the link is
+	// the source there (KLOX-65). The text is built from the item's own
+	// source excerpt so the citation floor verifies it (KLOX-51). The
+	// second sentence must open with a capital — SplitSentences only
+	// accepts a ". " boundary before a rune that can start a sentence,
+	// so a lowercase continuation would fold both into one line.
 	var firstWritten string
-	for i, it := range items {
+	for i, it := range writableItems(doc) {
 		ref := int(it["ref"].(float64))
 		excerpt, cite := citedExcerpt(t, it)
 		text := supportedSentence(excerpt)
@@ -325,7 +344,7 @@ func TestManualComposeJourney(t *testing.T) {
 		}
 	}
 	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
-	for _, it := range docItems(doc) {
+	for _, it := range writableItems(doc) {
 		sents := it["sentences"].([]any)
 		if len(sents) < 2 {
 			t.Fatalf("item %d has %d sentences, want >= 2", it["ref"], len(sents))

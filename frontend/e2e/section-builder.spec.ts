@@ -42,9 +42,10 @@ test("section builder onboarding, Seções screen and Configurações delete", a
   // Seções: the same builder edits the saved list; the new section is there
   await page.getByRole("link", { name: "Sections", exact: true }).first().click();
   await page.waitForURL(new RegExp(`/publications/${pubId}/sections`));
-  await expect(page.getByDisplayValue("Quick links")).toBeVisible();
+  const added = page.getByPlaceholder("Section name").last();
+  await expect(added).toHaveValue("Quick links");
   // renaming keeps the edition structure intact — save persists
-  await page.getByDisplayValue("Quick links").fill("Links I liked");
+  await added.fill("Links I liked");
   await page.getByRole("button", { name: "Save sections", exact: true }).click();
   await expect(
     page.getByText(/Sections saved — they apply to the next edition/),

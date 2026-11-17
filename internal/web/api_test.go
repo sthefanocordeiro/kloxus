@@ -1180,3 +1180,40 @@ func TestAPIOnboarding(t *testing.T) {
 		t.Errorf("readers email leaked the paid section: %.200s", md)
 	}
 }
+
+// TestAPIPublicationUpdatePartial locks the PUT contract the Seções
+// screen relies on: a body that carries only the section list must not
+// require — or wipe — the identity blocks (KLOX-65).
+func TestAPIPublicationUpdatePartial(t *testing.T) {
+	srv, _, pub, _ := demoServer(t)
+	base := "/api/v1/publications/" + fmt.Sprint(pub.ID)
+	before := apiGet(t, srv, base)["publication"].(map[string]any)
+
+	// the builder's save sends sections only — it succeeds and every
+	// field it did not send keeps the stored value
+	rr := apiCall(t, srv, "PUT", base, map[string]any{"sections": before["sections"]})
+	if rr.Code != 200 {
+		t.Fatalf("sections-only PUT = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	got := apiJSON(t, rr)["publication"].(map[string]any)
+	for _, k := range []string{"name", "topic", "audience", "editorial_line", "tone", "frequency", "ai_disclosure"} {
+		if got[k] != before[k] {
+			t.Errorf("sections-only PUT changed %q: %v -> %v", k, before[k], got[k])
+		}
+	}
+
+	// a rename keeps the stored section list
+	rr = apiCall(t, srv, "PUT", base, map[string]any{"name": "Futuro Renomeado"})
+	if rr.Code != 200 {
+		t.Fatalf("rename PUT = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	got = apiJSON(t, rr)["publication"].(map[string]any)
+	if got["name"] != "Futuro Renomeado" {
+		t.Fatalf("rename did not land: %v", got["name"])
+	}
+	bSecs, _ := before["sections"].([]any)
+	gSecs, _ := got["sections"].([]any)
+	if len(gSecs) != len(bSecs) {
+		t.Fatalf("rename PUT changed the section list: %d -> %d", len(bSecs), len(gSecs))
+	}
+}

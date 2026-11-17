@@ -1064,6 +1064,24 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 		Sections:     config.NormalizeSections(pub.Sections, pub.Paywall.PaidSections),
 		Paywall:      pub.Paywall,
 	}
+	// every block the request leaves out keeps the stored value — the
+	// builder's sections-only save must not wipe the identity fields
+	// (KLOX-65)
+	if def.Name == "" {
+		def.Name = pub.Name
+	}
+	if def.Topic == "" {
+		def.Topic = pub.Topic
+	}
+	if def.Audience == "" {
+		def.Audience = pub.Audience
+	}
+	if def.EditorialLine == "" {
+		def.EditorialLine = pub.EditorialLine
+	}
+	if def.Tone == "" {
+		def.Tone = pub.Tone
+	}
 	if def.Frequency == "" {
 		def.Frequency = pub.Frequency
 	}
