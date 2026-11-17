@@ -299,7 +299,7 @@ func publicationView(p *store.Publication) apiPublication {
 		// the stored line stays canonical for fixture-stable prompts —
 		// the response localizes the one English sentence (KLOX-56)
 		EditorialLine: localizeEditorialLine(p.EditorialLine, p.Language),
-		Tone: p.Tone, Frequency: p.Frequency, AIDisclosure: p.AIDisclosure,
+		Tone:          p.Tone, Frequency: p.Frequency, AIDisclosure: p.AIDisclosure,
 		Paywall: apiPaywall{
 			Enabled: p.Paywall.Enabled, PaidSections: p.Paywall.PaidSections,
 			Price: p.Paywall.Price,
@@ -1036,7 +1036,10 @@ func validateSections(in []config.Section) ([]config.Section, []apiReason) {
 // block. The change lands on the next edition: issues already in
 // progress keep the sections they were built with (KLOX-65).
 func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
-	pub, err := s.apiPub(r)
+	// the write path reads the stored row — canonicalPub swaps a custom
+	// publication's prompt fields for the demo sample, and persisting
+	// those fallbacks would silently overwrite the creator's edits
+	pub, err := db(r).GetPublication(r.Context(), r.PathValue("id"))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}

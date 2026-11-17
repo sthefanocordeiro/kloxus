@@ -1216,4 +1216,76 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 	if len(gSecs) != len(bSecs) {
 		t.Fatalf("rename PUT changed the section list: %d -> %d", len(bSecs), len(gSecs))
 	}
+
+	// --- custom publication: canonicalPub swaps a custom pub's
+	// prompt-bearing fields for the demo sample on reads, so a partial
+	// PUT built on the substituted values would persist the sample's
+	// text over the creator's (KLOX-65 D4) ---
+	create := map[string]any{
+		"name":           "Corner Bulletin",
+		"topic":          "street food and corner shops",
+		"audience":       "neighbours within walking distance",
+		"editorial_line": "Only verified neighbourhood stories.",
+		"tone":           "Friendly neighbour",
+		"language":       "en",
+		"frequency":      "daily",
+		"ai_disclosure":  "detailed",
+		"sections": []map[string]any{
+			{"title": "Main dish", "format": "featured", "items": 1, "commentary": "required", "access": "all"},
+			{"title": "Around the block", "format": "news", "items": 3, "commentary": "optional", "access": "subscribers"},
+		},
+		"paywall": map[string]any{"enabled": true, "price": "V$ 5/month"},
+	}
+	rr = apiCall(t, srv, "POST", "/api/v1/publications", create)
+	if rr.Code != 201 {
+		t.Fatalf("create custom publication = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	custom, _ := apiJSON(t, rr)["publication"].(map[string]any)
+	if custom["custom"] != true {
+		t.Fatal("POSTed publication is not flagged custom")
+	}
+	cBase := "/api/v1/publications/" + fmt.Sprint(int64(custom["id"].(float64)))
+
+	// sections-only PUT on a custom pub keeps the creator's identity
+	// text — none of the sample's fields may leak into the stored row
+	rr = apiCall(t, srv, "PUT", cBase, map[string]any{"sections": custom["sections"]})
+	if rr.Code != 200 {
+		t.Fatalf("custom sections-only PUT = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	got = apiJSON(t, rr)["publication"].(map[string]any)
+	for _, k := range []string{"name", "topic", "audience", "editorial_line", "tone", "language", "frequency", "ai_disclosure"} {
+		if got[k] != custom[k] {
+			t.Errorf("custom sections-only PUT changed %q: %v -> %v", k, custom[k], got[k])
+		}
+	}
+
+	// the Configurações save carries identity + paywall but no sections
+	// key — the stored custom sections and paid_sections must survive
+	// (the canonical three would otherwise replace them)
+	rr = apiCall(t, srv, "PUT", cBase, map[string]any{
+		"name": "Corner Bulletin", "topic": "street food and corner shops",
+		"audience":       "neighbours within walking distance",
+		"editorial_line": "Only verified neighbourhood stories.",
+		"tone":           "Friendly neighbour",
+		"paywall":        custom["paywall"],
+	})
+	if rr.Code != 200 {
+		t.Fatalf("custom settings PUT = %d: %s", rr.Code, rr.Body.String()[:300])
+	}
+	got = apiJSON(t, rr)["publication"].(map[string]any)
+	cSecs, _ := custom["sections"].([]any)
+	gSecs, _ = got["sections"].([]any)
+	if len(gSecs) != len(cSecs) {
+		t.Fatalf("settings PUT changed the section list: %d -> %d", len(cSecs), len(gSecs))
+	}
+	for i, sc := range cSecs {
+		if got["sections"].([]any)[i].(map[string]any)["title"] != sc.(map[string]any)["title"] {
+			t.Fatalf("settings PUT replaced section %d: %v -> %v",
+				i, sc.(map[string]any)["title"], got["sections"].([]any)[i].(map[string]any)["title"])
+		}
+	}
+	paid, _ := got["paywall"].(map[string]any)["paid_sections"].([]any)
+	if len(paid) != 1 || paid[0] != "Around the block" {
+		t.Fatalf("settings PUT rewrote paid_sections: %v", paid)
+	}
 }
