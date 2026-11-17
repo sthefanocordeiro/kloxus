@@ -362,6 +362,16 @@ const dict = {
       footerTerms: "Terms",
       footerPrivacy: "Privacy",
       footerContact: "Contact",
+      menu: "Menu",
+      sourcesStrip: "Reads real sources like",
+      mock: {
+        docTitle: "The big one",
+        items: [
+          "Regulator opens consultation on AI in hiring",
+          "New handheld console surprises on battery life",
+          "Open Portuguese text corpus launches",
+        ],
+      },
     },
     create: {
       title: "Create your newsletter",
@@ -821,6 +831,16 @@ const dict = {
       footerTerms: "Termos",
       footerPrivacy: "Privacidade",
       footerContact: "Contato",
+      menu: "Menu",
+      sourcesStrip: "Lê fontes reais como",
+      mock: {
+        docTitle: "O destaque",
+        items: [
+          "Regulador abre consulta sobre IA em contratações",
+          "Novo console portátil surpreende na bateria",
+          "Base aberta de textos em português é lançada",
+        ],
+      },
     },
     create: {
       title: "Crie sua newsletter",

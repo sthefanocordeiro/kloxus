@@ -60,13 +60,17 @@ html {
   background: var(--color-paper);
 }
 
-/* Page and UI headings are Manrope (§4.2); serif is reserved for the
-   editor document, the reader page and emails (font-doc). */
-h1,
-h2,
-h3,
-h4 {
-  font-family: var(--font-display);
+/* Page and UI headings are Manrope (§4.2); Source Serif 4 (font-doc)
+   covers the editor document, reader page and emails — and, per the
+   owner review (KLOX-69), the display headings on the public pages.
+   In @layer base so the font-doc utility can override it per element. */
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+  }
 }
 
 /* Visible focus everywhere (WCAG): keyboard users always see the ring. */

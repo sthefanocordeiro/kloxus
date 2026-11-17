@@ -1,106 +1,72 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
-import { BookOpen, PenLine, Wallet } from "lucide-react";
-import { api } from "../api";
-import { useT, type Lang } from "../i18n";
-import { cn } from "../lib/cn";
+import { BadgeCheck, BookOpen, PenLine, Wallet } from "lucide-react";
+import { useT } from "../i18n";
 import { errText } from "../lib/errors";
-import { Button, Card } from "../ui";
-import heroShot from "../assets/editor-hero.jpg";
+import { Card } from "../ui";
+import { SiteCta, SiteFooter, SiteHeader, useSiteEntry } from "../components/SiteChrome";
 
-// The landing page (KLOX-61 §1): sticky header, a dark-green hero with
-// a static picture of the editor, three numbered steps, three cards
-// for writers, a collapsed FAQ, a closing band and a full footer that
-// carries the language switch. Start resolves-or-creates the visitor's
-// workspace through the signed-cookie flow (D17) and lands on
-// onboarding; a returning visitor gets "Ir para o painel" instead.
+// The landing page (KLOX-61 §1, reworked per owner review KLOX-69):
+// sticky header with the PT/EN switch and a hamburger menu on mobile,
+// a dark-green hero with a simplified product mock (legible at both
+// widths — the old full-app screenshot read as decoration at 390 px),
+// a real-sources strip, three numbered steps, three cards for writers,
+// a collapsed FAQ, a closing band and the shared site footer. Start
+// resolves-or-creates the visitor's workspace through the
+// signed-cookie flow (D17) and lands on onboarding; a returning
+// visitor gets "Ir para o painel" instead.
 export function Landing() {
-  const { t, lang, setLang } = useT();
-  const nav = useNavigate();
-  const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications, retry: false });
-  const returning = (pubs.data?.length ?? 0) > 0;
-
-  const start = useMutation({ mutationFn: api.workspace });
-  const create = () => start.mutate(undefined, { onSuccess: () => nav("/new") });
-  const signIn = () => start.mutate(undefined, { onSuccess: () => nav("/publications") });
+  const { t } = useT();
+  const entry = useSiteEntry();
 
   const cardIcons = [PenLine, BookOpen, Wallet];
 
-  const cta = (size: "sm" | "lg") => (
-    <Button size={size} variant="accent" onClick={create} disabled={start.isPending}>
-      {start.isPending ? t.landing.starting : t.landing.cta}
-    </Button>
-  );
-
   return (
     <div className="min-h-dvh bg-paper text-ink">
-      <header className="sticky top-0 z-40 border-b border-line bg-paper/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-5 px-4">
-          <Link to="/" className="font-display text-lg font-extrabold tracking-tight text-teal">
-            {t.appName}
-          </Link>
-          <nav className="hidden items-center gap-5 text-sm text-muted md:flex">
-            <a href="#como-funciona" className="hover:text-ink">
-              {t.landing.howTitle}
-            </a>
-            <a href="#perguntas" className="hover:text-ink">
-              {t.landing.faqTitle}
-            </a>
-          </nav>
-          <div className="ml-auto flex items-center gap-1">
-            {returning ? (
-              <Link
-                to="/publications"
-                className="inline-flex h-11 items-center rounded-[var(--radius-btn)] px-3 text-sm font-medium text-ink hover:bg-surface md:h-10"
-              >
-                {t.landing.navDashboard}
-              </Link>
-            ) : (
-              <button
-                onClick={signIn}
-                disabled={start.isPending}
-                className="inline-flex h-11 cursor-pointer items-center rounded-[var(--radius-btn)] px-3 text-sm font-medium text-ink hover:bg-surface disabled:opacity-50 md:h-10"
-              >
-                {t.landing.navSignIn}
-              </button>
-            )}
-            {cta("sm")}
-          </div>
-        </div>
-      </header>
+      <SiteHeader />
 
       <section className="bg-teal text-paper">
         <div className="mx-auto grid max-w-6xl gap-10 px-4 py-14 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:py-20">
           <div>
-            <h1 className="font-display text-3xl font-extrabold leading-tight md:text-5xl">
+            <h1 className="font-doc text-3xl font-bold leading-tight md:text-5xl">
               {t.landing.headline}
             </h1>
             <p className="mt-4 max-w-xl text-lg text-paper/80">{t.landing.subhead}</p>
-            <div className="mt-7">{cta("lg")}</div>
-            <p className="mt-3 text-sm text-paper/70">{t.landing.tryLine}</p>
-            {start.error && (
+            <div className="mt-7">
+              <SiteCta size="lg" entry={entry} />
+            </div>
+            <p className="mt-4">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-1.5 text-sm font-semibold text-teal">
+                <BadgeCheck size={15} aria-hidden />
+                {t.landing.tryLine}
+              </span>
+            </p>
+            {entry.start.error && (
               <p role="alert" className="mt-2 text-sm text-danger-soft">
-                {errText(t, start.error)}
+                {errText(t, entry.start.error)}
               </p>
             )}
           </div>
-          <div className="overflow-hidden rounded-xl border border-white/15 bg-paper shadow-2xl">
-            <div className="flex h-9 items-center gap-1.5 border-b border-line bg-surface px-3">
-              <span className="h-2.5 w-2.5 rounded-full bg-line" />
-              <span className="h-2.5 w-2.5 rounded-full bg-line" />
-              <span className="h-2.5 w-2.5 rounded-full bg-line" />
-              <span className="mx-auto truncate rounded-md bg-paper px-6 py-0.5 text-[11px] text-muted">
-                kloxus.fly.dev
-              </span>
-            </div>
-            <img src={heroShot} alt={t.landing.shotAlt} className="block w-full" />
-          </div>
+          <HeroMock />
+        </div>
+      </section>
+
+      <section aria-label={t.landing.sourcesStrip} className="border-b border-line bg-paper">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-baseline gap-x-6 gap-y-1.5 px-4 py-5">
+          <p className="shrink-0 text-xs font-semibold uppercase tracking-wider text-muted">
+            {t.landing.sourcesStrip}
+          </p>
+          <ul className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+            {SOURCES.map((n) => (
+              <li key={n} className="font-doc text-[15px] font-semibold text-ink/80">
+                {n}
+              </li>
+            ))}
+          </ul>
         </div>
       </section>
 
       <section id="como-funciona" aria-labelledby="landing-how" className="scroll-mt-20 border-b border-line">
         <div className="mx-auto max-w-6xl px-4 py-14 md:py-16">
-          <h2 id="landing-how" className="font-display text-2xl font-bold md:text-3xl">
+          <h2 id="landing-how" className="font-doc text-2xl font-bold md:text-3xl">
             {t.landing.howTitle}
           </h2>
           <ol className="mt-8 grid gap-6 md:grid-cols-3">
@@ -121,7 +87,7 @@ export function Landing() {
 
       <section aria-labelledby="landing-writers" className="bg-surface">
         <div className="mx-auto max-w-6xl px-4 py-14 md:py-16">
-          <h2 id="landing-writers" className="font-display text-2xl font-bold md:text-3xl">
+          <h2 id="landing-writers" className="font-doc text-2xl font-bold md:text-3xl">
             {t.landing.cardsTitle}
           </h2>
           <div className="mt-8 grid gap-5 md:grid-cols-3">
@@ -143,7 +109,7 @@ export function Landing() {
 
       <section id="perguntas" aria-labelledby="landing-faq" className="scroll-mt-20 border-t border-line">
         <div className="mx-auto max-w-3xl px-4 py-14 md:py-16">
-          <h2 id="landing-faq" className="font-display text-2xl font-bold md:text-3xl">
+          <h2 id="landing-faq" className="font-doc text-2xl font-bold md:text-3xl">
             {t.landing.faqTitle}
           </h2>
           <div className="mt-4">
@@ -159,78 +125,93 @@ export function Landing() {
 
       <section aria-labelledby="landing-close" className="bg-teal text-paper">
         <div className="mx-auto max-w-6xl px-4 py-14 text-center md:py-16">
-          <h2 id="landing-close" className="font-display text-2xl font-bold md:text-3xl">
+          <h2 id="landing-close" className="font-doc text-2xl font-bold md:text-3xl">
             {t.landing.closingTitle}
           </h2>
-          <div className="mt-6 flex justify-center">{cta("lg")}</div>
+          <div className="mt-6 flex justify-center">
+            <SiteCta size="lg" entry={entry} />
+          </div>
         </div>
       </section>
 
-      <footer className="border-t border-line bg-paper">
-        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 sm:grid-cols-2 md:grid-cols-[1.5fr_1fr_1fr_1.5fr]">
-          <div>
-            <p className="font-display text-lg font-extrabold tracking-tight text-teal">
-              {t.appName}
+      <SiteFooter />
+    </div>
+  );
+}
+
+// The "Fontes reais" credibility strip (KLOX-69): real outlet names,
+// same in both locales — proper nouns need no translation.
+const SOURCES = [
+  "Tecnoblog",
+  "Olhar Digital",
+  "TabNews",
+  "MacMagazine",
+  "Meio Bit",
+  "Startups.com.br",
+];
+
+// A simplified product illustration inside a clean browser frame
+// (KLOX-69 #2): the pauta rail plus the writing surface, rendered as
+// real text so it stays legible at 1440 px and meaningful at 390 px —
+// on the smallest widths the rail drops out and the document carries
+// the picture alone.
+function HeroMock() {
+  const { t } = useT();
+  const m = t.landing.mock;
+  return (
+    <div
+      role="img"
+      aria-label={t.landing.shotAlt}
+      className="overflow-hidden rounded-xl border border-white/15 bg-paper text-ink shadow-2xl"
+    >
+      <div className="flex h-9 items-center gap-1.5 border-b border-line bg-surface px-3">
+        <span className="h-2.5 w-2.5 rounded-full bg-line" />
+        <span className="h-2.5 w-2.5 rounded-full bg-line" />
+        <span className="h-2.5 w-2.5 rounded-full bg-line" />
+        <span className="mx-auto truncate rounded-md bg-paper px-6 py-0.5 text-[11px] text-muted">
+          kloxus.fly.dev
+        </span>
+      </div>
+      <div className="grid sm:grid-cols-[2fr_3fr]">
+        <div className="hidden border-r border-line bg-surface/70 p-3 sm:block">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+            {t.board.bench}
+          </p>
+          <ul className="mt-2 grid gap-2">
+            {m.items.map((title, i) => (
+              <li key={i} className="rounded-lg border border-line bg-paper p-2.5">
+                <p className="text-[12.5px] font-medium leading-snug">{title}</p>
+                <span className="mt-1.5 inline-block rounded-md bg-teal-soft px-1.5 py-0.5 text-[10px] font-semibold text-chip">
+                  {t.itemStatus.approved}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="p-4 sm:p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+            {t.nav.edition}
+          </p>
+          <p className="mt-1 font-doc text-xl font-semibold leading-snug">{m.docTitle}</p>
+          <div className="mt-3 grid gap-2" aria-hidden="true">
+            <div className="h-2.5 w-11/12 rounded bg-line" />
+            <div className="h-2.5 w-full rounded bg-line" />
+            <div className="h-2.5 w-3/5 rounded bg-line" />
+          </div>
+          <div className="mt-4 rounded-lg border border-teal/20 bg-teal-soft/60 p-2.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-chip">
+              {t.commentary.label}
             </p>
-            <div className="mt-4 flex items-center gap-1" aria-label={t.nav.language}>
-              {(["en", "pt"] as Lang[]).map((l) => (
-                <button
-                  key={l}
-                  onClick={() => setLang(l)}
-                  className={cn(
-                    "flex h-11 min-w-11 items-center justify-center rounded-md px-1.5 text-xs md:h-10 md:min-w-10",
-                    lang === l ? "bg-ink font-medium text-paper" : "text-muted hover:text-ink",
-                  )}
-                  aria-pressed={lang === l}
-                >
-                  {l === "en" ? "EN" : "PT"}
-                </button>
-              ))}
-            </div>
+            <div className="mt-1.5 h-2.5 w-4/5 rounded bg-teal/15" aria-hidden="true" />
           </div>
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-              {t.landing.footerProduct}
-            </h3>
-            <ul className="mt-3 grid gap-2 text-sm">
-              <li>
-                <a href="#como-funciona" className="hover:text-teal">
-                  {t.landing.howTitle}
-                </a>
-              </li>
-              <li>
-                <a href="#perguntas" className="hover:text-teal">
-                  {t.landing.faqTitle}
-                </a>
-              </li>
-            </ul>
-          </div>
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-              {t.landing.footerLegal}
-            </h3>
-            <ul className="mt-3 grid gap-2 text-sm text-muted">
-              <li>{t.landing.footerTerms}</li>
-              <li>{t.landing.footerPrivacy}</li>
-            </ul>
-          </div>
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-              {t.landing.footerContact}
-            </h3>
-            <ul className="mt-3 grid gap-2 text-sm">
-              <li>
-                <a href="mailto:news@kloxus-ai.trendfi.com.br" className="break-all hover:text-teal">
-                  news@kloxus-ai.trendfi.com.br
-                </a>
-              </li>
-            </ul>
+          <div className="mt-4 flex items-center gap-2" aria-hidden="true">
+            <span className="rounded-md bg-line/70 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+              [1]
+            </span>
+            <div className="h-2 w-2/5 rounded bg-line" />
           </div>
         </div>
-        <div className="border-t border-line">
-          <div className="mx-auto max-w-6xl px-4 py-5 text-xs text-muted">© 2026 {t.appName}</div>
-        </div>
-      </footer>
+      </div>
     </div>
   );
 }

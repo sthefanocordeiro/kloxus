@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api, type Publication } from "../api";
 import { LangProvider } from "../i18n";
 import { Landing } from "../pages/Landing";
+import { PrivacyPage, TermsPage } from "../pages/Legal";
 
 vi.mock("../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../api")>();
@@ -43,6 +44,8 @@ function renderApp() {
             <Route path="/" element={<Landing />} />
             <Route path="/new" element={<div>onboarding screen</div>} />
             <Route path="/publications" element={<div>publications screen</div>} />
+            <Route path="/termos" element={<TermsPage />} />
+            <Route path="/privacidade" element={<PrivacyPage />} />
           </Routes>
         </MemoryRouter>
       </LangProvider>
@@ -90,5 +93,43 @@ describe("Landing", () => {
     expect(await screen.findByRole("link", { name: /dashboard/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: /dashboard/i }));
     expect(await screen.findByText("publications screen")).toBeInTheDocument();
+  });
+
+  // KLOX-69: the hamburger covers the section links, entry and CTA at
+  // 390 px; the PT/EN switch lives in the header on every width.
+  it("folds nav, entry and CTA into the header menu on mobile", async () => {
+    renderApp();
+    const menuBtn = await screen.findByRole("button", { name: /menu/i });
+    expect(menuBtn).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(menuBtn);
+    expect(menuBtn).toHaveAttribute("aria-expanded", "true");
+    const menu = document.getElementById("site-menu");
+    expect(menu).not.toBeNull();
+    expect(within(menu!).getByRole("link", { name: /how it works/i })).toBeInTheDocument();
+    expect(within(menu!).getByRole("link", { name: /questions/i })).toBeInTheDocument();
+    expect(within(menu!).getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect(
+      within(menu!).getByRole("button", { name: /create your newsletter/i }),
+    ).toBeInTheDocument();
+  });
+
+  // KLOX-70: footer legal links resolve to real pages, in the design
+  // system, with no dead ends (the contact mailto is the only link out).
+  it("links Terms and Privacy to real pages and renders them", async () => {
+    renderApp();
+    const terms = await screen.findByRole("link", { name: "Terms" });
+    const privacy = screen.getByRole("link", { name: "Privacy" });
+    expect(terms).toHaveAttribute("href", "/termos");
+    expect(privacy).toHaveAttribute("href", "/privacidade");
+
+    fireEvent.click(terms);
+    expect(
+      await screen.findByRole("heading", { name: /terms of use/i }),
+    ).toBeInTheDocument();
+    // header/footer chrome carries over — lang switch still works
+    fireEvent.click(screen.getByRole("button", { name: "PT" }));
+    expect(
+      await screen.findByRole("heading", { name: /termos de uso/i }),
+    ).toBeInTheDocument();
   });
 });
