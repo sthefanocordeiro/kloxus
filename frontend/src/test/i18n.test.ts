@@ -80,13 +80,18 @@ describe("pt locale ≠ en locale (KLOX-64)", () => {
   });
 
   it("never shows the banned words in pt copy", () => {
+    // JS \b is ASCII-only: a word ending in an accented letter (dossiê)
+    // has no boundary after it, so \b-based patterns miss the exact
+    // words §2 bans. Patterns ending in a possible accent close with a
+    // (?![\wÀ-ÿ]) lookahead instead, and every inflection is covered
+    // (reivindique, sinais, escalações, evidências).
     const banned = [
       /\bespaços?\b/i,
-      /\bdossi[êe]\b/i,
-      /\bevid[êe]ncia\b/i,
-      /\breivindic/i,
-      /\bescala[çc][ãa]o\b/i,
-      /\bsinal\b/i,
+      /dossi[eê]s?(?![\wÀ-ÿ])/i,
+      /evid[êe]ncias?(?![\wÀ-ÿ])/i,
+      /\breivindic|\breivindiqu/i,
+      /escala[çc](?:[ãa]o|[õo]es)(?![\wÀ-ÿ])/i,
+      /\bsinal/i,
       /fonte\(s\)/i,
       /\bdetermin[íi]st/i,
       /\branquead/i,
@@ -94,7 +99,7 @@ describe("pt locale ≠ en locale (KLOX-64)", () => {
       /\bdemo\b/i,
       /\bsimulad/i,
       /\bpipeline\b/i,
-      /\bissue\b/i,
+      /\bissues?\b/i,
     ];
     const hits: string[] = [];
     for (const { path, value } of leaves(pt)) {
@@ -118,13 +123,16 @@ describe("pt locale ≠ en locale (KLOX-64)", () => {
       /\bsignals?\b/i,
       /\bdemo session\b/i,
       /source\(s\)/i,
-      // pt glossary words leaking into the en dictionary
+      // pt glossary words leaking into the en dictionary — same
+      // accent-aware boundaries as the pt scan above
       /\bpautas?\b/i,
-      /\bedi[çc][ãa]o\b/i,
-      /\bve[íi]culos?\b/i,
+      /edi[çc][ãa]o(?![\wÀ-ÿ])/i,
+      /ve[íi]culos?(?![\wÀ-ÿ])/i,
       /\bfontes?\b/i,
       /\bassinantes?\b/i,
-      /\bse[çc][ãa]o\b/i,
+      /se[çc][ãa]o(?![\wÀ-ÿ])/i,
+      /dossi[eê]s?(?![\wÀ-ÿ])/i,
+      /\breivindic|\breivindiqu/i,
     ];
     const hits: string[] = [];
     for (const { path, value } of leaves(en)) {

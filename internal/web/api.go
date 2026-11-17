@@ -375,10 +375,16 @@ func orEmpty[T any](s []T) []T {
 func receiptView(rec *store.ApprovalReceipt) map[string]any {
 	checks := []apiCheck{}
 	json.Unmarshal([]byte(rec.ChecksJSON), &checks)
+	// Receipts stored before the owner e-mail became the approver carry
+	// the workspace's session label — never show it (§2, KLOX-64).
+	approver := rec.Approver
+	if approver == "local" || approver == "local demo" || strings.HasPrefix(approver, "demo session ") {
+		approver = ""
+	}
 	return map[string]any{
 		"issue_id": rec.IssueID, "number": rec.Number,
 		"document_version": rec.DocumentVersion,
-		"approver":         rec.Approver,
+		"approver":         approver,
 		"approved_at":      rec.ApprovedAt,
 		"checks":           checks,
 	}
@@ -2816,8 +2822,11 @@ func (s *Server) recordApproval(r *http.Request, iss *store.Issue, pub *store.Pu
 	rec = &store.ApprovalReceipt{
 		IssueID: iss.ID, Number: iss.Number,
 		DocumentVersion: docVersion(iss),
-		Approver:        reqWS(r).Label,
-		ChecksJSON:      string(cj),
+		// the approver is the claimed owner — an anonymous session has
+		// no name to show, so it stays empty rather than leaking the
+		// workspace label (§2 never-show, KLOX-64)
+		Approver:   s.workspaceOwner(ctx, db(r)),
+		ChecksJSON: string(cj),
 	}
 	if err := db(r).SaveApprovalReceipt(ctx, rec); err != nil {
 		return nil, err

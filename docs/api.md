@@ -57,7 +57,7 @@ conflict` and the response carries the fresh `document`.
 
 ### `GET /api/v1/workspace`
 ```json
-{"id": "local", "label": "local demo", "mode": "demo", "hosted": false, "llm_mode": "auto",
+{"id": "local", "label": "local", "mode": "demo", "hosted": false, "llm_mode": "auto",
  "claimed": false, "owner_email": "", "mail": "outbox", "mail_transport": "outbox"}
 ```
 `mail` is `"live"` when a mail sender is configured, `"outbox"`
@@ -536,9 +536,11 @@ fresh one.
 {"issue": {"id": 1, "status": "approved", "receipt": {…}, "…": "…"},
  "receipt": {"issue_id": 1, "number": 1,
              "document_version": "9f1c04ab22dd77ee",
-             "approver": "local demo",
+             "approver": "creator@example.com",
              "approved_at": "2026-11-11 12:00:00", "checks": […]}}
 ```
+`approver` is the claiming owner's e-mail — `""` while the session is
+anonymous, never the workspace label.
 
 ### `POST /api/v1/issues/{id}/send`
 `{"audience": "test"|"readers", "to": "optional@test.address", "when": "now"|"schedule", "at": "RFC3339"}`

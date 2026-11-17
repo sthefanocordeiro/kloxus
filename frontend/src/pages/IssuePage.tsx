@@ -422,7 +422,7 @@ export function IssuePage() {
               </Button>
             }
           >
-            {issue.receipt && (
+            {issue.receipt?.approver && (
               <p className="mb-2 text-xs text-muted">
                 {t.receipt.by} {issue.receipt.approver}
               </p>
@@ -676,7 +676,7 @@ function ApproveBar({
             {t.readiness.approve}
           </Button>
         )}
-        {issue.status === "approved" && issue.receipt && (
+        {issue.status === "approved" && issue.receipt?.approver && (
           <div className="mt-3 border-t border-line pt-2 text-xs text-muted">
             {t.receipt.by} {issue.receipt.approver}
           </div>
@@ -932,7 +932,8 @@ function AfterSend({ issue }: { issue: IssueSummary }) {
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs">
           {r && (
             <span className="text-muted">
-              {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)}
+              {r.approver ? `${t.receipt.by} ${r.approver} · ` : ""}
+              {fmtDate(r.approved_at, lang, true)}
             </span>
           )}
           {issue.status === "scheduled" && issue.scheduled_at && (

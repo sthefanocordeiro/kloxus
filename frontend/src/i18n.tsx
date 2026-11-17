@@ -242,6 +242,7 @@ export const dict = {
       not_sent: "This issue has not been sent yet",
       not_approved: "Approve the issue first",
       not_implemented: "Not available yet",
+      rate_limited: "Too many tries — wait a bit and try again",
       generic: "Something went wrong",
     },
     claim: {
@@ -722,6 +723,7 @@ export const dict = {
       not_sent: "Esta edição ainda não foi enviada",
       not_approved: "Aprove a edição primeiro",
       not_implemented: "Ainda não disponível",
+      rate_limited: "Muitas tentativas — espere um pouco e tente de novo",
       generic: "Algo deu errado",
     },
     claim: {

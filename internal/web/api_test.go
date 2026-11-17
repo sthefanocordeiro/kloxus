@@ -449,8 +449,13 @@ outer0:
 		t.Fatalf("approve = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
 	rec := apiJSON(t, rr)["receipt"].(map[string]any)
-	if rec["approved_at"] == "" || rec["approver"] == "" || rec["document_version"] == "" {
+	if rec["approved_at"] == "" || rec["document_version"] == "" {
 		t.Errorf("approval receipt incomplete: %v", rec)
+	}
+	// the anonymous workspace has no owner — the approver stays empty
+	// rather than leaking a session label (§2 never-show, KLOX-64)
+	if rec["approver"] != "" {
+		t.Errorf("anonymous approver = %q, want empty", rec["approver"])
 	}
 	// a repeated approve returns the stored receipt, not a new timestamp
 	rr = apiCall(t, srv, "POST", issueURL+"/approve", nil)
