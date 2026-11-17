@@ -646,9 +646,13 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			sc := scoreByRef[idx+1]
 			why := sc.reason
 			if why != "" {
-				why += "; "
+				why += " · "
 			}
-			why += "re-slotted to fill an empty section"
+			if ptLang(pub.Language) {
+				why += "realocada para preencher a seção vazia"
+			} else {
+				why += "re-slotted to fill an empty section"
+			}
 			iiID, err := r.DB.CreateIssueItem(ctx, store.IssueItem{
 				IssueID: issueID,
 				StoryID: stories[idx].ID,

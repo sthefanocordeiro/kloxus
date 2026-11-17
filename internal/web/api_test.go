@@ -436,7 +436,7 @@ outer0:
 	// --- commentary + approve ---
 	ver = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)["version"].(string)
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "My editorial take on the regulator consultation.", "version": ver})
+		map[string]string{"section": "O destaque", "text": "My editorial take on the regulator consultation.", "version": ver})
 	if rr.Code != 200 {
 		t.Fatalf("commentary = %d", rr.Code)
 	}
@@ -449,8 +449,13 @@ outer0:
 		t.Fatalf("approve = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
 	rec := apiJSON(t, rr)["receipt"].(map[string]any)
-	if rec["approved_at"] == "" || rec["approver"] == "" || rec["document_version"] == "" {
+	if rec["approved_at"] == "" || rec["document_version"] == "" {
 		t.Errorf("approval receipt incomplete: %v", rec)
+	}
+	// the anonymous workspace has no owner — the approver stays empty
+	// rather than leaking a session label (§2 never-show, KLOX-64)
+	if rec["approver"] != "" {
+		t.Errorf("anonymous approver = %q, want empty", rec["approver"])
 	}
 	// a repeated approve returns the stored receipt, not a new timestamp
 	rr = apiCall(t, srv, "POST", issueURL+"/approve", nil)
@@ -460,7 +465,7 @@ outer0:
 	// edits after approval revert to draft and void the receipt
 	ver = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)["version"].(string)
 	apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "v2.", "version": ver})
+		map[string]string{"section": "O destaque", "text": "v2.", "version": ver})
 	iss, _ = db.GetIssue(ctx, issueID)
 	if iss.Status != "drafted" {
 		t.Fatalf("edit after approve: status = %q", iss.Status)
@@ -574,7 +579,7 @@ outer0:
 	}
 	// a scheduled issue is locked like a sent one
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "v3"})
+		map[string]string{"section": "O destaque", "text": "v3"})
 	if c := apiErrCode(t, rr); c != "read_only" {
 		t.Fatalf("commentary on scheduled issue: code = %q", c)
 	}
@@ -661,7 +666,7 @@ outer0:
 
 	// --- sent issue is read-only ---
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "v3"})
+		map[string]string{"section": "O destaque", "text": "v3"})
 	if c := apiErrCode(t, rr); c != "read_only" {
 		t.Fatalf("commentary on sent issue: code = %q", c)
 	}
@@ -868,7 +873,7 @@ func TestAPILineup(t *testing.T) {
 		t.Skip("no bench candidates in fixture")
 	}
 	added := bench[0]
-	entries = append(entries, map[string]any{"story_id": int64(added["story_id"].(float64)), "section": "Quick links"})
+	entries = append(entries, map[string]any{"story_id": int64(added["story_id"].(float64)), "section": "Links rápidos"})
 	rr = apiCall(t, srv, "PUT", issueURL+"/lineup", map[string]any{"entries": entries})
 	if rr.Code != 200 {
 		t.Fatalf("PUT lineup+add = %d: %s", rr.Code, rr.Body.String())
@@ -1157,7 +1162,7 @@ func TestAPIOnboarding(t *testing.T) {
 		t.Fatalf("custom-pub public page not gated: %v", pp["gated"])
 	}
 	if md := pp["body_md"].(string); !strings.Contains(md, "Exclusivo para assinantes") ||
-		strings.Contains(md, "Worth knowing") {
+		strings.Contains(md, "Vale saber") {
 		t.Errorf("public page leaked the paid section: %.200s", md)
 	}
 	var issueEmail map[string]any
@@ -1171,7 +1176,7 @@ func TestAPIOnboarding(t *testing.T) {
 	}
 	em := apiGet(t, srv, "/api/v1/outbox/"+fmt.Sprint(int64(issueEmail["id"].(float64))))["email"].(map[string]any)
 	if md, _ := em["body_md"].(string); !strings.Contains(md, "Exclusivo para assinantes") ||
-		strings.Contains(md, "Worth knowing") {
+		strings.Contains(md, "Vale saber") {
 		t.Errorf("readers email leaked the paid section: %.200s", md)
 	}
 }

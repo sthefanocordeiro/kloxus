@@ -422,7 +422,7 @@ export function IssuePage() {
               </Button>
             }
           >
-            {issue.receipt && (
+            {issue.receipt?.approver && (
               <p className="mb-2 text-xs text-muted">
                 {t.receipt.by} {issue.receipt.approver}
               </p>
@@ -676,7 +676,7 @@ function ApproveBar({
             {t.readiness.approve}
           </Button>
         )}
-        {issue.status === "approved" && issue.receipt && (
+        {issue.status === "approved" && issue.receipt?.approver && (
           <div className="mt-3 border-t border-line pt-2 text-xs text-muted">
             {t.receipt.by} {issue.receipt.approver}
           </div>
@@ -753,7 +753,7 @@ function ApproveBar({
           )}
           <div className="flex justify-between">
             <dt>{t.send.sender}</dt>
-            <dd>{pub?.name} &lt;demo@trendfi.com.br&gt;</dd>
+            <dd>{pub?.name}</dd>
           </div>
         </dl>
         <div className="flex justify-end gap-2">
@@ -859,7 +859,7 @@ function SendRow({ issue, onDone, onToast }: {
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.sender}</dt>
-            <dd>{pub?.name} &lt;demo@trendfi.com.br&gt;</dd>
+            <dd>{pub?.name}</dd>
           </div>
           {confirmSend?.when === "schedule" && (
             <div className="flex justify-between gap-4">
@@ -932,7 +932,8 @@ function AfterSend({ issue }: { issue: IssueSummary }) {
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs">
           {r && (
             <span className="text-muted">
-              {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)}
+              {r.approver ? `${t.receipt.by} ${r.approver} · ` : ""}
+              {fmtDate(r.approved_at, lang, true)}
             </span>
           )}
           {issue.status === "scheduled" && issue.scheduled_at && (

@@ -28,6 +28,21 @@ const (
 	subscribePerDay = 1 // confirm emails per reader per day (idem key)
 )
 
+// ptLang reports whether a language tag is Portuguese — claim pages
+// and lifecycle emails localize on it (KLOX-64).
+func ptLang(lang string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(lang)), "pt")
+}
+
+// plural picks the singular or plural English noun for API messages —
+// never "item(s)" on screen (KLOX-64).
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
 // publicWDB resolves the workspace a sealed public link points at — the
 // ?tok (or legacy ?ws) parameter — without touching the visitor's own
 // session. Local mode returns the fixed workspace; anything else is nil
@@ -83,6 +98,7 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 	wdb := db(r)
 	var in struct {
 		Email string `json:"email"`
+		Lang  string `json:"lang"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
@@ -110,12 +126,18 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := s.publicBase(r) + "/claim?t=" + url.QueryEscape(token)
-	md := fmt.Sprintf("Confirm this email to claim your Kloxus workspace.\n\n[Claim workspace](%s)\n\nThe link works once and expires in 15 minutes.", link)
+	subject, md := "Save your Kloxus with this email",
+		fmt.Sprintf("Confirm this email to keep your Kloxus.\n\n[Save my Kloxus](%s)\n\nThe link works once and expires in 15 minutes.", link)
+	if ptLang(in.Lang) {
+		link += "&lang=pt"
+		subject, md = "Salve o seu Kloxus com este e-mail",
+			fmt.Sprintf("Confirme este e-mail para guardar o seu Kloxus.\n\n[Guardar o meu Kloxus](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
+	}
 	res, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{email},
-		Subject: "Claim your Kloxus workspace",
+		Subject: subject,
 		Text:    md,
-		HTML:    delivery.RenderHTML("Claim your Kloxus workspace", md, s.publicBase(r)),
+		HTML:    delivery.RenderHTML(subject, md, s.publicBase(r)),
 		Kind:    "magic_link",
 		IdemKey: "claim/" + hash,
 	})
@@ -150,50 +172,63 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 // An invalid, spent or expired token renders the one failure state.
 func (s *Server) claimPage(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("t")
+	lang := r.URL.Query().Get("lang")
 	hash := hashToken(token)
 	now := store.NowUTC()
 	var email string
 	if pool := s.d.WS.Pool(); pool != nil {
 		_, em, err := pool.PeekMagicLink(r.Context(), hash, now)
 		if err != nil {
-			claimFail(w)
+			claimFail(w, lang)
 			return
 		}
 		email = em
 	} else if l := s.d.WS.Local(); l != nil {
 		em, err := l.DB.PeekMagicLink(r.Context(), hash, now)
 		if err != nil {
-			claimFail(w)
+			claimFail(w, lang)
 			return
 		}
 		email = em
 	} else {
-		claimFail(w)
+		claimFail(w, lang)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// the URL carries a credential — don't let a cache keep or replay it
 	w.Header().Set("Cache-Control", "no-store")
+	title, blurb, button, note := "Save your Kloxus",
+		"Confirming signs this browser in as the owner (%s).",
+		"Confirm",
+		"The link works once and expires 15 minutes after it was sent."
+	if ptLang(lang) {
+		title, blurb, button, note = "Salve o seu Kloxus",
+			"Ao confirmar, este navegador fica associado ao e-mail %s.",
+			"Confirmar",
+			"O link funciona uma vez e expira 15 minutos depois de enviado."
+	}
 	fmt.Fprintf(w, `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:34em;margin:4em auto">`+
-		`<h1>Claim your Kloxus workspace</h1>`+
-		`<p>Confirming signs this browser in as the workspace owner (%s).</p>`+
-		`<form method="POST" action="/claim?t=%s"><button type="submit" `+
-		`style="font-size:1em;padding:.6em 1.4em;cursor:pointer">Confirm claim</button></form>`+
-		`<p style="color:#777;font-size:.85em">The link works once and expires 15 minutes after it was sent.</p></body></html>`,
-		html.EscapeString(email), url.QueryEscape(token))
+		`<h1>%s</h1><p>`+blurb+`</p>`+
+		`<form method="POST" action="/claim?t=%s&amp;lang=%s"><button type="submit" `+
+		`style="font-size:1em;padding:.6em 1.4em;cursor:pointer">%s</button></form>`+
+		`<p style="color:#777;font-size:.85em">%s</p></body></html>`,
+		html.EscapeString(title), html.EscapeString(email),
+		url.QueryEscape(token), url.QueryEscape(lang),
+		html.EscapeString(button), html.EscapeString(note))
 }
 
 // claimConfirm spends a magic link: it must be unexpired and unused,
 // then the workspace becomes owned and the cookie signs this browser in.
 func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("t")
+	lang := r.URL.Query().Get("lang")
 	hash := hashToken(token)
 	now := store.NowUTC()
 	var wsID, email string
 	if pool := s.d.WS.Pool(); pool != nil {
 		id, em, err := pool.ConsumeMagicLink(r.Context(), hash, now)
 		if err != nil {
-			claimFail(w)
+			claimFail(w, lang)
 			return
 		}
 		wsID, email = id, em
@@ -204,7 +239,7 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 	} else if l := s.d.WS.Local(); l != nil {
 		em, err := l.DB.ConsumeMagicLink(r.Context(), hash, now)
 		if err != nil {
-			claimFail(w)
+			claimFail(w, lang)
 			return
 		}
 		email = em
@@ -213,7 +248,7 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		claimFail(w)
+		claimFail(w, lang)
 		return
 	}
 	if s.d.WS.Hosted() {
@@ -225,13 +260,18 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 // claimFail renders the single failure state for a bad, spent or
-// expired link.
-func claimFail(w http.ResponseWriter) {
+// expired link, in the language the link carried.
+func claimFail(w http.ResponseWriter, lang string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)
-	fmt.Fprint(w, `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:34em;margin:4em auto">`+
-		`<h1>Link expired or already used</h1>`+
-		`<p>Claim links work once and expire after 15 minutes. Go back to Kloxus and request a new one.</p></body></html>`)
+	title, body := "Link expired or already used",
+		"Links work once and expire after 15 minutes. Go back to Kloxus and request a new one."
+	if ptLang(lang) {
+		title, body = "Link expirado ou já usado",
+			"O link funciona uma vez e expira em 15 minutos. Volte ao Kloxus e peça um novo."
+	}
+	fmt.Fprintf(w, `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:34em;margin:4em auto">`+
+		`<h1>%s</h1><p>%s</p></body></html>`, html.EscapeString(title), html.EscapeString(body))
 }
 
 // --- reader double opt-in ---
@@ -274,12 +314,17 @@ func (s *Server) apiSubscribe(w http.ResponseWriter, r *http.Request) {
 	link := fmt.Sprintf("%s/confirm-sub?pub=%s&r=%d&t=%s%s",
 		s.publicBase(r), url.QueryEscape(pub.Slug), rid,
 		s.d.WS.MAC("sub", fmt.Sprintf("%d:%d", pub.ID, rid)), tokSuffix(r))
-	md := fmt.Sprintf("Confirm you'd like to receive %s by email.\n\n[Confirm subscription](%s)\n\nIf you did not ask for this, ignore the email — nothing else will be sent.", pub.Name, link)
+	subject, md := pub.Name+" — confirm your subscription",
+		fmt.Sprintf("Confirm you'd like to receive %s by email.\n\n[Confirm subscription](%s)\n\nIf you did not ask for this, ignore the email — nothing else will be sent.", pub.Name, link)
+	if ptLang(pub.Language) {
+		subject, md = pub.Name+" — confirme sua inscrição",
+			fmt.Sprintf("Confirme que você quer receber %s por e-mail.\n\n[Confirmar inscrição](%s)\n\nSe você não pediu, ignore este e-mail — nada mais será enviado.", pub.Name, link)
+	}
 	res, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{email},
-		Subject: pub.Name + " — confirm your subscription",
+		Subject: subject,
 		Text:    md,
-		HTML:    delivery.RenderHTML(pub.Name+" — confirm your subscription", md, s.publicBase(r)),
+		HTML:    delivery.RenderHTML(subject, md, s.publicBase(r)),
 		Kind:    "reader_confirm",
 		IdemKey: fmt.Sprintf("confirm/%d/%s", rid, today()),
 	})
@@ -308,18 +353,18 @@ func (s *Server) apiSubscribe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) confirmSub(w http.ResponseWriter, r *http.Request) {
 	wdb := s.publicWDB(r)
 	if wdb == nil {
-		claimFail(w)
+		claimFail(w, "")
 		return
 	}
 	pub, err := wdb.GetPublication(r.Context(), r.URL.Query().Get("pub"))
 	if err != nil {
-		claimFail(w)
+		claimFail(w, "")
 		return
 	}
 	rid, _ := strconv.ParseInt(r.URL.Query().Get("r"), 10, 64)
 	tok := r.URL.Query().Get("t")
 	if rid == 0 || !s.d.WS.ValidMAC("sub", fmt.Sprintf("%d:%d", pub.ID, rid), tok) {
-		claimFail(w)
+		claimFail(w, pub.Language)
 		return
 	}
 	if err := wdb.MarkReaderConfirmed(r.Context(), rid); err != nil {

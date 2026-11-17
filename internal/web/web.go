@@ -220,7 +220,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ws, err := s.d.WS.Resolve(w, r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusTooManyRequests)
+		apiErr(w, http.StatusTooManyRequests, "rate_limited", err.Error())
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), ctxWS, ws))

@@ -163,23 +163,61 @@ func scoreStories(stories []store.Story, lang string) (scores []float64, reasons
 			date = "sem data"
 		}
 		if t, ok := storyNewest(&stories[i]); ok {
-			date = t.Format("2006-01-02")
+			date = agoLabel(time.Since(t), t, pt)
 		}
-		if pt {
-			reasons[i] = fmt.Sprintf("ranqueado: %s, %d fonte(s)", date, len(stories[i].Outlets()))
-		} else {
-			reasons[i] = fmt.Sprintf("ranked: %s, %d source(s)", date, len(stories[i].Outlets()))
-		}
+		reasons[i] = date + " · " + outletsLabel(len(stories[i].Outlets()), pt)
 		if nonEditorial(&stories[i]) {
 			scores[i] -= nonEditorialPenalty
 			if pt {
-				reasons[i] += "; não editorial (rebaixado)"
+				reasons[i] += " · fora do editorial"
 			} else {
-				reasons[i] += "; non-editorial (demoted)"
+				reasons[i] += " · off the editorial line"
 			}
 		}
 	}
 	return scores, reasons
+}
+
+// agoLabel renders story freshness for the reader-facing reason:
+// relative under a week ("há 3 h" / "3 h ago"), the date beyond it.
+func agoLabel(d time.Duration, t time.Time, pt bool) string {
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Hour:
+		m := int(d.Minutes()) + 1
+		if pt {
+			return fmt.Sprintf("há %d min", m)
+		}
+		return fmt.Sprintf("%d min ago", m)
+	case d < 24*time.Hour:
+		if pt {
+			return fmt.Sprintf("há %d h", int(d.Hours()))
+		}
+		return fmt.Sprintf("%d h ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		if pt {
+			return fmt.Sprintf("há %d d", int(d.Hours()/24))
+		}
+		return fmt.Sprintf("%d d ago", int(d.Hours()/24))
+	default:
+		return t.Format("2006-01-02")
+	}
+}
+
+// outletsLabel pluralizes the outlet count — never "fonte(s)".
+func outletsLabel(n int, pt bool) string {
+	if pt {
+		if n == 1 {
+			return "1 veículo"
+		}
+		return fmt.Sprintf("%d veículos", n)
+	}
+	if n == 1 {
+		return "1 outlet"
+	}
+	return fmt.Sprintf("%d outlets", n)
 }
 
 // nonEditorial reports whether the story title or any member headline

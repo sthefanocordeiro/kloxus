@@ -439,9 +439,9 @@ export const api = {
     ),
   // Workspace claim: mails a single-use magic link to the creator.
   // Outbox mode answers with the link itself so the demo can open it.
-  claim: (email: string) =>
+  claim: (email: string, lang: string) =>
     request<{ sent: boolean; email: string; delivery?: string; claim_url?: string; refused?: string; outbox_email_id?: number }>(
-      "POST", "/api/v1/workspace/claim", { email },
+      "POST", "/api/v1/workspace/claim", { email, lang },
     ),
   // Reader double opt-in: mails a confirm link; nothing is sent to the
   // reader until they open it. query carries the sealed ?tok.

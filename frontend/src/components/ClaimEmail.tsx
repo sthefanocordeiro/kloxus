@@ -10,12 +10,12 @@ import { Button } from "../ui";
 // when a real send needs it. It mails one magic link; outbox mode
 // returns the link itself so the demo can open it.
 export function ClaimEmail({ onDone }: { onDone?: () => void }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState<{ email: string; claim_url?: string } | null>(null);
   const claim = useMutation({
-    mutationFn: () => api.claim(email.trim()),
+    mutationFn: () => api.claim(email.trim(), lang),
     onSuccess: (r) => {
       setSent({ email: r.email, claim_url: r.claim_url });
       qc.invalidateQueries({ queryKey: ["workspace"] });

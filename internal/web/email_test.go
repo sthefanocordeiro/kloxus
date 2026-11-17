@@ -100,7 +100,7 @@ func liveDeps(t *testing.T, mailer delivery.Sender, tweak func(*config.Config)) 
 	deps := web.Deps{
 		WS: workspace.OpenLocal(db, seed), Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
-		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm"},
+		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir("")},
 		Monitor: sources.FakeMonitor{},
 		Mailer:  mailer, Seed: seed,
 	}
@@ -270,7 +270,7 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	// the send lifecycle is untouched by the marker
 	docVer := sent["document_version"].(string)
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "post-test edit", "version": docVer})
+		map[string]string{"section": "O destaque", "text": "post-test edit", "version": docVer})
 	if rr.Code != 200 {
 		t.Fatalf("commentary on a test-sent issue = %d, want 200", rr.Code)
 	}
@@ -306,6 +306,18 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	// issue, since the unclaimed test above already sent the first
 	issueID2 := approvedIssue(t, db, pub.ID, 2, "Edição 2")
 	sendURL2 := "/api/v1/issues/" + strconv.FormatInt(issueID2, 10) + "/send"
+	// the approval receipt names the claimed owner — never the
+	// workspace's session label (§2 never-show, KLOX-64)
+	if err := db.SaveCommentary(ctx, issueID2, map[string]string{"O destaque": "ok"}); err != nil {
+		t.Fatalf("SaveCommentary: %v", err)
+	}
+	rr = apiCall(t, srv, "POST", "/api/v1/issues/"+strconv.FormatInt(issueID2, 10)+"/approve", nil)
+	if rr.Code != 200 {
+		t.Fatalf("approve claimed issue = %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := apiJSON(t, rr)["receipt"].(map[string]any)["approver"]; got != owner {
+		t.Fatalf("approver = %q, want owner %q", got, owner)
+	}
 	rr = apiCall(t, srv, "POST", sendURL2, map[string]string{"audience": "test"})
 	if rr.Code != 200 {
 		t.Fatalf("test send = %d %s", rr.Code, rr.Body.String()[:300])
@@ -882,7 +894,7 @@ func TestGlobalCapAcrossWorkspaces(t *testing.T) {
 	srv := web.New(web.Deps{
 		WS: mgr, Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
-		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm"},
+		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir("")},
 		Monitor: sources.FakeMonitor{}, Mailer: fake, Seed: seed,
 	})
 	serve := func(method, path, cookie string, body any) *httptest.ResponseRecorder {
@@ -1077,7 +1089,7 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 	srv := web.New(web.Deps{
 		WS: mgr, Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
-		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm"},
+		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir("")},
 		Monitor: sources.FakeMonitor{}, Mailer: fake, Seed: seed,
 	})
 	serve := func(method, path, cookie string, body any) *httptest.ResponseRecorder {

@@ -55,7 +55,7 @@ function renderApp() {
 
 describe("Landing", () => {
   beforeEach(() => {
-    vi.mocked(api.workspace).mockResolvedValue({ id: "w1", label: "demo session w1…", mode: "demo", hosted: true, llm_mode: "auto" });
+    vi.mocked(api.workspace).mockResolvedValue({ id: "w1", label: "visitor w1…", mode: "demo", hosted: true, llm_mode: "auto" });
     vi.mocked(api.publications).mockResolvedValue([]);
   });
 

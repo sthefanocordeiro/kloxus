@@ -25,7 +25,7 @@ type EditorWindow = Window & {
 };
 
 const issueCol = (page: Page) => page.locator('section[aria-label="This issue"]');
-const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
+const benchCol = (page: Page) => page.locator('section[aria-label="Suggestions"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
 
@@ -137,7 +137,7 @@ test("manual compose journey", async ({ page }) => {
 
   // pick candidates: drop an AI suggestion and pull one story in from
   // the bench — the manual flow must also carry a story with no dossier
-  const wk = sectionBox(page, "Worth knowing");
+  const wk = sectionBox(page, "Vale saber");
   await wk.getByRole("button", { name: "Remove", exact: true }).first().click();
   await page.getByRole("button", { name: "just remove" }).click();
   await benchCol(page).getByRole("button", { name: "Add to issue", exact: true }).first().click();
@@ -145,7 +145,7 @@ test("manual compose journey", async ({ page }) => {
 
   // manual compose: the lineup becomes empty slots — no draft run
   await page.getByRole("button", { name: "Write it myself" }).click();
-  const emptySlot = page.getByRole("button", { name: /Empty — write this item/ });
+  const emptySlot = page.getByRole("button", { name: /Write this story/ });
   await expect(emptySlot.first()).toBeVisible({ timeout: 30000 });
   const total = await emptySlot.count();
   expect(total).toBeGreaterThan(0);
@@ -170,7 +170,7 @@ test("manual compose journey", async ({ page }) => {
       }
     }
   }
-  const box = page.locator('section[aria-label="Write this item"]');
+  const box = page.locator('section[aria-label="Write this story"]');
   const itemRefOf = async () =>
     Number(
       await emptySlot
@@ -190,7 +190,7 @@ test("manual compose journey", async ({ page }) => {
     .getByRole("textbox")
     .fill("The Central Bank will end Pix in March 2027 and charge 9 reais per transfer.");
   await box.getByRole("button", { name: firstChip }).click();
-  await box.getByRole("button", { name: "Add to item" }).click();
+  await box.getByRole("button", { name: "Add to story" }).click();
   await expect(page.getByText(/not supported by \[\d+\]/).first()).toBeVisible({ timeout: 15000 });
   // the flag carries Edit/Remove actions — removing resolves it
   const fabricated = page.locator("[data-sid]").filter({ hasText: "Central Bank" });
@@ -199,7 +199,7 @@ test("manual compose journey", async ({ page }) => {
   // verbatim first-sentence paste with its citation
   await box.getByRole("textbox").fill(verbatimPaste(firstSrc.excerpt));
   await box.getByRole("button", { name: firstChip }).click();
-  await box.getByRole("button", { name: "Add to item" }).click();
+  await box.getByRole("button", { name: "Add to story" }).click();
   await expect(page.getByText("too close to the source").first()).toBeVisible({ timeout: 15000 });
   await page
     .locator("[data-sid]")
@@ -221,7 +221,7 @@ test("manual compose journey", async ({ page }) => {
     await expect(box).toBeVisible();
     await box.getByRole("textbox").fill(text);
     await box.getByRole("button", { name: new RegExp(`^\\[${cite}\\] `) }).click();
-    await box.getByRole("button", { name: "Add to item" }).click();
+    await box.getByRole("button", { name: "Add to story" }).click();
     // the sentence lands in the document as a cited fact
     await expect(page.locator("[data-sid]")).toHaveCount(i + 1, { timeout: 15000 });
   }
@@ -230,22 +230,22 @@ test("manual compose journey", async ({ page }) => {
 
   // audit reproduction (KLOX-52): a sentence added without picking a
   // source must land flagged exactly like an unsupported [n] — with a
-  // visible reason and Edit/Remove — and "Fix now" must open the fix
+  // visible reason and Edit/Remove — and "Review pending" must open the fix
   // affordance, not only flash the sentence.
   await page.locator("[data-item-ref] h3").first().click();
   await expect(box).toBeVisible();
   await box
     .getByRole("textbox")
     .fill("A claim nobody can trace back to a source.");
-  await box.getByRole("button", { name: "Add to item" }).click();
+  await box.getByRole("button", { name: "Add to story" }).click();
   const uncited = page.locator("[data-sid]").filter({ hasText: "nobody can trace" });
   await expect(uncited.getByText("sentence has no citation")).toBeVisible({ timeout: 15000 });
   await expect(uncited.getByRole("button", { name: "Edit" })).toBeVisible();
   await expect(uncited.getByRole("button", { name: "Remove" })).toBeVisible();
-  // "Fix now" opens the sentence's edit box — the citation chips are
+  // "Review pending" opens the sentence's edit box — the citation chips are
   // the way out; resolving through them unblocks approval entirely in
   // the UI
-  await page.getByRole("button", { name: "Fix now" }).first().click();
+  await page.getByRole("button", { name: "Review pending" }).first().click();
   await expect(uncited.getByRole("textbox")).toBeVisible({ timeout: 15000 });
   await uncited.getByRole("textbox").fill(firstSrc.text);
   await uncited.getByRole("button", { name: firstChip }).click();

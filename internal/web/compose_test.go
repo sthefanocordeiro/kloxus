@@ -370,7 +370,7 @@ func TestManualComposeJourney(t *testing.T) {
 	}
 	version = doc["version"].(string)
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "My editorial take.", "version": version})
+		map[string]string{"section": "O destaque", "text": "My editorial take.", "version": version})
 	if rr.Code != 200 {
 		t.Fatalf("commentary = %d: %s", rr.Code, shortBody(rr))
 	}

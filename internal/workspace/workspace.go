@@ -112,7 +112,7 @@ func OpenHosted(ctx context.Context, pool *store.Pool, secret []byte, seed func(
 // runs (no cookies, one shared demo).
 func OpenLocal(db *store.DB, seed func(context.Context, *store.DB) error) *Manager {
 	return &Manager{
-		local: &Workspace{ID: "local", Label: "local demo", DB: db},
+		local: &Workspace{ID: "local", Label: "local", DB: db},
 		seed:  seed,
 	}
 }
@@ -312,7 +312,7 @@ func (m *Manager) Resolve(w http.ResponseWriter, r *http.Request) (*Workspace, e
 		// Unknown/deleted workspace: fall through and create a fresh one.
 	}
 	if !m.allowCreate(clientIP(r)) {
-		return nil, fmt.Errorf("too many new demo sessions from this address — try again later")
+		return nil, fmt.Errorf("too many new sessions from this address — try again later")
 	}
 	ws, err := m.Create(r.Context())
 	if err != nil {
@@ -328,7 +328,7 @@ func (m *Manager) New(w http.ResponseWriter, r *http.Request) (*Workspace, error
 		return m.local, nil
 	}
 	if !m.allowCreate(clientIP(r)) {
-		return nil, fmt.Errorf("too many new demo sessions from this address — try again later")
+		return nil, fmt.Errorf("too many new sessions from this address — try again later")
 	}
 	ws, err := m.Create(r.Context())
 	if err != nil {
@@ -503,9 +503,12 @@ func (m *Manager) cleanup(ctx context.Context) {
 	m.mu.Unlock()
 }
 
+// labelOf names a hosted workspace for API payloads. It is not a
+// person: user-facing surfaces (the approval receipt) use the claimed
+// owner e-mail instead, never this label (§2 never-show, KLOX-64).
 func labelOf(id string) string {
 	if len(id) > 4 {
-		return "demo session " + id[:4] + "…"
+		return "visitor " + id[:4] + "…"
 	}
-	return "demo session " + id
+	return "visitor " + id
 }

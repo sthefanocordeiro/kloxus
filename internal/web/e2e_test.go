@@ -311,7 +311,7 @@ outer0:
 	commentary := func(text string) *httptest.ResponseRecorder {
 		ver := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)["version"].(string)
 		return apiCall(t, srv, "PUT", issueURL+"/commentary",
-			map[string]string{"section": "The big one", "text": text, "version": ver})
+			map[string]string{"section": "O destaque", "text": text, "version": ver})
 	}
 	if rr := commentary("Minha análise."); rr.Code != 200 {
 		t.Fatalf("commentary = %d", rr.Code)
@@ -374,7 +374,7 @@ outer0:
 	}
 	// sent issue is read-only
 	if rr := apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "v3"}); apiErrCode(t, rr) != "read_only" {
+		map[string]string{"section": "O destaque", "text": "v3"}); apiErrCode(t, rr) != "read_only" {
 		t.Fatal("commentary on sent issue should be refused")
 	}
 	// .eml has standard headers + encoded subject
@@ -493,7 +493,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	srv := web.New(web.Deps{
 		WS: mgr, Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
-		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm"},
+		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir("")},
 		Monitor: sources.FakeMonitor{},
 		Seed:    seed,
 	})
@@ -533,7 +533,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	}
 	pubs, _ := wsA.DB.ListPublications(ctx)
 	pub := pubs[0]
-	body := "# Edição 1\n\n## The big one\n\n### Manchete\n\nFrase de abertura curta. Conteúdo completo para assinantes [1]."
+	body := "# Edição 1\n\n## O destaque\n\n### Manchete\n\nFrase de abertura curta. Conteúdo completo para assinantes [1]."
 	iid, _ := wsA.DB.CreateIssue(ctx, pub.ID, 1, "Edição 1", body)
 	if err := wsA.DB.UpdateIssue(ctx, iid, "sent", body, "[]"); err != nil {
 		t.Fatalf("UpdateIssue: %v", err)

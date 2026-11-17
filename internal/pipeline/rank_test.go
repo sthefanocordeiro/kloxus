@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
@@ -71,11 +72,11 @@ func TestNonEditorialDemotion(t *testing.T) {
 		if scores[i] >= scores[4] {
 			t.Fatalf("non-editorial story %d scored %.1f ≥ real story %.1f", i, scores[i], scores[4])
 		}
-		if !strings.Contains(reasons[i], "non-editorial") {
+		if !strings.Contains(reasons[i], "off the editorial line") {
 			t.Errorf("demoted story %d reason lacks the marker: %q", i, reasons[i])
 		}
 	}
-	if strings.Contains(reasons[4], "non-editorial") {
+	if strings.Contains(reasons[4], "off the editorial line") {
 		t.Errorf("real story wrongly demoted: %q", reasons[4])
 	}
 	picks := pickLineup(stories, scores, reasons,
@@ -128,15 +129,35 @@ func TestScoreStoriesPTReasons(t *testing.T) {
 		detStory(1, "Pauta sem data", "", 2),
 	}
 	_, en := scoreStories(stories, "")
-	if !strings.Contains(en[0], "ranked:") || !strings.Contains(en[0], "undated") {
+	if en[0] != "undated · 2 outlets" {
 		t.Fatalf("en reason = %q", en[0])
 	}
 	_, pt := scoreStories(stories, "pt-BR")
-	if !strings.Contains(pt[0], "ranqueado:") || !strings.Contains(pt[0], "sem data") {
+	if pt[0] != "sem data · 2 veículos" {
 		t.Fatalf("pt reason = %q", pt[0])
 	}
-	if strings.Contains(pt[0], "ranked:") {
+	if strings.Contains(pt[0], "source") {
 		t.Fatalf("pt reason leaked English: %q", pt[0])
+	}
+}
+
+// TestScoreStoriesReasonFormat: the deterministic rank reason reads
+// "há 3 h · 2 veículos" — relative freshness, proper plural, never
+// "fonte(s)" or a raw "ranked:" prefix (KLOX-64).
+func TestScoreStoriesReasonFormat(t *testing.T) {
+	fresh := detStory(1, "Pauta recente", time.Now().Add(-3*time.Hour).UTC().Format(time.RFC3339), 1)
+	_, pt := scoreStories([]store.Story{fresh}, "pt-BR")
+	if pt[0] != "há 3 h · 1 veículo" {
+		t.Fatalf("pt reason = %q, want %q", pt[0], "há 3 h · 1 veículo")
+	}
+	_, en := scoreStories([]store.Story{fresh}, "")
+	if en[0] != "3 h ago · 1 outlet" {
+		t.Fatalf("en reason = %q, want %q", en[0], "3 h ago · 1 outlet")
+	}
+	plural := detStory(2, "Pauta recente", time.Now().Add(-3*time.Hour).UTC().Format(time.RFC3339), 2)
+	_, pt2 := scoreStories([]store.Story{plural}, "pt-BR")
+	if pt2[0] != "há 3 h · 2 veículos" {
+		t.Fatalf("pt plural reason = %q, want %q", pt2[0], "há 3 h · 2 veículos")
 	}
 }
 

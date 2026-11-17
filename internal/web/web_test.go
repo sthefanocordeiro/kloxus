@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,6 +20,16 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/web"
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
+
+// llmDumpDir lets a fixture-rekey run redirect Replay request dumps to a
+// stable directory via KLOX_LLM_DUMP; the fallback keeps the per-test
+// tempdir (or "" for no dumps) otherwise.
+func llmDumpDir(fallback string) string {
+	if d := os.Getenv("KLOX_LLM_DUMP"); d != "" {
+		return d
+	}
+	return fallback
+}
 
 // demoServer seeds the example publication and returns the server plus its
 // collaborators. The whole test runs offline on replayed model calls.
@@ -63,7 +74,7 @@ func demoServerOpt(t *testing.T, opt func(*web.Deps)) (*web.Server, *store.DB, *
 	deps := web.Deps{
 		WS: workspace.OpenLocal(db, seed), Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
-		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: filepath.Join(cfg.OutDir, "llm-dump")},
+		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir(filepath.Join(cfg.OutDir, "llm-dump"))},
 		Monitor: sources.FakeMonitor{},
 		Seed:    seed,
 	}
@@ -145,7 +156,7 @@ func TestDemoIssueLifecycle(t *testing.T) {
 	// --- clear blockers ---
 	ver := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)["version"].(string)
 	rr := apiCall(t, srv, "PUT", issueURL+"/commentary", map[string]string{
-		"section": "The big one", "text": "My editorial take on the regulator consultation.", "version": ver,
+		"section": "O destaque", "text": "My editorial take on the regulator consultation.", "version": ver,
 	})
 	if rr.Code != 200 {
 		t.Fatalf("PUT commentary = %d", rr.Code)
