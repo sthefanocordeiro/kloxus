@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { Plus } from "lucide-react";
 import { api } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Button, Card } from "../ui";
+import { ShellPrimary } from "../components/ShellPortal";
 
 export function Publications() {
   const { t } = useT();
@@ -24,26 +26,30 @@ export function Publications() {
   const demoErr = reset.error ?? newWs.error;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
-      <p className="mb-1 text-xs uppercase tracking-wide text-muted">
-        {ws.data ? `${t.workspace}: ${ws.data.label}` : ""}
-      </p>
-      <h1 className="mb-6 font-doc text-2xl font-semibold">{t.publications}</h1>
+    <div className="mx-auto w-full max-w-3xl px-4 py-6">
+      <ShellPrimary>
+        <Link to="/new">
+          <Button size="sm">
+            <Plus size={15} aria-hidden />
+            {t.nav.newNewsletter}
+          </Button>
+        </Link>
+      </ShellPrimary>
       {pubs.isLoading && <p className="text-muted">…</p>}
       {pubs.data?.length === 0 && (
         <Card className="p-6 text-center">
-          <p className="text-sm text-muted">{t.landing.lede}</p>
+          <p className="text-sm text-muted">{t.landing.subhead}</p>
           <Link to="/new" className="mt-3 inline-block">
-            <Button>{t.landing.start}</Button>
+            <Button>{t.landing.cta}</Button>
           </Link>
         </Card>
       )}
       <div className="grid gap-3">
         {pubs.data?.map((p) => (
           <Link key={p.id} to={`/publications/${p.id}`}>
-            <Card className="hover:border-ink/40 transition-colors">
+            <Card className="transition-colors hover:border-ink/40">
               <div className="flex items-baseline justify-between">
-                <h2 className="font-doc text-lg font-semibold">{p.name}</h2>
+                <h2 className="font-display text-lg font-bold">{p.name}</h2>
                 <span className="text-xs text-muted">
                   {(t.frequency as Record<string, string>)[p.frequency] ?? p.frequency}
                 </span>
@@ -60,7 +66,7 @@ export function Publications() {
             {t.demo.title}
           </h2>
           <div className="flex flex-wrap items-start gap-3">
-            <div className="flex-1 min-w-48">
+            <div className="min-w-48 flex-1">
               <Button
                 variant="outline"
                 size="sm"
@@ -73,7 +79,7 @@ export function Publications() {
                 {reset.isSuccess ? t.demo.resetDone : t.demo.resetHint}
               </p>
             </div>
-            <div className="flex-1 min-w-48">
+            <div className="min-w-48 flex-1">
               <Button
                 variant="outline"
                 size="sm"
