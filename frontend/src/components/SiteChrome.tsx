@@ -69,7 +69,7 @@ function LangToggle() {
           onClick={() => setLang(l)}
           aria-pressed={lang === l}
           className={cn(
-            "flex h-11 min-w-11 items-center justify-center rounded-full px-1 text-xs font-medium md:h-8 md:min-w-9",
+            "flex h-11 min-w-11 items-center justify-center rounded-full px-1 text-xs font-medium md:h-10 md:min-w-10",
             lang === l ? "bg-ink text-paper" : "text-muted hover:text-ink",
           )}
         >
