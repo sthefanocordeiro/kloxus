@@ -100,7 +100,7 @@ func liveDeps(t *testing.T, mailer delivery.Sender, tweak func(*config.Config)) 
 	deps := web.Deps{
 		WS: workspace.OpenLocal(db, seed), Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
-		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm"},
+		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir("")},
 		Monitor: sources.FakeMonitor{},
 		Mailer:  mailer, Seed: seed,
 	}
@@ -270,7 +270,7 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	// the send lifecycle is untouched by the marker
 	docVer := sent["document_version"].(string)
 	rr = apiCall(t, srv, "PUT", issueURL+"/commentary",
-		map[string]string{"section": "The big one", "text": "post-test edit", "version": docVer})
+		map[string]string{"section": "O destaque", "text": "post-test edit", "version": docVer})
 	if rr.Code != 200 {
 		t.Fatalf("commentary on a test-sent issue = %d, want 200", rr.Code)
 	}
@@ -882,7 +882,7 @@ func TestGlobalCapAcrossWorkspaces(t *testing.T) {
 	srv := web.New(web.Deps{
 		WS: mgr, Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
-		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm"},
+		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir("")},
 		Monitor: sources.FakeMonitor{}, Mailer: fake, Seed: seed,
 	})
 	serve := func(method, path, cookie string, body any) *httptest.ResponseRecorder {
@@ -1077,7 +1077,7 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 	srv := web.New(web.Deps{
 		WS: mgr, Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
-		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm"},
+		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir("")},
 		Monitor: sources.FakeMonitor{}, Mailer: fake, Seed: seed,
 	})
 	serve := func(method, path, cookie string, body any) *httptest.ResponseRecorder {

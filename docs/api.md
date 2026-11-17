@@ -23,11 +23,11 @@ HTTP/1.1 409 Conflict
     "message": "the issue is not ready to approve — fix each reason first",
     "reasons": [
       {"code": "flags_unresolved",
-       "message": "1 flagged sentence(s) unresolved — edit, mark as interpretation or remove each",
+       "message": "1 flagged sentence unresolved — edit, mark as interpretation or remove each",
        "target": {"kind": "sentence", "ref": "3.9f1c04ab"}},
       {"code": "commentary_required",
-       "message": "commentary required in \"The big one\"",
-       "target": {"kind": "section", "ref": "The big one"}}
+       "message": "commentary required in \"O destaque\"",
+       "target": {"kind": "section", "ref": "O destaque"}}
     ]
   }
 }
@@ -126,9 +126,9 @@ workspace-free, so every citation opens an original inside the demo.
   "name": "Futuro Próximo", "topic": "…", "audience": "…",
   "editorial_line": "…", "tone": "…",
   "language": "pt-BR", "frequency": "weekly", "ai_disclosure": "short",
-  "sections": [{"title": "The big one", "items": 1, "commentary": "required"}],
+  "sections": [{"title": "O destaque", "items": 1, "commentary": "required"}],
   "sources": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml"}],
-  "paywall": {"enabled": true, "paid_sections": ["The big one"], "price": "V$ 12/month"}
+  "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "V$ 12/month"}
 }}
 ```
 
@@ -159,8 +159,8 @@ by the canonical sample at run time so fixture replay stays stable.
     "language": "pt-BR", "topic": "…", "audience": "…",
     "editorial_line": "…", "tone": "…", "frequency": "weekly",
     "ai_disclosure": "short",
-    "sections": [{"title": "The big one", "items": 1, "commentary": "required"}],
-    "paywall": {"enabled": true, "paid_sections": ["The big one"], "price": "V$ 12/month"}
+    "sections": [{"title": "O destaque", "items": 1, "commentary": "required"}],
+    "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "V$ 12/month"}
   },
   "latest_issue": {"id": 1, "number": 1, "status": "reviewing", "…": "…"}
 }
@@ -293,7 +293,7 @@ issue — shown on the issue page (KLOX-44).
 ### `GET /api/v1/issues/{id}/items` — triage cards
 ```json
 {"items": [{
-  "id": 9, "issue_id": 1, "story_id": 4, "section": "The big one",
+  "id": 9, "issue_id": 1, "story_id": 4, "section": "O destaque",
   "score": 8.7, "reason": "why this belongs in the issue",
   "status": "pending", "origin": "phaseA",
   "title": "Regulator opens consultation on AI labelling",
@@ -330,12 +330,12 @@ paged away.
   "story_id": 4, "item_id": 9, "title": "…", "outlets": ["Radar Tech"],
   "sources": 2, "duplicates": 1,
   "score": 8.7, "reason": "why this belongs", "rank": 1,
-  "in_issue": true, "section": "The big one",
-  "suggested_section": "The big one",
+  "in_issue": true, "section": "O destaque",
+  "suggested_section": "O destaque",
   "status": "approved", "origin": "phaseA", "position": 0,
   "dossier": true, "available": true
 }],
- "sections": [{"title": "The big one", "capacity": 1, "commentary": "required"}],
+ "sections": [{"title": "O destaque", "capacity": 1, "commentary": "required"}],
  "page": 0, "page_size": 50, "bench_total": 137, "has_more": true,
  "demo": true}
 ```
@@ -351,7 +351,7 @@ paged away.
   adding another → `demo_unavailable`.
 
 ### `PUT /api/v1/issues/{id}/lineup` — set the board
-`{"entries": [{"story_id": 4, "section": "Worth knowing"}, …]}` —
+`{"entries": [{"story_id": 4, "section": "Vale saber"}, …]}` —
 the full desired lineup; order within a section is the array order
 (`position` 0-based). Returns the first candidates page in the same
 shape as `GET …/candidates` (plus `guide` when a re-included rejection
@@ -432,7 +432,7 @@ sentence stay on the item.
   "version": "9f1c04ab22dd77ee",
   "subject": "Futuro Próximo — issue 1",
   "sections": [{
-    "title": "The big one",
+    "title": "O destaque",
     "commentary": {"mode": "required", "text": "My editorial take…"},
     "items": [{
       "ref": 1, "issue_item_id": 9,
@@ -507,7 +507,7 @@ defaults to the sentence's text without citations). Marks the sentence
 as interpretation and resolves its flag.
 
 ### `PUT /api/v1/issues/{id}/commentary`
-`{"section": "The big one", "text": "…", "version": "9f1c04ab22dd77ee"}`
+`{"section": "O destaque", "text": "…", "version": "9f1c04ab22dd77ee"}`
 — the only write path for commentary; the AI never writes here. Reverts
 an approved issue to `drafted` and voids its receipt.
 
@@ -519,7 +519,7 @@ an approved issue to `drafted` and voids its receipt.
  "checks": [
   {"code": "pending_decisions", "ok": true},
   {"code": "uncited_sentences", "ok": false,
-   "message": "1 sentence(s) without a citation",
+   "message": "1 sentence without a citation",
    "target": {"kind": "sentence", "ref": "1.22dd77ee"}},
   {"code": "flags_unresolved", "ok": true},
   {"code": "commentary_required", "ok": true}
@@ -682,7 +682,7 @@ unlocks the full body; `view=free` forces the gated teaser.
 {"publication": {"name": "Futuro Próximo", "slug": "futuro-proximo", "language": "pt-BR"},
  "issue": {"number": 1, "subject": "…", "created_at": "…"},
  "body_md": "…", "gated": true, "subscribed": false,
- "reader": {"name": "Demo Reader"}, "paid_sections": ["The big one"]}
+ "reader": {"name": "Demo Reader"}, "paid_sections": ["O destaque"]}
 ```
 
 ### `POST /api/v1/p/{slug}/subscribe`

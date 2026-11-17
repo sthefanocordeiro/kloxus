@@ -64,7 +64,7 @@ func EML(e *store.OutboxEmail) string {
 	}
 	subject := mime.QEncoding.Encode("utf-8", e.Subject)
 	return fmt.Sprintf(
-		"From: Kloxus Demo <demo@trendfi.com.br>\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
+		"From: Kloxus <demo@trendfi.com.br>\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
 		e.To, subject, when.Format("Mon, 02 Jan 2006 15:04:05 +0000"), e.BodyHTML)
 }
 
@@ -108,12 +108,17 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string, aiUsed bo
 	lines := strings.Split(iss.BodyMD, "\n")
 	var out []string
 	inFirstSection := false
+	pt := strings.HasPrefix(strings.ToLower(pub.Language), "pt")
+	commentaryLabel := "Editor's note:"
+	if pt {
+		commentaryLabel = "Comentário do editor:"
+	}
 	flush := func(section string) {
 		if section == "" {
 			return
 		}
 		if c := strings.TrimSpace(iss.Commentary[section]); c != "" {
-			out = append(out, "> **Comentário do editor:** "+c, "")
+			out = append(out, "> **"+commentaryLabel+"** "+c, "")
 		}
 	}
 	current := ""

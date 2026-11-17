@@ -81,7 +81,7 @@ func TestRunTimeoutReleasesPublication(t *testing.T) {
 		return web.Deps{
 			WS: mgr, Cfg: cfg,
 			Fetcher: fetcher,
-			LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: filepath.Join(cfg.OutDir, "llm-dump")},
+			LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir(filepath.Join(cfg.OutDir, "llm-dump"))},
 			Monitor: sources.FakeMonitor{},
 			Seed:    seed,
 			// RunTimeout bounds the worker — short for the wedged run,

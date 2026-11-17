@@ -50,8 +50,9 @@ export function PautasPane({
                   <Badge tone={statusOf(it.issue_item_id) === "approved" ? "teal" : "muted"}>
                     {statusLabel(statusOf(it.issue_item_id))}
                   </Badge>
-                  <span className="text-[10px] text-muted">{(it.sentences ?? []).length} ·</span>
-                  <span className="text-[10px] text-muted">{(it.sources ?? []).length} {t.evidence.sources.toLowerCase()}</span>
+                  <span className="text-[10px] text-muted">
+                    {t.evidence.sent((it.sentences ?? []).length)} · {t.evidence.src((it.sources ?? []).length)}
+                  </span>
                 </span>
               </button>
             ))}

@@ -24,7 +24,7 @@ type EditorWindow = Window & {
 };
 
 const issueCol = (page: Page) => page.locator('section[aria-label="This issue"]');
-const benchCol = (page: Page) => page.locator('section[aria-label="Pautas"]');
+const benchCol = (page: Page) => page.locator('section[aria-label="Suggestions"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
 
@@ -124,7 +124,7 @@ async function settleBenchAdd(page: Page) {
 async function boardOps(page: Page, isPhone: boolean) {
   const off = await llmOff(page);
   const tabIssue = page.getByRole("button", { name: /This issue/ });
-  const tabBench = page.getByRole("button", { name: /^Pautas/ });
+  const tabBench = page.getByRole("button", { name: /^Suggestions/ });
   if (isPhone) await tabIssue.click();
 
   // 1) remove a Worth-knowing story giving a reason — the guide learns
@@ -133,7 +133,7 @@ async function boardOps(page: Page, isPhone: boolean) {
   //    always reads "Rule learned". The bench badge still marks the
   //    deterministic run (attached-asserted: the bench column is hidden
   //    behind its tab on phone)
-  const wk = sectionBox(page, "Worth knowing");
+  const wk = sectionBox(page, "Vale saber");
   const removedTitle = (await wk.locator("p.font-doc").first().textContent())!.trim();
   await wk.getByRole("button", { name: "Remove", exact: true }).first().click();
   await page.getByRole("button", { name: "not for my audience" }).click();
@@ -152,11 +152,11 @@ async function boardOps(page: Page, isPhone: boolean) {
   //    move opens the swap picker: pick the story that leaves. The move
   //    popover stays open under the dialog, so scope by the prompt text.
   if (isPhone) await tabIssue.click();
-  await sectionBox(page, "Worth knowing")
+  await sectionBox(page, "Vale saber")
     .getByRole("button", { name: /Move to/ })
     .first()
     .click();
-  await page.getByRole("button", { name: /Quick links/ }).click();
+  await page.getByRole("button", { name: /Links rápidos/ }).click();
   if (off) {
     const swap = page.getByRole("dialog").filter({ hasText: /pick a story to swap out/ });
     await expect(swap).toBeVisible({ timeout: 15000 });
@@ -205,7 +205,7 @@ async function boardOps(page: Page, isPhone: boolean) {
       if (src) supported.set(it.ref, { text: supportedSentence(src.excerpt), cite: src.ref });
     }
   }
-  const emptySlot = page.getByRole("button", { name: /Empty — write this item/ });
+  const emptySlot = page.getByRole("button", { name: /Write this story/ });
   for (let filled = 0, tries = 0; tries < 24; tries++) {
     if ((await emptySlot.count()) === 0) break;
     // each add refetches the document and remounts every node view — a
@@ -223,17 +223,17 @@ async function boardOps(page: Page, isPhone: boolean) {
       continue;
     }
     const fill = itemRef != null ? supported.get(itemRef) : undefined;
-    const box = page.locator('section[aria-label="Write this item"]');
+    const box = page.locator('section[aria-label="Write this story"]');
     await expect(box).toBeVisible();
     await box.getByRole("textbox").fill(fill?.text ?? "Editor's reading of the sources.");
     if (fill) {
       await box.getByRole("button", { name: new RegExp(`^\\[${fill.cite}\\] `) }).click();
-      await box.getByRole("button", { name: "Add to item" }).click();
+      await box.getByRole("button", { name: "Add to story" }).click();
     } else {
       // no source excerpt to verify against — write the item as the
       // editor's own take so the slot still fills without a citation
       await box.getByRole("checkbox", { name: /my take/i }).check();
-      await box.getByRole("button", { name: "Add to item" }).click();
+      await box.getByRole("button", { name: "Add to story" }).click();
     }
     // wait for the remounted document — the count check above is only
     // trustworthy once the refetch has landed (compose.spec.ts does the
@@ -529,7 +529,7 @@ async function readerJourney(page: Page) {
   await expect(page.getByText("For paying readers")).toBeVisible({ timeout: 15000 });
   // subscribe → the magic-link offer appears
   await page.getByRole("button", { name: "Subscribe" }).click();
-  await expect(page.getByText(/magic link/i).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/sign-in link/i).first()).toBeVisible({ timeout: 15000 });
 }
 
 const viewports = [

@@ -753,7 +753,7 @@ function ApproveBar({
           )}
           <div className="flex justify-between">
             <dt>{t.send.sender}</dt>
-            <dd>{pub?.name} &lt;demo@trendfi.com.br&gt;</dd>
+            <dd>{pub?.name}</dd>
           </div>
         </dl>
         <div className="flex justify-end gap-2">
@@ -859,7 +859,7 @@ function SendRow({ issue, onDone, onToast }: {
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.sender}</dt>
-            <dd>{pub?.name} &lt;demo@trendfi.com.br&gt;</dd>
+            <dd>{pub?.name}</dd>
           </div>
           {confirmSend?.when === "schedule" && (
             <div className="flex justify-between gap-4">

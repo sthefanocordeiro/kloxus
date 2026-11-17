@@ -64,16 +64,10 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
   const doneSteps = new Set(events.map((e) => e.step));
   const running = steps.find((s) => !doneSteps.has(s)); // first unfinished step ticks
   const stepLabels = t.run.step as Record<string, string>;
-  const countLabels = t.run.counts as Record<string, string | ((n: number) => string)>;
   return (
     <ol className="space-y-1.5">
       {steps.map((s) => {
-        const ev = events.find((e) => e.step === s);
         const done = doneSteps.has(s);
-        const bits = Object.entries(ev?.counts ?? {}).map(([k, v]) => {
-          const lbl = countLabels[k] ?? k;
-          return typeof lbl === "function" ? `${v} ${lbl(v)}` : `${v} ${lbl}`;
-        });
         return (
           <li key={s} className="flex items-center gap-2 text-sm">
             <span
@@ -83,7 +77,6 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
               )}
             />
             <span className={cn(done ? "text-ink" : "text-muted")}>{stepLabels[s] ?? s}</span>
-            {bits.length > 0 && <span className="text-xs text-muted">— {bits.join(", ")}</span>}
           </li>
         );
       })}
@@ -527,7 +520,6 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const sections = candsQ.data.sections;
   const total = sections.reduce((n, s) => n + board.sections[s.title].length, 0);
   const draftReady = sections.every((s) => board.sections[s.title].length > 0);
-  const benchTotal = candsQ.data.bench_total ?? benchAll.length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -576,7 +568,6 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             )}
           >
             {tab === "bench" ? t.board.bench : t.board.issue}
-            {tab === "issue" ? ` (${total})` : ` (${benchTotal})`}
           </button>
         ))}
       </div>
@@ -592,7 +583,6 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         >
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold">{t.board.bench}</h2>
-            <span className="text-xs text-muted">{benchTotal}</span>
             <span className="flex-1" />
             <div className="relative">
               <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />

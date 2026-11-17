@@ -170,13 +170,13 @@ func (s *Server) localizeReaderMD(md string, pub *store.Publication) string {
 		}
 	}
 	if strings.HasPrefix(strings.ToLower(pub.Language), "pt") {
-		// the sample publication's own sections carry canonical English
-		// titles for fixture compatibility — a pt reader sees pt names
-		// (KLOX-56). gating already ran on the canonical headings. This
-		// runs for custom publications too: API-created pubs are stored
-		// custom=TRUE while replaying the canonical pipeline, so a
-		// creator who kept the canonical titles still leaks "The big
-		// one" unless the swap applies after the custom-title pass.
+		// bodies written before KLOX-64 carry canonical English section
+		// titles — a pt reader sees pt names (KLOX-56). gating already
+		// ran on the stored headings. This runs for custom publications
+		// too: API-created pubs are stored custom=TRUE while replaying
+		// the canonical pipeline, so a creator who kept the old
+		// canonical titles still leaks "The big one" unless the swap
+		// applies after the custom-title pass.
 		for _, swap := range canonicalSectionPT {
 			md = regexp.MustCompile(`(?m)^##\s+`+regexp.QuoteMeta(swap[0])+`$`).
 				ReplaceAllString(md, "## "+swap[1])
@@ -217,9 +217,9 @@ func localizeSubject(subject, lang string) string {
 	return strings.Replace(subject, " — issue ", " — edição ", 1)
 }
 
-// canonicalSectionPT maps the sample publication's canonical English
-// section titles to the pt names readers see — the same names the app
-// interface shows (KLOX-56). Stored bodies keep the canonical titles.
+// canonicalSectionPT maps the legacy canonical English section titles
+// to the pt names readers see — bodies stored before KLOX-64 keep the
+// English headings and swap at render time (KLOX-56).
 var canonicalSectionPT = [][2]string{
 	{"The big one", "O destaque"},
 	{"Worth knowing", "Vale saber"},
@@ -251,9 +251,9 @@ func (s *Server) sampleArticle(w http.ResponseWriter, r *http.Request) {
 		`.note{margin-top:3em;padding:.9em 1.1em;border:1px dashed #bbb;border-radius:.5em;color:#666;font-size:.85em;font-family:system-ui,sans-serif}`+
 		`</style></head><body>`+
 		`<p class="site">%s</p><h1>%s</h1>`+
-		`<p>Este é um artigo de demonstração do universo ficcional de Valdória — `+
-		`o Kloxus serve fontes simuladas para que cada citação abra um original de verdade, mesmo em modo demo.</p>`+
-		`<div class="note">Conteúdo simulado · fictional source · <a href="/">← Kloxus</a></div>`+
+		`<p>Este artigo pertence ao universo ficcional de Valdória — `+
+		`cada citação na sua edição abre um original de verdade como este.</p>`+
+		`<div class="note">Fonte fictícia de Valdória · <a href="/">← Kloxus</a></div>`+
 		`</body></html>`,
 		title, u.Host, u.Host, title)
 }
@@ -1364,7 +1364,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		counts[e.Section]++
 		if counts[e.Section] > cap_ {
 			apiErr(w, 409, "section_full",
-				fmt.Sprintf("section %q holds %d item(s) — the lineup asks for %d", e.Section, cap_, counts[e.Section]),
+				fmt.Sprintf("section %q holds %d %s — the lineup asks for %d", e.Section, cap_, plural(cap_, "item", "items"), counts[e.Section]),
 				apiReason{Code: "section_full",
 					Message: fmt.Sprintf("%s is full (%d/%d)", e.Section, cap_, cap_),
 					Target:  &apiTarget{Kind: "section", Ref: e.Section}})
@@ -1664,7 +1664,7 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 
 	pending := doc.dctx.pending
 	c := apiCheck{Code: "pending_decisions", OK: pending == 0, Count: pending,
-		Message: fmt.Sprintf("%d story decision(s) still open", pending)}
+		Message: fmt.Sprintf("%d %s still open", pending, plural(pending, "story decision", "story decisions"))}
 	if !c.OK {
 		c.Target = &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}
 	}
@@ -1684,7 +1684,7 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 		}
 	}
 	c = apiCheck{Code: "uncited_sentences", OK: uncited == 0, Count: uncited,
-		Message: fmt.Sprintf("%d sentence(s) without a citation", uncited)}
+		Message: fmt.Sprintf("%d %s without a citation", uncited, plural(uncited, "sentence", "sentences"))}
 	if !c.OK {
 		c.Target = &apiTarget{Kind: "sentence", Ref: firstUncited}
 	}
@@ -1695,7 +1695,7 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	// keep blocking approval (KLOX-52)
 	live := doc.Coverage.Flagged
 	c = apiCheck{Code: "flags_unresolved", OK: live == 0, Count: live,
-		Message: fmt.Sprintf("%d flagged sentence(s) unresolved — edit, mark as interpretation or remove each", live)}
+		Message: fmt.Sprintf("%d flagged %s unresolved — edit, mark as interpretation or remove each", live, plural(live, "sentence", "sentences"))}
 	if !c.OK {
 		// point at the first flagged sentence we can locate
 		ref := ""
@@ -1728,7 +1728,7 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 		}
 	}
 	c = apiCheck{Code: "empty_items", OK: empty == 0, Count: empty,
-		Message: fmt.Sprintf("%d item(s) still empty — write each item's text", empty)}
+		Message: fmt.Sprintf("%d %s still empty — write each item's text", empty, plural(empty, "item", "items"))}
 	if !c.OK {
 		c.Target = &apiTarget{Kind: "item", Ref: firstEmpty}
 	}
@@ -1802,7 +1802,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(reasons) > 0 {
-		apiErr(w, 409, "blocked", fmt.Sprintf("%d section(s) still empty — fill each one before drafting", len(reasons)), reasons...)
+		apiErr(w, 409, "blocked", fmt.Sprintf("%d %s still empty — fill each one before drafting", len(reasons), plural(len(reasons), "section", "sections")), reasons...)
 		return
 	}
 	for _, ii := range lineup {
@@ -1934,7 +1934,7 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(reasons) > 0 {
-		apiErr(w, 409, "blocked", fmt.Sprintf("%d section(s) still empty — fill each one before composing", len(reasons)), reasons...)
+		apiErr(w, 409, "blocked", fmt.Sprintf("%d %s still empty — fill each one before composing", len(reasons), plural(len(reasons), "section", "sections")), reasons...)
 		return
 	}
 	ctx := r.Context()
@@ -1952,7 +1952,7 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db(r).RecordDecision(ctx, iss.PublicationID, 0, "manual_compose",
-		fmt.Sprintf("lineup of %d item(s) became empty slots for manual writing", res.Selected))
+		fmt.Sprintf("lineup of %d %s became empty slots for manual writing", res.Selected, plural(res.Selected, "item", "items")))
 	fresh, err := db(r).GetIssue(ctx, iss.ID)
 	if apiDBErr(w, r, err, "issue") {
 		return
@@ -2524,7 +2524,7 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
 		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body, Flags: flags,
 		Decision:       "sentence_restore",
-		Reason:         fmt.Sprintf("%d sentence(s) restored to item %d", len(entries), ref),
+		Reason:         fmt.Sprintf("%d %s restored to item %d", len(entries), plural(len(entries), "sentence", "sentences"), ref),
 		RevertApproved: iss.Status == "approved",
 	})
 	if apiDBErr(w, r, err, "issue") {
@@ -2610,7 +2610,7 @@ func (s *Server) apiItemRemoveFlagged(w http.ResponseWriter, r *http.Request) {
 	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
 		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body, Flags: kept,
 		Decision:       "flagged_bulk_remove",
-		Reason:         fmt.Sprintf("%d flagged sentence(s) removed from item %d", len(removed), item.Ref),
+		Reason:         fmt.Sprintf("%d flagged %s removed from item %d", len(removed), plural(len(removed), "sentence", "sentences"), item.Ref),
 		RevertApproved: iss.Status == "approved",
 	})
 	if apiDBErr(w, r, err, "issue") {

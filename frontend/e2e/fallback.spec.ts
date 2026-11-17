@@ -84,7 +84,7 @@ async function approvedIssue(page: Page): Promise<number> {
   // (KLOX-58). Fill each empty item the way the editor does — the
   // excerpt-derived supported fill compose/journey use: a claim built
   // from the item's own source excerpt, cited through the same compose
-  // endpoint the "Write this item" box calls. A dossierless item with
+  // endpoint the "Write this story" box calls. A dossierless item with
   // no usable excerpt gets the editor's own take instead (no citation
   // needed), the same escape hatch journey.spec.ts uses.
   for (let i = 0; i < 40; i++) {

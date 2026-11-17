@@ -48,7 +48,7 @@ Keep item 1 selected if you want to show the planted unsupported-claim flag.
 3. Review story list; open one dossier; reject one lower-ranked item with a reason.
 4. Show that the rejection reason is appended to the editorial guide.
 5. Draft the issue; show the citation flag on item 1.
-6. Add required commentary in **The big one**, dismiss the flag after explaining it.
+6. Add required commentary in **O destaque**, dismiss the flag after explaining it.
 7. Approve; export Markdown/HTML or send to the local outbox.
 8. Paywall: simulate reader payment and compare unpaid/paid reader views.
 9. Optional: Sources page shows the simulated Firecrawl monitor badge and Check now.

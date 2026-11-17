@@ -122,7 +122,7 @@ func TestPaywallNoteLocalized(t *testing.T) {
 	if n := paywallNote("pt-BR", 0); !strings.Contains(n, "assinantes") {
 		t.Fatalf("pt note expected, got %q", n)
 	}
-	if n := paywallNote("pt-BR", 3); !strings.Contains(n, "mais 3 matérias") {
+	if n := paywallNote("pt-BR", 3); !strings.Contains(n, "mais 3 pautas") {
 		t.Fatalf("pt counted note expected, got %q", n)
 	}
 	if n := paywallNote("en", 0); !strings.Contains(n, "Subscribers only") {
@@ -339,29 +339,33 @@ func TestLocalizeReaderMD(t *testing.T) {
 	}
 
 	// API-created publications are stored custom=TRUE while replaying
-	// the canonical pipeline — canonical headings still swap to pt, and
-	// a creator's renamed section is untouched by the canonical swap
-	// (KLOX-56 QA rework).
-	custom := s.localizeReaderMD(md, &store.Publication{
-		Language: "pt-BR", Custom: true,
-		Sections: []config.Section{
-			{Title: "The big one"}, {Title: "Meus favoritos"}, {Title: "Quick links"},
-		},
-	})
-	if !strings.Contains(custom, "## O destaque") {
-		t.Fatalf("custom pub canonical heading not swapped:\n%s", custom)
+	// the canonical pipeline — the internal body carries the sample's
+	// pt titles and the creator's renamed section swaps in first, so
+	// nothing canonical leaks (KLOX-56, KLOX-64).
+	custom := s.localizeReaderMD(
+		"# Futuro Próximo — edição 3\n\n## O destaque\n\nFact. [1]\n\n## Vale saber\n\nMore. [2]\n",
+		&store.Publication{Language: "pt-BR", Custom: true,
+			Sections: []config.Section{
+				{Title: "Meus favoritos"}, {Title: "Vale saber"}, {Title: "Links rápidos"},
+			},
+		})
+	if !strings.Contains(custom, "## Meus favoritos") || !strings.Contains(custom, "## Vale saber") {
+		t.Fatalf("creator section titles not honored:\n%s", custom)
 	}
-	if strings.Contains(custom, "The big one") {
+	if strings.Contains(custom, "O destaque") {
 		t.Fatalf("custom pub leaked canonical heading:\n%s", custom)
 	}
-	// creator-renamed section: the custom pass swapped canonical→creator
-	// title first, so the canonical→pt swap must not mangle it
-	renamed := s.localizeReaderMD(
-		"# Futuro Próximo — issue 3\n\n## The big one\n\nFact. [1]\n\n## Worth knowing\n\nMore. [2]\n",
-		&store.Publication{Language: "pt-BR", Custom: true,
-			Sections: []config.Section{{Title: "Meus favoritos"}, {Title: "Vale saber"}, {Title: "Quick links"}}})
-	if !strings.Contains(renamed, "## Meus favoritos") || !strings.Contains(renamed, "## Vale saber") {
-		t.Fatalf("creator section titles not honored:\n%s", renamed)
+	// bodies written before the pt rename still carry the old canonical
+	// English headings — the legacy swap keeps localizing them (KLOX-64).
+	legacy := s.localizeReaderMD(md, &store.Publication{Language: "pt-BR", Custom: true,
+		Sections: []config.Section{
+			{Title: "Meus favoritos"}, {Title: "Vale saber"}, {Title: "Links rápidos"},
+		}})
+	if !strings.Contains(legacy, "## O destaque") {
+		t.Fatalf("legacy canonical heading not swapped:\n%s", legacy)
+	}
+	if strings.Contains(legacy, "The big one") {
+		t.Fatalf("legacy body leaked canonical heading:\n%s", legacy)
 	}
 }
 

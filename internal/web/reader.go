@@ -50,10 +50,17 @@ func (s *Server) issueMessage(ctx context.Context, wdb *store.DB, wsID string, i
 	}
 	md = s.localizeReaderMD(md, pub)
 	if !active {
-		md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s) · [cancelar assinatura](%s)*",
-			pub.Name, publicPage, unsub)
-	} else {
+		if ptLang(pub.Language) {
+			md += fmt.Sprintf("\n\n---\n*[Assinar %s](%s) · [cancelar assinatura](%s)*",
+				pub.Name, publicPage, unsub)
+		} else {
+			md += fmt.Sprintf("\n\n---\n*[Subscribe to %s](%s) · [unsubscribe](%s)*",
+				pub.Name, publicPage, unsub)
+		}
+	} else if ptLang(pub.Language) {
 		md += fmt.Sprintf("\n\n---\n*[cancelar assinatura](%s)*", unsub)
+	} else {
+		md += fmt.Sprintf("\n\n---\n*[unsubscribe](%s)*", unsub)
 	}
 	idem := fmt.Sprintf("%s/%d/r%d", kind, iss.ID, rid)
 	if idemNS != "" {
@@ -197,14 +204,19 @@ func gateSections(body string, paid []string, lang string) string {
 // section's teaser, in the publication's own language. When the wall
 // also hides further items, "more" names how many.
 func paywallNote(lang string, more int) string {
-	pt := strings.HasPrefix(strings.ToLower(lang), "pt")
 	if more > 0 {
-		if pt {
-			return fmt.Sprintf("Exclusivo para assinantes — assine para ler esta e mais %d matérias.", more)
+		if ptLang(lang) {
+			if more == 1 {
+				return "Exclusivo para assinantes — assine para ler esta e mais 1 pauta."
+			}
+			return fmt.Sprintf("Exclusivo para assinantes — assine para ler esta e mais %d pautas.", more)
+		}
+		if more == 1 {
+			return "Subscribers only — subscribe to read this and 1 more story."
 		}
 		return fmt.Sprintf("Subscribers only — subscribe to read this and %d more stories.", more)
 	}
-	if pt {
+	if ptLang(lang) {
 		return "Exclusivo para assinantes — assine para continuar a leitura."
 	}
 	return "Subscribers only — subscribe to keep reading."

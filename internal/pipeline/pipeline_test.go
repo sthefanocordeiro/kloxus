@@ -664,7 +664,7 @@ func TestReplaySecondPublicationOnReusedDB(t *testing.T) {
 	}
 
 	fetcher := sources.FixtureFetcher{FS: examples.FS}
-	replay := llm.Replay{FS: examples.FS, Dir: "fixtures/llm"}
+	replay := llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: os.Getenv("KLOX_LLM_DUMP")}
 	var deepPrompts []string
 	provider := llm.Func(func(ctx context.Context, req llm.Request) (llm.Response, error) {
 		if req.Template == "deepdive" {
