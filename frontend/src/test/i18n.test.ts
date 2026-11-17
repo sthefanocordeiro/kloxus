@@ -176,6 +176,21 @@ describe("pt glossary (KLOX-64 §2)", () => {
     expect(t.evidence.src(140)).toBe("140 fontes");
   });
 
+  it("pluralizes draftAction — never '(1 pautas)'", () => {
+    expect(t.board.draftAction(1)).toBe("Redigir a edição (1 pauta)");
+    expect(t.board.draftAction(2)).toBe("Redigir a edição (2 pautas)");
+    expect(t.board.draftAction(7)).toBe("Redigir a edição (7 pautas)");
+  });
+
+  it("agrees sectionFull on 'seção', not on the section title", () => {
+    expect(t.board.sectionFull("O destaque", 3)).toBe(
+      "A seção “O destaque” está cheia (3/3) — escolha uma pauta para trocar",
+    );
+    expect(t.board.sectionFull("Links rápidos", 4)).toContain(
+      "A seção “Links rápidos” está cheia",
+    );
+  });
+
   it("speaks second person", () => {
     expect(t.claim.action).toBe("Salvar com seu e-mail");
     expect(t.errors.unclaimed_workspace).toBe("Salve com seu e-mail antes de enviar");
