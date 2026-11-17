@@ -26,6 +26,18 @@ const router = createBrowserRouter([
   // the landing stands alone — the app shell (sidebar, tabs, menus) is
   // lazy so none of it lands in the "/" bundle (KLOX-16 budget)
   { path: "/", element: <Landing />, errorElement: <ErrorPage /> },
+  // legal pages share the landing chrome and stay out of the app
+  // shell — lazy so the landing payload budget is untouched (KLOX-70)
+  {
+    path: "/termos",
+    lazy: () => import("./pages/Legal").then((m) => ({ Component: m.TermsPage })),
+    errorElement: <ErrorPage />,
+  },
+  {
+    path: "/privacidade",
+    lazy: () => import("./pages/Legal").then((m) => ({ Component: m.PrivacyPage })),
+    errorElement: <ErrorPage />,
+  },
   {
     lazy: () => import("./AppShell").then((m) => ({ Component: m.AppShell })),
     errorElement: <ErrorPage />,

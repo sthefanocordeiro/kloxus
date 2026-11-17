@@ -56,9 +56,9 @@ async function llmOff(page: Page) {
 // landing → /new → /pub/:id/sources → confirm → first run → board.
 async function onboard(page: Page) {
   await page.goto("/");
-  // the landing renders the cited sample dossier before any workspace
-  await expect(page.getByText(/(dossier|research( file)?) from the (fictional )?sample issue/i)).toBeVisible({ timeout: 15000 });
-  await page.getByRole("button", { name: /Get started without login/ }).first().click();
+  // the landing renders the hero headline before any workspace exists
+  await expect(page.getByRole("heading", { name: /The research is done/ })).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: /Create your newsletter/ }).first().click();
   await page.waitForURL(/\/new/);
 
   // the sample proposal pre-fills the five editable blocks
@@ -585,7 +585,8 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   // poll may have brought fresh items since the first issue — then a
   // live collection run is the equally correct outcome.
   await page.goto("/");
-  await page.getByRole("link", { name: /Continue to/ }).click();
+  await page.getByRole("link", { name: "Dashboard" }).click();
+  await page.getByRole("link", { name: /Futuro Próximo/ }).click();
   await page.getByRole("button", { name: "Prepare next issue" }).click();
   await expect(
     page
@@ -602,7 +603,7 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   const reset = page.getByRole("button", { name: "Reset test data" });
   if (!(await reset.isVisible())) return;
   await reset.click();
-  await expect(page.getByRole("button", { name: /Get started without login/ }).first()).toBeVisible({
+  await expect(page.getByRole("button", { name: /Create your newsletter/ }).first()).toBeVisible({
     timeout: 15000,
   });
   await onboard(page);
