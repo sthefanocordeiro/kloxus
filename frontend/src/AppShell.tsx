@@ -304,7 +304,7 @@ function LangSwitch({ lang, setLang, className }: { lang: Lang; setLang: (l: Lan
           key={l}
           onClick={() => setLang(l)}
           className={cn(
-            "flex h-8 min-w-8 items-center justify-center rounded-md px-1.5",
+            "flex h-11 min-w-11 items-center justify-center rounded-md px-1.5 md:h-10 md:min-w-10",
             lang === l ? "bg-ink font-medium text-paper" : "text-muted hover:text-ink",
           )}
           aria-pressed={lang === l}

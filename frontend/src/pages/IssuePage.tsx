@@ -52,7 +52,6 @@ export function IssuePage() {
   const [params, setParams] = useSearchParams();
   const runID = params.get("run");
   const [runDone, setRunDone] = useState(!runID);
-  const [runSummary, setRunSummary] = useState<string | null>(null);
   const [runBlocked, setRunBlocked] = useState<string | null>(null);
   const issueQ = useQuery({ queryKey: ["issue", issueID], queryFn: () => api.issue(issueID) });
   const itemsQ = useQuery({ queryKey: ["items", issueID], queryFn: () => api.issueItems(issueID) });
@@ -452,17 +451,7 @@ export function IssuePage() {
               <StepRail
                 runID={runID}
                 steps={["collect", "dedupe", "triage", "storylist", "dossier", "deepdive"]}
-                onDone={(run, events) => {
-                  const bits: string[] = [];
-                  const labels = t.run.counts as Record<string, string | ((n: number) => string)>;
-                  for (const key of ["items_read", "duplicates_merged", "ranked", "selected"]) {
-                    const ev = [...events].reverse().find((e) => e.counts && key in e.counts);
-                    if (ev?.counts) {
-                      const lbl = labels[key] ?? key;
-                      bits.push(`${ev.counts[key]} ${typeof lbl === "function" ? lbl(ev.counts[key]) : lbl}`);
-                    }
-                  }
-                  if (bits.length) setRunSummary(bits.join(" · "));
+                onDone={(run) => {
                   setRunDone(true);
                   setParams((p) => { p.delete("run"); return p; }, { replace: true });
                   qc.invalidateQueries({ queryKey: ["candidates", issueID] });
@@ -477,7 +466,6 @@ export function IssuePage() {
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
-            {runSummary && <p className="border-b border-line px-4 py-1.5 text-xs text-muted">{runSummary}</p>}
             {runBlocked && (
               <div className="relative border-b border-line">
                 <button

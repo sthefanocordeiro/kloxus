@@ -864,7 +864,7 @@ function benchFiltered(bench: Candidate[], q: string, section: string): Candidat
   const needle = q.trim().toLowerCase();
   return bench.filter((c) => {
     if (section && c.suggested_section !== section && c.section !== section) return false;
-    if (needle && !`${c.title} ${c.outlets.join(" ")} ${c.reason}`.toLowerCase().includes(needle)) return false;
+    if (needle && !`${c.title} ${c.outlets.join(" ")}`.toLowerCase().includes(needle)) return false;
     return true;
   });
 }
@@ -1011,11 +1011,7 @@ function StoryCard({
         </span>
         <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
           <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
-          <p className="mt-0.5 text-xs text-muted">
-            {c.outlets.join(", ")}
-            {c.duplicates > 0 ? ` · +${c.duplicates}` : ""} · {c.score.toFixed(1)}/10
-          </p>
-          {c.reason && <p className="mt-0.5 line-clamp-2 text-xs text-muted">{c.reason}</p>}
+          <p className="mt-0.5 text-xs text-muted">{c.outlets.join(", ")}</p>
           {!c.available && (
             <Badge tone="warn" className="mt-1">{board.demoUnavailable}</Badge>
           )}
@@ -1155,9 +1151,7 @@ function StorySheet({ cand, onClose }: { cand: Candidate | null; onClose: () => 
         <DossierView d={dossierQ.data.dossier} />
       ) : storyQ.data ? (
         <div className="space-y-3">
-          <p className="text-xs text-muted">
-            {storyQ.data.outlets.join(", ")} · {storyQ.data.score.toFixed(1)}/10 — {storyQ.data.reason}
-          </p>
+          <p className="text-xs text-muted">{storyQ.data.outlets.join(", ")}</p>
           {cand && !cand.dossier && <p className="text-xs italic text-muted">{t.board.noDossier}</p>}
           {storyQ.data.items.map((it) => (
             <div key={it.id} className="rounded-[var(--radius-card)] border border-line p-3">

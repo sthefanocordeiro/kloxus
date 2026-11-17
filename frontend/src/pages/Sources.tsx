@@ -93,14 +93,13 @@ export function SourcesPage() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{s.name || s.url}</p>
                   <p className="truncate text-xs text-muted">{s.url}</p>
-                  <p className="mt-0.5 text-xs text-muted">
-                    {t.sourcesPage.itemsWeek(s.items_per_week)}
-                    {s.last_status && (
-                      <Badge className="ml-2" tone={s.last_status.startsWith("ok") ? "teal" : "warn"}>
+                  {s.last_status && (
+                    <p className="mt-0.5 text-xs text-muted">
+                      <Badge tone={s.last_status.startsWith("ok") ? "teal" : "warn"}>
                         {s.last_status.startsWith("ok") ? t.sourcesPage.lastOk : t.sourcesPage.lastFail}
                       </Badge>
-                    )}
-                  </p>
+                    </p>
+                  )}
                 </div>
                 <Button
                   variant="outline" size="sm" disabled={remove.isPending}
@@ -134,9 +133,6 @@ export function SourcesPage() {
                       <span className="mt-0.5 flex items-center gap-2 text-xs text-muted">
                         <Badge>{o.type === "rss" ? t.sourcesPage.ownType.rss : t.sourcesPage.ownType.page}</Badge>
                         {o.suspended && <Badge tone="warn">{t.sourcesPage.suspendedBadge}</Badge>}
-                        {o.items_per_week != null && o.items_per_week > 0 && (
-                          <span>{t.sourcesPage.itemsWeek(o.items_per_week)}</span>
-                        )}
                       </span>
                       {o.note && <span className="mt-0.5 block text-xs text-muted">{o.note}</span>}
                     </span>
