@@ -1,37 +1,363 @@
-import { Link, Outlet } from "react-router-dom";
-import { useT, type Lang } from "./i18n";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link, NavLink, Outlet, matchPath, useLocation, useNavigate } from "react-router-dom";
+import {
+  BookOpen,
+  CircleUser,
+  Ellipsis,
+  Inbox,
+  Layers,
+  LayoutGrid,
+  Newspaper,
+  Plus,
+  Rss,
+  Settings,
+  Users,
+} from "lucide-react";
+import { api } from "./api";
+import { useT, type Lang, type T } from "./i18n";
+import { cn } from "./lib/cn";
+import { BackButton } from "./components/BackButton";
+import { ClaimEmail } from "./components/ClaimEmail";
 
-// The chrome around every screen: brand, language switch.
+interface Crumb {
+  label: string;
+  to: string;
+}
+interface Chrome {
+  title: string;
+  crumbs: Crumb[];
+  section: string;
+}
+
+function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: number): Chrome {
+  const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
+  const issueM = matchPath("/issues/:id", pathname);
+  const runM = matchPath("/runs/:id", pathname);
+  const pub = pubM?.params.id;
+  const pubCrumb: Crumb = { label: pubName ?? t.publications, to: pub ? `/publications/${pub}` : "/publications" };
+
+  if (pathname === "/new") return { title: t.nav.creating, crumbs: [{ label: t.nav.newNewsletter, to: "/new" }], section: "new" };
+  if (pathname === "/publications") return { title: t.publications, crumbs: [], section: "editions" };
+  if (issueM) {
+    return {
+      title: issueNumber ? `${t.issue} ${issueNumber}` : t.nav.edition,
+      crumbs: [pubCrumb],
+      section: "edition",
+    };
+  }
+  if (runM) return { title: t.nav.preparing, crumbs: [{ label: t.publications, to: "/publications" }], section: "edition" };
+  if (pub) {
+    const tail = pathname.split("/").pop() ?? "";
+    const map: Record<string, [string, string]> = {
+      sources: [t.sources, "sources"],
+      readers: [t.nav.readers, "readers"],
+      sections: [t.nav.sections, "sections"],
+      settings: [t.nav.settings, "settings"],
+      outbox: [t.outbox, "more"],
+      guide: [t.guide.title, "more"],
+    };
+    const [title, section] = map[tail] ?? [pubName ?? t.nav.editions, "editions"];
+    const crumbs = tail === pub ? [] : [pubCrumb];
+    return { title, crumbs, section };
+  }
+  return { title: t.appName, crumbs: [], section: "" };
+}
+
 export function AppShell() {
   const { t, lang, setLang } = useT();
+  const { pathname } = useLocation();
+  const nav = useNavigate();
+  const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, retry: false, staleTime: Infinity });
+
+  const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
+  const issueM = matchPath("/issues/:id", pathname);
+  const pubId = pubM?.params.id;
+  const issueId = issueM?.params.id ? Number(issueM.params.id) : undefined;
+
+  const issue = useQuery({
+    queryKey: ["issue", issueId],
+    queryFn: () => api.issue(issueId!),
+    enabled: !!issueId,
+  });
+  const pubKey = pubId ?? (issue.data?.publication_id ? String(issue.data.publication_id) : undefined);
+  const pubQ = useQuery({
+    queryKey: ["publication", pubKey],
+    queryFn: () => api.publication(pubKey!),
+    enabled: !!pubKey,
+  });
+  const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
+
+  const pub = pubQ.data?.publication;
+  const latest = pubQ.data?.latest_issue;
+  const chrome = chromeFor(pathname, t, pub?.name, issue.data?.number);
+  const pubBase = pub ? `/publications/${pub.id}` : "/publications";
+  const editionTo = latest ? `/issues/${latest.id}` : pubBase;
+
+  const items = [
+    { to: editionTo, label: t.nav.edition, icon: Newspaper, section: "edition" },
+    { to: pubBase, label: t.nav.editions, icon: Layers, section: "editions", end: true },
+    { to: `${pubBase}/readers`, label: t.nav.readers, icon: Users, section: "readers" },
+    { to: `${pubBase}/sources`, label: t.sources, icon: Rss, section: "sources" },
+    { to: `${pubBase}/sections`, label: t.nav.sections, icon: LayoutGrid, section: "sections" },
+    { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },
+  ];
+
+  const back = chrome.crumbs[chrome.crumbs.length - 1];
+
   return (
-    <div className="h-dvh flex flex-col">
-      <header className="border-b border-line bg-paper-raised">
-        <div className="mx-auto flex h-12 max-w-[1400px] items-center gap-4 px-4">
-          <Link to="/" className="font-doc text-lg font-semibold tracking-tight">
+    <div className="flex h-dvh">
+      {/* desktop sidebar — 240 px (§3.1) */}
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-surface md:flex">
+        <div className="flex h-14 items-center px-4">
+          <Link to="/" className="font-display text-lg font-extrabold tracking-tight text-teal">
             {t.appName}
           </Link>
-          <span className="text-xs text-muted">demo</span>
-          <div className="ml-auto flex items-center gap-1 text-xs">
-            {(["en", "pt"] as Lang[]).map((l) => (
-              <button
-                key={l}
-                onClick={() => setLang(l)}
-                className={
-                  "rounded px-2 py-1 " +
-                  (lang === l ? "bg-ink text-paper font-medium" : "text-muted hover:text-ink")
-                }
-                aria-pressed={lang === l}
-              >
-                {l === "en" ? "EN" : "PT"}
-              </button>
-            ))}
-          </div>
         </div>
-      </header>
-      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto">
-        <Outlet />
-      </main>
+        <div className="px-3 pb-3">
+          <label className="sr-only" htmlFor="shell-switcher">
+            {t.publications}
+          </label>
+          <select
+            id="shell-switcher"
+            value={pub?.id ? String(pub.id) : ""}
+            onChange={(e) => e.target.value && nav(`/publications/${e.target.value}`)}
+            className="h-10 w-full truncate rounded-[var(--radius-input)] border border-line bg-paper-raised px-2 text-sm font-medium text-ink"
+          >
+            <option value="">{t.publications}</option>
+            {(pubs.data ?? []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3" aria-label={t.publications}>
+          {items.map((it) => (
+            <NavLink
+              key={it.section}
+              to={it.to}
+              end={it.end}
+              className={({ isActive }) =>
+                cn(
+                  "flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium transition-colors duration-150",
+                  isActive || chrome.section === it.section
+                    ? "bg-teal-soft text-teal"
+                    : "text-muted hover:bg-line/50 hover:text-ink",
+                )
+              }
+            >
+              <it.icon size={16} aria-hidden />
+              {it.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="border-t border-line p-3">
+          <Link to="/new" className="flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium text-muted hover:bg-line/50 hover:text-ink">
+            <Plus size={16} aria-hidden />
+            {t.nav.newNewsletter}
+          </Link>
+        </div>
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* top bar — breadcrumb + page title left, one primary action right */}
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-paper-raised px-4">
+          {back && <BackButton to={back.to} dest={back.label} className="hidden sm:inline-flex" />}
+          <div className="min-w-0">
+            {chrome.crumbs.length > 0 && (
+              <nav aria-label="breadcrumb" className="hidden sm:block">
+                <ol className="flex items-center gap-1 text-xs text-muted">
+                  {chrome.crumbs.map((c) => (
+                    <li key={c.to}>
+                      <Link to={c.to} className="hover:text-ink hover:underline">
+                        {c.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ol>
+              </nav>
+            )}
+            <h1 className="truncate font-display text-base font-bold leading-tight">{chrome.title}</h1>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <div id="shell-primary-slot" className="flex items-center gap-2" />
+            <LangSwitch lang={lang} setLang={setLang} className="hidden md:flex" />
+            <Drop
+              trigger={(open) => (
+                <button
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-full text-muted hover:bg-surface hover:text-ink md:h-10 md:w-10"
+                  aria-label={t.nav.account}
+                  title={t.nav.account}
+                  aria-expanded={open}
+                  aria-haspopup="menu"
+                >
+                  <CircleUser size={22} aria-hidden />
+                </button>
+              )}
+            >
+              <AccountMenu claimed={ws.data?.claimed} email={ws.data?.owner_email} />
+            </Drop>
+          </div>
+        </header>
+
+        <main className="min-h-0 flex-1 overflow-y-auto pb-20 md:pb-0">
+          <Outlet />
+        </main>
+
+        {/* mobile bottom tabs — fixed order: Edição, Edições, Leitores, Mais (§3.1) */}
+        <nav
+          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-line bg-paper-raised md:hidden"
+          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+          aria-label={t.publications}
+        >
+          {[
+            { to: editionTo, label: t.nav.edition, icon: Newspaper, active: chrome.section === "edition" },
+            { to: pubBase, label: t.nav.editions, icon: Layers, active: chrome.section === "editions" },
+            { to: `${pubBase}/readers`, label: t.nav.readers, icon: Users, active: chrome.section === "readers" },
+          ].map((tab) => (
+            <Link
+              key={tab.label}
+              to={tab.to}
+              className={cn(
+                "flex h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium",
+                tab.active ? "text-teal" : "text-muted",
+              )}
+            >
+              <tab.icon size={20} aria-hidden />
+              {tab.label}
+            </Link>
+          ))}
+          <Drop
+            side="top"
+            trigger={(open) => (
+              <button
+                className="flex h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium text-muted"
+                aria-label={t.nav.more}
+                aria-expanded={open}
+                aria-haspopup="menu"
+              >
+                <Ellipsis size={20} aria-hidden />
+                {t.nav.more}
+              </button>
+            )}
+          >
+            <MoreMenu pubBase={pubBase} />
+          </Drop>
+        </nav>
+      </div>
+    </div>
+  );
+}
+
+// A featherweight dropdown for the shell's two menus — the Radix
+// popover stays in the lazy route chunks; pulling it into this eager
+// module would blow the landing bundle budget (KLOX-16).
+function Drop({
+  trigger,
+  children,
+  side = "bottom",
+}: {
+  trigger: (open: boolean) => ReactNode;
+  children: ReactNode;
+  side?: "top" | "bottom";
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <span onClick={() => setOpen((o) => !o)}>{trigger(open)}</span>
+      {open && (
+        <div
+          className={cn(
+            "absolute z-50 w-72 rounded-[var(--radius-card)] border border-line bg-paper-raised p-4 shadow-lg",
+            side === "bottom" ? "right-0 top-full mt-1.5" : "bottom-full right-0 mb-1.5",
+          )}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LangSwitch({ lang, setLang, className }: { lang: Lang; setLang: (l: Lang) => void; className?: string }) {
+  return (
+    <div className={cn("flex items-center gap-1 text-xs", className)}>
+      {(["en", "pt"] as Lang[]).map((l) => (
+        <button
+          key={l}
+          onClick={() => setLang(l)}
+          className={cn(
+            "flex h-8 min-w-8 items-center justify-center rounded-md px-1.5",
+            lang === l ? "bg-ink font-medium text-paper" : "text-muted hover:text-ink",
+          )}
+          aria-pressed={lang === l}
+        >
+          {l === "en" ? "EN" : "PT"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AccountMenu({ claimed, email }: { claimed?: boolean; email?: string }) {
+  const { t } = useT();
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t.nav.account}</p>
+      {claimed && email ? (
+        <p className="text-sm text-ink">{t.nav.savedWith(email)}</p>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-sm font-medium">{t.nav.saveWithEmail}</p>
+          <ClaimEmail />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MoreMenu({ pubBase }: { pubBase: string }) {
+  const { t, lang, setLang } = useT();
+  const links = [
+    { to: `${pubBase}/sources`, label: t.sources, icon: Rss },
+    { to: `${pubBase}/sections`, label: t.nav.sections, icon: LayoutGrid },
+    { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings },
+    { to: `${pubBase}/guide`, label: t.guide.title, icon: BookOpen },
+    { to: `${pubBase}/outbox`, label: t.outbox, icon: Inbox },
+    { to: "/publications", label: t.publications, icon: Layers },
+    { to: "/new", label: t.nav.newNewsletter, icon: Plus },
+  ];
+  return (
+    <div>
+      <nav className="grid gap-1" aria-label={t.nav.more}>
+        {links.map((l) => (
+          <Link key={l.to} to={l.to} className="flex h-11 items-center gap-3 rounded-[var(--radius-btn)] px-2 text-sm font-medium text-ink hover:bg-surface">
+            <l.icon size={16} aria-hidden className="text-muted" />
+            {l.label}
+          </Link>
+        ))}
+      </nav>
+      <div className="mt-3 flex items-center justify-between border-t border-line pt-3">
+        <span className="text-xs text-muted">{t.nav.language}</span>
+        <LangSwitch lang={lang} setLang={setLang} />
+      </div>
     </div>
   );
 }

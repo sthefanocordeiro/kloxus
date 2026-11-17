@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api, type PreviewItem } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
+import { StepCounter } from "../components/StepCounter";
 
 // /publications/:id/sources — the onboarding sources screen: suggested fixture
 // sources with real previews, add/remove, and confirm → auto first run.
@@ -24,6 +25,10 @@ export function SourcesPage() {
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id!) });
   const sources = useQuery({ queryKey: ["sources", id], queryFn: () => api.sources(id!) });
   const catalog = useQuery({ queryKey: ["catalog", id], queryFn: () => api.sourceCatalog(id!) });
+  const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
+  // real mode is catalog-only: the server refuses pasted URLs, so the
+  // "add your own" form would only fail — explain instead (KLOX-49)
+  const catalogOnly = ws.data?.mode === "real";
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["sources", id] });
     qc.invalidateQueries({ queryKey: ["catalog", id] });
@@ -43,8 +48,12 @@ export function SourcesPage() {
   // suspenders filter also drops an offered row the moment a source
   // with that URL exists
   const addedURLs = new Set((sources.data ?? []).map((s) => s.url));
-  const offered = (catalog.data ?? []).filter((o) => !addedURLs.has(o.url));
+  const offered = (catalog.data?.offered ?? []).filter((o) => !addedURLs.has(o.url));
   const count = (sources.data?.length ?? 0) + offered.filter((o) => checked(o.url)).length;
+  // while the catalog is in flight the lists are unknown — render a
+  // loading line instead of flashing an empty state + "no sources"
+  // hint that the arriving data contradicts a moment later (KLOX-56)
+  const loading = sources.isLoading || catalog.isLoading;
   const confirm = useMutation({
     mutationFn: async () => {
       await api.sourceConfirm(id!, offered.filter((o) => checked(o.url)).map((o) => o.url));
@@ -66,14 +75,16 @@ export function SourcesPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      <Link to={`/publications/${id}`} className="text-xs text-muted hover:text-ink">←</Link>
-      <h1 className="mt-1 font-doc text-2xl font-semibold">
+      {!pub.data?.latest_issue && <StepCounter steps={t.steps.onboarding} current={3} />}
+      <h1 className="mt-4 font-display text-2xl font-bold">
         {t.sourcesPage.title}
         {pub.data && <span className="ml-2 text-base font-normal text-muted">— {pub.data.publication.name}</span>}
       </h1>
       <p className="mt-1 text-sm text-muted">{t.sourcesPage.subtitle}</p>
 
-      {(sources.data?.length ?? 0) > 0 && (
+      {loading && <p className="mt-6 text-sm text-muted">{t.sourcesPage.loading}</p>}
+
+      {!loading && (sources.data?.length ?? 0) > 0 && (
         <>
           <h2 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.added}</h2>
           <div className="mt-2 grid gap-2">
@@ -85,8 +96,8 @@ export function SourcesPage() {
                   <p className="mt-0.5 text-xs text-muted">
                     {t.sourcesPage.itemsWeek(s.items_per_week)}
                     {s.last_status && (
-                      <Badge className="ml-2" tone={s.last_status === "ok" ? "teal" : "warn"}>
-                        {s.last_status === "ok" ? t.sourcesPage.lastOk : t.sourcesPage.lastFail}
+                      <Badge className="ml-2" tone={s.last_status.startsWith("ok") ? "teal" : "warn"}>
+                        {s.last_status.startsWith("ok") ? t.sourcesPage.lastOk : t.sourcesPage.lastFail}
                       </Badge>
                     )}
                   </p>
@@ -103,7 +114,7 @@ export function SourcesPage() {
         </>
       )}
 
-      {offered.length > 0 && (
+      {!loading && offered.length > 0 && (
         <>
           <h2 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.offered}</h2>
           <div className="mt-2 grid gap-2">
@@ -114,6 +125,7 @@ export function SourcesPage() {
                     <input
                       type="checkbox"
                       className="h-4 w-4 accent-teal"
+                      aria-label={o.name || o.url}
                       checked={checked(o.url)}
                       onChange={(e) => setSel((s) => ({ ...s, [o.url]: e.target.checked }))}
                     />
@@ -121,10 +133,12 @@ export function SourcesPage() {
                       <span className="block truncate text-sm font-medium">{o.name || o.url}</span>
                       <span className="mt-0.5 flex items-center gap-2 text-xs text-muted">
                         <Badge>{o.type === "rss" ? t.sourcesPage.ownType.rss : t.sourcesPage.ownType.page}</Badge>
+                        {o.suspended && <Badge tone="warn">{t.sourcesPage.suspendedBadge}</Badge>}
                         {o.items_per_week != null && o.items_per_week > 0 && (
                           <span>{t.sourcesPage.itemsWeek(o.items_per_week)}</span>
                         )}
                       </span>
+                      {o.note && <span className="mt-0.5 block text-xs text-muted">{o.note}</span>}
                     </span>
                   </label>
                   <Button variant="outline" size="sm" onClick={() => preview(o.type, o.url)}>
@@ -151,6 +165,12 @@ export function SourcesPage() {
         </>
       )}
 
+      {catalogOnly ? (
+        <Card className="mt-6 p-4">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
+          <p className="mt-2 text-sm text-muted">{t.sourcesPage.ownCatalogOnly}</p>
+        </Card>
+      ) : (
       <Card className="mt-6 p-4">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -194,6 +214,7 @@ export function SourcesPage() {
         )}
         {add.error && <p className="mt-2 text-xs text-danger">{errText(t, add.error)}</p>}
       </Card>
+      )}
 
       <div className="mt-6 flex items-center gap-3">
         <Button
@@ -203,7 +224,7 @@ export function SourcesPage() {
         >
           {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(count)}
         </Button>
-        {count === 0 && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
+        {count === 0 && !loading && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
       </div>
       {confirm.error && <p className="mt-2 text-xs text-danger">{errText(t, confirm.error)}</p>}
     </div>
