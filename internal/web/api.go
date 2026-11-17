@@ -278,9 +278,12 @@ type apiPublication struct {
 }
 
 type apiSection struct {
+	ID         string `json:"id"`
 	Title      string `json:"title"`
+	Format     string `json:"format"` // featured | news | links
 	Items      int    `json:"items"`
 	Commentary string `json:"commentary"`
+	Access     string `json:"access"` // all | subscribers
 }
 
 type apiPaywall struct {
@@ -302,9 +305,10 @@ func publicationView(p *store.Publication) apiPublication {
 			Price: p.Paywall.Price,
 		},
 	}
-	for _, sc := range p.Sections {
+	for _, sc := range config.NormalizeSections(p.Sections, p.Paywall.PaidSections) {
 		v.Sections = append(v.Sections, apiSection{
-			Title: sc.Title, Items: sc.Items, Commentary: sc.Commentary,
+			ID: sc.ID, Title: sc.Title, Format: sc.Format,
+			Items: sc.Items, Commentary: sc.Commentary, Access: sc.Access,
 		})
 	}
 	if v.Sections == nil {
@@ -331,8 +335,9 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	if pubErr == nil {
 		subject = localizeSubject(subject, rawPub.Language)
 	}
-	if pub, err := s.canonicalPub(rawPub, pubErr); err == nil {
-		for _, sc := range pub.Sections {
+	pub, pubOK := s.canonicalPub(rawPub, pubErr)
+	if pubOK == nil {
+		for _, sc := range issueSections(iss, pub) {
 			if sc.Commentary == "required" && strings.TrimSpace(iss.Commentary[sc.Title]) == "" {
 				missing++
 			}
@@ -345,6 +350,11 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 		"flags":                       len(iss.Flags),
 		"missing_required_commentary": missing,
 		"document_version":            docVersion(iss),
+	}
+	if pubOK == nil {
+		// the edition keeps its own section snapshot — flag drift so the
+		// board can say "builder edits apply to the next edition" (KLOX-65)
+		m["sections_changed"] = sectionsChanged(iss, pub)
 	}
 	// The run's recorded model cost travels with the issue so the
 	// creator always sees what this issue cost (KLOX-44).
@@ -361,6 +371,63 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 		m["receipt"] = receiptView(rec)
 	}
 	return m
+}
+
+// issueSections returns the section definitions an edition works with:
+// the snapshot stored on the issue at run time, or the publication's
+// current sections when the issue predates the snapshot. Either way the
+// list is normalized — ids, formats and access filled — so consumers
+// never branch on a field being absent (KLOX-65).
+func issueSections(iss *store.Issue, pub *store.Publication) []config.Section {
+	var paid []string
+	if pub != nil {
+		paid = pub.Paywall.PaidSections
+	}
+	if len(iss.Sections) > 0 {
+		return config.NormalizeSections(iss.Sections, paid)
+	}
+	if pub == nil {
+		return nil
+	}
+	return config.NormalizeSections(pub.Sections, paid)
+}
+
+// pubWithIssueSections returns a shallow publication clone whose
+// sections are the edition's snapshot — the value the issue document,
+// draft gate and compose path must work from so builder edits only
+// reach the next edition.
+func pubWithIssueSections(iss *store.Issue, pub *store.Publication) *store.Publication {
+	if pub == nil {
+		return nil
+	}
+	cp := *pub
+	cp.Sections = issueSections(iss, pub)
+	return &cp
+}
+
+// sectionsChanged reports whether the edition's section snapshot
+// differs from the publication's current builder state — the signal
+// for the "edits apply to the next edition" note.
+func sectionsChanged(iss *store.Issue, pub *store.Publication) bool {
+	if len(iss.Sections) == 0 || pub == nil {
+		return false
+	}
+	a, _ := json.Marshal(issueSections(iss, pub))
+	b, _ := json.Marshal(config.NormalizeSections(pub.Sections, pub.Paywall.PaidSections))
+	return string(a) != string(b)
+}
+
+// paidSectionTitles returns the titles gated for non-subscribers on
+// this edition — from the snapshot's access levels, or the stored
+// paywall list when the issue predates snapshots.
+func paidSectionTitles(iss *store.Issue, pub *store.Publication) []string {
+	if pub == nil {
+		return nil
+	}
+	if len(iss.Sections) == 0 {
+		return pub.Paywall.PaidSections
+	}
+	return config.PaidSectionTitles(issueSections(iss, pub))
 }
 
 // orEmpty keeps the contract's arrays as [] — never null.
@@ -815,8 +882,11 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secs := []apiSection{}
-	for _, sec := range def.Sections {
-		secs = append(secs, apiSection{Title: sec.Title, Items: sec.Items, Commentary: sec.Commentary})
+	for _, sec := range config.NormalizeSections(def.Sections, def.Paywall.PaidSections) {
+		secs = append(secs, apiSection{
+			ID: sec.ID, Title: sec.Title, Format: sec.Format,
+			Items: sec.Items, Commentary: sec.Commentary, Access: sec.Access,
+		})
 	}
 	srcs := []map[string]string{}
 	for _, sd := range def.Sources {
@@ -871,11 +941,19 @@ func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
 		return
 	}
+	secs, reasons := validateSections(in.Sections)
+	if len(reasons) > 0 {
+		apiErr(w, 400, "validation", "the section list needs a fix", reasons...)
+		return
+	}
+	// the builder's per-section access flag is the source of truth for
+	// the paywall's title list — the two must never drift apart
+	in.Paywall.PaidSections = config.PaidSectionTitles(secs)
 	def := &config.Publication{
 		Name: in.Name, Topic: in.Topic, Audience: in.Audience,
 		EditorialLine: in.EditorialLine, Tone: in.Tone,
 		Language: in.Language, Frequency: in.Frequency,
-		AIDisclosure: in.AIDisclosure, Sections: in.Sections, Paywall: in.Paywall,
+		AIDisclosure: in.AIDisclosure, Sections: secs, Paywall: in.Paywall,
 	}
 	if err := def.Validate(); err != nil {
 		apiErr(w, 400, "validation", err.Error())
@@ -888,6 +966,167 @@ func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
 	db(r).SetProgress(r.Context(), "publication_created")
 	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(id))
 	apiJSON(w, 201, map[string]any{"publication": publicationView(pub)})
+}
+
+// validateSections applies the builder's rules and returns the
+// normalized list (ids, formats and access defaults filled, paywall
+// titles resolved) — the value to persist. Bound checks come back as
+// structured reasons so the client can localize each one.
+func validateSections(in []config.Section) ([]config.Section, []apiReason) {
+	var reasons []apiReason
+	secs := config.NormalizeSections(in, nil)
+	if len(secs) == 0 {
+		reasons = append(reasons, apiReason{Code: "sections_empty",
+			Message: "add at least one section"})
+		return nil, reasons
+	}
+	ids, titles := map[string]bool{}, map[string]bool{}
+	total := 0
+	for i, sc := range secs {
+		target := &apiTarget{Kind: "section", Ref: sc.Title}
+		if strings.TrimSpace(sc.Title) == "" {
+			reasons = append(reasons, apiReason{Code: "section_title_empty",
+				Message: fmt.Sprintf("section %d needs a name", i+1), Target: target})
+		} else if len([]rune(sc.Title)) > 40 {
+			reasons = append(reasons, apiReason{Code: "section_title_long",
+				Message: fmt.Sprintf("section %q runs past 40 characters", sc.Title), Target: target})
+		} else if titles[strings.ToLower(sc.Title)] {
+			reasons = append(reasons, apiReason{Code: "section_title_dup",
+				Message: fmt.Sprintf("section %q is repeated", sc.Title), Target: target})
+		}
+		titles[strings.ToLower(sc.Title)] = true
+		if ids[sc.ID] {
+			reasons = append(reasons, apiReason{Code: "section_id_dup",
+				Message: fmt.Sprintf("section id %q is repeated", sc.ID), Target: target})
+		}
+		ids[sc.ID] = true
+		if sc.Items < 1 || sc.Items > 10 {
+			reasons = append(reasons, apiReason{Code: "section_items",
+				Message: fmt.Sprintf("section %q asks for %d stories — pick 1 to 10", sc.Title, sc.Items), Target: target})
+		} else {
+			total += sc.Items
+		}
+		if !config.ValidSectionFormat(sc.Format) {
+			reasons = append(reasons, apiReason{Code: "section_format",
+				Message: fmt.Sprintf("section %q has an unknown format %q", sc.Title, sc.Format), Target: target})
+		}
+		switch sc.Commentary {
+		case "required", "optional", "none":
+		default:
+			reasons = append(reasons, apiReason{Code: "section_commentary",
+				Message: fmt.Sprintf("section %q has an unknown commentary mode %q", sc.Title, sc.Commentary), Target: target})
+		}
+		if !config.ValidSectionAccess(sc.Access) {
+			reasons = append(reasons, apiReason{Code: "section_access",
+				Message: fmt.Sprintf("section %q has an unknown access level %q", sc.Title, sc.Access), Target: target})
+		}
+	}
+	if total > 20 {
+		reasons = append(reasons, apiReason{Code: "sections_total",
+			Message: fmt.Sprintf("the edition asks for %d stories — the limit is 20", total)})
+	}
+	if len(reasons) > 0 {
+		return nil, reasons
+	}
+	return secs, nil
+}
+
+// apiPublicationUpdate rewrites the creator-editable blocks of a
+// publication — identity copy, cadence, sections and the paywall
+// block. The change lands on the next edition: issues already in
+// progress keep the sections they were built with (KLOX-65).
+func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
+	pub, err := s.apiPub(r)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	var in struct {
+		Name          string           `json:"name"`
+		Topic         string           `json:"topic"`
+		Audience      string           `json:"audience"`
+		EditorialLine string           `json:"editorial_line"`
+		Tone          string           `json:"tone"`
+		Frequency     string           `json:"frequency"`
+		AIDisclosure  string           `json:"ai_disclosure"`
+		Sections      []config.Section `json:"sections"`
+		Paywall       *apiPaywall      `json:"paywall"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	def := &config.Publication{
+		Name: in.Name, Topic: in.Topic, Audience: in.Audience,
+		EditorialLine: in.EditorialLine, Tone: in.Tone,
+		Language: pub.Language, Slug: pub.Slug,
+		Frequency:    in.Frequency,
+		AIDisclosure: in.AIDisclosure,
+		Sections:     config.NormalizeSections(pub.Sections, pub.Paywall.PaidSections),
+		Paywall:      pub.Paywall,
+	}
+	if def.Frequency == "" {
+		def.Frequency = pub.Frequency
+	}
+	if def.AIDisclosure == "" {
+		def.AIDisclosure = pub.AIDisclosure
+	}
+	if strings.TrimSpace(def.Name) == "" {
+		apiErr(w, 400, "validation", "the newsletter needs a name",
+			apiReason{Code: "name_empty", Message: "give the newsletter a name"})
+		return
+	}
+	if in.Sections != nil {
+		secs, reasons := validateSections(in.Sections)
+		if len(reasons) > 0 {
+			apiErr(w, 400, "validation", "the section list needs a fix", reasons...)
+			return
+		}
+		def.Sections = secs
+	}
+	if in.Paywall != nil {
+		def.Paywall.Enabled = in.Paywall.Enabled
+		def.Paywall.Price = in.Paywall.Price
+	}
+	def.Paywall.PaidSections = config.PaidSectionTitles(def.Sections)
+	if err := def.Validate(); err != nil {
+		apiErr(w, 400, "validation", err.Error())
+		return
+	}
+	if apiDBErr(w, r, db(r).UpdatePublication(r.Context(), pub.ID, def), "publication") {
+		return
+	}
+	fresh, err := db(r).GetPublication(r.Context(), fmt.Sprint(pub.ID))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	apiJSON(w, 200, map[string]any{"publication": publicationView(fresh)})
+}
+
+// apiPublicationDelete removes a publication and everything it owns —
+// issues, stories, sources, readers, guides. The call must carry an
+// explicit {"confirm": true} so a stray request can never delete a
+// newsletter (KLOX-65).
+func (s *Server) apiPublicationDelete(w http.ResponseWriter, r *http.Request) {
+	pub, err := s.apiPub(r)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	var in struct {
+		Confirm bool `json:"confirm"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if !in.Confirm {
+		apiErr(w, 400, "validation", "deleting a newsletter requires confirm: true",
+			apiReason{Code: "confirm_required", Message: "confirm the deletion"})
+		return
+	}
+	if err := db(r).DeletePublication(r.Context(), pub.ID); apiDBErr(w, r, err, "publication") {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) apiSourceWatch(w http.ResponseWriter, r *http.Request) {
@@ -1185,10 +1424,11 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]any{
-		"candidates": views,
-		"sections":   sectionViews(pub),
-		"demo":       s.d.Cfg.Mode == "demo",
-		"llm_mode":   s.d.Cfg.LLMMode,
+		"candidates":       views,
+		"sections":         sectionViews(issueSections(iss, pub)),
+		"sections_changed": sectionsChanged(iss, pub),
+		"demo":             s.d.Cfg.Mode == "demo",
+		"llm_mode":         s.d.Cfg.LLMMode,
 	}
 	maps.Copy(resp, meta)
 	apiJSON(w, 200, resp)
@@ -1298,11 +1538,12 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 	return out, nil
 }
 
-func sectionViews(pub *store.Publication) []map[string]any {
+func sectionViews(secs []config.Section) []map[string]any {
 	out := []map[string]any{}
-	for _, sec := range pub.Sections {
+	for _, sec := range secs {
 		out = append(out, map[string]any{
-			"title": sec.Title, "capacity": sec.Items, "commentary": sec.Commentary,
+			"id": sec.ID, "title": sec.Title, "capacity": sec.Items,
+			"commentary": sec.Commentary, "format": sec.Format, "access": sec.Access,
 		})
 	}
 	return out
@@ -1337,7 +1578,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	caps := map[string]int{}
-	for _, sec := range pub.Sections {
+	for _, sec := range issueSections(iss, pub) {
 		caps[sec.Title] = sec.Items
 	}
 	cands, err := db(r).RankedCandidates(ctx, iss.PublicationID, iss.ID)
@@ -1678,6 +1919,11 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 
 	uncited, firstUncited := 0, ""
 	for _, sec := range doc.Sections {
+		if sec.Format == config.SectionLinks {
+			// a links item's source is the link itself — no written
+			// sentence, citation or flag gate applies (KLOX-65)
+			continue
+		}
 		for _, it := range sec.Items {
 			for _, sn := range it.Sentences {
 				if sn.Kind == "fact" && len(sn.Citations) == 0 {
@@ -1707,6 +1953,9 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 		ref := ""
 	search:
 		for _, sec := range doc.Sections {
+			if sec.Format == config.SectionLinks {
+				continue
+			}
 			for _, it := range sec.Items {
 				for _, sn := range it.Sentences {
 					if sn.Flag != nil {
@@ -1724,6 +1973,9 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	// them — an empty item blocks approval exactly like an uncited fact
 	empty, firstEmpty := 0, ""
 	for _, sec := range doc.Sections {
+		if sec.Format == config.SectionLinks {
+			continue
+		}
 		for _, it := range sec.Items {
 			if len(it.Sentences) == 0 {
 				empty++
@@ -1741,8 +1993,11 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	checks = append(checks, c)
 
 	missing := []string{}
-	if pub != nil {
-		for _, sc := range pub.Sections {
+	// doc.pub carries the edition's own section snapshot — required
+	// commentary is checked against what the run configured, not what
+	// the builder says today (KLOX-65)
+	if doc != nil && doc.pub != nil {
+		for _, sc := range doc.pub.Sections {
 			if sc.Commentary == "required" && strings.TrimSpace(iss.Commentary[sc.Title]) == "" {
 				missing = append(missing, sc.Title)
 				checks = append(checks, apiCheck{Code: "commentary_required", OK: false,
@@ -1790,8 +2045,9 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	// the build board owns the lineup now: every configured section
-	// needs at least one item in it before the issue can be drafted
+	// the build board owns the lineup now: every section the edition
+	// was configured with needs at least one item before drafting —
+	// the snapshot, not the builder's current state (KLOX-65)
 	lineup, _ := db(r).IssueItems(r.Context(), iss.ID)
 	filled := map[string]int{}
 	for _, ii := range lineup {
@@ -1800,7 +2056,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var reasons []apiReason
-	for _, sec := range pub.Sections {
+	for _, sec := range issueSections(iss, pub) {
 		if filled[sec.Title] == 0 {
 			reasons = append(reasons, apiReason{Code: "section_empty",
 				Message: fmt.Sprintf("section %q has no stories", sec.Title),
@@ -1871,7 +2127,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(llm.WithRunScope(context.Background(), wsp.ID), s.runTimeout())
 		defer cancel()
-		res, err := runner.RunPhaseB(ctx, pub, iss.ID)
+		res, err := runner.RunPhaseB(ctx, pubWithIssueSections(iss, pub), iss.ID)
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		st.st.Done = true
@@ -1923,7 +2179,8 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 409, "not_empty", "this issue already has written content — compose is only for empty issues")
 		return
 	}
-	// same lineup gate as drafting: every configured section needs a story
+	// same lineup gate as drafting: every section the edition was
+	// configured with needs a story (snapshot, not builder — KLOX-65)
 	lineup, _ := db(r).IssueItems(r.Context(), iss.ID)
 	filled := map[string]int{}
 	for _, ii := range lineup {
@@ -1932,7 +2189,7 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var reasons []apiReason
-	for _, sec := range pub.Sections {
+	for _, sec := range issueSections(iss, pub) {
 		if filled[sec.Title] == 0 {
 			reasons = append(reasons, apiReason{Code: "section_empty",
 				Message: fmt.Sprintf("section %q has no stories", sec.Title),
@@ -1952,7 +2209,7 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	runner := &pipeline.Runner{DB: db(r)}
-	res, err := runner.ComposeSkeleton(ctx, pub, iss.ID)
+	res, err := runner.ComposeSkeleton(ctx, pubWithIssueSections(iss, pub), iss.ID)
 	if err != nil {
 		apiErr(w, 409, "blocked", err.Error())
 		return
@@ -3133,7 +3390,7 @@ func (s *Server) apiPreview(w http.ResponseWriter, r *http.Request) {
 	md := delivery.ReaderBody(iss, pub, s.publicBase(r), aiUsed)
 	gated := false
 	if reader == "non-subscriber" {
-		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
+		md = gateSections(md, paidSectionTitles(iss, pub), pub.Language)
 		gated = true
 	}
 	md = s.localizeReaderMD(md, rawPub)
@@ -3336,7 +3593,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	aiUsed, _ := db(r).IssueUsedAI(ctx, iss.ID)
 	md := delivery.ReaderBody(iss, pub, s.publicBase(r), aiUsed)
 	if !unlocked {
-		md = gateSections(md, pub.Paywall.PaidSections, pub.Language)
+		md = gateSections(md, paidSectionTitles(iss, pub), pub.Language)
 	}
 	md = s.localizeReaderMD(md, rawPub)
 	apiJSON(w, 200, map[string]any{
@@ -3344,7 +3601,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 		"issue":       map[string]any{"number": iss.Number, "subject": localizeSubject(iss.Subject, rawPub.Language), "created_at": iss.CreatedAt},
 		"body_md":     md, "gated": !unlocked, "subscribed": active,
 		"reader":        map[string]string{"name": demoReaderName},
-		"paid_sections": pub.Paywall.PaidSections,
+		"paid_sections": paidSectionTitles(iss, pub),
 	})
 }
 

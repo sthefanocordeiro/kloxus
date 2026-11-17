@@ -248,11 +248,92 @@ func parseDotEnv(r io.Reader) map[string]string {
 	return out
 }
 
-// Section is one issue section from a publication definition.
+// Section is one issue section from a publication definition. ID is the
+// section's stable identity — it survives renames so past editions and
+// paywall rules never dangle (KLOX-65). Format shapes the section's
+// item rendering: featured | news | links. Access: all | subscribers.
 type Section struct {
+	ID         string `yaml:"id" json:"id"`
 	Title      string `yaml:"title" json:"title"`
+	Format     string `yaml:"format" json:"format"`     // featured | news | links
 	Items      int    `yaml:"items" json:"items"`
 	Commentary string `yaml:"commentary" json:"commentary"` // required | optional | none
+	Access     string `yaml:"access" json:"access"`     // all | subscribers
+}
+
+// Section formats and access levels the builder offers (KLOX-65).
+const (
+	SectionFeatured = "featured"
+	SectionNews     = "news"
+	SectionLinks    = "links"
+	AccessAll         = "all"
+	AccessSubscribers = "subscribers"
+)
+
+// NormalizeSections fills the fields older stored rows and YAML
+// definitions never carried: a positional id (stable across renames —
+// it follows the slot, not the title), a format inferred from the
+// well-known template titles, and the access level the paywall's
+// paid_sections list used to encode by title.
+func NormalizeSections(secs []Section, paidSections []string) []Section {
+	paid := map[string]bool{}
+	for _, t := range paidSections {
+		paid[t] = true
+	}
+	out := make([]Section, len(secs))
+	for i, s := range secs {
+		if s.ID == "" {
+			s.ID = fmt.Sprintf("sec-%d", i+1)
+		}
+		if s.Format == "" {
+			s.Format = inferSectionFormat(s.Title)
+		}
+		if s.Access == "" {
+			if paid[s.Title] {
+				s.Access = AccessSubscribers
+			} else {
+				s.Access = AccessAll
+			}
+		}
+		out[i] = s
+	}
+	return out
+}
+
+// inferSectionFormat maps the legacy template titles onto a format —
+// the featured slot and the links bucket read differently in the
+// skeleton preview and the edition. Everything else is a news section.
+func inferSectionFormat(title string) string {
+	switch t := strings.ToLower(strings.TrimSpace(title)); {
+	case t == "o destaque" || t == "the big one":
+		return SectionFeatured
+	case strings.Contains(t, "links"):
+		return SectionLinks
+	default:
+		return SectionNews
+	}
+}
+
+// ValidSectionFormat reports whether f is a known section format.
+func ValidSectionFormat(f string) bool {
+	return f == SectionFeatured || f == SectionNews || f == SectionLinks
+}
+
+// ValidSectionAccess reports whether a is a known access level.
+func ValidSectionAccess(a string) bool {
+	return a == AccessAll || a == AccessSubscribers
+}
+
+// PaidSectionTitles derives the paywall's title list from the
+// per-section access level — the field that used to carry it by hand.
+func PaidSectionTitles(secs []Section) []string {
+	var out []string
+	for _, s := range secs {
+		if s.Access == AccessSubscribers {
+			out = append(out, s.Title)
+		}
+	}
+	return out
 }
 
 // SourceDef is one collection source: a name, an RSS feed or an open web page.

@@ -532,14 +532,86 @@ func (db *DB) NextIssueNumber(ctx context.Context, pubID int64) (int, error) {
 	return n, err
 }
 
-// CreateIssue inserts an issue and returns its id.
-func (db *DB) CreateIssue(ctx context.Context, pubID int64, number int, subject, bodyMD string) (int64, error) {
+// CreateIssue inserts an issue and returns its id. sections snapshots
+// the publication's section definitions for this edition — later
+// builder edits must not rewrite an edition already in progress
+// (KLOX-65); callers pass nil where no snapshot applies.
+func (db *DB) CreateIssue(ctx context.Context, pubID int64, number int, subject, bodyMD string, sections []config.Section) (int64, error) {
 	var id int64
+	secs, _ := json.Marshal(sections)
 	err := db.QueryRowContext(ctx,
-		`INSERT INTO issues (workspace_id, publication_id, number, subject, body_md) VALUES ($1,$2,$3,$4,$5)
+		`INSERT INTO issues (workspace_id, publication_id, number, subject, body_md, sections_json) VALUES ($1,$2,$3,$4,$5,$6)
 		 RETURNING id`,
-		db.ws, pubID, number, subject, bodyMD).Scan(&id)
+		db.ws, pubID, number, subject, bodyMD, string(secs)).Scan(&id)
 	return id, err
+}
+
+// UpdatePublication rewrites the creator-editable fields of a
+// publication: identity copy, cadence, the section definitions the
+// next edition uses, and the paywall block. Slug, language and the
+// custom flag stay put — they anchor public URLs and template drift.
+func (db *DB) UpdatePublication(ctx context.Context, id int64, p *config.Publication) error {
+	sections, _ := json.Marshal(p.Sections)
+	paywall, _ := json.Marshal(p.Paywall)
+	res, err := db.ExecContext(ctx, `UPDATE publications SET
+		name=$1, topic=$2, audience=$3, editorial_line=$4, tone=$5, frequency=$6,
+		sections_json=$7, paywall_json=$8, ai_disclosure=$9
+		WHERE workspace_id = $10 AND id = $11`,
+		p.Name, p.Topic, p.Audience, p.EditorialLine, p.Tone, p.Frequency,
+		string(sections), string(paywall), p.AIDisclosure, db.ws, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeletePublication removes a publication and every row it owns:
+// issues and their items/dossiers/decisions, runs, stories and raw
+// items, sources, readers and subscriptions, guides and payment
+// accounts. The send ledger (outbox_emails) is workspace-scoped by
+// design and stays — it is the legal record of what went out. Returns
+// sql.ErrNoRows when the publication does not exist in the workspace.
+func (db *DB) DeletePublication(ctx context.Context, pubID int64) error {
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	issuesOfPub := `SELECT id FROM issues WHERE workspace_id = $1 AND publication_id = $2`
+	itemsOfIssues := `SELECT id FROM issue_items WHERE workspace_id = $1 AND issue_id IN (` + issuesOfPub + `)`
+	for _, q := range []string{
+		`DELETE FROM decisions WHERE workspace_id = $1 AND (publication_id = $2 OR issue_item_id IN (` + itemsOfIssues + `))`,
+		`DELETE FROM dossiers WHERE workspace_id = $1 AND issue_item_id IN (` + itemsOfIssues + `)`,
+		`DELETE FROM issue_items WHERE workspace_id = $1 AND issue_id IN (` + issuesOfPub + `)`,
+		`DELETE FROM jobs WHERE workspace_id = $1 AND kind = 'send_issue' AND ref_id IN (` + issuesOfPub + `)`,
+		`DELETE FROM runs WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM issues WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM story_items WHERE workspace_id = $1 AND (story_id IN (SELECT id FROM stories WHERE workspace_id = $1 AND publication_id = $2)
+			OR item_id IN (SELECT id FROM items WHERE workspace_id = $1 AND source_id IN (SELECT id FROM sources WHERE workspace_id = $1 AND publication_id = $2)))`,
+		`DELETE FROM stories WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM items WHERE workspace_id = $1 AND source_id IN (SELECT id FROM sources WHERE workspace_id = $1 AND publication_id = $2)`,
+		`DELETE FROM sources WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM subscriptions WHERE workspace_id = $1 AND reader_id IN (SELECT id FROM readers WHERE workspace_id = $1 AND publication_id = $2)`,
+		`DELETE FROM readers WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM editorial_guides WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM payment_accounts WHERE workspace_id = $1 AND publication_id = $2`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, db.ws, pubID); err != nil {
+			return err
+		}
+	}
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM publications WHERE workspace_id = $1 AND id = $2`, db.ws, pubID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
 }
 
 // IssueBody returns the stored markdown body of an issue.

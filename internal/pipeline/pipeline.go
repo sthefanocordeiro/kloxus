@@ -417,8 +417,11 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	if ptLang(pub.Language) {
 		word = "edição"
 	}
+	// The issue snapshots the publication's section definitions: builder
+	// edits land on the next edition, not the one already in progress
+	// (KLOX-65).
 	issueID, err := r.DB.CreateIssue(ctx, pub.ID, number,
-		fmt.Sprintf("%s — %s %d", pub.Name, word, number), "")
+		fmt.Sprintf("%s — %s %d", pub.Name, word, number), "", pub.Sections)
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/config"
 )
 
 // Issue is a stored issue row.
@@ -18,9 +20,15 @@ type Issue struct {
 	BodyMD        string
 	Flags         []Flag
 	Commentary    map[string]string
-	CreatedAt     string
-	ScheduledAt   string
-	TestSentAt    string
+	// Sections snapshots the publication's section definitions at run
+	// time — an edition in progress keeps its own sections while the
+	// creator edits the builder for the next one (KLOX-65). Empty on
+	// issues written before the snapshot existed; callers fall back to
+	// the publication's current sections.
+	Sections    []config.Section
+	CreatedAt   string
+	ScheduledAt string
+	TestSentAt  string
 }
 
 // Flag is a citation-check flag stored in issues.flags_json.
@@ -32,18 +40,19 @@ type Flag struct {
 
 func (db *DB) scanIssue(row *sql.Row) (*Issue, error) {
 	var i Issue
-	var flags, commentary string
+	var flags, commentary, sections string
 	err := row.Scan(&i.ID, &i.PublicationID, &i.Number, &i.Status, &i.Subject,
-		&i.BodyMD, &flags, &commentary, &i.CreatedAt, &i.ScheduledAt, &i.TestSentAt)
+		&i.BodyMD, &flags, &commentary, &sections, &i.CreatedAt, &i.ScheduledAt, &i.TestSentAt)
 	if err != nil {
 		return nil, err
 	}
 	json.Unmarshal([]byte(flags), &i.Flags)
 	json.Unmarshal([]byte(commentary), &i.Commentary)
+	json.Unmarshal([]byte(sections), &i.Sections)
 	return &i, nil
 }
 
-const issueCols = `id, publication_id, number, status, subject, body_md, flags_json, commentary_json, created_at, scheduled_at, test_sent_at`
+const issueCols = `id, publication_id, number, status, subject, body_md, flags_json, commentary_json, sections_json, created_at, scheduled_at, test_sent_at`
 
 // GetIssue loads an issue by id.
 func (db *DB) GetIssue(ctx context.Context, id int64) (*Issue, error) {
@@ -62,13 +71,14 @@ func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
 	var out []*Issue
 	for rows.Next() {
 		var i Issue
-		var flags, commentary string
+		var flags, commentary, sections string
 		if err := rows.Scan(&i.ID, &i.PublicationID, &i.Number, &i.Status,
-			&i.Subject, &i.BodyMD, &flags, &commentary, &i.CreatedAt, &i.ScheduledAt, &i.TestSentAt); err != nil {
+			&i.Subject, &i.BodyMD, &flags, &commentary, &sections, &i.CreatedAt, &i.ScheduledAt, &i.TestSentAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(flags), &i.Flags)
 		json.Unmarshal([]byte(commentary), &i.Commentary)
+		json.Unmarshal([]byte(sections), &i.Sections)
 		out = append(out, &i)
 	}
 	return out, rows.Err()
