@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
 )
 
@@ -92,7 +93,9 @@ func apiGet(t *testing.T, srv *web.Server, path string) map[string]any {
 // waitRun polls a run until it is done or failed.
 func waitRun(t *testing.T, srv *web.Server, runID string) map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	// A fixture run issues hundreds of queries; against a remote
+	// Postgres each one is a network round-trip, so allow ample time.
+	deadline := time.Now().Add(3 * time.Minute)
 	for {
 		v := apiGet(t, srv, "/api/v1/runs/"+runID)
 		run := v["run"].(map[string]any)
@@ -361,9 +364,17 @@ func TestAPIJourney(t *testing.T) {
 	if c := apiErrCode(t, rr); c != "citation_required" {
 		t.Fatalf("uncited edit: code = %q", c)
 	}
-	// supported edit resolves the flag (grounded in a dossier fact)
+	// an existing but unrelated citation cannot clear the flag either —
+	// the claim must be supported by the cited source's stored text
 	rr = apiCall(t, srv, "PATCH", sents+flaggedID,
-		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
+		map[string]any{"text": flaggedText, "citations": []int{3}, "version": ver})
+	if c := apiErrCode(t, rr); c != "unsupported_claim" {
+		t.Fatalf("unrelated citation edit: code = %q", c)
+	}
+	// supported edit resolves the flag — the words come from the dossier
+	// fact but are reworded enough to stay under the copy threshold
+	rr = apiCall(t, srv, "PATCH", sents+flaggedID,
+		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo novo portal do órgão",
 			"citations": []int{1}, "version": ver})
 	if rr.Code != 200 {
 		t.Fatalf("supported edit = %d: %s", rr.Code, rr.Body.String()[:300])
@@ -381,7 +392,7 @@ outer0:
 		}
 	}
 	rr = apiCall(t, srv, "PATCH", sents+anySID,
-		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo portal do órgão",
+		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo novo portal do órgão",
 			"citations": []int{1}, "version": ver})
 	if c := apiErrCode(t, rr); c != "conflict" {
 		t.Fatalf("stale version: code = %q", c)
@@ -468,6 +479,11 @@ outer0:
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "<h1>") {
 		t.Fatalf("export html = %d", rr.Code)
 	}
+	// ?format= is the spelling the audit reached for — same file (KLOX-56)
+	rr = apiCall(t, srv, "GET", issueURL+"/export?format=html", nil)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "<h1>") {
+		t.Fatalf("export html via ?format= = %d %s", rr.Code, rr.Header().Get("Content-Type"))
+	}
 
 	// --- preview switches ---
 	pv := apiGet(t, srv, issueURL+"/preview?reader=non-subscriber&surface=email")
@@ -499,6 +515,20 @@ outer0:
 	iss, _ = db.GetIssue(ctx, issueID)
 	if iss.Status != "approved" {
 		t.Fatalf("test send marked issue %q — it must stay approved", iss.Status)
+	}
+	if iss.TestSentAt == "" {
+		t.Error("a test send must stamp test_sent_at")
+	}
+	// the marker unlocks the after-sending data and the public page
+	// without mutating the lifecycle (KLOX-53)
+	if v := apiGet(t, srv, issueURL)["issue"].(map[string]any); v["test_sent_at"] == nil || v["test_sent_at"] == "" {
+		t.Error("issue summary must carry test_sent_at")
+	}
+	if rr := apiCall(t, srv, "GET", issueURL+"/after", nil); rr.Code != 200 {
+		t.Fatalf("after-sending screen on a test-sent issue = %d, want 200", rr.Code)
+	}
+	if rr := apiCall(t, srv, "GET", "/api/v1/p/futuro-proximo/"+fmt.Sprint(iss.Number), nil); rr.Code != 200 {
+		t.Fatalf("public page on a test-sent issue = %d, want 200", rr.Code)
 	}
 
 	// --- schedule locks the issue; Hold returns it to draft ---
@@ -877,16 +907,45 @@ outer:
 	if flaggedID == "" {
 		t.Fatal("no flagged sentence")
 	}
+	// the fixture's flagged claim carries a number — marking it as
+	// interpretation is refused: a fact cannot escape the citation
+	// check by being relabeled (KLOX-48).
 	rr = apiCall(t, srv, "POST", issueURL+"/sentences/"+flaggedID+"/interpretation",
+		map[string]string{"text": "A leitura editorial é que a consulta pública muda o jogo.",
+			"version": doc["version"].(string)})
+	if c := apiErrCode(t, rr); c != "interpretation_restricted" {
+		t.Fatalf("numeric claim marked as interpretation: code = %q", c)
+	}
+	iss, _ := db.GetIssue(ctx, issueID)
+	if len(iss.Flags) == 0 {
+		t.Fatal("refused interpretation cleared the flag")
+	}
+	// a plain sentence with no number, date or quotation marks converts.
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	var cleanID string
+outer2:
+	for _, s := range doc["sections"].([]any) {
+		for _, i := range s.(map[string]any)["items"].([]any) {
+			for _, sn := range i.(map[string]any)["sentences"].([]any) {
+				snt := sn.(map[string]any)
+				if snt["flag"] == nil && snt["kind"] == "fact" &&
+					!pipeline.HasNumberDateOrQuote(snt["text"].(string)) {
+					cleanID = snt["id"].(string)
+					break outer2
+				}
+			}
+		}
+	}
+	if cleanID == "" {
+		t.Fatal("no clean sentence to mark as interpretation")
+	}
+	rr = apiCall(t, srv, "POST", issueURL+"/sentences/"+cleanID+"/interpretation",
 		map[string]string{"text": "A leitura editorial é que a consulta pública muda o jogo.",
 			"version": doc["version"].(string)})
 	if rr.Code != 200 {
 		t.Fatalf("interpretation = %d: %s", rr.Code, rr.Body.String()[:300])
 	}
-	iss, _ := db.GetIssue(ctx, issueID)
-	if len(iss.Flags) != 0 {
-		t.Fatalf("interpretation left %d flags", len(iss.Flags))
-	}
+	iss, _ = db.GetIssue(ctx, issueID)
 	if !strings.Contains(iss.BodyMD, "> _Interpretação: A leitura editorial") {
 		t.Fatal("interpretation not stored as an editor-attributed block")
 	}

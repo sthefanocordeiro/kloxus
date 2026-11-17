@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, Circle, ExternalLink } from "lucide-react";
+import { useContext, useEffect, useRef, useState } from "react";
+import { ArrowRight, CheckCircle2, Circle, ExternalLink, Plus } from "lucide-react";
 import { api, type Check, type Coverage, type DocItem, type IssueDocument, type IssueItem } from "../api";
 import { coverageDone, coverageLabel, readyFromChecks } from "../docModel";
-import { useT } from "../i18n";
+import { DocActionsCtx } from "../editor/nodes";
+import { ComposeBox, type ComposeInsert } from "./Compose";
+import { sectionTitle, useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { fmtDate } from "../lib/fmt";
 import { Markdown } from "../markdown";
@@ -22,7 +24,7 @@ export function PautasPane({
   selectedRef: number | null;
   onSelect: (ref: number, issueItemId: number) => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const statusOf = (iid: number) => items?.find((i) => i.id === iid)?.status ?? "pending";
   const statusLabel = (s: string) => (t.itemStatus as Record<string, string>)[s] ?? s;
   return (
@@ -30,7 +32,7 @@ export function PautasPane({
       {(doc.sections ?? []).map((sec) => (
         <div key={sec.title || "_"}>
           <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
-            {sec.title || t.pautas}
+            {sec.title ? sectionTitle(lang, sec.title) : t.pautas}
           </p>
           <div className="space-y-1">
             {(sec.items ?? []).map((it) => (
@@ -65,6 +67,16 @@ export function PautasPane({
 export function CoverageCounter({ coverage, onFixNow }: { coverage: Coverage; onFixNow: () => void }) {
   const { t } = useT();
   const done = coverageDone(coverage);
+  // an empty document has nothing to cite — "0/0" reads as a failure
+  // it isn't, so it shows a neutral label and no dead-end button
+  // (KLOX-56)
+  if (coverage.total === 0) {
+    return (
+      <div className="flex items-center gap-2">
+        <Badge>{t.coverage.empty}</Badge>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-2">
       <Badge tone={done ? "teal" : "warn"}>
@@ -90,14 +102,14 @@ export function ReadinessList({
   coverage: Coverage;
   onTarget: (c: Check) => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   // every check is translated here; the server's message stays a
   // fallback for codes this UI doesn't know yet
   const labelFor = (c: Check): string => {
     const entry = (t.readiness.check as Record<string, { ok: string; fail: string }>)[c.code];
     let label = entry ? (c.ok ? entry.ok : entry.fail) : (c.message || c.code);
     if (!c.ok && c.count && c.count > 0 && !/^\d/.test(label)) label = `${c.count} ${label}`;
-    if (!c.ok && c.target?.kind === "section") label += ` — ${c.target.ref}`;
+    if (!c.ok && c.target?.kind === "section") label += ` — ${sectionTitle(lang, c.target.ref)}`;
     return label;
   };
   return (
@@ -150,6 +162,8 @@ export function EvidencePane({
   sid?: string;
 }) {
   const { t, lang } = useT();
+  const actions = useContext(DocActionsCtx);
+  const [insert, setInsert] = useState<ComposeInsert | null>(null);
   const dossier = useQuery({
     queryKey: ["dossier", item?.issue_item_id],
     queryFn: () => api.dossier(item!.issue_item_id),
@@ -176,9 +190,21 @@ export function EvidencePane({
       .find((s) => s.id === sid)
       ?.evidence?.find((e) => e.ref === ref)?.excerpt;
 
+  // An inserted excerpt is a quotation, not a fact claim: keep it inside
+  // quotes, attribute it to the outlet, and cap it at 25 words so the
+  // draft's originality rule (10+ consecutive source words) accepts it.
+  const quotedExcerpt = (raw: string, name: string) => {
+    const words = raw.trim().split(/\s+/).filter(Boolean);
+    const clip = words.length > 25 ? words.slice(0, 25).join(" ") + "…" : words.join(" ");
+    return `“${clip}” — ${name}`;
+  };
+
   return (
     <div ref={flash} className="h-full space-y-4 overflow-y-auto p-3 text-sm">
       <p className="font-doc font-semibold leading-6">{item.headline}</p>
+      {item.issue_item_id !== 0 && !actions.readOnly && (
+        <ComposeBox item={item} insert={insert} />
+      )}
       {d && (
         <>
           {d.facts.length + (d.deep_facts?.length ?? 0) > 0 && (
@@ -228,6 +254,22 @@ export function EvidencePane({
               <p className="mt-1 border-l-2 border-line pl-2 text-[13px] leading-5 text-muted">
                 {evFor(s.ref) ?? s.excerpt}
               </p>
+              {item.issue_item_id !== 0 && !actions.readOnly && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setInsert((i) => ({
+                      text: quotedExcerpt(evFor(s.ref) ?? s.excerpt, s.name),
+                      cite: s.ref, seq: (i?.seq ?? 0) + 1,
+                    }))
+                  }
+                  title={t.compose.insertExcerpt(s.ref)}
+                  aria-label={t.compose.insertExcerpt(s.ref)}
+                  className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-teal hover:underline"
+                >
+                  <Plus size={11} /> {t.compose.insert}
+                </button>
+              )}
             </Card>
           ))}
         </div>
