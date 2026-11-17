@@ -166,9 +166,9 @@ func scoreStories(stories []store.Story, lang string) (scores []float64, reasons
 			date = t.Format("2006-01-02")
 		}
 		if pt {
-			reasons[i] = fmt.Sprintf("ranqueamento determinístico: %s, %d fonte(s)", date, len(stories[i].Outlets()))
+			reasons[i] = fmt.Sprintf("ranqueado: %s, %d fonte(s)", date, len(stories[i].Outlets()))
 		} else {
-			reasons[i] = fmt.Sprintf("deterministic rank: %s, %d source(s)", date, len(stories[i].Outlets()))
+			reasons[i] = fmt.Sprintf("ranked: %s, %d source(s)", date, len(stories[i].Outlets()))
 		}
 		if nonEditorial(&stories[i]) {
 			scores[i] -= nonEditorialPenalty

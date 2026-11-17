@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api, type PreviewItem } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
+import { StepCounter } from "../components/StepCounter";
 
 // /publications/:id/sources — the onboarding sources screen: suggested fixture
 // sources with real previews, add/remove, and confirm → auto first run.
@@ -74,8 +75,8 @@ export function SourcesPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      <Link to={`/publications/${id}`} className="text-xs text-muted hover:text-ink">←</Link>
-      <h1 className="mt-1 font-doc text-2xl font-semibold">
+      {!pub.data?.latest_issue && <StepCounter steps={t.steps.onboarding} current={3} />}
+      <h1 className="mt-4 font-display text-2xl font-bold">
         {t.sourcesPage.title}
         {pub.data && <span className="ml-2 text-base font-normal text-muted">— {pub.data.publication.name}</span>}
       </h1>
@@ -92,14 +93,13 @@ export function SourcesPage() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{s.name || s.url}</p>
                   <p className="truncate text-xs text-muted">{s.url}</p>
-                  <p className="mt-0.5 text-xs text-muted">
-                    {t.sourcesPage.itemsWeek(s.items_per_week)}
-                    {s.last_status && (
-                      <Badge className="ml-2" tone={s.last_status.startsWith("ok") ? "teal" : "warn"}>
+                  {s.last_status && (
+                    <p className="mt-0.5 text-xs text-muted">
+                      <Badge tone={s.last_status.startsWith("ok") ? "teal" : "warn"}>
                         {s.last_status.startsWith("ok") ? t.sourcesPage.lastOk : t.sourcesPage.lastFail}
                       </Badge>
-                    )}
-                  </p>
+                    </p>
+                  )}
                 </div>
                 <Button
                   variant="outline" size="sm" disabled={remove.isPending}
@@ -132,11 +132,7 @@ export function SourcesPage() {
                       <span className="block truncate text-sm font-medium">{o.name || o.url}</span>
                       <span className="mt-0.5 flex items-center gap-2 text-xs text-muted">
                         <Badge>{o.type === "rss" ? t.sourcesPage.ownType.rss : t.sourcesPage.ownType.page}</Badge>
-                        {o.policy === "signal" && <Badge tone="warn">{t.sourcesPage.signalBadge}</Badge>}
                         {o.suspended && <Badge tone="warn">{t.sourcesPage.suspendedBadge}</Badge>}
-                        {o.items_per_week != null && o.items_per_week > 0 && (
-                          <span>{t.sourcesPage.itemsWeek(o.items_per_week)}</span>
-                        )}
                       </span>
                       {o.note && <span className="mt-0.5 block text-xs text-muted">{o.note}</span>}
                     </span>

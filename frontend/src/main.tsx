@@ -3,9 +3,7 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LangProvider } from "./i18n";
-import { AppShell } from "./AppShell";
 import { ErrorPage, NotFound } from "./pages/ErrorPage";
-import { Publications } from "./pages/Publications";
 import { Landing } from "./pages/Landing";
 import { PublicIssue, ReaderShell, UnsubPage } from "./pages/ReaderPage";
 import "./styles.css";
@@ -25,8 +23,11 @@ const qc = new QueryClient({
 // Heavy screens (the Tiptap editor above all) load on demand so the
 // landing bundle stays small — see scripts/check-bundle-size.mjs.
 const router = createBrowserRouter([
+  // the landing stands alone — the app shell (sidebar, tabs, menus) is
+  // lazy so none of it lands in the "/" bundle (KLOX-16 budget)
+  { path: "/", element: <Landing />, errorElement: <ErrorPage /> },
   {
-    element: <AppShell />,
+    lazy: () => import("./AppShell").then((m) => ({ Component: m.AppShell })),
     errorElement: <ErrorPage />,
     hydrateFallbackElement: (
       <div className="grid flex-1 place-items-center text-muted" aria-busy="true">
@@ -34,13 +35,15 @@ const router = createBrowserRouter([
       </div>
     ),
     children: [
-      { path: "/", element: <Landing /> },
       { path: "/new", lazy: () => import("./pages/Create").then((m) => ({ Component: m.CreateNewsletter })) },
-      { path: "/publications", element: <Publications /> },
+      { path: "/publications", lazy: () => import("./pages/Publications").then((m) => ({ Component: m.Publications })) },
       { path: "/publications/:id", lazy: () => import("./pages/PublicationPage").then((m) => ({ Component: m.PublicationPage })) },
       { path: "/publications/:id/sources", lazy: () => import("./pages/Sources").then((m) => ({ Component: m.SourcesPage })) },
       { path: "/publications/:id/outbox", lazy: () => import("./pages/OutboxPage").then((m) => ({ Component: m.OutboxPage })) },
       { path: "/publications/:id/guide", lazy: () => import("./pages/GuidePage").then((m) => ({ Component: m.GuidePage })) },
+      { path: "/publications/:id/readers", lazy: () => import("./pages/ReadersPage").then((m) => ({ Component: m.ReadersPage })) },
+      { path: "/publications/:id/sections", lazy: () => import("./pages/SectionsPage").then((m) => ({ Component: m.SectionsPage })) },
+      { path: "/publications/:id/settings", lazy: () => import("./pages/SettingsPage").then((m) => ({ Component: m.SettingsPage })) },
       { path: "/issues/:id", lazy: () => import("./pages/IssuePage").then((m) => ({ Component: m.IssuePage })) },
       { path: "/runs/:runID", lazy: () => import("./pages/Board").then((m) => ({ Component: m.RunLanding })) },
       { path: "*", element: <NotFound /> },

@@ -128,14 +128,14 @@ func TestScoreStoriesPTReasons(t *testing.T) {
 		detStory(1, "Pauta sem data", "", 2),
 	}
 	_, en := scoreStories(stories, "")
-	if !strings.Contains(en[0], "deterministic rank") || !strings.Contains(en[0], "undated") {
+	if !strings.Contains(en[0], "ranked:") || !strings.Contains(en[0], "undated") {
 		t.Fatalf("en reason = %q", en[0])
 	}
 	_, pt := scoreStories(stories, "pt-BR")
-	if !strings.Contains(pt[0], "ranqueamento determinístico") || !strings.Contains(pt[0], "sem data") {
+	if !strings.Contains(pt[0], "ranqueado:") || !strings.Contains(pt[0], "sem data") {
 		t.Fatalf("pt reason = %q", pt[0])
 	}
-	if strings.Contains(pt[0], "deterministic rank") {
+	if strings.Contains(pt[0], "ranked:") {
 		t.Fatalf("pt reason leaked English: %q", pt[0])
 	}
 }

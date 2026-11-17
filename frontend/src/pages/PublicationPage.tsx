@@ -4,6 +4,7 @@ import { api, ApiRequestError } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
+import { ShellPrimary } from "../components/ShellPortal";
 import { NotFound } from "./ErrorPage";
 
 export function PublicationPage() {
@@ -29,27 +30,12 @@ export function PublicationPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
-      <Link to="/" className="text-sm text-muted hover:text-ink">
-        ← {t.back}
-      </Link>
-      <div className="mt-3 mb-6 flex items-baseline justify-between gap-4">
-        <div className="flex items-baseline gap-4">
-          <h1 className="font-doc text-2xl font-semibold">{pub.data?.publication.name ?? "…"}</h1>
-          <Link to={`/publications/${id}/sources`} className="text-xs text-muted underline hover:text-ink">
-            {t.sources}
-          </Link>
-          <Link to={`/publications/${id}/outbox`} className="text-xs text-muted underline hover:text-ink">
-            {t.outbox}
-          </Link>
-          <Link to={`/publications/${id}/guide`} className="text-xs text-muted underline hover:text-ink">
-            {t.guide.title}
-          </Link>
-        </div>
-        <Button onClick={() => start.mutate()} disabled={start.isPending}>
+    <div className="mx-auto w-full max-w-3xl px-4 py-6">
+      <ShellPrimary>
+        <Button size="sm" onClick={() => start.mutate()} disabled={start.isPending}>
           {start.isPending ? t.run.running : t.run.start}
         </Button>
-      </div>
+      </ShellPrimary>
 
       {start.error && (
         <Card className="mb-4 border-danger/40 bg-danger-soft p-3 text-sm text-danger">

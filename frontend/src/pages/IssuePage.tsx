@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
-import { ArrowLeft, BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
+import { BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
 import { api, ApiRequestError, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
 import { docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
 import { Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideCommentary, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
-import { fmtDate, fmtUSD } from "../lib/fmt";
+import { fmtDate } from "../lib/fmt";
 
 // datetime-local inputs work in local time without a zone; the API gets
 // the same instant as RFC3339 via new Date(v).toISOString().
@@ -21,6 +21,8 @@ function localInput(d: Date): string {
 }
 import { Badge, Button } from "../ui";
 import { KDialog, KPopover } from "../ui-overlays";
+import { ClaimEmail } from "../components/ClaimEmail";
+import { StepCounter } from "../components/StepCounter";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
 import { BlockedCard, BoardSkeleton, BuildBoard, StepRail } from "./Board";
 import { NotFound } from "./ErrorPage";
@@ -50,7 +52,6 @@ export function IssuePage() {
   const [params, setParams] = useSearchParams();
   const runID = params.get("run");
   const [runDone, setRunDone] = useState(!runID);
-  const [runSummary, setRunSummary] = useState<string | null>(null);
   const [runBlocked, setRunBlocked] = useState<string | null>(null);
   const issueQ = useQuery({ queryKey: ["issue", issueID], queryFn: () => api.issue(issueID) });
   const itemsQ = useQuery({ queryKey: ["items", issueID], queryFn: () => api.issueItems(issueID) });
@@ -388,43 +389,20 @@ export function IssuePage() {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* top bar */}
       <header className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2.5">
-        <Link to={`/publications/${issue.publication_id}`} className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink">
-          <ArrowLeft size={13} /> {t.back}
-        </Link>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">
             #{issue.number} · {issue.subject}
           </p>
         </div>
-        <ol className="flex items-center gap-1 text-[11px]" aria-label={(t.status as Record<string, string>)[issue.status]}>
-          {t.board.steps.map((label, i) => {
-            const step =
-              issue.status === "drafted" ? 2
-              : issue.status === "approved" || issue.status === "sent" || issue.status === "scheduled" ? 3
-              : 1;
-            return (
-              <li key={label} className="flex items-center gap-1">
-                {i > 0 && <span className="mx-0.5 text-muted/40">·</span>}
-                <span
-                  className={cn(
-                    "inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px]",
-                    i + 1 < step ? "bg-teal-soft text-teal" : i + 1 === step ? "bg-ink text-paper" : "bg-line text-muted",
-                  )}
-                >
-                  {i + 1}
-                </span>
-                <span className={i + 1 === step ? "font-semibold text-ink" : i + 1 < step ? "text-teal" : "text-muted"}>
-                  {label}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-        {typeof issue.cost_usd === "number" && (
-          <span className="text-[11px] text-muted" title={t.runCost}>
-            {t.runCost} {fmtUSD(issue.cost_usd)}
-          </span>
-        )}
+        <StepCounter
+          steps={t.board.steps}
+          current={
+            issue.status === "drafted" ? 2
+            : issue.status === "approved" || issue.status === "sent" || issue.status === "scheduled" ? 3
+            : 1
+          }
+          className="w-full shrink-0 sm:w-96"
+        />
         <span className="flex-1" />
         {saved && (
           <span className="rounded-full bg-teal-soft px-2 py-0.5 text-[11px] text-teal">
@@ -446,8 +424,7 @@ export function IssuePage() {
           >
             {issue.receipt && (
               <p className="mb-2 text-xs text-muted">
-                {t.receipt.by} {issue.receipt.approver} · {t.receipt.version}{" "}
-                {issue.receipt.document_version.slice(0, 8)}
+                {t.receipt.by} {issue.receipt.approver}
               </p>
             )}
             <SendRow issue={issue} onDone={() => invalidate()} onToast={showToast} />
@@ -474,17 +451,7 @@ export function IssuePage() {
               <StepRail
                 runID={runID}
                 steps={["collect", "dedupe", "triage", "storylist", "dossier", "deepdive"]}
-                onDone={(run, events) => {
-                  const bits: string[] = [];
-                  const labels = t.run.counts as Record<string, string | ((n: number) => string)>;
-                  for (const key of ["items_read", "duplicates_merged", "ranked", "selected"]) {
-                    const ev = [...events].reverse().find((e) => e.counts && key in e.counts);
-                    if (ev?.counts) {
-                      const lbl = labels[key] ?? key;
-                      bits.push(`${ev.counts[key]} ${typeof lbl === "function" ? lbl(ev.counts[key]) : lbl}`);
-                    }
-                  }
-                  if (bits.length) setRunSummary(bits.join(" · "));
+                onDone={(run) => {
                   setRunDone(true);
                   setParams((p) => { p.delete("run"); return p; }, { replace: true });
                   qc.invalidateQueries({ queryKey: ["candidates", issueID] });
@@ -499,7 +466,6 @@ export function IssuePage() {
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
-            {runSummary && <p className="border-b border-line px-4 py-1.5 text-xs text-muted">{runSummary}</p>}
             {runBlocked && (
               <div className="relative border-b border-line">
                 <button
@@ -696,7 +662,7 @@ function ApproveBar({
     <>
       <KPopover
         trigger={
-          <Button size="sm" variant={ready ? "teal" : "outline"}>
+          <Button size="sm" variant={ready ? "primary" : "outline"}>
             {issue.status === "approved" ? `${t.readiness.approvedAt}` : t.readiness.approve}
             {issue.status === "approved" && issue.receipt && (
               <span className="text-[10px] opacity-80">#{issue.receipt.number}</span>
@@ -706,13 +672,13 @@ function ApproveBar({
       >
         <ReadinessList checks={checks} coverage={coverage} onTarget={onTarget} />
         {ready && issue.status !== "approved" && (
-          <Button className="mt-3 w-full" variant="teal" size="sm" onClick={() => setConfirm(true)}>
+          <Button className="mt-3 w-full" size="sm" onClick={() => setConfirm(true)}>
             {t.readiness.approve}
           </Button>
         )}
         {issue.status === "approved" && issue.receipt && (
           <div className="mt-3 border-t border-line pt-2 text-xs text-muted">
-            {t.receipt.by} {issue.receipt.approver} · {t.receipt.version} {issue.receipt.document_version.slice(0, 8)}
+            {t.receipt.by} {issue.receipt.approver}
           </div>
         )}
       </KPopover>
@@ -759,13 +725,12 @@ function ApproveBar({
           </fieldset>
         )}
         {audience === "readers" && liveUnclaimed && (
-          <p className="mb-3 text-xs text-danger">{t.claim.hint}</p>
+          <div className="mb-3">
+            <p className="mb-1 text-xs text-danger">{t.claim.hint}</p>
+            <ClaimEmail />
+          </div>
         )}
         <dl className="mb-4 space-y-1 border-t border-line pt-3 text-xs text-muted">
-          <div className="flex justify-between">
-            <dt>{t.send.version}</dt>
-            <dd className="font-mono">{(issue.document_version ?? "").slice(0, 8)}</dd>
-          </div>
           {coverage && (
             <div className="flex justify-between">
               <dt>{t.send.sourced}</dt>
@@ -796,7 +761,7 @@ function ApproveBar({
             {t.doc.cancel}
           </Button>
           <Button
-            variant={audience === "readers" ? "danger" : "teal"}
+            variant={audience === "readers" ? "danger" : "primary"}
             disabled={flow.isPending || !atOK}
             onClick={() => flow.mutate()}
           >
@@ -848,7 +813,12 @@ function SendRow({ issue, onDone, onToast }: {
     : "…";
   return (
     <div className="mt-2 space-y-2">
-      {unclaimed && <p className="text-xs text-muted">{t.claim.hint}</p>}
+      {unclaimed && (
+        <div>
+          <p className="mb-1 text-xs text-muted">{t.claim.hint}</p>
+          <ClaimEmail />
+        </div>
+      )}
       <div className="flex gap-2">
         <Button size="sm" variant="outline" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "test", when: "now" })}>
           <Send size={12} /> {t.send.test}
@@ -962,8 +932,7 @@ function AfterSend({ issue }: { issue: IssueSummary }) {
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs">
           {r && (
             <span className="text-muted">
-              {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)} · {t.receipt.version}{" "}
-              {r.document_version.slice(0, 8)}
+              {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)}
             </span>
           )}
           {issue.status === "scheduled" && issue.scheduled_at && (
@@ -990,7 +959,7 @@ function AfterSend({ issue }: { issue: IssueSummary }) {
             </span>
           )}
           <span className="flex-1" />
-          <Button size="sm" variant="teal" disabled={next.isPending} onClick={() => next.mutate()}>
+          <Button size="sm" disabled={next.isPending} onClick={() => next.mutate()}>
             {t.after.next}
           </Button>
         </div>

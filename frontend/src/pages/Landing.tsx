@@ -1,28 +1,18 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { useT } from "../i18n";
+import { useT, type Lang } from "../i18n";
+import { cn } from "../lib/cn";
 import { SampleCard } from "../components/SampleCard";
 import { errText } from "../lib/errors";
-import { Badge, Button, Card } from "../ui";
-
-// Sponsors and technology named on the landing. `status` is the only
-// switch: flip an entry to "live" when its integrating issue merges —
-// the page must never claim a feature is live before then. Descriptions
-// live in the i18n dict under landing.stackDesc.
-const STACK = [
-  { id: "firecrawl", name: "Firecrawl", status: "live" },
-  { id: "resend", name: "Resend", status: "live" },
-  { id: "supabase", name: "Supabase", status: "live" },
-  { id: "abacatepay", name: "AbacatePay", status: "coming" },
-] as const;
+import { Button, Card } from "../ui";
 
 // The landing page: product promise, the loop, a cited dossier from the
 // fictional sample issue (fetched workspace-free), the rules, the stack
 // and a short FAQ. Start resolves-or-creates the visitor's workspace
 // through the signed-cookie flow (D17), then lands on onboarding.
 export function Landing() {
-  const { t } = useT();
+  const { t, lang, setLang } = useT();
   const nav = useNavigate();
   const sample = useQuery({ queryKey: ["sample"], queryFn: api.sample });
   const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
@@ -35,7 +25,7 @@ export function Landing() {
 
   const cta = (
     <div>
-      <Button size="lg" onClick={() => start.mutate()} disabled={start.isPending}>
+      <Button size="lg" variant="accent" onClick={() => start.mutate()} disabled={start.isPending}>
         {start.isPending ? t.landing.starting : t.landing.start}
       </Button>
       {start.error && (
@@ -47,9 +37,32 @@ export function Landing() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-10">
-      <p className="text-xs font-semibold uppercase tracking-widest text-teal">{t.landing.kicker}</p>
-      <h1 className="mt-2 font-doc text-4xl font-semibold leading-tight">{t.landing.headline}</h1>
+    <div className="flex h-dvh flex-col">
+      <header className="border-b border-line bg-paper-raised">
+        <div className="mx-auto flex h-12 max-w-[1400px] items-center gap-4 px-4">
+          <Link to="/" className="font-display text-lg font-extrabold tracking-tight text-teal">
+            {t.appName}
+          </Link>
+          <div className="ml-auto flex items-center gap-1 text-xs">
+            {(["en", "pt"] as Lang[]).map((l) => (
+              <button
+                key={l}
+                onClick={() => setLang(l)}
+                className={cn(
+                  "flex h-11 min-w-11 items-center justify-center rounded-md px-1.5 md:h-10 md:min-w-10",
+                  lang === l ? "bg-ink font-medium text-paper" : "text-muted hover:text-ink",
+                )}
+                aria-pressed={lang === l}
+              >
+                {l === "en" ? "EN" : "PT"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </header>
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl px-4 py-10">
+          <h1 className="mt-2 font-display text-4xl font-extrabold leading-tight">{t.landing.headline}</h1>
       <p className="mt-3 max-w-xl text-base text-muted">{t.landing.lede}</p>
       <p className="mt-2 max-w-xl text-sm text-muted">{t.landing.forWhom}</p>
 
@@ -69,7 +82,7 @@ export function Landing() {
       <p className="mt-2 text-xs text-muted">{t.landing.startHint}</p>
 
       <section aria-labelledby="landing-how" className="mt-12">
-        <h2 id="landing-how" className="font-doc text-2xl font-semibold">
+        <h2 id="landing-how" className="font-display text-2xl font-bold">
           {t.landing.howTitle}
         </h2>
         <ol className="mt-4 grid list-decimal gap-2.5 pl-5 text-sm marker:font-semibold marker:text-teal">
@@ -83,7 +96,7 @@ export function Landing() {
 
       {sample.data && sample.data.dossiers.length > 0 && (
         <section aria-labelledby="landing-sample" className="mt-12">
-          <h2 id="landing-sample" className="font-doc text-2xl font-semibold">
+          <h2 id="landing-sample" className="font-display text-2xl font-bold">
             {t.landing.sampleTitle}
           </h2>
           <p className="mt-1 text-xs uppercase tracking-wide text-muted">{t.landing.sampleCaption}</p>
@@ -97,7 +110,7 @@ export function Landing() {
       )}
 
       <section aria-labelledby="landing-rules" className="mt-12">
-        <h2 id="landing-rules" className="font-doc text-2xl font-semibold">
+        <h2 id="landing-rules" className="font-display text-2xl font-bold">
           {t.landing.rulesTitle}
         </h2>
         <div className="mt-4 grid gap-4 sm:grid-cols-3">
@@ -111,7 +124,7 @@ export function Landing() {
       </section>
 
       <section aria-labelledby="landing-sources" className="mt-12">
-        <h2 id="landing-sources" className="font-doc text-2xl font-semibold">
+        <h2 id="landing-sources" className="font-display text-2xl font-bold">
           {t.landing.sourcesTitle}
         </h2>
         <ul className="mt-4 grid gap-2 text-sm">
@@ -124,28 +137,8 @@ export function Landing() {
         </ul>
       </section>
 
-      <section aria-labelledby="landing-stack" className="mt-12">
-        <h2 id="landing-stack" className="font-doc text-2xl font-semibold">
-          {t.landing.stackTitle}
-        </h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {STACK.map((s) => (
-            <Card key={s.id} className="p-4">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold">{s.name}</h3>
-                <Badge tone={s.status === "live" ? "teal" : "muted"}>
-                  {t.landing.stackStatus[s.status]}
-                </Badge>
-              </div>
-              <p className="mt-1.5 text-sm text-muted">{t.landing.stackDesc[s.id]}</p>
-            </Card>
-          ))}
-        </div>
-        <p className="mt-3 text-xs text-muted">{t.landing.stackNote}</p>
-      </section>
-
       <section aria-labelledby="landing-faq" className="mt-12">
-        <h2 id="landing-faq" className="font-doc text-2xl font-semibold">
+        <h2 id="landing-faq" className="font-display text-2xl font-bold">
           {t.landing.faqTitle}
         </h2>
         <div className="mt-2">
@@ -159,12 +152,14 @@ export function Landing() {
       </section>
 
       <section aria-labelledby="landing-final" className="mt-12 border-t border-line pt-10">
-        <h2 id="landing-final" className="font-doc text-2xl font-semibold">
+        <h2 id="landing-final" className="font-display text-2xl font-bold">
           {t.landing.finalTitle}
         </h2>
         <p className="mt-2 max-w-xl text-sm text-muted">{t.landing.finalBody}</p>
         <div className="mt-5">{cta}</div>
       </section>
+        </div>
+      </main>
     </div>
   );
 }

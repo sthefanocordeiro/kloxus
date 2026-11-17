@@ -48,11 +48,11 @@ function verbatimPaste(excerpt: string): string {
 // first run lands on the build board
 async function onboard(page: Page) {
   await page.goto("/");
-  await expect(page.getByText(/dossier from the (fictional )?sample issue/i)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/(dossier|research( file)?) from the (fictional )?sample issue/i)).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Get started without login/ }).first().click();
   await page.waitForURL(/\/new/);
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
-  await page.getByRole("button", { name: "Create newsletter", exact: true }).click();
+  await page.getByRole("button", { name: "Continue to sources", exact: true }).click();
   await page.waitForURL(/\/publications\/\d+\/sources/);
   await expect(page.getByText("Suggested sources")).toBeVisible();
   await page.getByRole("button", { name: "Latest items", exact: true }).first().click();
