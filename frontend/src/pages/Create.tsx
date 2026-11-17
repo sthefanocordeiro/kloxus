@@ -1,10 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api, type Proposal } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
+import { StepCounter } from "../components/StepCounter";
 
 // /new — the create-newsletter screen. Paste-a-link is live-only in demo;
 // the sample proposal fills five editable blocks the creator can tune
@@ -38,8 +39,8 @@ export function CreateNewsletter() {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      <Link to="/" className="text-xs text-muted hover:text-ink">←</Link>
-      <h1 className="mt-1 font-doc text-2xl font-semibold">{t.create.title}</h1>
+      <StepCounter steps={t.steps.onboarding} current={1} />
+      <h1 className="mt-4 font-display text-2xl font-bold">{t.create.title}</h1>
 
       <Card className="mt-6 p-5">
         <label className="text-xs font-semibold uppercase tracking-wide text-muted" htmlFor="paste">
@@ -105,7 +106,6 @@ export function CreateNewsletter() {
             <Button disabled={create.isPending || !form.name.trim()} onClick={() => create.mutate()}>
               {create.isPending ? t.create.creating : t.create.action}
             </Button>
-            <span className="text-xs text-muted">{t.create.next}</span>
           </div>
         </Card>
       )}

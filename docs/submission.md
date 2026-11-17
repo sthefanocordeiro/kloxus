@@ -28,12 +28,12 @@ Criadores independentes perdem horas toda semana monitorando feeds, filtrando du
 
 ## Hosted demo checklist
 
-1. Change `app = "kloxus-demo"` in `fly.toml` if the name is unavailable.
+1. Change `app = "kloxus-demo"` in `fly.demo.toml` if the name is unavailable.
 2. Run:
    ```bash
-   fly launch --copy-config
-   fly volumes create kloxus_data --region gru --size 1
-   fly deploy
+   fly launch --copy-config -c fly.demo.toml
+   fly volumes create kloxus_data --region gru --size 1 -a kloxus-demo
+   fly deploy -c fly.demo.toml
    ```
 3. Verify `GET /healthz` returns `ok`.
 4. Open the demo URL, click **Reset demo**, then run the judge flow once.
