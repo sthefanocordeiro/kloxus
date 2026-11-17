@@ -10,10 +10,10 @@ test.describe("interface language", () => {
     await page.goto("/");
     await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
     await expect(
-      page.getByRole("button", { name: /Começar sem login/ }).first(),
+      page.getByRole("button", { name: /Criar minha newsletter/ }).first(),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /Get started without login/ }),
+      page.getByRole("button", { name: /Create your newsletter/ }),
     ).toHaveCount(0);
   });
 });

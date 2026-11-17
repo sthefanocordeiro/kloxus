@@ -38,9 +38,9 @@ export function Publications() {
       {pubs.isLoading && <p className="text-muted">…</p>}
       {pubs.data?.length === 0 && (
         <Card className="p-6 text-center">
-          <p className="text-sm text-muted">{t.landing.lede}</p>
+          <p className="text-sm text-muted">{t.landing.subhead}</p>
           <Link to="/new" className="mt-3 inline-block">
-            <Button>{t.landing.start}</Button>
+            <Button>{t.landing.cta}</Button>
           </Link>
         </Card>
       )}
