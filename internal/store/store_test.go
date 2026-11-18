@@ -107,7 +107,7 @@ func TestMigrateAndSeed(t *testing.T) {
 	if n, _ := db.NextIssueNumber(ctx, pub.ID); n != 1 {
 		t.Fatalf("NextIssueNumber = %d", n)
 	}
-	if _, err := db.CreateIssue(ctx, pub.ID, 1, "s", "body"); err != nil {
+	if _, err := db.CreateIssue(ctx, pub.ID, 1, "s", "body", nil); err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}
 	if n, _ := db.NextIssueNumber(ctx, pub.ID); n != 2 {

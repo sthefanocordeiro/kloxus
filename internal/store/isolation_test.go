@@ -34,7 +34,7 @@ func TestWorkspaceIsolation(t *testing.T) {
 	}
 
 	// --- issues + items ---
-	issueID, err := a.CreateIssue(ctx, pubA, 1, "s", "body")
+	issueID, err := a.CreateIssue(ctx, pubA, 1, "s", "body", nil)
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}
