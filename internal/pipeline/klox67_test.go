@@ -7,8 +7,10 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
@@ -161,7 +163,7 @@ func TestScoreStoriesEnriched(t *testing.T) {
 	stories := []store.Story{mkStory(1), mkStory(2), mkStory(3), mkStory(4)}
 	base, _ := scoreStories(stories, "pt")
 	enrich := map[int64]*store.ItemEnrichment{
-		1: {ItemID: 1, Kind: "noticia", Topics: []string{"tecnologia"}},  // +1 kind, +2 topic
+		1: {ItemID: 1, Kind: "noticia", Topics: []string{"tecnologia"}}, // +1 kind, +2 topic
 		2: {ItemID: 2, Kind: "analise", Topics: []string{"esporte"}},    // +1 kind, no topic
 		3: {ItemID: 3, Kind: "outro"},                                   // -0.5 kind
 		// 4: no enrichment — unchanged
@@ -293,5 +295,165 @@ func TestClampWords(t *testing.T) {
 	}
 	if got := clampWords("a b c d e f", 4); got != "a b c d" {
 		t.Errorf("clamped: %q", got)
+	}
+}
+
+// composeFixture seeds a publication with one story-bearing lineup item
+// (status approved, no dossier) — the shape ensureResearch fills.
+// Returns the ids the test asserts on.
+func composeFixture(t *testing.T, db *store.DB, slug, ext string) (pub *store.Publication, issueID, iiID, storyID int64) {
+	t.Helper()
+	ctx := context.Background()
+	// the shared research cache outlives a single test run on a reused
+	// database — unique URLs keep this run's key space clean
+	nonce := fmt.Sprintf("-%d", time.Now().UnixNano())
+	slug, ext = slug+nonce, ext+nonce
+	pubID, err := db.SeedPublication(ctx, &config.Publication{
+		Slug: slug, Name: "Pub",
+		Sections: []config.Section{{Title: "Lead", Items: 1}},
+		Sources:  []config.SourceDef{{Type: "rss", URL: "fixtures/feeds/a.xml"}},
+	})
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	srcs, _ := db.Sources(ctx, pubID)
+	var itemID int64
+	if err := db.QueryRowContext(ctx,
+		`INSERT INTO items (workspace_id, source_id, external_id, url, canonical_url, title, content_text, kind)
+		 VALUES ($1,$2,$3,$4,$4,$5,'O regulador abriu consulta pública sobre IA.','article') RETURNING id`,
+		db.Workspace(), srcs[0].ID, ext, "https://x.example/"+ext, "Regulador abre consulta").Scan(&itemID); err != nil {
+		t.Fatalf("insert item: %v", err)
+	}
+	storyID, err = db.CreateStory(ctx, pubID, "Consulta do regulador", 1, "https://x.example/"+ext)
+	if err != nil {
+		t.Fatalf("CreateStory: %v", err)
+	}
+	if err := db.AddStoryItem(ctx, storyID, itemID); err != nil {
+		t.Fatalf("AddStoryItem: %v", err)
+	}
+	if err := db.SetStoryTriage(ctx, storyID, 9.0, "top"); err != nil {
+		t.Fatalf("SetStoryTriage: %v", err)
+	}
+	issueID, err = db.CreateIssue(ctx, pubID, 1, "s", "")
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	iiID, err = db.CreateIssueItem(ctx, store.IssueItem{
+		IssueID: issueID, StoryID: storyID, Section: "Lead",
+		Score: 9, Status: "approved",
+	})
+	if err != nil {
+		t.Fatalf("CreateIssueItem: %v", err)
+	}
+	pub, err = db.GetPublication(ctx, slug)
+	if err != nil {
+		t.Fatalf("GetPublication: %v", err)
+	}
+	return pub, issueID, iiID, storyID
+}
+
+// TestComposeSkeletonResearchPrefill exercises ensureResearch inside
+// ComposeSkeleton end-to-end (the piece QA flagged): with a Researcher
+// wired, each dossier-less pauta gets one paid research call, the
+// dossier lands, ai_draft marks the item and the AI draft body reaches
+// the stored issue markdown. A second compose is a free shared-cache
+// hit — no new call, no new paid action.
+func TestComposeSkeletonResearchPrefill(t *testing.T) {
+	pool := testdb.Pool(t)
+	db := testdb.WSOn(t, pool)
+	ctx := context.Background()
+	pub, issueID, iiID, storyID := composeFixture(t, db, "rs-pub", "rs-1")
+
+	var calls int
+	runner := &Runner{DB: db, Research: &Researcher{
+		Pool: pool, Model: "claude-haiku-5-5",
+		LLM: llm.Func(func(_ context.Context, req llm.Request) (llm.Response, error) {
+			calls++
+			if req.Template != "research" || req.Model != "claude-haiku-5-5" {
+				t.Errorf("req = template %q model %q", req.Template, req.Model)
+			}
+			return llm.Response{Text: `{
+				"summary":"Resumo da pauta.",
+				"facts":[{"text":"Consulta aberta.","ref":1}],
+				"open_questions":[],
+				"draft_body":"O regulador abriu consulta pública sobre IA [1].",
+				"sources":[{"ref":1,"url":"https://x.example/rs-1","name":"X"}]
+			}`}, nil
+		}),
+	}}
+	res, err := runner.ComposeSkeleton(ctx, pub, issueID)
+	if err != nil {
+		t.Fatalf("ComposeSkeleton: %v", err)
+	}
+	if res.Selected != 1 || calls != 1 {
+		t.Fatalf("selected=%d calls=%d, want 1/1", res.Selected, calls)
+	}
+	if n, _ := db.PaidActionCount(ctx, store.PaidActionResearch, storyID); n != 1 {
+		t.Fatalf("research paid actions = %d, want 1", n)
+	}
+	ii, err := db.GetIssueItem(ctx, iiID)
+	if err != nil || !ii.AIDraft {
+		t.Fatalf("ai_draft after compose: %+v %v", ii, err)
+	}
+	dj, err := db.Dossier(ctx, iiID)
+	if err != nil || !strings.Contains(dj, "Resumo da pauta") {
+		t.Fatalf("research dossier: %v %q", err, dj)
+	}
+	iss, err := db.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if !strings.Contains(iss.BodyMD, "O regulador abriu consulta pública sobre IA [1].") {
+		t.Fatalf("issue body lacks the AI draft:\n%s", iss.BodyMD)
+	}
+	if !strings.Contains(iss.BodyMD, "**Sources:**") {
+		t.Fatalf("issue body lacks sources:\n%s", iss.BodyMD)
+	}
+
+	// Second compose: every item has a dossier, so ensureResearch does
+	// nothing — no call, no paid action. The shared cache is what makes
+	// the second newsletter free.
+	res, err = runner.ComposeSkeleton(ctx, pub, issueID)
+	if err != nil || res.Selected != 1 {
+		t.Fatalf("second compose: %v %+v", err, res)
+	}
+	if calls != 1 {
+		t.Fatalf("cached research re-called the model: %d", calls)
+	}
+	if n, _ := db.PaidActionCount(ctx, store.PaidActionResearch, storyID); n != 1 {
+		t.Fatalf("paid actions after cache hit = %d, want 1", n)
+	}
+}
+
+// TestComposeSkeletonResearchDegraded: a provider refusal inside
+// ensureResearch still produces the dossier ("Resumo indisponível
+// agora" + excerpts) but the pauta stays a manual slot — no ai_draft
+// marker, no AI text in the body, no paid action (§7.3).
+func TestComposeSkeletonResearchDegraded(t *testing.T) {
+	pool := testdb.Pool(t)
+	db := testdb.WSOn(t, pool)
+	ctx := context.Background()
+	pub, issueID, iiID, storyID := composeFixture(t, db, "rs-pub2", "rs-2")
+
+	runner := &Runner{DB: db, Research: &Researcher{
+		Pool: pool, Model: "claude-haiku-5-5", LLM: llm.None{},
+	}}
+	if _, err := runner.ComposeSkeleton(ctx, pub, issueID); err != nil {
+		t.Fatalf("ComposeSkeleton: %v", err)
+	}
+	ii, err := db.GetIssueItem(ctx, iiID)
+	if err != nil || ii.AIDraft {
+		t.Fatalf("degraded pauta marked ai_draft: %+v %v", ii, err)
+	}
+	dj, err := db.Dossier(ctx, iiID)
+	if err != nil || !strings.Contains(dj, ResearchUnavailable) {
+		t.Fatalf("degraded dossier: %v %q", err, dj)
+	}
+	iss, _ := db.GetIssue(ctx, issueID)
+	if strings.Contains(iss.BodyMD, ResearchUnavailable) {
+		t.Fatal("fallback text leaked into the issue body")
+	}
+	if n, _ := db.PaidActionCount(ctx, store.PaidActionResearch, storyID); n != 0 {
+		t.Fatalf("degraded path recorded a paid action: %d", n)
 	}
 }

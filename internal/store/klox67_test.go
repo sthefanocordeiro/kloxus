@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -241,5 +242,43 @@ func TestAIDraftLifecycle(t *testing.T) {
 	got, _ = db.GetIssueItem(ctx, iiID)
 	if got.AIDraft {
 		t.Fatal("author edit did not clear ai_draft")
+	}
+}
+
+// TestSplitStatementsCommentsAndLiterals is the 0005 regression: a ';'
+// inside a '--' comment must never split a statement (CI run
+// 44218603585 failed applying 0005 for exactly that), while ';' and
+// '--' inside '...' literals and $$ bodies stay content.
+func TestSplitStatementsCommentsAndLiterals(t *testing.T) {
+	body := `-- header comment; trailing words must not leak
+CREATE TABLE t (a TEXT);
+-- mid-line semicolon; the tail would corrupt the next statement
+CREATE TABLE u (b TEXT DEFAULT 'x;y');
+SELECT 1; -- same-line comment ends the line
+CREATE FUNCTION f() RETURNS void AS $$
+BEGIN
+  -- comment inside the body; with a semicolon
+  RAISE NOTICE 'done';
+END;
+$$ LANGUAGE plpgsql;
+SELECT 'literal -- still literal';`
+	stmts := splitStatements(body)
+	if len(stmts) != 5 {
+		t.Fatalf("statements = %d, want 5: %q", len(stmts), stmts)
+	}
+	for i, s := range stmts[:3] {
+		if strings.Contains(s, "--") {
+			t.Errorf("stmt %d leaked comment text: %q", i+1, s)
+		}
+	}
+	if !strings.Contains(stmts[1], `'x;y'`) {
+		t.Errorf("stmt 2 lost its literal: %q", stmts[1])
+	}
+	if !strings.Contains(stmts[3], "RAISE NOTICE 'done';") ||
+		!strings.Contains(stmts[3], "-- comment inside the body") {
+		t.Errorf("dollar-quoted body mangled: %q", stmts[3])
+	}
+	if !strings.Contains(stmts[4], `'literal -- still literal'`) {
+		t.Errorf("stmt 5 lost a '--' that lives inside a literal: %q", stmts[4])
 	}
 }

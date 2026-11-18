@@ -210,53 +210,61 @@ func (p *Pool) migrate() error {
 }
 
 // splitStatements splits a migration file on top-level semicolons.
-// Dollar-quoted bodies (functions) are respected; line comments are
-// dropped so a chunk of pure comments is not sent as an empty query.
+// '--' line comments are dropped during the scan itself, so a ';'
+// inside a comment can never split a statement (KLOX-67 rework: CI
+// failed applying 0005 for exactly that). Single-quoted literals and
+// dollar-quoted bodies are respected the same way — their ';' and '--'
+// are content, not syntax.
 func splitStatements(body string) []string {
 	var out []string
 	var b strings.Builder
-	inDollar := false
+	inDollar, inQuote := false, false
+	flush := func() {
+		if stmt := strings.TrimSpace(b.String()); stmt != "" {
+			out = append(out, stmt)
+		}
+		b.Reset()
+	}
 	for i := 0; i < len(body); i++ {
-		if !inDollar && i+1 < len(body) && body[i] == '$' && body[i+1] == '$' {
+		c := body[i]
+		switch {
+		case inDollar:
+			b.WriteByte(c)
+			if c == '$' && i+1 < len(body) && body[i+1] == '$' {
+				b.WriteByte('$')
+				i++
+				inDollar = false
+			}
+		case inQuote:
+			b.WriteByte(c)
+			if c == '\'' {
+				if i+1 < len(body) && body[i+1] == '\'' {
+					b.WriteByte('\'')
+					i++
+				} else {
+					inQuote = false
+				}
+			}
+		case c == '$' && i+1 < len(body) && body[i+1] == '$':
 			inDollar = true
 			b.WriteString("$$")
 			i++
-			continue
-		}
-		if inDollar && i+1 < len(body) && body[i] == '$' && body[i+1] == '$' {
-			inDollar = false
-			b.WriteString("$$")
-			i++
-			continue
-		}
-		if !inDollar && body[i] == ';' {
-			if stmt := cleanStatement(b.String()); stmt != "" {
-				out = append(out, stmt)
+		case c == '\'':
+			inQuote = true
+			b.WriteByte(c)
+		case c == '-' && i+1 < len(body) && body[i+1] == '-':
+			for i < len(body) && body[i] != '\n' {
+				i++
 			}
-			b.Reset()
-			continue
+			b.WriteByte('\n')
+		case c == ';':
+			flush()
+		default:
+			b.WriteByte(c)
 		}
-		b.WriteByte(body[i])
 	}
-	if stmt := cleanStatement(b.String()); stmt != "" {
-		out = append(out, stmt)
-	}
+	flush()
 	return out
-}
-
-// cleanStatement strips -- line comments and blank space; the result is
-// empty when the chunk carried only comments.
-func cleanStatement(s string) string {
-	var lines []string
-	for _, l := range strings.Split(s, "\n") {
-		if idx := strings.Index(l, "--"); idx >= 0 {
-			l = l[:idx]
-		}
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // Publication is a stored publication row with decoded JSON fields.
