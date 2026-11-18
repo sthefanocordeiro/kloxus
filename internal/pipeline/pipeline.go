@@ -61,6 +61,12 @@ type Runner struct {
 	// OnIssue, if set, is called the moment Phase A creates the issue
 	// row — lets run tracking expose issue_id before the run finishes.
 	OnIssue func(issueID int64)
+	// Research, when set, lets ComposeSkeleton prefill each pauta from
+	// the shared cached research (KLOX-67 §7.2): a story with research
+	// arrives with an AI-written, author-editable draft body; the
+	// degraded path keeps the manual slot. Nil means the deterministic
+	// skeleton exactly as before.
+	Research *Researcher
 }
 
 // StepEvent reports a finished pipeline step with its real counts — never
@@ -466,7 +472,20 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	var detScores []float64
 	var detReasons []string
 	if r.Deterministic {
-		detScores, detReasons = scoreStories(stories, pub.Language)
+		// The free ranking reads the shared enrichment when it exists
+		// (KLOX-67 §7.2): topic tags matching the publication's topic or
+		// editorial line and the story's kind weight adjust the
+		// recency + diversity score. No paid call happens here — the
+		// enrichment fills asynchronously after ingest.
+		var enrich map[int64]*store.ItemEnrichment
+		var eids []int64
+		for i := range stories {
+			for j := range stories[i].Items {
+				eids = append(eids, stories[i].Items[j].ID)
+			}
+		}
+		enrich, _ = r.DB.EnrichmentsForItems(ctx, eids)
+		detScores, detReasons = scoreStoriesEnriched(stories, pub.Language, pub, enrich)
 		updates := make([]store.StoryTriage, len(stories))
 		for i := range stories {
 			scoreByRef[i+1] = struct {
@@ -974,6 +993,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	draftByRef := map[int]struct {
 		headline, body string
 	}{}
+	aiDraftRefs := map[int]bool{}
 	if r.Deterministic {
 		// No-model draft = honest compose skeleton: headline + sources,
 		// empty body. Assembling source excerpts into prose would put
@@ -1015,6 +1035,12 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 			draftByRef[de.Ref] = struct {
 				headline, body string
 			}{de.Headline, de.BodyMD}
+			// The pauta body arrived AI-written — mark it "Gerado por IA"
+			// until the author edits (KLOX-67). Synthesized alternative
+			// bodies below are deterministic assembly, not AI text.
+			if strings.TrimSpace(de.BodyMD) != "" {
+				aiDraftRefs[de.Ref] = true
+			}
 		}
 		// Alternative items are never part of the canonical draft input, so
 		// they have no model-drafted body: synthesize one from the dossier
@@ -1197,6 +1223,13 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	}
 	if err := r.DB.UpdateIssue(ctx, issueID, "drafted", body, string(flagsJSON)); err != nil {
 		return nil, err
+	}
+	for _, e := range entries {
+		if aiDraftRefs[e.ref] {
+			if err := r.DB.SetIssueItemAIDraft(ctx, e.iiID, true); err != nil {
+				return nil, err
+			}
+		}
 	}
 	r.emit("citecheck", map[string]int{"checked": len(sents), "flagged": len(res.Flagged)})
 	res.Number = number
@@ -1657,12 +1690,72 @@ func (r *Runner) ensureManualDossiers(ctx context.Context, issueID int64) error 
 	return nil
 }
 
-// ComposeSkeleton writes the manual-compose issue body: the board's
-// lineup becomes section headings and empty item slots (headline +
-// source list, no body text) for the editor to fill. Items missing a
-// dossier get a deterministic one — the whole path is model-free.
+// ensureResearch fills the missing dossiers from the shared research
+// cache — generating one Haiku call per new story (a §7.3 paid action)
+// and marking each AI-filled pauta ai_draft. A degraded answer still
+// produces a dossier ("Resumo indisponível agora" + source excerpts)
+// but writes no body: the slot stays empty for the author, never
+// marked as AI text. draftByRef receives the item bodies for
+// assembleIssue.
+func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef map[int]struct {
+	headline, body string
+}) {
+	iis, err := r.DB.IssueItems(ctx, issueID)
+	if err != nil {
+		return
+	}
+	maxRef := 0
+	var missing []store.IssueItem
+	for _, ii := range iis {
+		if dj, err := r.DB.Dossier(ctx, ii.ID); err == nil {
+			var d Dossier
+			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
+				maxRef = d.Ref
+			}
+			continue
+		}
+		if ii.Status == "approved" || ii.Status == "pending" {
+			missing = append(missing, ii)
+		}
+	}
+	for _, ii := range missing {
+		story, err := r.DB.StoryWithItems(ctx, ii.StoryID)
+		if err != nil {
+			return
+		}
+		res, outcome, err := r.Research.ForStory(ctx, r.DB, story)
+		if err != nil {
+			return // store failure — let ensureManualDossiers take over
+		}
+		maxRef++
+		d := res.ToDossier(maxRef)
+		data, _ := json.Marshal(d)
+		if err := r.DB.SaveDossier(ctx, ii.ID, string(data)); err != nil {
+			return
+		}
+		if outcome != researchDegraded && strings.TrimSpace(res.DraftBody) != "" {
+			draftByRef[maxRef] = struct{ headline, body string }{body: res.DraftBody}
+			if err := r.DB.SetIssueItemAIDraft(ctx, ii.ID, true); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// ComposeSkeleton writes the issue body for the board's lineup. With a
+// Researcher wired (AI on) each pauta arrives prefilled with the cached
+// AI draft — claims carrying [n] citations, marked ai_draft until the
+// author edits — and a story the research could not serve degrades to
+// the manual empty slot (§7.3). With no Researcher the manual skeleton
+// is exactly what it was: headlines + source lists only, no AI text.
 func (r *Runner) ComposeSkeleton(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
 	res := &Result{IssueID: issueID}
+	draftByRef := map[int]struct {
+		headline, body string
+	}{}
+	if r.Research != nil {
+		r.ensureResearch(ctx, issueID, draftByRef)
+	}
 	if err := r.ensureManualDossiers(ctx, issueID); err != nil {
 		return nil, err
 	}
@@ -1685,10 +1778,7 @@ func (r *Runner) ComposeSkeleton(ctx context.Context, pub *store.Publication, is
 	for _, s := range pub.Sections {
 		sectionOrder = append(sectionOrder, s.Title)
 	}
-	// empty draft map: assembleIssue emits headline + sources only
-	body := assembleIssue(pub, number, entries, map[int]struct {
-		headline, body string
-	}{}, dossierByRef, sectionOrder)
+	body := assembleIssue(pub, number, entries, draftByRef, dossierByRef, sectionOrder)
 	if err := r.DB.UpdateIssue(ctx, issueID, "drafted", body, "[]"); err != nil {
 		return nil, err
 	}

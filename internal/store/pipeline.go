@@ -109,6 +109,12 @@ func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawIt
 // unbounded by design: they come from the editor's own picks, and a
 // date window or cap there would age the static demo/recorded fixtures
 // out of every deterministic replay (D41).
+//
+// The AI enrichment adds a second, shared exclusion (KLOX-67 §7.2): an
+// item the enrichment marked promotional or a non-editorial kind
+// (buying guide, entertainment, sport, almanac, advertorial) never
+// becomes a suggestion in any newsletter. Un-enriched items pass —
+// enrichment fills in asynchronously after ingest.
 func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT `+itemCols+`
@@ -122,6 +128,11 @@ func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, err
 		    COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) AS eff
 		  FROM items i
 		  WHERE i.kind <> 'promo'
+		    AND NOT EXISTS (
+		      SELECT 1 FROM item_enrichment e
+		      WHERE e.item_id = i.id
+		        AND (e.promotional OR e.ai_kind IN
+		             ('lista','publieditorial','entretenimento','esporte','efemeride')))
 		) i
 		LEFT JOIN sources s ON s.id = i.source_id
 		LEFT JOIN source_catalog c ON c.id = i.catalog_id
@@ -585,6 +596,10 @@ type IssueItem struct {
 	// canonical replay input (demo fixtures) reads OrigSection so its
 	// prompt keys stay stable no matter how the lineup changes.
 	OrigSection string
+	// AIDraft marks a pauta whose body text arrived AI-written (KLOX-67):
+	// the composer shows it as generated content until the author's
+	// first edit clears the flag.
+	AIDraft bool
 }
 
 // CreateIssueItem inserts an issue_item row.
@@ -606,7 +621,7 @@ func (db *DB) CreateIssueItem(ctx context.Context, ii IssueItem) (int64, error) 
 // IssueItems lists an issue's items ordered by score descending.
 func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section, ai_draft
 		 FROM issue_items WHERE workspace_id = $1 AND issue_id = $2 ORDER BY score DESC`, db.ws, issueID)
 	if err != nil {
 		return nil, err
@@ -615,7 +630,7 @@ func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error
 	var out []IssueItem
 	for rows.Next() {
 		var ii IssueItem
-		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection); err != nil {
+		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.AIDraft); err != nil {
 			return nil, err
 		}
 		out = append(out, ii)
@@ -637,7 +652,7 @@ type IssueItemDossier struct {
 // remote Postgres (KLOX-47).
 func (db *DB) IssueItemDossiers(ctx context.Context, issueID int64) ([]IssueItemDossier, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT ii.id, ii.issue_id, ii.story_id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section,
+		SELECT ii.id, ii.issue_id, ii.story_id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft,
 		       COALESCE(d.json, '')
 		FROM issue_items ii
 		LEFT JOIN dossiers d ON d.workspace_id = ii.workspace_id AND d.issue_item_id = ii.id
@@ -650,7 +665,7 @@ func (db *DB) IssueItemDossiers(ctx context.Context, issueID int64) ([]IssueItem
 	for rows.Next() {
 		var p IssueItemDossier
 		ii := &p.Item
-		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &p.Dossier); err != nil {
+		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.AIDraft, &p.Dossier); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -684,6 +699,7 @@ type bundlePair struct {
 	Origin      string  `json:"origin"`
 	Position    int     `json:"position"`
 	OrigSection string  `json:"orig_section"`
+	AIDraft     bool    `json:"ai_draft"`
 	Dossier     string  `json:"dossier"`
 }
 
@@ -724,7 +740,7 @@ func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundl
 		       (SELECT COALESCE(json_agg(row_to_json(x) ORDER BY x.score DESC), '[]')
 		        FROM (
 		            SELECT ii.id, ii.issue_id, ii.story_id, ii.section, ii.score, ii.reason,
-		                   ii.status, ii.origin, ii.position, ii.orig_section,
+		                   ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft,
 		                   COALESCE(d.json, '') AS dossier
 		            FROM issue_items ii
 		            LEFT JOIN dossiers d ON d.workspace_id = ii.workspace_id AND d.issue_item_id = ii.id
@@ -779,7 +795,7 @@ func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundl
 			Item: IssueItem{
 				ID: p.ID, IssueID: p.IssueID, StoryID: p.StoryID, Section: p.Section,
 				Score: p.Score, Reason: p.Reason, Status: p.Status, Origin: p.Origin,
-				Position: p.Position, OrigSection: p.OrigSection,
+				Position: p.Position, OrigSection: p.OrigSection, AIDraft: p.AIDraft,
 			},
 			Dossier: p.Dossier,
 		})
@@ -856,7 +872,12 @@ func (db *DB) SaveIssueEdit(ctx context.Context, issueID int64, e IssueEdit) err
 		ii = e.IssueItemID
 	}
 	_, err := db.ExecContext(ctx, `
-		WITH u AS (
+		WITH ai AS (
+			-- any author edit on an AI-drafted pauta clears its marker —
+			-- the text is now theirs (KLOX-67)
+			UPDATE issue_items SET ai_draft = FALSE
+			WHERE workspace_id = $1 AND id = $6 AND $6 IS NOT NULL),
+		u AS (
 			UPDATE issues
 			SET body_md = $2, flags_json = COALESCE($3::text, flags_json),
 			    status = CASE WHEN $9 AND status = 'approved' THEN 'drafted' ELSE status END
@@ -915,7 +936,7 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 	rows, err := db.QueryContext(ctx, `
 		SELECT s.id, s.title, COALESCE(s.triage_score,0), COALESCE(s.triage_reason,''),
 		       (SELECT COUNT(*) FROM story_items si WHERE si.story_id = s.id),
-		       ii.id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section,
+		       ii.id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft,
 		       EXISTS(SELECT 1 FROM dossiers d WHERE d.workspace_id = $1 AND d.issue_item_id = ii.id)
 		FROM stories s
 		LEFT JOIN (
@@ -929,6 +950,14 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 		    SELECT ii.story_id FROM issue_items ii
 		    JOIN issues i ON i.id = ii.issue_id
 		    WHERE ii.workspace_id = $1 AND i.id != $3 AND i.publication_id = s.publication_id)
+		  AND EXISTS (
+		    SELECT 1 FROM story_items si JOIN items it2 ON it2.id = si.item_id
+		    WHERE si.story_id = s.id
+		      AND NOT EXISTS (
+		        SELECT 1 FROM item_enrichment e
+		        WHERE e.item_id = it2.id
+		          AND (e.promotional OR e.ai_kind IN
+		               ('lista','publieditorial','entretenimento','esporte','efemeride'))))
 		ORDER BY COALESCE(s.triage_score,0) DESC, s.id`, db.ws, pubID, issueID)
 	if err != nil {
 		return nil, err
@@ -944,10 +973,11 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 			iiSec, iiStatus, iiOrig sql.NullString
 			iiScore                 sql.NullFloat64
 			iiReason, iiOrigSec     sql.NullString
+			iiDraft                 sql.NullBool
 			dossier                 bool
 		)
 		if err := rows.Scan(&storyID, &title, &score, &reason, &members,
-			&iiID, &iiSec, &iiScore, &iiReason, &iiStatus, &iiOrig, &iiPos, &iiOrigSec,
+			&iiID, &iiSec, &iiScore, &iiReason, &iiStatus, &iiOrig, &iiPos, &iiOrigSec, &iiDraft,
 			&dossier); err != nil {
 			return nil, err
 		}
@@ -961,6 +991,7 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 				Section: iiSec.String, Score: iiScore.Float64, Reason: iiReason.String,
 				Status: iiStatus.String, Origin: iiOrig.String,
 				Position: int(iiPos.Int64), OrigSection: iiOrigSec.String,
+				AIDraft: iiDraft.Bool,
 			}
 		}
 		out = append(out, c)

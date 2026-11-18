@@ -293,6 +293,19 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		// The global feed scheduler — feeds fetch once for every
 		// workspace (D29).
 		sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
+		if cfg.Mode != "demo" && !cfg.LLMOff() {
+			// The shared AI enrichment sweep (KLOX-67 §7.2): classify
+			// the new items once for every newsletter — kind, promo
+			// flag, topic tags, one-line PT summary — after each poll.
+			enr := &pipeline.Enricher{Pool: pool, LLM: provider, Model: cfg.ModelTriage}
+			sched.AfterPoll = func(ctx context.Context) {
+				if n, err := enr.Sweep(ctx, 200); err != nil {
+					log.Printf("enrich sweep: %v", err)
+				} else if n > 0 {
+					log.Printf("enrich sweep: %d items classified", n)
+				}
+			}
+		}
 		go sched.Run(context.Background())
 	}
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)

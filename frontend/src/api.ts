@@ -106,6 +106,8 @@ export interface IssueItem {
   title: string;
   outlets: string[];
   reject_reason?: string;
+  /** KLOX-67: the pauta body arrived AI-written; cleared on author edits. */
+  ai_draft?: boolean;
 }
 
 export interface Dossier {
@@ -144,6 +146,10 @@ export interface Candidate {
   position: number;
   dossier: boolean;
   available: boolean;
+  /** KLOX-67 §7.2: one-line AI summary; empty until the sweep runs. */
+  summary?: string;
+  /** KLOX-67: lineup card whose pauta body is still AI-written. */
+  ai_draft?: boolean;
 }
 
 export interface BoardSection {
@@ -219,6 +225,9 @@ export interface DocItem {
   sentences: DocSentence[];
   sources: { ref: number; name: string; url: string; item_id: number; excerpt: string; date: string }[];
   flags?: { sentence: string; note: string }[];
+  /** KLOX-67: pauta body still AI-written — the composer shows "Gerado
+   * por IA" until the author edits it. */
+  ai_draft?: boolean;
 }
 
 export interface DocSection {
@@ -388,6 +397,11 @@ export const api = {
     ),
   candidates: (issueID: number, page = 0) =>
     request<CandidatesResponse>("GET", `/api/v1/issues/${issueID}/candidates?page=${page}`),
+  // editorial rerank ("Ordenar pela minha linha editorial") — capped to
+  // 2 paid calls per newsletter per day; {reranked:false} keeps the
+  // free order and is not an error.
+  rerank: (issueID: number) =>
+    request<{ reranked: boolean }>("POST", `/api/v1/issues/${issueID}/rerank`, {}),
   lineup: (issueID: number, entries: LineupEntry[]) =>
     request<{
       candidates: Candidate[];

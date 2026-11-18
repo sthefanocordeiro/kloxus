@@ -183,7 +183,9 @@ func TestAnthropicStatusError(t *testing.T) {
 	defer srv.Close()
 	a := Anthropic{APIKey: "k", BaseURL: srv.URL}
 	code = 503
-	_, err := a.Complete(context.Background(), Request{Model: "m", User: "hi", MaxTokens: 8})
+	// KLOX-67: the Haiku-only check runs before the HTTP call, so the
+	// status test requests the allowed model.
+	_, err := a.Complete(context.Background(), Request{Model: "claude-haiku-5-5", User: "hi", MaxTokens: 8})
 	var se *StatusError
 	if !errors.As(err, &se) {
 		t.Fatalf("err=%v (%T), want *StatusError", err, err)

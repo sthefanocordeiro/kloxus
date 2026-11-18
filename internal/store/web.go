@@ -215,9 +215,9 @@ func (db *DB) ResolveFlags(ctx context.Context, issueID int64, flags []Flag) err
 func (db *DB) GetIssueItem(ctx context.Context, id int64) (*IssueItem, error) {
 	var ii IssueItem
 	err := db.QueryRowContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section, ai_draft
 		 FROM issue_items WHERE workspace_id = $1 AND id = $2`, db.ws, id).
-		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection)
+		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.AIDraft)
 	if err != nil {
 		return nil, err
 	}

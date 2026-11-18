@@ -404,6 +404,8 @@ type apiItem struct {
 	Outlets   []string `json:"outlets"`
 	Signals   []string `json:"signals,omitempty"`
 	RejectWhy string   `json:"reject_reason,omitempty"`
+	// AIDraft marks a pauta whose body arrived AI-written (KLOX-67).
+	AIDraft bool `json:"ai_draft,omitempty"`
 }
 
 func (s *Server) apiCardFor(r *http.Request, ii store.IssueItem) apiItem {
@@ -429,7 +431,7 @@ func (s *Server) apiCardFor(r *http.Request, ii store.IssueItem) apiItem {
 	card := apiItem{
 		ID: ii.ID, IssueID: ii.IssueID, StoryID: ii.StoryID, Section: ii.Section,
 		Score: ii.Score, Reason: ii.Reason, Status: ii.Status, Origin: ii.Origin,
-		Title: title, Outlets: names, Signals: signals,
+		Title: title, Outlets: names, Signals: signals, AIDraft: ii.AIDraft,
 	}
 	if card.Outlets == nil {
 		card.Outlets = []string{}
@@ -1145,6 +1147,12 @@ type apiCandidate struct {
 	Position         int      `json:"position"`
 	Dossier          bool     `json:"dossier"`
 	Available        bool     `json:"available"`
+	// Summary is the one-line AI summary the story card shows (KLOX-67
+	// §7.2); empty when the item pool has no enrichment yet.
+	Summary string `json:"summary,omitempty"`
+	// AIDraft marks a lineup card whose pauta body arrived AI-written
+	// and has not been edited by the author yet.
+	AIDraft bool `json:"ai_draft,omitempty"`
 }
 
 // demoCandidateCap is how many ranked stories a demo workspace can
@@ -1259,6 +1267,10 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 	if err != nil {
 		return nil, err
 	}
+	summaries, err := db(r).StorySummaries(r.Context(), ids)
+	if err != nil {
+		return nil, err
+	}
 	out := []apiCandidate{}
 	for _, c := range cands {
 		outlets := []string{}
@@ -1277,7 +1289,7 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 			StoryID: c.Story.ID, Title: c.Story.Title,
 			Outlets: outlets, Sources: len(byStory[c.Story.ID]), Duplicates: c.Duplicates,
 			Score: c.Story.TriageScore, Reason: c.Story.TriageReason, Rank: c.Rank,
-			Dossier: c.Dossier, Available: true,
+			Dossier: c.Dossier, Available: true, Summary: summaries[c.Story.ID],
 		}
 		if c.Item != nil {
 			cv.ItemID = c.Item.ID
@@ -1285,6 +1297,7 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 			cv.Status = c.Item.Status
 			cv.Origin = c.Item.Origin
 			cv.Position = c.Item.Position
+			cv.AIDraft = c.Item.AIDraft
 			cv.InIssue = c.Item.Status == "pending" || c.Item.Status == "approved"
 			// any prior placement is a valid suggestion: a rejected or
 			// alternative story re-adds where it once sat
@@ -1296,6 +1309,139 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 		out = append(out, cv)
 	}
 	return out, nil
+}
+
+// rerankCap is the §7.2 bound on one editorial-rerank call — title +
+// one-line summary only, at most 120 suggestions.
+const rerankCap = 120
+
+// apiRerank is the user-triggered "Ordenar pela minha linha editorial"
+// (KLOX-67 §7.2): one Haiku call re-orders the ranked pool by the
+// publication's editorial line, persisted as new triage scores. Capped
+// at ReranksPerDay per newsletter and counted against the workspace's
+// paid actions; on cap, kill switch or failure the answer is
+// {reranked:false} — suggestions stay on the free ranking, never an
+// error page.
+func (s *Server) apiRerank(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.apiIssueID(r)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	ctx := r.Context()
+	pub, err := s.canonicalPub(db(r).GetPublication(ctx, fmt.Sprint(iss.PublicationID)))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	reply := func(ok bool) {
+		apiJSON(w, 200, map[string]any{"reranked": ok})
+	}
+	if s.d.Cfg.Mode == "demo" || s.d.Cfg.LLMOff() || s.d.LLM == nil {
+		reply(false)
+		return
+	}
+	if s.d.Cfg.ReranksPerDay > 0 {
+		if n, err := db(r).PaidActionCount(ctx, store.PaidActionRerank, pub.ID); err == nil && n >= s.d.Cfg.ReranksPerDay {
+			reply(false)
+			return
+		}
+	}
+	if s.d.Cfg.PaidActionsPerDay > 0 {
+		if n, err := db(r).PaidActionsToday(ctx); err == nil && n >= s.d.Cfg.PaidActionsPerDay {
+			reply(false)
+			return
+		}
+	}
+	cands, err := db(r).RankedCandidates(ctx, pub.ID, iss.ID)
+	if apiDBErr(w, r, err, "candidates") {
+		return
+	}
+	if len(cands) > rerankCap {
+		cands = cands[:rerankCap]
+	}
+	if len(cands) == 0 {
+		reply(true)
+		return
+	}
+	var ids []int64
+	for _, c := range cands {
+		ids = append(ids, c.Story.ID)
+	}
+	summaries, _ := db(r).StorySummaries(ctx, ids)
+	type rrItem struct {
+		Ref     int
+		StoryID int64
+		Title   string
+		Summary string
+		Reason  string
+	}
+	var list []rrItem
+	for i, c := range cands {
+		list = append(list, rrItem{Ref: i + 1, StoryID: c.Story.ID,
+			Title: c.Story.Title, Summary: summaries[c.Story.ID],
+			Reason: c.Story.TriageReason})
+	}
+	user, err := pipeline.RenderPrompt("rerank", map[string]any{
+		"Publication": pub.Name, "Audience": pub.Audience,
+		"EditorialLine": pub.EditorialLine, "Items": list,
+	})
+	if err != nil {
+		reply(false)
+		return
+	}
+	resp, err := s.d.LLM.Complete(ctx, llm.Request{
+		Model: s.d.Cfg.ModelTriage, Template: "rerank", User: user, MaxTokens: 2048,
+	})
+	if err != nil {
+		reply(false)
+		return
+	}
+	var order []int
+	if err := decodeJSONArr(resp.Text, &order); err != nil {
+		reply(false)
+		return
+	}
+	if err := db(r).RecordPaidAction(ctx, store.PaidActionRerank, pub.ID); err != nil {
+		slog.Warn("paid-action record failed", "err", err)
+	}
+	// Persist the model's order as descending triage scores: reranked
+	// stories float to the top in the returned sequence; anything the
+	// answer dropped keeps its score below them.
+	var updates []store.StoryTriage
+	top := 12.0
+	seen := map[int]bool{}
+	for pos, ref := range order {
+		if ref < 1 || ref > len(list) || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		updates = append(updates, store.StoryTriage{
+			StoryID: list[ref-1].StoryID, Score: top - float64(pos)*0.01,
+			Reason: list[ref-1].Reason,
+		})
+	}
+	if len(updates) > 0 {
+		if err := db(r).SetStoriesTriage(ctx, updates); err != nil {
+			apiDBErr(w, r, err, "rerank")
+			return
+		}
+	}
+	reply(len(updates) > 0)
+}
+
+// decodeJSONArr tolerates a fenced/explained JSON array answer.
+func decodeJSONArr(text string, out *[]int) error {
+	s := strings.TrimSpace(text)
+	s = strings.TrimPrefix(s, "```json")
+	s = strings.TrimPrefix(s, "```")
+	s = strings.TrimSuffix(s, "```")
+	if err := json.Unmarshal([]byte(strings.TrimSpace(s)), out); err == nil {
+		return nil
+	}
+	start, end := strings.Index(s, "["), strings.LastIndex(s, "]")
+	if start < 0 || end <= start {
+		return fmt.Errorf("no JSON array in answer")
+	}
+	return json.Unmarshal([]byte(s[start:end+1]), out)
 }
 
 func sectionViews(pub *store.Publication) []map[string]any {
@@ -1952,6 +2098,16 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	runner := &pipeline.Runner{DB: db(r)}
+	// AI on (real mode): each pauta arrives prefilled from the shared
+	// research cache — one Haiku call per new story, capped and
+	// degrading to the manual slot (KLOX-67 §7.3). Demo replay and
+	// LLM-off keep the deterministic, model-free skeleton untouched.
+	if s.d.Pool != nil && s.d.Cfg.Mode != "demo" && !s.d.Cfg.LLMOff() {
+		runner.Research = &pipeline.Researcher{
+			Pool: s.d.Pool, LLM: s.d.LLM, Model: s.d.Cfg.ModelTriage,
+			PaidActionsPerDay: s.d.Cfg.PaidActionsPerDay,
+		}
+	}
 	res, err := runner.ComposeSkeleton(ctx, pub, iss.ID)
 	if err != nil {
 		apiErr(w, 409, "blocked", err.Error())
@@ -2791,12 +2947,153 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 409, "blocked", "the issue is not ready to approve — fix each reason first", reasons...)
 		return
 	}
+	// Approval-time AI citecheck (KLOX-67 §7.5): the deterministic
+	// floor passed, so exactly one Haiku call checks for inverted
+	// meaning across every cited fact — author-edited AI claims are
+	// re-checked here like any other. Capped per edition per day and
+	// counted against the workspace's paid actions; on cap, kill
+	// switch or API failure the deterministic results stand alone.
+	if s.approveCiteCheck(w, r, iss, pub) {
+		return
+	}
 	rec, err := s.recordApproval(r, iss, pub, checks)
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
 	fresh, _ := db(r).GetIssue(r.Context(), iss.ID)
 	apiJSON(w, 200, map[string]any{"issue": s.issueSummary(r, fresh), "receipt": receiptView(rec)})
+}
+
+// approveCiteCheck runs the one Haiku inverted-meaning pass at
+// approval. It writes a response and returns true only when a verdict
+// blocked approval; every failure mode (caps, kill switch, provider
+// error) returns false so approval proceeds on deterministic checks.
+func (s *Server) approveCiteCheck(w http.ResponseWriter, r *http.Request, iss *store.Issue, pub *store.Publication) bool {
+	ctx := r.Context()
+	if s.d.Cfg.Mode == "demo" || s.d.Cfg.LLMOff() || s.d.LLM == nil {
+		return false // real-mode AI only; demo keeps the deterministic floor
+	}
+	if s.d.Cfg.CiteChecksPerEdition > 0 {
+		if n, err := db(r).PaidActionCount(ctx, store.PaidActionCiteCheck, iss.ID); err == nil && n >= s.d.Cfg.CiteChecksPerEdition {
+			return false
+		}
+	}
+	if s.d.Cfg.PaidActionsPerDay > 0 {
+		if n, err := db(r).PaidActionsToday(ctx); err == nil && n >= s.d.Cfg.PaidActionsPerDay {
+			return false
+		}
+	}
+	doc, err := buildIssueDocument(ctx, db(r), iss, pub)
+	if err != nil {
+		return false
+	}
+	type sent struct {
+		ID    int    `json:"id"`
+		Item  int    `json:"item"`
+		Refs  string `json:"refs"`
+		Text  string `json:"text"`
+	}
+	var sents []sent
+	var items []map[string]any
+	// byID maps the check's sentence id back to its raw stored text —
+	// the flag's key in the document.
+	rawByID := map[int]string{}
+	itemRefByID := map[int]int64{}
+	id := 0
+	for _, sec := range doc.Sections {
+		for _, it := range sec.Items {
+			var srcs []map[string]any
+			for _, src := range it.Sources {
+				srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
+			}
+			if len(srcs) > 0 {
+				items = append(items, map[string]any{"ref": it.Ref, "sources": srcs})
+			}
+			for _, sn := range it.Sentences {
+				if sn.Kind != "fact" || len(sn.Citations) == 0 {
+					continue
+				}
+				id++
+				refs := make([]string, len(sn.Citations))
+				for i, c := range sn.Citations {
+					refs[i] = fmt.Sprint(c)
+				}
+				sents = append(sents, sent{ID: id, Item: it.Ref,
+					Refs: strings.Join(refs, ","), Text: sn.Text})
+				rawByID[id] = sn.raw
+				itemRefByID[id] = int64(it.Ref)
+			}
+		}
+	}
+	if len(sents) == 0 {
+		return false
+	}
+	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
+		"Publication": pub.Name, "Sentences": sents, "Items": items,
+	})
+	if err != nil {
+		return false
+	}
+	resp, err := s.d.LLM.Complete(ctx, llm.Request{
+		Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 4096,
+	})
+	if err != nil {
+		slog.Info("approval citecheck skipped", "err", err)
+		return false // blocked/failed → deterministic results stand (§7.5)
+	}
+	if err := db(r).RecordPaidAction(ctx, store.PaidActionCiteCheck, iss.ID); err != nil {
+		slog.Warn("paid-action record failed", "err", err)
+	}
+	var checks []struct {
+		ID      int    `json:"id"`
+		Verdict string `json:"verdict"`
+		Note    string `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(resp.Text)), &checks); err != nil {
+		// the model answered non-JSON — treat as unavailable
+		var anyJSON []struct {
+			ID      int    `json:"id"`
+			Verdict string `json:"verdict"`
+			Note    string `json:"note"`
+		}
+		start := strings.Index(resp.Text, "[")
+		end := strings.LastIndex(resp.Text, "]")
+		if start < 0 || end <= start || json.Unmarshal([]byte(resp.Text[start:end+1]), &anyJSON) != nil {
+			return false
+		}
+		checks = anyJSON
+	}
+	var newFlags []store.Flag
+	var reasons []apiReason
+	for _, c := range checks {
+		if c.Verdict != "unsupported" {
+			continue
+		}
+		raw, ok := rawByID[c.ID]
+		if !ok {
+			continue
+		}
+		note := c.Note
+		if note == "" {
+			note = "citation check: claim not supported by the cited source"
+		}
+		newFlags = append(newFlags, store.Flag{Item: itemRefByID[c.ID], Sentence: raw, Note: note})
+		reasons = append(reasons, apiReason{Code: "unsupported_claim",
+			Message: note, Target: &apiTarget{Kind: "sentence", Ref: fmt.Sprintf("%d.%d", itemRefByID[c.ID], c.ID)}})
+	}
+	if len(newFlags) == 0 {
+		return false
+	}
+	flags := append(append([]store.Flag{}, iss.Flags...), newFlags...)
+	if err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
+		PubID: iss.PublicationID, Body: iss.BodyMD, Flags: flags,
+		Decision: "citecheck", Reason: fmt.Sprintf("approval-time check flagged %d %s", len(newFlags), plural(len(newFlags), "sentence", "sentences")),
+	}); err != nil {
+		slog.Warn("citecheck flag save failed", "err", err)
+		return false
+	}
+	apiErr(w, 409, "blocked", "the citation check found claims its sources do not support — edit or remove each", reasons...)
+	return true
 }
 
 // recordApproval marks the issue approved (when it is not already) and
