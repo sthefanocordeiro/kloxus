@@ -51,7 +51,11 @@ export function PautasPane({
                     {statusLabel(statusOf(it.issue_item_id))}
                   </Badge>
                   <span className="text-[10px] text-muted">
-                    {t.evidence.sent((it.sentences ?? []).length)} · {t.evidence.src((it.sources ?? []).length)}
+                    {sec.format === "links"
+                      // a link-only pauta needs no text — "0 sentences"
+                      // would read as missing work (KLOX-65/D2)
+                      ? t.evidence.src((it.sources ?? []).length)
+                      : `${t.evidence.sent((it.sentences ?? []).length)} · ${t.evidence.src((it.sources ?? []).length)}`}
                   </span>
                 </span>
               </button>
@@ -157,10 +161,14 @@ export function EvidencePane({
   item,
   citeRef,
   sid,
+  linkOnly,
 }: {
   item: DocItem | null;
   citeRef?: number;
   sid?: string;
+  // link-only pauta (links-format section): the link is the source —
+  // no compose box or insert-excerpt affordances (KLOX-65/D2)
+  linkOnly?: boolean;
 }) {
   const { t, lang } = useT();
   const actions = useContext(DocActionsCtx);
@@ -203,7 +211,7 @@ export function EvidencePane({
   return (
     <div ref={flash} className="h-full space-y-4 overflow-y-auto p-3 text-sm">
       <p className="font-doc font-semibold leading-6">{item.headline}</p>
-      {item.issue_item_id !== 0 && !actions.readOnly && (
+      {item.issue_item_id !== 0 && !actions.readOnly && !linkOnly && (
         <ComposeBox item={item} insert={insert} />
       )}
       {d && (
@@ -255,7 +263,7 @@ export function EvidencePane({
               <p className="mt-1 border-l-2 border-line pl-2 text-[13px] leading-5 text-muted">
                 {evFor(s.ref) ?? s.excerpt}
               </p>
-              {item.issue_item_id !== 0 && !actions.readOnly && (
+              {item.issue_item_id !== 0 && !actions.readOnly && !linkOnly && (
                 <button
                   type="button"
                   onClick={() =>
