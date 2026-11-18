@@ -26,6 +26,11 @@ function renderBox(actions: Partial<DocActions>, it: DocItem = item(), insert: C
     removeFlagged: async () => false,
     showEvidence: () => {},
     addSentence: async () => null,
+    moveBlock: async () => false,
+    removeBlock: async () => false,
+    updateBlock: async () => null,
+    insertBlock: async () => null,
+    pickPauta: () => {},
     readOnly: false,
     ...actions,
   };

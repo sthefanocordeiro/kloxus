@@ -16,6 +16,13 @@ export function CreateNewsletter() {
   const { t } = useT();
   const nav = useNavigate();
   const proposal = useQuery({ queryKey: ["proposal"], queryFn: api.proposal });
+  // one newsletter per account (KLOX-66): onboarding is the only
+  // create path — an account that already has a newsletter goes
+  // straight to it
+  const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
+  useEffect(() => {
+    if (pubs.data?.length) nav(`/publications/${pubs.data[0].id}`, { replace: true });
+  }, [pubs.data, nav]);
   const [form, setForm] = useState<Proposal | null>(null);
   const [step, setStep] = useState(0); // 0 = newsletter, 1 = sections
   const [material, setMaterial] = useState("");

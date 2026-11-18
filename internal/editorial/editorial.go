@@ -48,8 +48,34 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 			// demo fallback stay general — a learned rule names the
 			// objection, never a specific headline.
 			if ii, err := db.GetIssueItem(ctx, d.ItemID); err == nil {
-				if title, err := db.StoryTitle(ctx, ii.StoryID); err == nil && title != "" {
-					d.Reason = bare + " — " + title
+				// The rejection's context records the story's kind and
+				// its source outlets alongside the title (KLOX-66 §8.10):
+				// the guide can learn "weak source" → which outlet,
+				// "not for my audience" → which story kind.
+				if story, err := db.StoryWithItems(ctx, ii.StoryID); err == nil && story.Title != "" {
+					kinds := map[string]bool{}
+					outlets := map[string]bool{}
+					var kl, ol []string
+					for _, it := range story.Items {
+						k := it.Kind
+						if k == "" {
+							k = "article"
+						}
+						if !kinds[k] {
+							kinds[k] = true
+							kl = append(kl, k)
+						}
+						o := it.SourceName
+						if o == "" {
+							o = it.SourceURL
+						}
+						if o != "" && !outlets[o] {
+							outlets[o] = true
+							ol = append(ol, o)
+						}
+					}
+					d.Reason = fmt.Sprintf("%s — %s [%s · %s]", bare, story.Title,
+						strings.Join(kl, "/"), strings.Join(ol, ", "))
 				}
 			}
 			ds = append(ds, d)

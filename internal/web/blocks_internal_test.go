@@ -1,0 +1,152 @@
+package web
+
+// DB-free unit tests for the block parser (KLOX-66): the section block
+// list's order, the <!-- /item --> boundary that keeps an author text
+// block from folding into an item's interpretation sentences, and the
+// stored-line shapes blockLine writes and parseBlockLine reads.
+
+import (
+	"testing"
+
+	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/store"
+)
+
+func testDoc(t *testing.T, body string) *issueDocument {
+	t.Helper()
+	iss := &store.Issue{ID: 1, Status: "drafted", BodyMD: body}
+	pub := &store.Publication{Sections: []config.Section{
+		{Title: "Top", Format: "briefing", Commentary: "none"},
+	}}
+	return parseIssueDocument(iss, pub, dcFromPairs(nil, nil))
+}
+
+func blockList(t *testing.T, doc *issueDocument) []docBlock {
+	t.Helper()
+	if len(doc.Sections) != 1 {
+		t.Fatalf("sections = %d, want 1", len(doc.Sections))
+	}
+	return doc.Sections[0].Blocks
+}
+
+func kinds(blocks []docBlock) []string {
+	out := []string{}
+	for _, b := range blocks {
+		out = append(out, b.Kind)
+	}
+	return out
+}
+
+func TestParseBlocksOrder(t *testing.T) {
+	body := "# Pub — Issue 1\n\n## Top\n\n" +
+		"### Story one <!-- item 1 -->\n\n" +
+		"A fact [1].\n\n" +
+		"**Sources:** [1] [Outlet](/a/1)\n\n" +
+		"<!-- /item -->\n\n" +
+		"> An author note.\n\n" +
+		"#### Also on my radar\n\n" +
+		"---\n\n" +
+		"- [Deep dive](https://example.com/x)\n"
+	blocks := blockList(t, testDoc(t, body))
+	want := []string{"item", "text", "heading", "divider", "link"}
+	got := kinds(blocks)
+	if len(got) != len(want) {
+		t.Fatalf("kinds = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("kinds = %v, want %v", got, want)
+		}
+	}
+	if blocks[1].Text != "An author note." || blocks[2].Text != "Also on my radar" ||
+		blocks[4].Text != "Deep dive" || blocks[4].URL != "https://example.com/x" {
+		t.Fatalf("block contents = %+v", blocks)
+	}
+}
+
+// Without the marker a `> ` after an item is an interpretation
+// sentence; with it the same line is a section-level text block and
+// the item keeps only its own sentences.
+func TestEndItemMarkerBoundary(t *testing.T) {
+	body := "# Pub — Issue 1\n\n## Top\n\n" +
+		"### Story one <!-- item 1 -->\n\n" +
+		"A fact [1].\n\n" +
+		"> The author's read inside the story.\n\n" +
+		"<!-- /item -->\n\n" +
+		"> A note for readers between stories.\n\n" +
+		"### Story two <!-- item 2 -->\n\n" +
+		"Another fact [1].\n"
+	doc := testDoc(t, body)
+	sec := doc.Sections[0]
+	got := kinds(sec.Blocks)
+	want := []string{"item", "text", "item"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("kinds = %v, want %v", got, want)
+	}
+	if len(sec.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(sec.Items))
+	}
+	// the in-item `> ` stays an interpretation sentence of item 1
+	if len(sec.Items[0].Sentences) != 2 || sec.Items[0].Sentences[1].Kind != "interpretation" {
+		t.Fatalf("item1 sentences = %+v", sec.Items[0].Sentences)
+	}
+	if len(sec.Items[1].Sentences) != 1 {
+		t.Fatalf("item2 sentences = %+v", sec.Items[1].Sentences)
+	}
+	if sec.Blocks[1].Text != "A note for readers between stories." {
+		t.Fatalf("text block = %q", sec.Blocks[1].Text)
+	}
+}
+
+// A `> ` line still inside the item (no marker) keeps legacy behavior:
+// it parses as the item's interpretation, never a section block.
+func TestTextWithoutMarkerStaysInterpretation(t *testing.T) {
+	body := "# Pub — Issue 1\n\n## Top\n\n" +
+		"### Story one <!-- item 1 -->\n\n" +
+		"A fact [1].\n\n" +
+		"> Trailing interpretation.\n"
+	doc := testDoc(t, body)
+	sec := doc.Sections[0]
+	if got := kinds(sec.Blocks); len(got) != 1 || got[0] != "item" {
+		t.Fatalf("kinds = %v, want [item]", got)
+	}
+	if len(sec.Items[0].Sentences) != 2 || sec.Items[0].Sentences[1].Kind != "interpretation" {
+		t.Fatalf("sentences = %+v", sec.Items[0].Sentences)
+	}
+}
+
+// blockLine/parseBlockLine round-trip every stored shape.
+func TestBlockLineRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		kind, text, url string
+	}{
+		{"heading", "A title", ""},
+		{"divider", "", ""},
+		{"link", "Label", "https://example.com/x"},
+		{"link", "", "https://example.com/bare"},
+		{"text", "A note.", ""},
+	} {
+		line, ok := blockLine(tc.kind, tc.text, tc.url)
+		if !ok {
+			t.Fatalf("blockLine %v refused", tc)
+		}
+		blk, isBlock := parseBlockLine(line)
+		if !isBlock {
+			t.Fatalf("parseBlockLine did not read %q back", line)
+		}
+		if blk.Kind != tc.kind {
+			t.Fatalf("kind = %q, want %q (line %q)", blk.Kind, tc.kind, line)
+		}
+	}
+	// invalid content is refused, never stored half-formed
+	for _, bad := range [][3]string{
+		{"heading", " ", ""},
+		{"link", "x", "not a url"},
+		{"text", "", ""},
+		{"video", "x", ""},
+	} {
+		if line, ok := blockLine(bad[0], bad[1], bad[2]); ok {
+			t.Fatalf("blockLine %v accepted %q", bad, line)
+		}
+	}
+}

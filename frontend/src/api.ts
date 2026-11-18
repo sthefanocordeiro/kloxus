@@ -60,6 +60,9 @@ export interface IssueSummary {
   // (approved/editable); the marker unlocks the after-sending surface
   test_sent_at?: string;
   receipt?: ApprovalReceipt;
+  // a post-approval edit reverted the issue to drafted — the header
+  // shows "re-approve to send" until a fresh approval lands (KLOX-66)
+  edited_after_approval?: boolean;
 }
 
 export interface OutboxEmail {
@@ -86,6 +89,7 @@ export interface PublicIssue {
   subscribed: boolean;
   reader: { name: string };
   paid_sections: string[];
+  paywall?: { enabled: boolean; price: string };
 }
 
 export interface AfterSend {
@@ -239,10 +243,23 @@ export interface DocItem {
   flags?: { sentence: string; note: string }[];
 }
 
+// One ordered unit inside a section (KLOX-66): a pauta (kind "item")
+// or an author-inserted heading / divider / link / text block. The
+// block's index inside section.blocks addresses it in block ops.
+export interface DocBlock {
+  kind: "item" | "heading" | "divider" | "link" | "text";
+  ref?: number; // item → dossier ref
+  text?: string;
+  url?: string; // link → href
+}
+
 export interface DocSection {
   title: string;
   commentary: { mode: string; text: string };
   items: DocItem[];
+  // ordered layout — items in body order plus author blocks; absent on
+  // documents written before the block model, callers fall back to items
+  blocks?: DocBlock[];
 }
 
 export interface Coverage {
@@ -445,6 +462,21 @@ export const api = {
     request<{ commentary: { section: string; text: string }; version: string }>(
       "PUT", `/api/v1/issues/${issueID}/commentary`, { section, text, version },
     ),
+  // composer block ops (KLOX-66): every mutation answers with the fresh
+  // document — callers swap it into the cache and take its version
+  blockInsert: (issueID: number, body: {
+    section: string; kind: "item" | "heading" | "divider" | "link" | "text";
+    text?: string; url?: string; story_id?: number; position?: number; version: string;
+  }) => request<{ document: IssueDocument }>("POST", `/api/v1/issues/${issueID}/blocks`, body),
+  blockUpdate: (issueID: number, body: {
+    section: string; index: number; text?: string; url?: string; version: string;
+  }) => request<{ document: IssueDocument }>("PUT", `/api/v1/issues/${issueID}/blocks`, body),
+  blockMove: (issueID: number, section: string, from: number, to: number, version: string) =>
+    request<{ document: IssueDocument }>("POST", `/api/v1/issues/${issueID}/blocks/move`,
+      { section, from, to, version }),
+  blockRemove: (issueID: number, section: string, index: number, version: string) =>
+    request<{ document: IssueDocument }>("DELETE", `/api/v1/issues/${issueID}/blocks`,
+      { section, index, version }),
   approve: (issueID: number) =>
     request<{ issue: IssueSummary; receipt: ApprovalReceipt }>("POST", `/api/v1/issues/${issueID}/approve`, {}),
   send: (issueID: number, audience: "test" | "readers", when: "now" | "schedule" = "now", to?: string, at?: string) =>

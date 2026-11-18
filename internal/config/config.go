@@ -255,17 +255,17 @@ func parseDotEnv(r io.Reader) map[string]string {
 type Section struct {
 	ID         string `yaml:"id" json:"id"`
 	Title      string `yaml:"title" json:"title"`
-	Format     string `yaml:"format" json:"format"`     // featured | news | links
+	Format     string `yaml:"format" json:"format"` // featured | news | links
 	Items      int    `yaml:"items" json:"items"`
 	Commentary string `yaml:"commentary" json:"commentary"` // required | optional | none
-	Access     string `yaml:"access" json:"access"`     // all | subscribers
+	Access     string `yaml:"access" json:"access"`         // all | subscribers
 }
 
 // Section formats and access levels the builder offers (KLOX-65).
 const (
-	SectionFeatured = "featured"
-	SectionNews     = "news"
-	SectionLinks    = "links"
+	SectionFeatured   = "featured"
+	SectionNews       = "news"
+	SectionLinks      = "links"
 	AccessAll         = "all"
 	AccessSubscribers = "subscribers"
 )

@@ -4,10 +4,10 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
-import { BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
-import { api, ApiRequestError, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
+import { BookOpen, ClipboardCheck, Eye, Plus, Send, Wrench } from "lucide-react";
+import { api, ApiRequestError, type Candidate, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
 import { docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
-import { Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideCommentary, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
+import { BlockAdd, BlockDivider, BlockHeading, BlockLink, BlockText, Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideCommentary, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
@@ -198,9 +198,69 @@ export function IssuePage() {
           return errText(t, e);
         }
       },
+      // --- composer blocks (KLOX-66): every op answers with the fresh
+      // document — swap it into the cache and keep its version
+      moveBlock: async (section, index, dir) => {
+        try {
+          const r = await api.blockMove(issueID, section, index, index + dir, versionRef.current);
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      removeBlock: async (section, index) => {
+        try {
+          const r = await api.blockRemove(issueID, section, index, versionRef.current);
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          showToast(t.doc.removed);
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      updateBlock: async (section, index, text, url) => {
+        try {
+          const r = await api.blockUpdate(issueID, { section, index, text, url, version: versionRef.current });
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return null;
+        } catch (e) {
+          if (e instanceof ApiRequestError && e.document) {
+            qc.setQueryData(["document", issueID], e.document);
+          }
+          return errText(t, e);
+        }
+      },
+      insertBlock: async (section, kind, text, url) => {
+        try {
+          const r = await api.blockInsert(issueID, { section, kind, text, url, version: versionRef.current });
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return null;
+        } catch (e) {
+          if (e instanceof ApiRequestError && e.document) {
+            qc.setQueryData(["document", issueID], e.document);
+          }
+          return errText(t, e);
+        }
+      },
+      pickPauta: (section) => setPautaPick({ section }),
     }),
     [doc, issueID, invalidate, resync, qc, showToast, t],
   );
+
+  // the "+ Pauta" affordance opens a picker over the bench — stories
+  // already in the edition (or rejected) never appear (KLOX-66)
+  const [pautaPick, setPautaPick] = useState<{ section: string } | null>(null);
 
   // --- commentary autosave: watch editor updates, diff commentary
   // nodes against what the server last saw, PUT debounced.
@@ -264,6 +324,11 @@ export function IssuePage() {
         Commentary,
         ItemHeading,
         SectionHeading,
+        BlockHeading,
+        BlockDivider,
+        BlockLink,
+        BlockText,
+        BlockAdd,
       ],
       content: doc ? docToTiptap(doc) : { type: "doc", content: [] },
       editable: false, // enabled by the effect below once the document loads
@@ -385,6 +450,19 @@ export function IssuePage() {
   }
   const issue = issueQ.data;
 
+  // Edition steps (KLOX-66): Pautas → Escrever → Revisar e enviar. The
+  // counter navigates between visited steps; the board owns step 1
+  // until the edition exists (board statuses), writing owns step 2,
+  // review owns step 3 — a step can always be revisited.
+  const boardPhase = BOARD_STATUSES.has(issue.status);
+  const stepParam = params.get("step");
+  const step = boardPhase ? "pautas"
+    : stepParam === "pautas" || stepParam === "revisar" || stepParam === "escrever" ? stepParam
+    : issue.status === "drafted" ? "escrever" : "revisar";
+  const setStep = (s: string) =>
+    setParams((p) => { p.set("step", s); return p; }, { replace: true });
+  const stepNum = step === "pautas" ? 1 : step === "escrever" ? 2 : 3;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* top bar */}
@@ -396,11 +474,8 @@ export function IssuePage() {
         </div>
         <StepCounter
           steps={t.board.steps}
-          current={
-            issue.status === "drafted" ? 2
-            : issue.status === "approved" || issue.status === "sent" || issue.status === "scheduled" ? 3
-            : 1
-          }
+          current={stepNum}
+          onStep={(i) => setStep(["pautas", "escrever", "revisar"][i])}
           className="w-full shrink-0 sm:w-96"
         />
         <span className="flex-1" />
@@ -443,7 +518,23 @@ export function IssuePage() {
         {issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
       </header>
 
-      {BOARD_STATUSES.has(issue.status) ? (
+      {issue.edited_after_approval && (
+        <div className="border-b border-warn/40 bg-warn-soft/60 px-4 py-2 text-xs text-warn">
+          {t.review.editedAfterApproval}
+        </div>
+      )}
+
+      {step === "revisar" && doc ? (
+        <ReviewStep
+          issue={issue}
+          issueID={issueID}
+          checks={readinessQ.data?.checks ?? []}
+          coverage={doc?.coverage ?? readinessQ.data?.coverage ?? { ok: 0, cited: 0, total: 0, flagged: 0 }}
+          onTarget={(c) => { setStep("escrever"); onCheckTarget(c); }}
+          onChanged={() => invalidate()}
+          onToast={showToast}
+        />
+      ) : step === "pautas" || boardPhase ? (
         runID && !runDone ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="mx-auto w-full max-w-md p-6">
@@ -582,6 +673,21 @@ export function IssuePage() {
         )
       )}
 
+      {pautaPick && (
+        <PautaPicker
+          issueID={issueID}
+          section={pautaPick.section}
+          version={versionRef.current}
+          onPicked={(d) => {
+            versionRef.current = d.version;
+            qc.setQueryData(["document", issueID], d);
+            setPautaPick(null);
+            invalidate();
+          }}
+          onError={(e) => resync(e)}
+          onClose={() => setPautaPick(null)}
+        />
+      )}
       {(issue.status === "sent" || issue.status === "scheduled" || !!issue.test_sent_at) && (
         <AfterSend issue={issue} />
       )}
@@ -880,6 +986,135 @@ function SendRow({ issue, onDone, onToast }: {
         </div>
       </KDialog>
     </div>
+  );
+}
+
+// ReviewStep is the "Revisar e enviar" screen (KLOX-66): the checklist
+// linked to pending items on the left, the preview switch on the
+// right, and approve / send as separate actions below — a test send,
+// a readers send or a schedule. A post-approval edit banner shows at
+// the page level until the issue is approved again.
+function ReviewStep({
+  issue, issueID, checks, coverage, onTarget, onChanged, onToast,
+}: {
+  issue: IssueSummary;
+  issueID: number;
+  checks: Check[];
+  coverage: { ok: number; cited: number; total: number; flagged: number };
+  onTarget: (c: Check) => void;
+  onChanged: () => void;
+  onToast: (text: string) => void;
+}) {
+  const { t } = useT();
+  const ready = checks.length > 0 && checks.every((c) => c.ok);
+  const approveMut = useMutation({
+    mutationFn: () => api.approve(issueID),
+    onSuccess: onChanged,
+  });
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto grid w-full max-w-5xl gap-4 p-4 md:grid-cols-2">
+        <section className="space-y-3">
+          <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+            <h2 className="mb-2 text-sm font-semibold">{t.readiness.title}</h2>
+            <ReadinessList checks={checks} coverage={coverage} onTarget={onTarget} />
+          </div>
+          <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+            <h2 className="mb-2 text-sm font-semibold">{t.send.approveSend}</h2>
+            {issue.status !== "approved" ? (
+              <>
+                <Button
+                  size="sm"
+                  disabled={!ready || approveMut.isPending}
+                  title={ready ? undefined : t.readiness.blockedHint}
+                  onClick={() => approveMut.mutate()}
+                >
+                  {t.readiness.approve}
+                </Button>
+                {approveMut.error && <p className="mt-2 text-xs text-danger">{errText(t, approveMut.error)}</p>}
+              </>
+            ) : (
+              <>
+                {issue.receipt?.approver && (
+                  <p className="mb-2 text-xs text-muted">{t.receipt.by} {issue.receipt.approver}</p>
+                )}
+                <SendRow issue={issue} onDone={onChanged} onToast={onToast} />
+              </>
+            )}
+            {(issue.status === "scheduled" || issue.status === "sent") && (
+              <p className="mt-2 text-xs text-muted">
+                {issue.status === "scheduled" ? t.send.scheduled : t.send.sent}
+              </p>
+            )}
+          </div>
+        </section>
+        <section className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+          <PreviewPane issueID={issueID} />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// PautaPicker lists bench candidates for "+ Pauta" — stories in the
+// edition and rejected ones never appear as suggestions.
+function PautaPicker({
+  issueID, section, version, onPicked, onError, onClose,
+}: {
+  issueID: number;
+  section: string;
+  version: string;
+  onPicked: (d: IssueDocument) => void;
+  onError: (e: unknown) => void;
+  onClose: () => void;
+}) {
+  const { t } = useT();
+  const [q, setQ] = useState("");
+  const candsQ = useQuery({
+    queryKey: ["candidates", issueID],
+    queryFn: () => api.candidates(issueID),
+  });
+  const pick = useMutation({
+    mutationFn: (c: Candidate) =>
+      api.blockInsert(issueID, { section, kind: "item", story_id: c.story_id, version }),
+    onSuccess: (r) => onPicked(r.document),
+    onError: onError,
+  });
+  const bench = (candsQ.data?.candidates ?? []).filter(
+    (c) => !c.in_issue && c.available && (!q || c.title.toLowerCase().includes(q.toLowerCase())),
+  );
+  return (
+    <KDialog open onOpenChange={(o) => !o && onClose()} title={t.blocks.pautaTitle(section)}>
+      <input
+        autoFocus
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={t.blocks.pautaSearch}
+        className="mb-3 w-full rounded-[var(--radius-input)] border border-line bg-paper px-3 py-2 text-sm"
+      />
+      <div className="max-h-72 space-y-1 overflow-y-auto">
+        {candsQ.isLoading && <p className="text-sm text-muted">…</p>}
+        {!candsQ.isLoading && bench.length === 0 && (
+          <p className="text-sm text-muted">{t.blocks.pautaEmpty}</p>
+        )}
+        {bench.map((c) => (
+          <button
+            key={c.story_id}
+            type="button"
+            disabled={pick.isPending}
+            onClick={() => pick.mutate(c)}
+            className="flex w-full items-start justify-between gap-2 rounded-[var(--radius-btn)] px-2 py-1.5 text-left hover:bg-surface disabled:opacity-50"
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{c.title}</span>
+              <span className="text-xs text-muted">{c.outlets.join(" · ")}</span>
+            </span>
+            <span className="shrink-0 text-teal"><Plus size={14} /></span>
+          </button>
+        ))}
+      </div>
+      {!!pick.error && <p className="mt-2 text-xs text-danger">{errText(t, pick.error)}</p>}
+    </KDialog>
   );
 }
 

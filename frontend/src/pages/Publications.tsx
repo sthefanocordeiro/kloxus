@@ -27,14 +27,18 @@ export function Publications() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6">
-      <ShellPrimary>
-        <Link to="/new">
-          <Button size="sm">
-            <Plus size={15} aria-hidden />
-            {t.nav.newNewsletter}
-          </Button>
-        </Link>
-      </ShellPrimary>
+      {/* one newsletter per account (KLOX-66) — the create action
+          exists only as the empty-state call to action */}
+      {pubs.data?.length === 0 && (
+        <ShellPrimary>
+          <Link to="/new">
+            <Button size="sm">
+              <Plus size={15} aria-hidden />
+              {t.nav.newNewsletter}
+            </Button>
+          </Link>
+        </ShellPrimary>
+      )}
       {pubs.isLoading && <p className="text-muted">…</p>}
       {pubs.data?.length === 0 && (
         <Card className="p-6 text-center">

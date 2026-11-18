@@ -151,6 +151,10 @@ func New(d Deps) *Server {
 	m.HandleFunc("DELETE /api/v1/issues/{id}/items/{ref}/sentences", s.apiItemRemoveFlagged)
 	m.HandleFunc("POST /api/v1/issues/{id}/sentences/{sid}/interpretation", s.apiSentenceInterpretation)
 	m.HandleFunc("PUT /api/v1/issues/{id}/commentary", s.apiCommentary)
+	m.HandleFunc("POST /api/v1/issues/{id}/blocks", s.apiBlockInsert)
+	m.HandleFunc("PUT /api/v1/issues/{id}/blocks", s.apiBlockUpdate)
+	m.HandleFunc("POST /api/v1/issues/{id}/blocks/move", s.apiBlockMove)
+	m.HandleFunc("DELETE /api/v1/issues/{id}/blocks", s.apiBlockRemove)
 	m.HandleFunc("POST /api/v1/issues/{id}/approve", s.apiApprove)
 	m.HandleFunc("POST /api/v1/issues/{id}/send", s.apiSend)
 	m.HandleFunc("POST /api/v1/issues/{id}/hold", s.apiHold)
@@ -191,6 +195,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// frame-src covers the outbox preview's sandboxed srcdoc iframe.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	// HSTS on every response (KLOX-66 §8): the hosted app only serves
+	// TLS behind Fly's proxy; local http listeners ignore the header.
+	w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+

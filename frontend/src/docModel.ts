@@ -51,6 +51,12 @@ export function failingChecks(checks: Check[]): Check[] {
 // (sid, kind, citations, flag) — node views read them back out.
 export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
   const content: Record<string, unknown>[] = [];
+  const blockType: Record<string, string> = {
+    heading: "blockHeading",
+    divider: "blockDivider",
+    link: "blockLink",
+    text: "blockText",
+  };
   for (const sec of doc.sections ?? []) {
     if (sec.title) {
       content.push({
@@ -58,7 +64,23 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
         attrs: { title: sec.title },
       });
     }
-    for (const item of sec.items ?? []) {
+    const byRef = new Map((sec.items ?? []).map((i) => [i.ref, i]));
+    // blocks carry the edition's layout order (KLOX-66); documents
+    // written before the block model have none — items stand in.
+    const blocks = sec.blocks ?? (sec.items ?? []).map((i) => ({ kind: "item" as const, ref: i.ref }));
+    blocks.forEach((b, bi) => {
+      if (b.kind !== "item") {
+        const type = blockType[b.kind];
+        if (type) {
+          content.push({
+            type,
+            attrs: { section: sec.title, index: bi, text: b.text ?? "", url: b.url ?? "" },
+          });
+        }
+        return;
+      }
+      const item = byRef.get(b.ref ?? -1);
+      if (!item) return;
       content.push({
         type: "itemHeading",
         attrs: {
@@ -81,7 +103,9 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
           content: [{ type: "text", text: s.text }],
         });
       }
-    }
+    });
+    // the "+ bloco" affordance closes the section's block list
+    content.push({ type: "blockAdd", attrs: { section: sec.title } });
     // commentary closes the section, where it appears in the output
     if (sec.commentary.mode !== "none") {
       content.push({

@@ -370,6 +370,16 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	if rec, err := db(r).ApprovalReceipt(ctx, iss.ID); err == nil {
 		m["receipt"] = receiptView(rec)
 	}
+	// Edited-after-approval (KLOX-66): the issue sat in "approved" and a
+	// post-approval edit reverted it — the stored approve decision for
+	// this issue is the marker (the receipt itself is voided on revert).
+	// The header shows "re-approve to send" until a fresh approve lands.
+	if iss.Status == "drafted" || iss.Status == "reviewing" {
+		if ok, _ := db(r).DecisionExists(ctx, iss.PublicationID, "approve",
+			approveDecisionReason(iss.ID)); ok {
+			m["edited_after_approval"] = true
+		}
+	}
 	return m
 }
 
@@ -957,6 +967,17 @@ func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := def.Validate(); err != nil {
 		apiErr(w, 400, "validation", err.Error())
+		return
+	}
+	// One newsletter per account (owner amendment, KLOX-66): the rule
+	// lives in the API, not just the UI — any existing publication makes
+	// the account "has a newsletter", including a template-seeded one.
+	// Workspaces that already hold several publications (pre-amendment
+	// data) keep them all; the guard only stops new growth, and deleting
+	// back to zero reopens onboarding.
+	if pubs, err := db(r).ListPublications(r.Context()); err == nil && len(pubs) > 0 {
+		apiErr(w, 409, "one_newsletter",
+			"this account already has a newsletter — one newsletter per account")
 		return
 	}
 	id, err := db(r).CreatePublication(r.Context(), def)
@@ -3087,7 +3108,7 @@ func (s *Server) recordApproval(r *http.Request, iss *store.Issue, pub *store.Pu
 			return nil, err
 		}
 		iss.Status = "approved" // the receipt attests to the approved document
-		db(r).RecordDecision(ctx, iss.PublicationID, 0, "approve", "issue approved")
+		db(r).RecordDecision(ctx, iss.PublicationID, 0, "approve", approveDecisionReason(iss.ID))
 	}
 	rec, err := db(r).ApprovalReceipt(ctx, iss.ID)
 	if err != sql.ErrNoRows {
@@ -3430,6 +3451,14 @@ func (s *Server) apiOutbox(w http.ResponseWriter, r *http.Request) {
 	db(r).SetProgress(r.Context(), "outbox_seen")
 	out := []map[string]any{}
 	for _, e := range emails {
+		// The publication outbox shows only the newsletter's own mail
+		// (KLOX-66 §8): account-level magic-link mail belongs to the
+		// workspace claim, never to an edition. Under the
+		// one-newsletter rule every remaining kind — issue, test,
+		// reader_confirm — is this newsletter's.
+		if e.Kind == "magic_link" {
+			continue
+		}
 		out = append(out, map[string]any{
 			"id": e.ID, "kind": e.Kind, "to": e.To, "subject": e.Subject,
 			"provider": e.Provider, "status": e.Status,
@@ -3623,6 +3652,9 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 		"body_md":     md, "gated": !unlocked, "subscribed": active,
 		"reader":        map[string]string{"name": demoReaderName},
 		"paid_sections": paidSectionTitles(iss, pub),
+		// price on the reader page (KLOX-66): the gated card sells the
+		// subscription with the creator's price and the paid sections
+		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": rawPub.Paywall.Price},
 	})
 }
 

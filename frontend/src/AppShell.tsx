@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, NavLink, Outlet, matchPath, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, matchPath, useLocation } from "react-router-dom";
 import {
   BookOpen,
   CircleUser,
@@ -67,7 +67,6 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
 export function AppShell() {
   const { t, lang, setLang } = useT();
   const { pathname } = useLocation();
-  const nav = useNavigate();
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, retry: false, staleTime: Infinity });
 
   const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
@@ -115,22 +114,24 @@ export function AppShell() {
           </Link>
         </div>
         <div className="px-3 pb-3">
-          <label className="sr-only" htmlFor="shell-switcher">
-            {t.publications}
-          </label>
-          <select
-            id="shell-switcher"
-            value={pub?.id ? String(pub.id) : ""}
-            onChange={(e) => e.target.value && nav(`/publications/${e.target.value}`)}
-            className="h-10 w-full truncate rounded-[var(--radius-input)] border border-line bg-paper-raised px-2 text-sm font-medium text-ink"
-          >
-            <option value="">{t.publications}</option>
-            {(pubs.data ?? []).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+          {/* one newsletter per account (KLOX-66) — no switcher; the
+              sidebar shows the newsletter's name, or the create link
+              when the account still has none */}
+          {pub ? (
+            <Link
+              to={pubBase}
+              className="flex h-10 w-full items-center truncate rounded-[var(--radius-input)] border border-line bg-paper-raised px-3 text-sm font-medium text-ink hover:border-teal/50"
+            >
+              <span className="truncate">{pub.name}</span>
+            </Link>
+          ) : pubs.data?.length ? (
+            <Link
+              to={`/publications/${pubs.data[0].id}`}
+              className="flex h-10 w-full items-center truncate rounded-[var(--radius-input)] border border-line bg-paper-raised px-3 text-sm font-medium text-ink hover:border-teal/50"
+            >
+              <span className="truncate">{pubs.data[0].name}</span>
+            </Link>
+          ) : null}
         </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-3" aria-label={t.publications}>
           {items.map((it) => (
@@ -152,12 +153,14 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-line p-3">
-          <Link to="/new" className="flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium text-muted hover:bg-line/50 hover:text-ink">
-            <Plus size={16} aria-hidden />
-            {t.nav.newNewsletter}
-          </Link>
-        </div>
+        {pubs.data?.length === 0 && (
+          <div className="border-t border-line p-3">
+            <Link to="/new" className="flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium text-muted hover:bg-line/50 hover:text-ink">
+              <Plus size={16} aria-hidden />
+              {t.nav.newNewsletter}
+            </Link>
+          </div>
+        )}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -342,7 +345,6 @@ function MoreMenu({ pubBase }: { pubBase: string }) {
     { to: `${pubBase}/guide`, label: t.guide.title, icon: BookOpen },
     { to: `${pubBase}/outbox`, label: t.outbox, icon: Inbox },
     { to: "/publications", label: t.publications, icon: Layers },
-    { to: "/new", label: t.nav.newNewsletter, icon: Plus },
   ];
   return (
     <div>

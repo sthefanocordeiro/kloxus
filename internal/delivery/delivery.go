@@ -168,11 +168,15 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string, aiUsed bo
 var citePlaceRe = regexp.MustCompile(`\.\s*(\[\d+\])\.?`)
 
 var (
+	reH4     = regexp.MustCompile(`^#### (.+?)\s*$`)
 	reH3     = regexp.MustCompile(`^### (.+?)\s*$`)
 	reH2     = regexp.MustCompile(`^## (.+)$`)
 	reH1     = regexp.MustCompile(`^# (.+)$`)
+	reHR     = regexp.MustCompile(`^(---+|\*\*\*+|___+)\s*$`)
+	reList   = regexp.MustCompile(`^[-*] (.+)$`)
 	reBold   = regexp.MustCompile(`\*\*(.+?)\*\*`)
 	reItalic = regexp.MustCompile(`_(.+?)_`)
+	reStarIt = regexp.MustCompile(`\*([^*]+)\*`)
 	reLink   = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
 	reBare   = regexp.MustCompile(`\[(https?://[^\]]+)\]`)
 )
@@ -182,10 +186,16 @@ var (
 // becomes a self-linked anchor; base absolutizes root-relative links.
 func RenderHTML(title, bodyMD, base string) string {
 	var b strings.Builder
+	// The email body reads like the finished newsletter (KLOX-66):
+	// Source Serif 4 with a serif fallback, the teal brand accent on
+	// rules and links, and real <hr>/<ul>/<em> elements — no raw
+	// markdown markers may reach the reader (§8.6).
 	b.WriteString("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" + html.EscapeString(title) +
-		"</title><style>body{font-family:system-ui,sans-serif;max-width:44em;margin:2em auto;padding:0 1em;line-height:1.55;color:#1a1a1a}" +
-		"h1{border-bottom:2px solid #333;padding-bottom:.3em}h2{margin-top:2em;border-bottom:1px solid #ccc}h3{margin-bottom:.2em}" +
-		"a{color:#2d5a8a}blockquote{border-left:3px solid #e0a030;margin:1em 0;padding:.5em 1em;background:#fdf6e3;color:#7a5b00}" +
+		"</title><style>body{font-family:'Source Serif 4',Georgia,serif;max-width:44em;margin:2em auto;padding:0 1em;line-height:1.55;color:#1a1a1a}" +
+		"h1{border-bottom:2px solid #0e7a6d;padding-bottom:.3em}h2{margin-top:2em;border-bottom:1px solid #ccc}" +
+		"h3{margin-bottom:.2em}h4{margin:1.4em 0 .3em;color:#0e7a6d}" +
+		"hr{border:0;border-top:1px solid #ddd;margin:1.6em 0}ul{padding-left:1.4em}" +
+		"a{color:#0e7a6d}blockquote{border-left:3px solid #e0a030;margin:1em 0;padding:.5em 1em;background:#fdf6e3;color:#7a5b00}" +
 		".sources{color:#666;font-size:.85em}</style></head><body>")
 	inline := func(s string) string {
 		// Protect markdown links from inline escaping, then restore them
@@ -202,6 +212,7 @@ func RenderHTML(title, bodyMD, base string) string {
 		s = html.EscapeString(s)
 		s = reBold.ReplaceAllString(s, "<strong>$1</strong>")
 		s = reItalic.ReplaceAllString(s, "<em>$1</em>")
+		s = reStarIt.ReplaceAllString(s, "<em>$1</em>")
 		for i, m := range links {
 			var anchor string
 			if sub := reLink.FindStringSubmatch(m); sub != nil {
@@ -217,16 +228,38 @@ func RenderHTML(title, bodyMD, base string) string {
 		}
 		return s
 	}
+	inList := false
+	closeList := func() {
+		if inList {
+			b.WriteString("</ul>")
+			inList = false
+		}
+	}
 	for _, line := range strings.Split(bodyMD, "\n") {
 		t := strings.TrimSpace(line)
+		if !reList.MatchString(t) {
+			closeList()
+		}
 		switch {
 		case t == "":
+		case strings.HasPrefix(t, "<!--"):
+			// structural markers (item refs, /item boundaries) never render
+		case reHR.MatchString(t):
+			b.WriteString("<hr>")
+		case reH4.MatchString(t):
+			b.WriteString("<h4>" + inline(reH4.FindStringSubmatch(t)[1]) + "</h4>")
 		case reH3.MatchString(t):
 			b.WriteString("<h3>" + inline(reH3.FindStringSubmatch(t)[1]) + "</h3>")
 		case reH2.MatchString(t):
 			b.WriteString("<h2>" + inline(reH2.FindStringSubmatch(t)[1]) + "</h2>")
 		case reH1.MatchString(t):
 			b.WriteString("<h1>" + inline(reH1.FindStringSubmatch(t)[1]) + "</h1>")
+		case reList.MatchString(t):
+			if !inList {
+				b.WriteString("<ul>")
+				inList = true
+			}
+			b.WriteString("<li>" + inline(reList.FindStringSubmatch(t)[1]) + "</li>")
 		case strings.HasPrefix(t, "> "):
 			b.WriteString("<blockquote>" + inline(t[2:]) + "</blockquote>")
 		case strings.HasPrefix(t, "**Sources:**"):
@@ -235,6 +268,7 @@ func RenderHTML(title, bodyMD, base string) string {
 			b.WriteString("<p>" + inline(t) + "</p>")
 		}
 	}
+	closeList()
 	b.WriteString("</body></html>")
 	return b.String()
 }
