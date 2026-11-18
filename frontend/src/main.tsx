@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LangProvider } from "./i18n";
 import { ErrorPage, NotFound } from "./pages/ErrorPage";
 import { Landing } from "./pages/Landing";
-import { PublicIssue, ReaderShell, UnsubPage } from "./pages/ReaderPage";
 import "./styles.css";
 
 // Legacy /app/* URLs are served the SPA as-is (a 301 back to "/" would
@@ -63,11 +62,21 @@ const router = createBrowserRouter([
   },
   // reader-facing pages live outside the editor shell — no app nav
   {
-    element: <ReaderShell />,
+    // lazy like the app shell — the reader pages pull in the shared
+    // markdown renderer, which now carries the composer's image/embed
+    // blocks (KLOX-66) and must not inflate the landing payload
+    // (KLOX-16 budget)
+    lazy: () => import("./pages/ReaderPage").then((m) => ({ Component: m.ReaderShell })),
     errorElement: <ErrorPage />,
     children: [
-      { path: "/p/:slug/:num", element: <PublicIssue /> },
-      { path: "/unsub", element: <UnsubPage /> },
+      {
+        path: "/p/:slug/:num",
+        lazy: () => import("./pages/ReaderPage").then((m) => ({ Component: m.PublicIssue })),
+      },
+      {
+        path: "/unsub",
+        lazy: () => import("./pages/ReaderPage").then((m) => ({ Component: m.UnsubPage })),
+      },
     ],
   },
 ]);

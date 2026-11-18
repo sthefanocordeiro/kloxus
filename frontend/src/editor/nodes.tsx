@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type FC, type MouseEvent } from "react";
 import { mergeAttributes, Node } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { createContext, useContext } from "react";
-import { AlertTriangle, ArrowDown, ArrowUp, PenLine, Plus, Quote, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Bold, Italic, Link2, PenLine, Plus, Quote, Trash2 } from "lucide-react";
 import { flagNote, sectionTitle, useT } from "../i18n";
+import { useComposer } from "./composerStrings";
 import { cn } from "../lib/cn";
 import { Button } from "../ui";
 // What the sentence/commentary node views can ask the issue page to do.
@@ -23,21 +24,43 @@ export interface DocActions {
   addSentence: (itemRef: number, text: string, citations: number[], kind: "fact" | "interpretation") => Promise<string | null>;
   // composer blocks (KLOX-66): index is the block's position inside the
   // section's block list; updateBlock returns the refusal like
-  // editSentence, the others report plain success
+  // editSentence, the others report plain success. insertBlock takes
+  // the gap position — blocks insert anywhere now (D3).
   moveBlock: (section: string, index: number, dir: -1 | 1) => Promise<boolean>;
   removeBlock: (section: string, index: number) => Promise<boolean>;
   updateBlock: (section: string, index: number, text: string, url?: string) => Promise<string | null>;
-  insertBlock: (section: string, kind: "heading" | "divider" | "link" | "text", text?: string, url?: string) => Promise<string | null>;
-  // opens the pauta picker for the section — the page owns the dialog
-  pickPauta: (section: string) => void;
+  insertBlock: (section: string, kind: "heading" | "divider" | "link" | "image" | "embed" | "text",
+    position?: number, text?: string, url?: string) => Promise<string | null>;
+  // opens the page-owned insert dialogs — image upload/URL, embed HTML
+  // and the standard-message library (D3)
+  openInsert: (section: string, index: number, kind: "image" | "embed" | "message") => void;
+  // uploads one image file (base64) → returns the /m/ URL, null on failure
+  uploadImage: (dataB64: string, contentType: string, name: string) => Promise<string | null>;
+  // opens the pauta picker for the section — the page owns the dialog;
+  // position is the gap the picker was opened from (append when unset)
+  pickPauta: (section: string, position?: number) => void;
+  // link-only toggle (KLOX-66 D2): the pauta ships its link with no
+  // written text — nothing to write or cite for it
+  toggleLinkOnly: (ref: number, linkOnly: boolean) => Promise<boolean>;
   readOnly: boolean;
 }
 
 // insideCommentary reports whether a resolved position sits inside a
-// commentary block — the only editable region in an issue document.
+// commentary block — a legacy name for the sentence-level guard; the
+// composer guard is insideEditable (commentary OR a rich text block).
 export function insideCommentary($pos: { depth: number; node: (d: number) => { type: { name: string } } | null }): boolean {
   for (let d = $pos.depth; d >= 0; d--) {
     if ($pos.node(d)?.type?.name === "commentary") return true;
+  }
+  return false;
+}
+
+// insideEditable: keystrokes land only inside a commentary card or a
+// rich text block — every other node stays a non-editable atom.
+export function insideEditable($pos: { depth: number; node: (d: number) => { type: { name: string } } | null }): boolean {
+  for (let d = $pos.depth; d >= 0; d--) {
+    const name = $pos.node(d)?.type?.name;
+    if (name === "commentary" || name === "blockText") return true;
   }
   return false;
 }
@@ -66,7 +89,10 @@ export const DocActionsCtx = createContext<DocActions>({
   removeBlock: async () => false,
   updateBlock: async () => null,
   insertBlock: async () => null,
+  openInsert: () => {},
+  uploadImage: async () => null,
   pickPauta: () => {},
+  toggleLinkOnly: async () => false,
   readOnly: true,
 });
 
@@ -292,40 +318,76 @@ function CommentaryView({ node, editor, getPos }: NodeViewProps) {
 // opens the compose box in the evidence pane.
 function ItemHeadingView({ node, editor }: NodeViewProps) {
   const { t } = useT();
+  const b = useComposer();
   const actions = useContext(DocActionsCtx);
-  const a = node.attrs as { ref: number; issueItemId: number; headline: string; empty: boolean; flagged: number };
+  const a = node.attrs as {
+    ref: number; issueItemId: number; headline: string; empty: boolean; flagged: number;
+    linkOnly: boolean; format: string;
+  };
   const [busy, setBusy] = useState(false);
+  const linkItem = a.linkOnly || a.format === "links";
   const open = () => {
     blurEditor(editor);
     actions.showEvidence(a.ref, { issueItemId: a.issueItemId });
   };
   return (
-    <NodeViewWrapper className="mt-6" onMouseDown={(e: MouseEvent) => e.preventDefault()} data-item-ref={a.ref}>
+    <NodeViewWrapper className="group mt-6" onMouseDown={(e: MouseEvent) => e.preventDefault()} data-item-ref={a.ref}>
       <div className="flex items-start justify-between gap-2">
         <h3 className="cursor-pointer font-doc text-lg font-semibold hover:text-teal" onClick={open}>
           {a.headline}
+          {linkItem && (
+            <span className="ml-2 inline-flex translate-y-[-1px] items-center gap-0.5 rounded bg-line/60 px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide text-muted">
+              <Link2 size={10} /> {b.linkOnly}
+            </span>
+          )}
         </h3>
-        {a.flagged > 0 && !actions.readOnly && (
-          <Button
-            size="sm"
-            variant="danger"
-            disabled={busy}
-            contentEditable={false}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await actions.removeFlagged(a.ref);
-              } finally {
-                setBusy(false);
-              }
-            }}
-            className="shrink-0"
-          >
-            <Trash2 size={12} /> {t.doc.removeFlagged(a.flagged)}
-          </Button>
-        )}
+        <span className="flex shrink-0 items-center gap-1">
+          {!actions.readOnly && (
+            <button
+              type="button"
+              contentEditable={false}
+              disabled={busy}
+              title={linkItem ? b.linkOnlyOff : b.linkOnlyOn}
+              aria-pressed={a.linkOnly}
+              className={cn(
+                "rounded p-1 transition-opacity",
+                a.linkOnly ? "text-teal" : "text-muted opacity-0 hover:text-teal group-hover:opacity-100",
+              )}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await actions.toggleLinkOnly(a.ref, !a.linkOnly);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <Link2 size={13} />
+            </button>
+          )}
+          {a.flagged > 0 && !actions.readOnly && (
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={busy}
+              contentEditable={false}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await actions.removeFlagged(a.ref);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <Trash2 size={12} /> {t.doc.removeFlagged(a.flagged)}
+            </Button>
+          )}
+        </span>
       </div>
-      {a.empty && !actions.readOnly && (
+      {/* a link-only pauta ships the link itself — never a "write it"
+          affordance, never a citation prompt (KLOX-66 D2) */}
+      {a.empty && !linkItem && !actions.readOnly && (
         <button
           type="button"
           contentEditable={false}
@@ -365,6 +427,7 @@ function SectionHeadingView({ node, editor }: NodeViewProps) {
 function BlockTools({ node }: { node: NodeViewProps["node"] }) {
   const actions = useContext(DocActionsCtx);
   const { t } = useT();
+  const b = useComposer();
   const a = node.attrs as { section: string; index: number };
   const [busy, setBusy] = useState(false);
   if (actions.readOnly) return null;
@@ -374,12 +437,12 @@ function BlockTools({ node }: { node: NodeViewProps["node"] }) {
   };
   return (
     <span className="ml-2 inline-flex shrink-0 items-center gap-0.5 align-middle opacity-0 transition-opacity group-hover:opacity-100" contentEditable={false}>
-      <button type="button" disabled={busy} aria-label={t.blocks.up}
+      <button type="button" disabled={busy} aria-label={b.up}
         className="rounded p-1 text-muted hover:bg-line/60 hover:text-ink disabled:opacity-40"
         onClick={() => run(() => actions.moveBlock(a.section, a.index, -1))}>
         <ArrowUp size={12} />
       </button>
-      <button type="button" disabled={busy} aria-label={t.blocks.down}
+      <button type="button" disabled={busy} aria-label={b.down}
         className="rounded p-1 text-muted hover:bg-line/60 hover:text-ink disabled:opacity-40"
         onClick={() => run(() => actions.moveBlock(a.section, a.index, 1))}>
         <ArrowDown size={12} />
@@ -500,33 +563,209 @@ function BlockLinkView({ node }: NodeViewProps) {
   );
 }
 
-function BlockTextView({ node }: NodeViewProps) {
-  const actions = useContext(DocActionsCtx);
-  const e = useBlockEdit(node);
-  const a = node.attrs as { text: string };
+// BlockTextView is the free-form rich text block (KLOX-66 D3): real
+// inline editing with bold / italic / link marks. The stored form is
+// the `> text` markdown subset — the page autosaves the diff.
+function BlockTextView({ node, editor }: NodeViewProps) {
+  const { t } = useT();
+  const b = useComposer();
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [href, setHref] = useState("");
+  const applyLink = () => {
+    const u = href.trim();
+    if (u) {
+      editor.chain().focus().extendMarkRange("link").setLink({ href: u }).run();
+    } else {
+      editor.chain().focus().extendMarkRange("link").unsetLink().run();
+    }
+    setLinkOpen(false);
+  };
   return (
-    <NodeViewWrapper className="group my-1 flex items-start rounded-md border-l-2 border-teal/50 bg-teal-soft/30 px-2 py-1">
-      <p className="flex-1 font-doc text-[15px] italic leading-7 text-ink-soft">{a.text}</p>
-      <BlockTools node={node} />
-      {!actions.readOnly && !e.editing && (
-        <button type="button" contentEditable={false} aria-label="edit"
-          className="ml-1 rounded p-1 text-muted opacity-0 hover:text-ink group-hover:opacity-100"
-          onClick={e.open}>
-          <PenLine size={12} />
+    <NodeViewWrapper className="group my-1 rounded-md px-2 py-1">
+      <div contentEditable={false}
+        className="mb-0.5 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+        <button type="button" aria-label="bold" title={b.bold}
+          className={cn("rounded p-1 text-muted hover:bg-line/60 hover:text-ink", editor.isActive("bold") && "bg-line/60 text-ink")}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => editor.chain().focus().toggleBold().run()}>
+          <Bold size={12} />
         </button>
+        <button type="button" aria-label="italic" title={b.italic}
+          className={cn("rounded p-1 text-muted hover:bg-line/60 hover:text-ink", editor.isActive("italic") && "bg-line/60 text-ink")}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => editor.chain().focus().toggleItalic().run()}>
+          <Italic size={12} />
+        </button>
+        <button type="button" aria-label="link" title={b.link}
+          className={cn("rounded p-1 text-muted hover:bg-line/60 hover:text-ink", editor.isActive("link") && "bg-line/60 text-ink")}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { setHref(String(editor.getAttributes("link").href ?? "")); setLinkOpen((v) => !v); }}>
+          <Link2 size={12} />
+        </button>
+        <BlockTools node={node} />
+      </div>
+      {linkOpen && (
+        <div contentEditable={false} className="mb-1 flex items-center gap-1">
+          <input
+            autoFocus
+            value={href}
+            onChange={(e) => setHref(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") applyLink(); if (e.key === "Escape") setLinkOpen(false); }}
+            placeholder="https://"
+            className="w-64 rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1 text-xs"
+          />
+          <Button size="sm" onClick={applyLink}>{t.doc.save}</Button>
+          <Button size="sm" variant="ghost" onClick={() => setLinkOpen(false)}>{t.doc.cancel}</Button>
+        </div>
       )}
-      {e.editing && <div className="flex-1"><BlockEditRow e={e} /></div>}
+      <NodeViewContent className="font-doc text-[15px] leading-7 text-ink-soft [&_p]:my-0.5" />
     </NodeViewWrapper>
   );
 }
 
-// BlockAddView is the "+ bloco" affordance closing each section: a
-// small menu of block kinds. Pauta goes through the page's picker
-// dialog; the others ask for inline content when needed.
+// BlockImageView renders a composer image (banner or inline photo):
+// the stored ![alt](src) line. Edit swaps src/alt through updateBlock;
+// upload goes through the page's media endpoint (D3).
+function BlockImageView({ node }: NodeViewProps) {
+  const { t } = useT();
+  const b = useComposer();
+  const actions = useContext(DocActionsCtx);
+  const a = node.attrs as { section: string; index: number; text: string; url: string };
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(a.url);
+  const [alt, setAlt] = useState(a.text);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const save = async () => {
+    setBusy(true);
+    const refused = await actions.updateBlock(a.section, a.index, alt, url);
+    setBusy(false);
+    if (refused === null) setEditing(false);
+    else setErr(refused);
+  };
+  const onFile = async (f: File | undefined) => {
+    if (!f) return;
+    setBusy(true);
+    const buf = await f.arrayBuffer();
+    let bin = "";
+    new Uint8Array(buf).forEach((b) => (bin += String.fromCharCode(b)));
+    const res = await actions.uploadImage(btoa(bin), f.type || "image/png", f.name);
+    setBusy(false);
+    if (res) setUrl(res);
+    else setErr(b.uploadErr);
+  };
+  return (
+    <NodeViewWrapper className="group my-3" contentEditable={false}>
+      <figure>
+        <img src={a.url} alt={a.text} className="max-h-96 w-full rounded-[var(--radius-card)] object-cover" />
+        {a.text && <figcaption className="mt-1 text-center text-xs text-muted">{a.text}</figcaption>}
+      </figure>
+      {!actions.readOnly && !editing && (
+        <div className="mt-1 flex items-center opacity-0 transition-opacity group-hover:opacity-100">
+          <button type="button" aria-label="edit"
+            className="rounded p-1 text-muted hover:bg-line/60 hover:text-ink"
+            onClick={() => { setUrl(a.url); setAlt(a.text); setErr(""); setEditing(true); }}>
+            <PenLine size={12} />
+          </button>
+          <BlockTools node={node} />
+        </div>
+      )}
+      {editing && (
+        <div className="mt-2 max-w-md space-y-1.5 rounded-[var(--radius-card)] border border-line bg-paper-raised p-2">
+          <div className="flex gap-1">
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder={b.imageUrlPh}
+              className="min-w-0 flex-1 rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1 text-xs"
+            />
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
+              {b.upload}
+            </Button>
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden"
+              onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ""; }} />
+          </div>
+          <input
+            value={alt}
+            onChange={(e) => setAlt(e.target.value)}
+            placeholder={b.altPh}
+            className="w-full rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1 text-xs"
+          />
+          {err && <p className="text-xs text-danger" role="alert">{err}</p>}
+          <div className="flex gap-2">
+            <Button size="sm" disabled={busy || !url.trim()} onClick={() => void save()}>{t.doc.save}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>{t.doc.cancel}</Button>
+          </div>
+        </div>
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+// BlockEmbedView renders a sanitized HTML/embed block. The stored text
+// is already sanitized server-side — the canvas preview injects it as
+//-is, the pencil opens the raw field for edits (D3 trust boundary:
+// only the sanitized form reaches any surface).
+function BlockEmbedView({ node }: NodeViewProps) {
+  const { t } = useT();
+  const b = useComposer();
+  const actions = useContext(DocActionsCtx);
+  const a = node.attrs as { section: string; index: number; text: string };
+  const [editing, setEditing] = useState(false);
+  const [html, setHtml] = useState(a.text);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    const refused = await actions.updateBlock(a.section, a.index, html);
+    setBusy(false);
+    if (refused === null) setEditing(false);
+    else setErr(refused);
+  };
+  return (
+    <NodeViewWrapper className="group my-3 rounded-[var(--radius-card)] border border-line p-2" contentEditable={false}>
+      <div className="embed-preview" dangerouslySetInnerHTML={{ __html: a.text }} />
+      {!actions.readOnly && !editing && (
+        <div className="mt-1 flex items-center opacity-0 transition-opacity group-hover:opacity-100">
+          <button type="button" aria-label="edit"
+            className="rounded p-1 text-muted hover:bg-line/60 hover:text-ink"
+            onClick={() => { setHtml(a.text); setErr(""); setEditing(true); }}>
+            <PenLine size={12} />
+          </button>
+          <BlockTools node={node} />
+        </div>
+      )}
+      {editing && (
+        <div className="mt-2 space-y-1.5">
+          <textarea
+            autoFocus
+            value={html}
+            onChange={(e) => setHtml(e.target.value)}
+            rows={6}
+            placeholder={b.embedPh}
+            className="w-full resize-y rounded-[var(--radius-input)] border border-line bg-paper p-2 font-mono text-xs leading-5"
+          />
+          {err && <p className="text-xs text-danger" role="alert">{err}</p>}
+          <div className="flex gap-2">
+            <Button size="sm" disabled={busy || !html.trim()} onClick={() => void save()}>{t.doc.save}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>{t.doc.cancel}</Button>
+          </div>
+        </div>
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+// BlockAddView is the insertion gap between every pair of blocks
+// (KLOX-66 D3): a slim hover affordance that opens the block menu —
+// text, heading, link, divider, image, embed, standard message and
+// pauta — inserting at the gap's own position.
 function BlockAddView({ node }: NodeViewProps) {
   const actions = useContext(DocActionsCtx);
   const { t } = useT();
-  const a = node.attrs as { section: string };
+  const b = useComposer();
+  const a = node.attrs as { section: string; index: number };
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<"" | "heading" | "link" | "text">("");
   const [text, setText] = useState("");
@@ -534,74 +773,99 @@ function BlockAddView({ node }: NodeViewProps) {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   if (actions.readOnly) return <NodeViewWrapper className="hidden" />;
+  const close = () => { setOpen(false); setKind(""); setText(""); setUrl(""); setErr(""); };
   const insert = async (k: "heading" | "divider" | "link" | "text", tx = "", u = "") => {
     setBusy(true);
-    const refused = await actions.insertBlock(a.section, k, tx, u);
+    const refused = await actions.insertBlock(a.section, k, a.index, tx, u);
     setBusy(false);
-    if (refused === null) { setOpen(false); setKind(""); setText(""); setUrl(""); setErr(""); }
+    if (refused === null) close();
     else setErr(refused);
   };
   return (
-    <NodeViewWrapper className="my-2" contentEditable={false}>
+    <NodeViewWrapper className="group/gap relative my-0.5" contentEditable={false}>
       {!open && !kind && (
-        <button type="button" onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-[var(--radius-btn)] border border-dashed border-line px-2.5 py-1 text-xs text-muted transition-colors hover:border-teal/60 hover:text-teal">
-          <Plus size={12} /> {t.blocks.add}
-        </button>
-      )}
-      {open && !kind && (
-        <div className="flex flex-wrap items-center gap-1.5 rounded-[var(--radius-card)] border border-line bg-paper-raised p-2">
-          {([
-            ["text", t.blocks.text],
-            ["heading", t.blocks.heading],
-            ["link", t.blocks.link],
-            ["divider", t.blocks.divider],
-          ] as const).map(([k, label]) => (
-            <button key={k} type="button" disabled={busy}
-              className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
-              onClick={() => (k === "divider" ? void insert("divider") : setKind(k))}>
-              {label}
-            </button>
-          ))}
-          <button type="button" disabled={busy}
-            className="rounded-full border border-teal px-2.5 py-1 text-xs font-medium text-teal hover:bg-teal hover:text-paper"
-            onClick={() => { setOpen(false); actions.pickPauta(a.section); }}>
-            {t.blocks.pauta}
-          </button>
-          <button type="button" className="text-xs text-muted hover:text-ink" onClick={() => setOpen(false)}>
-            ✕
+        <div className="flex h-4 items-center justify-center">
+          <span className="absolute inset-x-2 top-1/2 h-px bg-transparent transition-colors group-hover/gap:bg-line" />
+          <button type="button" onClick={() => setOpen(true)} aria-label={b.add}
+            className="relative rounded-full border border-transparent bg-paper p-0.5 text-transparent transition-colors hover:border-teal hover:text-teal group-hover/gap:border-line group-hover/gap:text-muted">
+            <Plus size={12} />
           </button>
         </div>
       )}
-      {kind && (
-        <div className="w-full max-w-md space-y-1 rounded-[var(--radius-card)] border border-line bg-paper-raised p-2">
-          <input
-            autoFocus
-            value={text}
-            onChange={(ev) => setText(ev.target.value)}
-            onKeyDown={(ev) => { if (ev.key === "Enter" && kind !== "link") void insert(kind, text); if (ev.key === "Escape") setKind(""); }}
-            placeholder={kind === "heading" ? t.blocks.headingPh : t.blocks.textPh}
-            className="w-full rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1 font-doc text-sm"
-          />
-          {kind === "link" && (
-            <input
-              value={url}
-              onChange={(ev) => setUrl(ev.target.value)}
-              onKeyDown={(ev) => { if (ev.key === "Enter") void insert("link", text, url); if (ev.key === "Escape") setKind(""); }}
-              placeholder="https://"
-              className="w-full rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1 text-xs"
-            />
+      {(open || kind) && (
+        <div className="my-1 rounded-[var(--radius-card)] border border-line bg-paper-raised p-2">
+          {!kind && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(
+                [
+                  ["text", b.text],
+                  ["heading", b.heading],
+                  ["link", b.link],
+                  ["divider", b.divider],
+                ] as const
+              ).map(([k, label]) => (
+                <button key={k} type="button" disabled={busy}
+                  className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                  onClick={() => (k === "divider" ? void insert("divider") : setKind(k))}>
+                  {label}
+                </button>
+              ))}
+              <button type="button" disabled={busy}
+                className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                onClick={() => { close(); actions.openInsert(a.section, a.index, "image"); }}>
+                {b.image}
+              </button>
+              <button type="button" disabled={busy}
+                className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                onClick={() => { close(); actions.openInsert(a.section, a.index, "embed"); }}>
+                {b.embed}
+              </button>
+              <button type="button" disabled={busy}
+                className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                onClick={() => { close(); actions.openInsert(a.section, a.index, "message"); }}>
+                {b.message}
+              </button>
+              <button type="button" disabled={busy}
+                className="rounded-full border border-teal px-2.5 py-1 text-xs font-medium text-teal hover:bg-teal hover:text-paper"
+                onClick={() => { close(); actions.pickPauta(a.section, a.index); }}>
+                {b.pauta}
+              </button>
+              <button type="button" className="text-xs text-muted hover:text-ink" onClick={close}>
+                ✕
+              </button>
+            </div>
           )}
-          {err && <p className="text-xs text-danger" role="alert">{err}</p>}
-          <div className="flex gap-2">
-            <Button size="sm" disabled={busy || !text.trim()}
-              onClick={() => void insert(kind, text, url)}>
-              {t.blocks.insert}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => { setKind(""); setErr(""); }}>
-              {t.doc.cancel}
-            </Button>
-          </div>
+          {kind && (
+            <div className="w-full max-w-md space-y-1">
+              <input
+                autoFocus
+                value={text}
+                onChange={(ev) => setText(ev.target.value)}
+                onKeyDown={(ev) => { if (ev.key === "Enter" && kind !== "link") void insert(kind, text); if (ev.key === "Escape") setKind(""); }}
+                placeholder={kind === "heading" ? b.headingPh : b.textPh}
+                className="w-full rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1 font-doc text-sm"
+              />
+              {kind === "link" && (
+                <input
+                  value={url}
+                  onChange={(ev) => setUrl(ev.target.value)}
+                  onKeyDown={(ev) => { if (ev.key === "Enter") void insert("link", text, url); if (ev.key === "Escape") setKind(""); }}
+                  placeholder="https://"
+                  className="w-full rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1 text-xs"
+                />
+              )}
+              {err && <p className="text-xs text-danger" role="alert">{err}</p>}
+              <div className="flex gap-2">
+                <Button size="sm" disabled={busy || !text.trim()}
+                  onClick={() => void insert(kind, text, url)}>
+                  {b.insert}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => { setKind(""); setErr(""); }}>
+                  {t.doc.cancel}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </NodeViewWrapper>
@@ -620,7 +884,7 @@ export const IssueDoc = Node.create({
   name: "doc",
   topNode: true,
   content:
-    "(sectionHeading | itemHeading | sentence | commentary | blockHeading | blockDivider | blockLink | blockText | blockAdd)+",
+    "(sectionHeading | itemHeading | sentence | commentary | blockHeading | blockDivider | blockLink | blockImage | blockEmbed | blockText | blockAdd)+",
 });
 
 // blockNode builds one block node definition — shared shape: atom,
@@ -655,8 +919,34 @@ function blockNode(name: string, extra: Record<string, unknown>, view: FC<NodeVi
 export const BlockHeading = blockNode("blockHeading", {}, BlockHeadingView);
 export const BlockDivider = blockNode("blockDivider", {}, BlockDividerView);
 export const BlockLink = blockNode("blockLink", {}, BlockLinkView);
-export const BlockText = blockNode("blockText", {}, BlockTextView);
+export const BlockImage = blockNode("blockImage", {}, BlockImageView);
+export const BlockEmbed = blockNode("blockEmbed", {}, BlockEmbedView);
 export const BlockAdd = blockNode("blockAdd", {}, BlockAddView);
+
+// BlockText is the one content node among the layout blocks — real
+// inline editing (bold/italic/link marks) inside paragraph content.
+// The `md` attr is the stored-markdown baseline the autosave diffs.
+export const BlockText = Node.create({
+  name: "blockText",
+  group: "block",
+  content: "paragraph+",
+  addAttributes() {
+    return {
+      section: { default: "" },
+      index: { default: 0 },
+      md: { default: "" },
+    };
+  },
+  parseHTML() {
+    return [{ tag: `div[data-block="blockText"]` }];
+  },
+  renderHTML({ node, HTMLAttributes }) {
+    return ["div", mergeAttributes(HTMLAttributes, { "data-block": "blockText", "data-index": node.attrs.index }), 0];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(BlockTextView);
+  },
+});
 
 export const Sentence = Node.create({
   name: "sentence",
@@ -713,6 +1003,8 @@ export const ItemHeading = Node.create({
     return {
       ref: { default: 0 }, issueItemId: { default: 0 }, headline: { default: "" },
       empty: { default: false }, flagged: { default: 0 },
+      section: { default: "" }, index: { default: 0 }, format: { default: "" },
+      linkOnly: { default: false },
     };
   },
   parseHTML() {

@@ -1971,6 +1971,11 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 			continue
 		}
 		for _, it := range sec.Items {
+			if it.LinkOnly {
+				// same exemption per-item: a link-only pauta ships the
+				// story link with zero written text (KLOX-66 D2)
+				continue
+			}
 			for _, sn := range it.Sentences {
 				if sn.Kind == "fact" && len(sn.Citations) == 0 {
 					uncited++
@@ -2003,6 +2008,9 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 				continue
 			}
 			for _, it := range sec.Items {
+				if it.LinkOnly {
+					continue
+				}
 				for _, sn := range it.Sentences {
 					if sn.Flag != nil {
 						ref = sn.ID
@@ -2023,6 +2031,9 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 			continue
 		}
 		for _, it := range sec.Items {
+			if it.LinkOnly {
+				continue
+			}
 			if len(it.Sentences) == 0 {
 				empty++
 				if firstEmpty == "" {

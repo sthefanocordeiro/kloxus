@@ -88,11 +88,14 @@ func aiDisclosure(pub *store.Publication) string {
 }
 
 var (
-	itemMarkerRe  = regexp.MustCompile(`\s*<!--\s*item \d+\s*-->`)
+	itemMarkerRe  = regexp.MustCompile(`\s*<!--\s*item \d+(?:\s+link)?\s*-->`)
 	relLinkRe     = regexp.MustCompile(`\]\((/a/\d+)\)`)
 	sectionRe     = regexp.MustCompile(`^## (.+)$`)
 	blankRunRe    = regexp.MustCompile(`\n{3,}`)
 	trailSpacesRe = regexp.MustCompile(`[ \t]+\n`)
+	// commentRe is any remaining structural comment (<!-- /item -->
+	// boundaries) — they must never reach a reader surface.
+	commentRe = regexp.MustCompile(`^\s*<!--.*-->\s*$`)
 )
 
 // ReaderBody renders the reader-facing markdown for an issue:
@@ -131,6 +134,9 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string, aiUsed bo
 			current = m[1]
 		}
 		line = itemMarkerRe.ReplaceAllString(line, "")
+		if commentRe.MatchString(line) {
+			continue
+		}
 		// the sources footer is a sentence — it earns its full stop
 		// like every other line in the export (KLOX-56).
 		if strings.HasPrefix(strings.TrimSpace(line), "**Sources:**") &&
@@ -179,7 +185,14 @@ var (
 	reStarIt = regexp.MustCompile(`\*([^*]+)\*`)
 	reLink   = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
 	reBare   = regexp.MustCompile(`\[(https?://[^\]]+)\]`)
+	reImage  = regexp.MustCompile(`^!\[([^\]]*)\]\((\S+)\)\s*$`)
 )
+
+// EmbedFenceOpen/EmbedFenceClose delimit a stored embed block inside
+// an issue body: the sanitizer's output sits between them and is the
+// only raw HTML allowed through to reader/email surfaces.
+const EmbedFenceOpen = "<klox-embed>"
+const EmbedFenceClose = "</klox-embed>"
 
 // RenderHTML converts the issue markdown subset to a simple HTML
 // document. Markdown links [text](url) become <a href>; a bare [url]
@@ -229,27 +242,57 @@ func RenderHTML(title, bodyMD, base string) string {
 		return s
 	}
 	inList := false
+	inQuote := false
 	closeList := func() {
 		if inList {
 			b.WriteString("</ul>")
 			inList = false
 		}
 	}
-	for _, line := range strings.Split(bodyMD, "\n") {
+	closeQuote := func() {
+		if inQuote {
+			b.WriteString("</blockquote>")
+			inQuote = false
+		}
+	}
+	lines := strings.Split(bodyMD, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		t := strings.TrimSpace(line)
 		if !reList.MatchString(t) {
 			closeList()
+		}
+		if !strings.HasPrefix(t, "> ") {
+			closeQuote()
 		}
 		switch {
 		case t == "":
 		case strings.HasPrefix(t, "<!--"):
 			// structural markers (item refs, /item boundaries) never render
+		case t == EmbedFenceOpen:
+			// embed block: the stored content is already sanitized at
+			// write time; sanitize again on render as defense in depth
+			// and emit it raw inside a marker div (KLOX-66 D3).
+			var inner strings.Builder
+			for i++; i < len(lines) && strings.TrimSpace(lines[i]) != EmbedFenceClose; i++ {
+				inner.WriteString(lines[i])
+				inner.WriteByte('\n')
+			}
+			b.WriteString(`<div class="embed">` + SanitizeEmbed(inner.String()) + "</div>")
 		case reHR.MatchString(t):
 			b.WriteString("<hr>")
+		case reImage.MatchString(t):
+			m := reImage.FindStringSubmatch(t)
+			src := m[2]
+			if strings.HasPrefix(src, "/") && base != "" {
+				src = base + src
+			}
+			b.WriteString(`<p class="img"><img src="` + html.EscapeString(src) +
+				`" alt="` + html.EscapeString(m[1]) + `" style="max-width:100%;height:auto"></p>`)
 		case reH4.MatchString(t):
-			b.WriteString("<h4>" + inline(reH4.FindStringSubmatch(t)[1]) + "</h4>")
+			b.WriteString("<h4>" + inline(itemMarkerRe.ReplaceAllString(reH4.FindStringSubmatch(t)[1], "")) + "</h4>")
 		case reH3.MatchString(t):
-			b.WriteString("<h3>" + inline(reH3.FindStringSubmatch(t)[1]) + "</h3>")
+			b.WriteString("<h3>" + inline(itemMarkerRe.ReplaceAllString(reH3.FindStringSubmatch(t)[1], "")) + "</h3>")
 		case reH2.MatchString(t):
 			b.WriteString("<h2>" + inline(reH2.FindStringSubmatch(t)[1]) + "</h2>")
 		case reH1.MatchString(t):
@@ -261,7 +304,13 @@ func RenderHTML(title, bodyMD, base string) string {
 			}
 			b.WriteString("<li>" + inline(reList.FindStringSubmatch(t)[1]) + "</li>")
 		case strings.HasPrefix(t, "> "):
-			b.WriteString("<blockquote>" + inline(t[2:]) + "</blockquote>")
+			if !inQuote {
+				b.WriteString("<blockquote>")
+				inQuote = true
+			} else {
+				b.WriteString("<br>")
+			}
+			b.WriteString(inline(t[2:]))
 		case strings.HasPrefix(t, "**Sources:**"):
 			b.WriteString("<p class=\"sources\">" + inline(t) + "</p>")
 		default:
@@ -269,6 +318,7 @@ func RenderHTML(title, bodyMD, base string) string {
 		}
 	}
 	closeList()
+	closeQuote()
 	b.WriteString("</body></html>")
 	return b.String()
 }

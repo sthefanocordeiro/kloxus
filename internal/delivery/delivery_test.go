@@ -74,3 +74,39 @@ func TestReaderBodyFooterAndBlankRuns(t *testing.T) {
 		t.Fatalf("trailing spaces survived:\n%q", md)
 	}
 }
+
+// Structural markers never reach a reader surface: `<!-- item -->`
+// markers, `<!-- /item -->` boundaries and the embed fences are
+// document structure, not content (KLOX-66 D3).
+func TestRenderHTMLStripsStructuralMarkers(t *testing.T) {
+	body := "# Pub — issue 1\n\n## S\n\n" +
+		"### H <!-- item 1 link -->\n\n" +
+		"**Sources:** [1] [O](/a/1)\n\n" +
+		"<!-- /item -->\n\n" +
+		"> A note.\n"
+	out := RenderHTML("T", body, "")
+	for _, bad := range []string{"<!--", "item 1", "klox-embed"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("structural marker %q leaked:\n%s", bad, out)
+		}
+	}
+}
+
+func TestRenderHTMLEmbedSanitizedAgain(t *testing.T) {
+	body := "# Pub — issue 1\n\n## S\n\n" +
+		"<klox-embed>\n" +
+		"<p>ok <script>alert(1)</script></p>\n" +
+		"</klox-embed>\n"
+	out := RenderHTML("T", body, "")
+	if strings.Contains(out, "<script") || !strings.Contains(out, "<p>ok") {
+		t.Fatalf("embed render wrong:\n%s", out)
+	}
+}
+
+func TestRenderHTMLImage(t *testing.T) {
+	body := "# Pub — issue 1\n\n## S\n\n![Cover](/m/12-ab)\n"
+	out := RenderHTML("T", body, "")
+	if !strings.Contains(out, `<img`) || !strings.Contains(out, `/m/12-ab`) {
+		t.Fatalf("image not rendered:\n%s", out)
+	}
+}

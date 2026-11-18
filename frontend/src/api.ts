@@ -241,25 +241,41 @@ export interface DocItem {
   sentences: DocSentence[];
   sources: { ref: number; name: string; url: string; item_id: number; excerpt: string; date: string }[];
   flags?: { sentence: string; note: string }[];
+  // link-only pauta (KLOX-66 D2): ships the story link with zero
+  // written text — no commentary or citation is expected for it
+  link_only?: boolean;
 }
 
 // One ordered unit inside a section (KLOX-66): a pauta (kind "item")
-// or an author-inserted heading / divider / link / text block. The
-// block's index inside section.blocks addresses it in block ops.
+// or an author-inserted heading / divider / link / image / embed /
+// text block. The block's index inside section.blocks addresses it in
+// block ops. image → url is the src and text the alt; embed → text is
+// the sanitized HTML.
 export interface DocBlock {
-  kind: "item" | "heading" | "divider" | "link" | "text";
+  kind: "item" | "heading" | "divider" | "link" | "image" | "embed" | "text";
   ref?: number; // item → dossier ref
   text?: string;
-  url?: string; // link → href
+  url?: string; // link → href, image → src
 }
 
 export interface DocSection {
   title: string;
+  // edition's section format snapshot (KLOX-65) — "links" sections
+  // carry the link as their source
+  format?: string;
   commentary: { mode: string; text: string };
   items: DocItem[];
   // ordered layout — items in body order plus author blocks; absent on
   // documents written before the block model, callers fall back to items
   blocks?: DocBlock[];
+}
+
+// One reusable standard message (greeting/footer/signature) — author
+// text inserted into an edition without retyping (KLOX-66 D3).
+export interface StdMessage {
+  id: number;
+  name: string;
+  body: string;
 }
 
 export interface Coverage {
@@ -465,7 +481,7 @@ export const api = {
   // composer block ops (KLOX-66): every mutation answers with the fresh
   // document — callers swap it into the cache and take its version
   blockInsert: (issueID: number, body: {
-    section: string; kind: "item" | "heading" | "divider" | "link" | "text";
+    section: string; kind: "item" | "heading" | "divider" | "link" | "image" | "embed" | "text";
     text?: string; url?: string; story_id?: number; position?: number; version: string;
   }) => request<{ document: IssueDocument }>("POST", `/api/v1/issues/${issueID}/blocks`, body),
   blockUpdate: (issueID: number, body: {
@@ -477,6 +493,23 @@ export const api = {
   blockRemove: (issueID: number, section: string, index: number, version: string) =>
     request<{ document: IssueDocument }>("DELETE", `/api/v1/issues/${issueID}/blocks`,
       { section, index, version }),
+  // link-only toggle (KLOX-66 D2): marks/unmarks a pauta as shipping
+  // the bare story link — no written text required
+  itemLinkOnly: (issueID: number, ref: number, linkOnly: boolean, version: string) =>
+    request<{ document: IssueDocument }>("PUT", `/api/v1/issues/${issueID}/items/${ref}/link`,
+      { link_only: linkOnly, version }),
+  // media upload (KLOX-66 D3): JSON base64 stays inside the API's
+  // JSON-only contract — returns the public /m/{id}-{token} URL
+  uploadMedia: (issueID: number, body: { content_type: string; data_b64: string; name: string }) =>
+    request<{ media: { id: number; url: string; content_type: string; bytes: number } }>(
+      "POST", `/api/v1/issues/${issueID}/media`, body),
+  // standard-message library (KLOX-66 D3): reusable author text
+  messages: (pubID: number) =>
+    request<{ messages: StdMessage[] }>("GET", `/api/v1/publications/${pubID}/messages`).then((r) => r.messages),
+  messageCreate: (pubID: number, body: { name: string; body: string }) =>
+    request<{ message: StdMessage }>("POST", `/api/v1/publications/${pubID}/messages`, body).then((r) => r.message),
+  messageDelete: (pubID: number, mid: number) =>
+    request<void>("DELETE", `/api/v1/publications/${pubID}/messages/${mid}`),
   approve: (issueID: number) =>
     request<{ issue: IssueSummary; receipt: ApprovalReceipt }>("POST", `/api/v1/issues/${issueID}/approve`, {}),
   send: (issueID: number, audience: "test" | "readers", when: "now" | "schedule" = "now", to?: string, at?: string) =>

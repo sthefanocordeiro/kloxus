@@ -1,8 +1,13 @@
 import type { ReactNode } from "react";
 
 // Minimal renderer for our own server-generated markdown (headings,
-// paragraphs, emphasis, links, lists, quotes, hr). The input is
-// trusted — it comes from our API — so inline HTML is not a concern.
+// paragraphs, emphasis, links, lists, quotes, hr, images, embed
+// fences). Embed HTML inside <klox-embed>…</klox-embed> is already
+// allowlist-sanitized at write and again at render on the server —
+// this surface only re-renders that sanitized subset; ordinary lines
+// are always escaped, so raw HTML never reaches the DOM as markup.
+// Structural HTML comments (e.g. <!-- item 2 link -->) are document
+// markers, never reader content — they're skipped.
 function inline(text: string, key: string | number): ReactNode {
   const parts: ReactNode[] = [];
   const re = /(\*\*[^*]+\*\*|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^)]+\))/g;
@@ -45,36 +50,76 @@ export function Markdown({ md }: { md: string }) {
       list = [];
     }
   };
+  let embed: string[] | null = null;
+  let quote: string[] = [];
+  const flushQuote = () => {
+    if (!quote.length) return;
+    const q = quote.join(" ");
+    quote = [];
+    if (/Subscribers only|Exclusivo para assinantes/i.test(q)) {
+      out.push(
+        <div key={k++} className="my-3 flex items-start gap-3 rounded-lg border border-dashed border-line bg-paper-raised px-4 py-3">
+          <svg viewBox="0 0 16 16" className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <rect x="3" y="7" width="10" height="6" rx="1.5" />
+            <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+          </svg>
+          <div className="text-sm font-medium text-ink">{inline(q.replace(/^\*\*|\*\*$/g, ""), k)}</div>
+        </div>,
+      );
+      return;
+    }
+    out.push(<blockquote key={k++} className="border-l-2 border-line pl-3 italic text-muted my-2">{inline(q, k)}</blockquote>);
+  };
   for (const line of lines) {
     const t = line.trim();
+    if (embed !== null) {
+      if (t === "</klox-embed>") {
+        out.push(<div key={k++} className="embed-preview my-3" dangerouslySetInnerHTML={{ __html: embed.join("\n") }} />);
+        embed = null;
+      } else {
+        embed.push(line);
+      }
+      continue;
+    }
+    if (t === "<klox-embed>") {
+      flush();
+      flushQuote();
+      embed = [];
+      continue;
+    }
+    if (t.startsWith("<!--")) continue; // structural markers are not content
+    if (t.startsWith("> ")) {
+      flush();
+      quote.push(t.slice(2));
+      continue;
+    }
+    flushQuote();
     if (t.startsWith("- ")) {
       list.push(t.slice(2));
       continue;
     }
     flush();
     if (!t) continue;
+    const img = t.match(/^!\[([^\]]*)\]\(([^)\s]+)\)$/);
+    if (img) {
+      out.push(
+        <figure key={k++} className="my-3">
+          <img src={img[2]} alt={img[1]} className="w-full rounded-[var(--radius-card)]" />
+          {img[1] && <figcaption className="mt-1 text-center text-xs text-muted">{img[1]}</figcaption>}
+        </figure>,
+      );
+      continue;
+    }
     if (t.startsWith("### ")) out.push(<h3 key={k++} className="font-doc font-semibold mt-4 mb-1">{inline(t.slice(4), k)}</h3>);
     else if (t.startsWith("## ")) out.push(<h2 key={k++} className="font-doc text-xl font-semibold mt-5 mb-2">{inline(t.slice(3), k)}</h2>);
     else if (t.startsWith("# ")) out.push(<h1 key={k++} className="font-doc text-2xl font-semibold mb-3">{inline(t.slice(2), k)}</h1>);
-    else if (t.startsWith("> ")) {
-      const q = t.slice(2);
-      if (/Subscribers only|Exclusivo para assinantes/i.test(q)) {
-        out.push(
-          <div key={k++} className="my-3 flex items-start gap-3 rounded-lg border border-dashed border-line bg-paper-raised px-4 py-3">
-            <svg viewBox="0 0 16 16" className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-              <rect x="3" y="7" width="10" height="6" rx="1.5" />
-              <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
-            </svg>
-            <div className="text-sm font-medium text-ink">{inline(q.replace(/^\*\*|\*\*$/g, ""), k)}</div>
-          </div>,
-        );
-        continue;
-      }
-      out.push(<blockquote key={k++} className="border-l-2 border-line pl-3 italic text-muted my-2">{inline(q, k)}</blockquote>);
-    }
     else if (t === "---") out.push(<hr key={k++} className="my-4 border-line" />);
     else out.push(<p key={k++} className="mb-2 font-doc leading-7">{inline(t, k)}</p>);
   }
+  flushQuote();
   flush();
+  if (embed !== null) {
+    out.push(<div key={k++} className="embed-preview my-3" dangerouslySetInnerHTML={{ __html: embed.join("\n") }} />);
+  }
   return <div>{out}</div>;
 }

@@ -19,6 +19,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -72,6 +73,10 @@ type docItem struct {
 	Sentences   []docSentence `json:"sentences"`
 	Sources     []docSource   `json:"sources"`
 	Flags       []docItemFlag `json:"flags,omitempty"` // flags not matched to a sentence
+	// LinkOnly marks a pauta the editor sends as a bare link — no
+	// written text required and no citation prompt (KLOX-66 D2). The
+	// whole section may also imply it via the "links" format.
+	LinkOnly bool `json:"link_only,omitempty"`
 
 	// spanStart/spanEnd bound the item's block inside the stored body,
 	// so edits replace only inside their own item — an identical
@@ -145,7 +150,7 @@ type issueDocument struct {
 }
 
 var (
-	docItemRe    = regexp.MustCompile(`^### (.*?)\s*<!--\s*item\s+(\d+)\s*-->\s*$`)
+	docItemRe    = regexp.MustCompile(`^### (.*?)\s*<!--\s*item\s+(\d+)(?:\s+(link))?\s*-->\s*$`)
 	docSectionRe = regexp.MustCompile(`^## (.+?)\s*$`)
 	docCiteRe    = regexp.MustCompile(`\[(\d+)\]`)
 )
@@ -524,9 +529,14 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 		}
 		item.Sentences = append(item.Sentences, sn)
 	}
-	pos := 0 // byte offset of the current line inside the body
-	for _, line := range strings.Split(iss.BodyMD, "\n") {
+	pos := 0         // byte offset of the current line inside the body
+	textRun := false // previous line extended a section text block
+	lines := strings.Split(iss.BodyMD, "\n")
+	for li := 0; li < len(lines); li++ {
+		line := lines[li]
 		t := strings.TrimSpace(line)
+		wasText := textRun
+		textRun = false
 		if m := docSectionRe.FindStringSubmatch(t); m != nil {
 			finishItem(pos)
 			if sec != nil {
@@ -555,7 +565,7 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			}
 			ref, _ := strconv.Atoi(m[2])
 			it := docItem{Ref: ref, Headline: m[1], spanStart: pos, openings: map[int]string{},
-				Sentences: []docSentence{}, Sources: []docSource{}}
+				LinkOnly: m[3] == "link", Sentences: []docSentence{}, Sources: []docSource{}}
 			if info, ok := dc.byRef[ref]; ok {
 				it.IssueItemID = info.issueItemID
 				it.dossier = info.dossier
@@ -595,21 +605,68 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 		// An `<!-- /item -->` marker closes the running item (KLOX-66):
 		// `> ` inside an item is an interpretation sentence, so an
 		// author text block that follows an item can only be told from
-		// one by an explicit boundary — the block ops write it.
+		// one by an explicit boundary — the block ops write it. An
+		// embed fence opens a section-level block too — it closes a
+		// running item the same way, but the line itself still parses
+		// as a block below.
 		if sec != nil && item != nil && strings.HasPrefix(t, "<!--") {
 			finishItem(pos)
 			pos += len(line) + 1
 			continue
 		}
-		// Section-level layout blocks (KLOX-66): divider, link-list and
-		// author text live between items. Inside an item nothing
-		// changes — `> ` stays an interpretation sentence and other
-		// marks are folded into the item's span as before.
+		if sec != nil && item != nil && t == delivery.EmbedFenceOpen {
+			finishItem(pos)
+		}
+		// Section-level layout blocks (KLOX-66): divider, link-list,
+		// image, embed and author text live between items. Inside an
+		// item nothing changes — `> ` stays an interpretation sentence
+		// and other marks are folded into the item's span as before.
 		if sec != nil && item == nil {
+			if t == delivery.EmbedFenceOpen {
+				// multi-line embed block: sanitized HTML lives between
+				// the fence lines. An unclosed fence is stray markup —
+				// skip only its opening line.
+				liStart := li
+				cur := pos + len(line) + 1
+				var inner []string
+				closed := false
+				for li+1 < len(lines) {
+					li++
+					nl := lines[li]
+					if strings.TrimSpace(nl) == delivery.EmbedFenceClose {
+						closed = true
+						break
+					}
+					inner = append(inner, nl)
+					cur += len(nl) + 1
+				}
+				if closed {
+					sec.Blocks = append(sec.Blocks, docBlock{Kind: "embed",
+						Text:      strings.Join(inner, "\n"),
+						spanStart: pos, spanEnd: cur + len(lines[li])})
+					pos = cur + len(lines[li]) + 1
+				} else {
+					li = liStart
+					pos += len(line) + 1
+				}
+				continue
+			}
 			blk, isBlock := parseBlockLine(t)
 			if isBlock {
+				if blk.Kind == "text" && wasText && len(sec.Blocks) > 0 &&
+					sec.Blocks[len(sec.Blocks)-1].Kind == "text" {
+					// contiguous `> ` lines are one multi-paragraph
+					// text block — a blank line splits them
+					last := &sec.Blocks[len(sec.Blocks)-1]
+					last.Text += "\n" + blk.Text
+					last.spanEnd = pos + len(line)
+					textRun = true
+					pos += len(line) + 1
+					continue
+				}
 				blk.spanStart, blk.spanEnd = pos, pos+len(line)
 				sec.Blocks = append(sec.Blocks, blk)
+				textRun = blk.Kind == "text"
 			}
 			pos += len(line) + 1
 			continue

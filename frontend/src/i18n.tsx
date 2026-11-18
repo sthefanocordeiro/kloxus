@@ -60,9 +60,7 @@ export const dict = {
       full: "full",
       swapWith: "swap with…",
       sectionFull: (name: string, cap: number) => `${name} is full (${cap}/${cap}) — pick a story to swap out`,
-      demoUnavailable: "not available here",
       openDossier: "Open research",
-      noDossier: "Research is generated at draft time",
       draftAction: (n: number) => `Draft the issue (${n} ${n === 1 ? "story" : "stories"})`,
       steps: ["Stories", "Write", "Review & send"],
       emptySlot: (n: number) => `Drop a story here · ${n} free`,
@@ -216,6 +214,8 @@ export const dict = {
       pautaTitle: (section: string) => `Add story — ${section}`,
       pautaSearch: "Search stories…",
       pautaEmpty: "No stories on the bench — decided or already used stories don't return here.",
+      // composer-only strings live in editor/composerStrings.ts — the
+      // shared table is inside the landing-payload budget (KLOX-16)
     },
     review: {
       editedAfterApproval: "You changed the issue after approving. Approve it again to send.",
@@ -586,9 +586,7 @@ export const dict = {
       full: "cheia",
       swapWith: "trocar com…",
       sectionFull: (name: string, cap: number) => `A seção “${name}” está cheia (${cap}/${cap}) — escolha uma pauta para trocar`,
-      demoUnavailable: "indisponível aqui",
       openDossier: "Abrir pesquisa",
-      noDossier: "A pesquisa é gerada na etapa de escrita",
       draftAction: (n: number) => `Redigir a edição (${n === 1 ? "1 pauta" : `${n} pautas`})`,
       steps: ["Pautas", "Escrever", "Revisar e enviar"],
       emptySlot: (n: number) => `Solte uma pauta aqui · ${n} vaga${n > 1 ? "s" : ""}`,
@@ -742,6 +740,8 @@ export const dict = {
       pautaTitle: (section: string) => `Adicionar pauta — ${section}`,
       pautaSearch: "Buscar pautas…",
       pautaEmpty: "Nenhuma pauta na reserva — pautas decididas ou já usadas não voltam a aparecer.",
+      // composer-only strings live in editor/composerStrings.ts — the
+      // shared table is inside the landing-payload budget (KLOX-16)
     },
     review: {
       editedAfterApproval: "Você mudou a edição depois de aprovar. Aprove de novo para enviar.",

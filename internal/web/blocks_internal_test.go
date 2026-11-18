@@ -150,3 +150,65 @@ func TestBlockLineRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// `<!-- item N link -->` marks a pauta link-only (KLOX-66 D2): the
+// parser surfaces it, and the stored item needs no sentences.
+func TestLinkOnlyItemMarker(t *testing.T) {
+	body := "# Pub — Issue 1\n\n## Top\n\n" +
+		"### Story one <!-- item 1 link -->\n\n" +
+		"**Sources:** [1] [Outlet](/a/1)\n\n" +
+		"### Story two <!-- item 2 -->\n\n" +
+		"A fact [1].\n"
+	doc := testDoc(t, body)
+	sec := doc.Sections[0]
+	if len(sec.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(sec.Items))
+	}
+	if !sec.Items[0].LinkOnly {
+		t.Fatal("item 1 link marker not parsed")
+	}
+	if sec.Items[1].LinkOnly {
+		t.Fatal("item 2 wrongly marked link-only")
+	}
+	if got := kinds(sec.Blocks); len(got) != 2 || got[0] != "item" || got[1] != "item" {
+		t.Fatalf("kinds = %v, want [item item]", got)
+	}
+}
+
+// Image and embed blocks parse at section level; the embed's stored
+// text is what the fence holds (already sanitized on write).
+func TestImageAndEmbedBlocks(t *testing.T) {
+	body := "# Pub — Issue 1\n\n## Top\n\n" +
+		"### Story one <!-- item 1 -->\n\n" +
+		"A fact [1].\n\n" +
+		"<!-- /item -->\n\n" +
+		"![Cover](/m/12-ab34)\n\n" +
+		"<klox-embed>\n" +
+		"<p>embedded <strong>thing</strong></p>\n" +
+		"</klox-embed>\n"
+	blocks := blockList(t, testDoc(t, body))
+	want := []string{"item", "image", "embed"}
+	got := kinds(blocks)
+	if len(got) != len(want) || got[0] != "item" || got[1] != "image" || got[2] != "embed" {
+		t.Fatalf("kinds = %v, want %v", got, want)
+	}
+	if blocks[1].URL != "/m/12-ab34" || blocks[1].Text != "Cover" {
+		t.Fatalf("image block = %+v", blocks[1])
+	}
+	if blocks[2].Text != "<p>embedded <strong>thing</strong></p>" {
+		t.Fatalf("embed block = %+v", blocks[2])
+	}
+}
+
+// An unclosed embed fence is stray markup — its line is skipped, no
+// embed block appears.
+func TestUnclosedEmbedFenceIgnored(t *testing.T) {
+	body := "# Pub — Issue 1\n\n## Top\n\n" +
+		"<klox-embed>\n<p>oops\n"
+	blocks := blockList(t, testDoc(t, body))
+	for _, b := range blocks {
+		if b.Kind == "embed" {
+			t.Fatalf("unclosed fence produced embed block: %+v", b)
+		}
+	}
+}

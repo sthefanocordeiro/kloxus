@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -28,6 +30,11 @@ func parseBlockLine(t string) (docBlock, bool) {
 		return docBlock{Kind: "divider"}, true
 	case strings.HasPrefix(t, "#### "):
 		return docBlock{Kind: "heading", Text: strings.TrimSpace(t[5:])}, true
+	case strings.HasPrefix(t, "!["):
+		if m := blockImageRe.FindStringSubmatch(t); m != nil {
+			return docBlock{Kind: "image", Text: m[1], URL: m[2]}, true
+		}
+		return docBlock{}, false
 	case strings.HasPrefix(t, "- ") && len(t) > 2:
 		label, url := splitBlockLink(t[2:])
 		return docBlock{Kind: "link", Text: label, URL: url}, true
@@ -35,10 +42,11 @@ func parseBlockLine(t string) (docBlock, bool) {
 		return docBlock{Kind: "text", Text: strings.TrimSpace(t[2:])}, true
 	case t == "", strings.HasPrefix(t, "#"), strings.HasPrefix(t, "**"),
 		strings.HasPrefix(t, "-"), strings.HasPrefix(t, "_"),
-		strings.HasPrefix(t, "<!--"):
-		// `<!-- /item -->` boundaries are structural, never blocks
-		// blank lines, `#`/`##` headings, sources lists, lone dashes,
-		// emphasis marks — structural noise, not blocks
+		strings.HasPrefix(t, "<"):
+		// `<!-- /item -->` boundaries, embed fence lines and stray
+		// markup are structural, never blocks; blank lines, `#`/`##`
+		// headings, sources lists, lone dashes, emphasis marks —
+		// structural noise, not blocks
 		return docBlock{}, false
 	default:
 		if strings.ContainsFunc(t, unicode.IsLetter) {
@@ -49,7 +57,18 @@ func parseBlockLine(t string) (docBlock, bool) {
 	}
 }
 
-var blockLinkRe = regexp.MustCompile(`^\[([^\]]*)\]\(([^)\s]+)\)\s*$`)
+var (
+	blockLinkRe  = regexp.MustCompile(`^\[([^\]]*)\]\(([^)\s]+)\)\s*$`)
+	blockImageRe = regexp.MustCompile(`^!\[([^\]]*)\]\(([^)\s]+)\)\s*$`)
+)
+
+// blockSafeURL reports whether u can be stored as a block URL —
+// http(s) links out, or an uploaded image's /m/ path.
+func blockSafeURL(u string) bool {
+	l := strings.ToLower(u)
+	return strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "http://") ||
+		strings.HasPrefix(u, "/m/")
+}
 
 // splitBlockLink unpacks "[label](url)" or a bare url.
 func splitBlockLink(rest string) (label, url string) {
@@ -74,18 +93,52 @@ func blockLine(kind, text, url string) (string, bool) {
 		return "---", true
 	case "link":
 		u := strings.TrimSpace(url)
-		if u == "" || strings.ContainsAny(u, " \t()") {
+		if u == "" || strings.ContainsAny(u, " \t()") || !blockSafeURL(u) {
 			return "", false
 		}
 		if t == "" || strings.ContainsAny(t, "[]") {
 			t = u
 		}
 		return "- [" + t + "](" + u + ")", true
+	case "image":
+		u := strings.TrimSpace(url)
+		if u == "" || strings.ContainsAny(u, " \t()") || !blockSafeURL(u) {
+			return "", false
+		}
+		if strings.ContainsAny(t, "[]\n") {
+			return "", false
+		}
+		return "![" + t + "](" + u + ")", true
+	case "embed":
+		// the stored body keeps the sanitized form only — the raw
+		// paste never reaches a reader surface (KLOX-66 D3)
+		clean := delivery.SanitizeEmbed(t)
+		if clean == "" {
+			return "", false
+		}
+		return delivery.EmbedFenceOpen + "\n" + clean + "\n" + delivery.EmbedFenceClose, true
 	case "text":
 		if t == "" {
 			return "", false
 		}
-		return "> " + t, true
+		var b strings.Builder
+		for _, ln := range strings.Split(t, "\n") {
+			ln = strings.TrimSpace(ln)
+			if ln == "" {
+				continue
+			}
+			if strings.HasPrefix(ln, "<!--") || strings.HasPrefix(ln, "<klox-embed") {
+				return "", false
+			}
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString("> " + ln)
+		}
+		if b.Len() == 0 {
+			return "", false
+		}
+		return b.String(), true
 	}
 	return "", false
 }
@@ -215,7 +268,7 @@ func (s *Server) apiBlockInsert(w http.ResponseWriter, r *http.Request) {
 		line, okv := blockLine(in.Kind, in.Text, in.URL)
 		if !okv {
 			apiErr(w, 400, "validation",
-				"block needs a valid kind (item|heading|divider|link|text) and content")
+				"block needs a valid kind (item|heading|divider|link|image|embed|text) and content")
 			return
 		}
 		seg = line
@@ -344,7 +397,8 @@ func (s *Server) apiBlockUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blk := sec.Blocks[in.Index]
-	if blk.Kind == "item" || blk.Kind == "divider" {
+	switch blk.Kind {
+	case "item", "divider":
 		apiErr(w, 400, "validation", "this block kind has no editable content")
 		return
 	}
@@ -492,4 +546,67 @@ func (s *Server) apiBlockRemove(w http.ResponseWriter, r *http.Request) {
 // later edition's own approvals (KLOX-66).
 func approveDecisionReason(issueID int64) string {
 	return fmt.Sprintf("issue %d approved", issueID)
+}
+
+// apiItemLinkOnly toggles a pauta between written and link-only
+// (KLOX-66 D2): the stored heading marker gains/loses its `link`
+// flag. A link-only pauta ships the story link with no written text —
+// readiness, citations and the writing prompts never pressure the
+// author for one.
+func (s *Server) apiItemLinkOnly(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		LinkOnly bool   `json:"link_only"`
+		Version  string `json:"version"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	iss, doc, ok := s.issueDoc(w, r)
+	if !ok {
+		return
+	}
+	if iss.Status == "sent" || iss.Status == "scheduled" {
+		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
+		return
+	}
+	if !checkDocVersion(w, doc, in.Version) {
+		return
+	}
+	ref, err := strconv.Atoi(r.PathValue("ref"))
+	if err != nil {
+		apiErr(w, 400, "validation", "item ref must be a number")
+		return
+	}
+	it := doc.findItem(ref)
+	if it == nil {
+		apiErr(w, 404, "not_found", "pauta not found in this edition")
+		return
+	}
+	if it.LinkOnly == in.LinkOnly {
+		s.respondBlock(w, r, iss, doc, nil)
+		return
+	}
+	body := iss.BodyMD
+	lineEnd := strings.IndexByte(body[it.spanStart:], '\n')
+	if lineEnd < 0 {
+		lineEnd = len(body)
+	} else {
+		lineEnd += it.spanStart
+	}
+	head := body[it.spanStart:lineEnd]
+	mi := strings.Index(head, "<!--")
+	if mi < 0 {
+		apiErr(w, 409, "blocked", "could not locate the pauta marker")
+		return
+	}
+	marker := fmt.Sprintf("<!-- item %d -->", ref)
+	if in.LinkOnly {
+		marker = fmt.Sprintf("<!-- item %d link -->", ref)
+	}
+	head = head[:mi] + marker
+	if !s.saveBlockBody(w, r, iss, body[:it.spanStart]+head+body[lineEnd:], nil) {
+		return
+	}
+	s.respondBlock(w, r, iss, doc, nil)
 }
