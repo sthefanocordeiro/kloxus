@@ -2,7 +2,6 @@ package editorial
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -10,15 +9,12 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 )
 
 func setup(t *testing.T) (*store.DB, *store.Publication) {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
+	db := testdb.WS(t)
 	ctx := context.Background()
 	def := &config.Publication{
 		Slug: "p", Name: "Pub", EditorialLine: "regra editorial",
@@ -59,5 +55,19 @@ func TestRebuildFallbackOnMissingFixture(t *testing.T) {
 	}
 	if version != 1 || content != "- Fora da minha linha editorial" {
 		t.Fatalf("fallback content=%q version=%d", content, version)
+	}
+}
+
+// TestRebuildDeterministicNoProvider is the llm_mode=off contract
+// (KLOX-55): a nil provider is never invoked — Rebuild condenses the
+// recorded reasons locally and persists a real, versioned guide.
+func TestRebuildDeterministicNoProvider(t *testing.T) {
+	db, pub := setup(t)
+	content, version, err := Rebuild(context.Background(), db, pub, nil, "m")
+	if err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+	if version != 1 || content != "- Fora da minha linha editorial" {
+		t.Fatalf("deterministic guide content=%q version=%d", content, version)
 	}
 }
