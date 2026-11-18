@@ -975,7 +975,11 @@ func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
 	// Workspaces that already hold several publications (pre-amendment
 	// data) keep them all; the guard only stops new growth, and deleting
 	// back to zero reopens onboarding.
-	if pubs, err := db(r).ListPublications(r.Context()); err == nil && len(pubs) > 0 {
+	pubs, err := db(r).ListPublications(r.Context())
+	if apiDBErr(w, r, err, "publications") {
+		return
+	}
+	if len(pubs) > 0 {
 		apiErr(w, 409, "one_newsletter",
 			"this account already has a newsletter — one newsletter per account")
 		return

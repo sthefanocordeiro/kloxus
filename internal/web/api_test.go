@@ -46,7 +46,7 @@ func apiJSON(t *testing.T, rr *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 	var v map[string]any
 	if err := json.Unmarshal(rr.Body.Bytes(), &v); err != nil {
-		t.Fatalf("response is not JSON (%d): %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("response is not JSON (%d): %s", rr.Code, shortBody(rr))
 	}
 	return v
 }
@@ -58,11 +58,11 @@ func apiErrCode(t *testing.T, rr *httptest.ResponseRecorder) string {
 	v := apiJSON(t, rr)
 	e, ok := v["error"].(map[string]any)
 	if !ok {
-		t.Fatalf("no error envelope in %d response: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("no error envelope in %d response: %s", rr.Code, shortBody(rr))
 	}
 	code, _ := e["code"].(string)
 	if code == "" {
-		t.Fatalf("error envelope has no code: %s", rr.Body.String()[:300])
+		t.Fatalf("error envelope has no code: %s", shortBody(rr))
 	}
 	return code
 }
@@ -85,7 +85,7 @@ func apiGet(t *testing.T, srv *web.Server, path string) map[string]any {
 	t.Helper()
 	rr := apiCall(t, srv, "GET", path, nil)
 	if rr.Code != 200 {
-		t.Fatalf("GET %s = %d: %s", path, rr.Code, rr.Body.String()[:300])
+		t.Fatalf("GET %s = %d: %s", path, rr.Code, shortBody(rr))
 	}
 	return apiJSON(t, rr)
 }
@@ -143,7 +143,7 @@ func TestAPIJourney(t *testing.T) {
 	rr := apiCall(t, srv, "POST", "/api/v1/publications/"+pubID+"/sources",
 		map[string]string{"type": "rss", "url": "https://feed.test/rss.xml"})
 	if rr.Code != 201 {
-		t.Fatalf("add source = %d: %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("add source = %d: %s", rr.Code, shortBody(rr))
 	}
 	if v := apiJSON(t, rr); v["note"] == nil {
 		t.Error("demo source add should carry the simulated-mode note")
@@ -185,7 +185,7 @@ func TestAPIJourney(t *testing.T) {
 	rr = apiCall(t, srv, "GET", "/api/v1/runs/"+runID+"/events", nil)
 	body := rr.Body.String()
 	if !strings.Contains(body, "event: step") || !strings.Contains(body, "event: done") {
-		t.Fatalf("SSE stream incomplete: %q", body[:200])
+		t.Fatalf("SSE stream incomplete: %.200q", body)
 	}
 	issueID := int64(run["issue_id"].(float64))
 	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
@@ -239,7 +239,7 @@ func TestAPIJourney(t *testing.T) {
 	// alternative replaces the pauta
 	rr = apiCall(t, srv, "POST", issueURL+"/items/"+iid(6)+"/decisions", map[string]string{"kind": "alternative"})
 	if rr.Code != 200 {
-		t.Fatalf("alternative = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("alternative = %d: %s", rr.Code, shortBody(rr))
 	}
 	if v := apiJSON(t, rr); v["item"].(map[string]any)["status"] != "pending" {
 		t.Fatalf("alternative replacement should be pending: %v", v["item"])
@@ -260,7 +260,7 @@ func TestAPIJourney(t *testing.T) {
 	// --- draft as a run ---
 	rr = apiCall(t, srv, "POST", issueURL+"/draft", nil)
 	if rr.Code != 202 {
-		t.Fatalf("draft = %d: %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("draft = %d: %s", rr.Code, shortBody(rr))
 	}
 	draftRun := waitRun(t, srv, apiJSON(t, rr)["run"].(map[string]any)["id"].(string))
 	if draftRun["status"] != "done" || draftRun["kind"] != "draft" {
@@ -377,7 +377,7 @@ func TestAPIJourney(t *testing.T) {
 		map[string]any{"text": "Comentários podem ser enviados até 15 de dezembro pelo novo portal do órgão",
 			"citations": []int{1}, "version": ver})
 	if rr.Code != 200 {
-		t.Fatalf("supported edit = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("supported edit = %d: %s", rr.Code, shortBody(rr))
 	}
 	// a stale version is a conflict carrying the fresh document
 	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
@@ -424,7 +424,7 @@ outer0:
 		}
 		if rr := apiCall(t, srv, "DELETE", sents+next,
 			map[string]any{"version": doc["version"].(string)}); rr.Code != 200 {
-			t.Fatalf("remove flagged sentence %s = %d: %s", next, rr.Code, rr.Body.String()[:200])
+			t.Fatalf("remove flagged sentence %s = %d: %s", next, rr.Code, shortBody(rr))
 		}
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
@@ -446,7 +446,7 @@ outer0:
 	}
 	rr = apiCall(t, srv, "POST", issueURL+"/approve", nil)
 	if rr.Code != 200 {
-		t.Fatalf("approve = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("approve = %d: %s", rr.Code, shortBody(rr))
 	}
 	rec := apiJSON(t, rr)["receipt"].(map[string]any)
 	if rec["approved_at"] == "" || rec["document_version"] == "" {
@@ -512,7 +512,7 @@ outer0:
 	// a test send records the outbox email but leaves the issue approved
 	rr = apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "test"})
 	if rr.Code != 200 {
-		t.Fatalf("send test = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("send test = %d: %s", rr.Code, shortBody(rr))
 	}
 	if v := apiJSON(t, rr); v["outbox_email_id"] == nil {
 		t.Error("send response lacks outbox_email_id")
@@ -565,7 +565,7 @@ outer0:
 	rr = apiCall(t, srv, "POST", issueURL+"/send",
 		map[string]string{"audience": "readers", "when": "schedule", "at": at.Format(time.RFC3339)})
 	if rr.Code != 200 {
-		t.Fatalf("schedule = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("schedule = %d: %s", rr.Code, shortBody(rr))
 	}
 	if v := apiJSON(t, rr); !v["scheduled"].(bool) || v["scheduled_at"] != at.Format(time.RFC3339) {
 		t.Errorf("schedule response = %v", v)
@@ -586,7 +586,7 @@ outer0:
 	// hold is a no-op for a non-scheduled issue — here it unlocks
 	rr = apiCall(t, srv, "POST", issueURL+"/hold", nil)
 	if rr.Code != 200 {
-		t.Fatalf("hold = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("hold = %d: %s", rr.Code, shortBody(rr))
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
 	if iss.Status != "drafted" {
@@ -608,7 +608,7 @@ outer0:
 	}
 	rr = apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "readers"})
 	if rr.Code != 200 {
-		t.Fatalf("send readers = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("send readers = %d: %s", rr.Code, shortBody(rr))
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
 	if iss.Status != "sent" {
@@ -948,7 +948,7 @@ outer2:
 		map[string]string{"text": "A leitura editorial é que a consulta pública muda o jogo.",
 			"version": doc["version"].(string)})
 	if rr.Code != 200 {
-		t.Fatalf("interpretation = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("interpretation = %d: %s", rr.Code, shortBody(rr))
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
 	if !strings.Contains(iss.BodyMD, "> _Interpretação: A leitura editorial") {
@@ -1018,7 +1018,9 @@ func TestAPILearnedRuleContext(t *testing.T) {
 // the critical invariant — a run on the custom publication still replays
 // the demo fixtures via canonical prompt substitution.
 func TestAPIOnboarding(t *testing.T) {
-	srv, db, _, _ := demoServer(t)
+	// onboarding is the empty-workspace journey — a seeded workspace
+	// would hit the one_newsletter guard instead (KLOX-66)
+	srv, db := emptyServer(t)
 	ctx := context.Background()
 
 	// the landing page's cited sample — workspace-free
@@ -1057,15 +1059,15 @@ func TestAPIOnboarding(t *testing.T) {
 	}
 	rr = apiCall(t, srv, "POST", "/api/v1/publications", body)
 	if rr.Code != 201 {
-		t.Fatalf("create publication = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("create publication = %d: %s", rr.Code, shortBody(rr))
 	}
 	pub, _ := apiJSON(t, rr)["publication"].(map[string]any)
 	pubID := fmt.Sprint(int64(pub["id"].(float64)))
 	if pub["custom"] != true {
 		t.Fatal("created publication is not flagged custom")
 	}
-	if pub["slug"] == "futuro-proximo" {
-		t.Fatal("slug collided with the seeded publication")
+	if pub["slug"] != "futuro-proximo" {
+		t.Fatalf("slug = %v, want it derived from the proposal name", pub["slug"])
 	}
 
 	// an empty submission fails validation
@@ -1100,7 +1102,7 @@ func TestAPIOnboarding(t *testing.T) {
 	// confirm adds everything offered and marks onboarding done
 	rr = apiCall(t, srv, "POST", base+"/sources/confirm", nil)
 	if rr.Code != 200 {
-		t.Fatalf("confirm = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("confirm = %d: %s", rr.Code, shortBody(rr))
 	}
 	srcs, _ := apiJSON(t, rr)["sources"].([]any)
 	if len(srcs) != len(offered) {
@@ -1117,7 +1119,7 @@ func TestAPIOnboarding(t *testing.T) {
 	// substitution keeps edited blocks from breaking prompt-hash lookups
 	rr = apiCall(t, srv, "POST", base+"/runs", nil)
 	if rr.Code != 202 {
-		t.Fatalf("start run = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("start run = %d: %s", rr.Code, shortBody(rr))
 	}
 	run, _ := apiJSON(t, rr)["run"].(map[string]any)
 	done := waitRun(t, srv, run["id"].(string))
@@ -1144,7 +1146,7 @@ func TestAPIOnboarding(t *testing.T) {
 	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
 	rr = apiCall(t, srv, "POST", issueURL+"/draft", nil)
 	if rr.Code != 202 {
-		t.Fatalf("draft on custom pub = %d: %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("draft on custom pub = %d: %s", rr.Code, shortBody(rr))
 	}
 	if dr := waitRun(t, srv, apiJSON(t, rr)["run"].(map[string]any)["id"].(string)); dr["status"] != "done" {
 		t.Fatalf("draft run on custom pub failed: %v", dr["error"])
@@ -1155,7 +1157,7 @@ func TestAPIOnboarding(t *testing.T) {
 		t.Fatalf("approve on custom pub: %v", err)
 	}
 	if rr := apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "readers"}); rr.Code != 200 {
-		t.Fatalf("send on custom pub = %d: %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("send on custom pub = %d: %s", rr.Code, shortBody(rr))
 	}
 	pp := apiGet(t, srv, "/api/v1/p/"+pub["slug"].(string)+"/1")
 	if pp["gated"] != true {
@@ -1193,7 +1195,7 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 	// field it did not send keeps the stored value
 	rr := apiCall(t, srv, "PUT", base, map[string]any{"sections": before["sections"]})
 	if rr.Code != 200 {
-		t.Fatalf("sections-only PUT = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("sections-only PUT = %d: %s", rr.Code, shortBody(rr))
 	}
 	got := apiJSON(t, rr)["publication"].(map[string]any)
 	for _, k := range []string{"name", "topic", "audience", "editorial_line", "tone", "frequency", "ai_disclosure"} {
@@ -1205,7 +1207,7 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 	// a rename keeps the stored section list
 	rr = apiCall(t, srv, "PUT", base, map[string]any{"name": "Futuro Renomeado"})
 	if rr.Code != 200 {
-		t.Fatalf("rename PUT = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("rename PUT = %d: %s", rr.Code, shortBody(rr))
 	}
 	got = apiJSON(t, rr)["publication"].(map[string]any)
 	if got["name"] != "Futuro Renomeado" {
@@ -1221,6 +1223,16 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 	// prompt-bearing fields for the demo sample on reads, so a partial
 	// PUT built on the substituted values would persist the sample's
 	// text over the creator's (KLOX-65 D4) ---
+	// one newsletter per account (KLOX-66): creating the custom pub
+	// first requires deleting the seeded one — which is also the
+	// "delete returns the account to onboarding" edge case
+	rr = apiCall(t, srv, "DELETE", base, map[string]any{"confirm": true})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("delete seeded publication = %d: %s", rr.Code, shortBody(rr))
+	}
+	if n := len(apiGet(t, srv, "/api/v1/publications")["publications"].([]any)); n != 0 {
+		t.Fatalf("publications after delete = %d, want 0", n)
+	}
 	create := map[string]any{
 		"name":           "Corner Bulletin",
 		"topic":          "street food and corner shops",
@@ -1238,7 +1250,7 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 	}
 	rr = apiCall(t, srv, "POST", "/api/v1/publications", create)
 	if rr.Code != 201 {
-		t.Fatalf("create custom publication = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("create custom publication = %d: %s", rr.Code, shortBody(rr))
 	}
 	custom, _ := apiJSON(t, rr)["publication"].(map[string]any)
 	if custom["custom"] != true {
@@ -1250,7 +1262,7 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 	// text — none of the sample's fields may leak into the stored row
 	rr = apiCall(t, srv, "PUT", cBase, map[string]any{"sections": custom["sections"]})
 	if rr.Code != 200 {
-		t.Fatalf("custom sections-only PUT = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("custom sections-only PUT = %d: %s", rr.Code, shortBody(rr))
 	}
 	got = apiJSON(t, rr)["publication"].(map[string]any)
 	for _, k := range []string{"name", "topic", "audience", "editorial_line", "tone", "language", "frequency", "ai_disclosure"} {
@@ -1270,7 +1282,7 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 		"paywall":        custom["paywall"],
 	})
 	if rr.Code != 200 {
-		t.Fatalf("custom settings PUT = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("custom settings PUT = %d: %s", rr.Code, shortBody(rr))
 	}
 	got = apiJSON(t, rr)["publication"].(map[string]any)
 	cSecs, _ := custom["sections"].([]any)

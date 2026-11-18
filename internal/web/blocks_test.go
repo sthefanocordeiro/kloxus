@@ -131,18 +131,17 @@ func TestBlockOpsJourney(t *testing.T) {
 		t.Fatalf("after move kinds = %v", kinds[n-4:])
 	}
 
-	// remove the divider
+	// remove the divider — after the move the tail is
+	// [link, heading, text, divider], so it sits at n-1
 	rr = apiCall(t, srv, "DELETE", issueURL+"/blocks", map[string]any{
-		"section": sec, "index": n - 2, "version": ver(),
+		"section": sec, "index": n - 1, "version": ver(),
 	})
 	if rr.Code != 200 {
 		t.Fatalf("remove = %d: %s", rr.Code, shortBody(rr))
 	}
 	kinds = blockKinds(docBlocks(t, doc(), sec))
-	for _, k := range kinds {
-		if k == "divider" {
-			t.Fatalf("divider still in %v", kinds)
-		}
+	if len(kinds) != n-1 || kinds[n-4] != "link" || kinds[n-3] != "heading" || kinds[n-2] != "text" {
+		t.Fatalf("tail after removing divider = %v", kinds)
 	}
 
 	// validation guards
@@ -242,9 +241,13 @@ func TestBlockPautaInsert(t *testing.T) {
 // existing publication stays untouched.
 func TestOneNewsletterGuard(t *testing.T) {
 	srv, _, pub, _ := demoServer(t)
+	// a fully valid create body — anything less fails validation
+	// before the guard runs, which would prove nothing about it
 	rr := apiCall(t, srv, "POST", "/api/v1/publications", map[string]any{
 		"name": "Second Letter", "frequency": "weekly",
-		"sections": []map[string]any{{"title": "Top", "format": "briefing", "capacity": 3}},
+		"sections": []map[string]any{
+			{"title": "Top", "format": "news", "items": 3, "commentary": "optional", "access": "all"},
+		},
 	})
 	if rr.Code != 409 || apiErrCode(t, rr) != "one_newsletter" {
 		t.Fatalf("second publication = %d code=%q", rr.Code, apiErrCode(t, rr))
@@ -294,21 +297,35 @@ func TestEditedAfterApproval(t *testing.T) {
 	issueID := runPhaseA(t, srv, db, pub.ID)
 	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
 
-	// lineup decisions like the journey test — keep the approved items
+	// lineup decisions like the journey test — the canonical fixture
+	// lineup so the recorded draft replay matches: four rejects, the
+	// alternative swap, and every remaining pending item approved
 	iis, err := db.IssueItems(ctx, issueID)
 	if err != nil {
 		t.Fatalf("IssueItems: %v", err)
 	}
 	sort.Slice(iis, func(a, b int) bool { return iis[a].ID < iis[b].ID })
-	for _, ii := range iis[1:] {
-		kind := "reject"
-		if ii.ID == iis[6].ID {
-			kind = "alternative"
+	decide := func(iid int64, kind, reason string) {
+		body := map[string]string{"kind": kind}
+		if reason != "" {
+			body["reason"] = reason
 		}
-		rr := apiCall(t, srv, "POST", issueURL+"/items/"+fmt.Sprint(ii.ID)+"/decisions",
-			map[string]string{"kind": kind, "reason": "cut"})
+		rr := apiCall(t, srv, "POST", issueURL+"/items/"+fmt.Sprint(iid)+"/decisions", body)
 		if rr.Code != 200 {
-			t.Fatalf("decision on %d = %d: %s", ii.ID, rr.Code, shortBody(rr))
+			t.Fatalf("decision %s on %d = %d: %s", kind, iid, rr.Code, shortBody(rr))
+		}
+	}
+	for _, i := range []int{1, 2, 5, 7} {
+		decide(iis[i].ID, "reject", "cut")
+	}
+	decide(iis[6].ID, "alternative", "")
+	iis2, err := db.IssueItems(ctx, issueID)
+	if err != nil {
+		t.Fatalf("IssueItems after alternative: %v", err)
+	}
+	for _, ii := range iis2 {
+		if ii.Status == "pending" {
+			decide(ii.ID, "approve", "")
 		}
 	}
 	rr := apiCall(t, srv, "POST", issueURL+"/draft", nil)
@@ -359,7 +376,11 @@ func TestEditedAfterApproval(t *testing.T) {
 	if rr := apiCall(t, srv, "POST", issueURL+"/approve", nil); rr.Code != 200 {
 		t.Fatalf("approve = %d: %s", rr.Code, shortBody(rr))
 	}
-	if sum := apiGet(t, srv, issueURL); sum["edited_after_approval"] == true {
+	// the summary lives under "issue" — status, edited_after_approval
+	sum := func() map[string]any {
+		return apiGet(t, srv, issueURL)["issue"].(map[string]any)
+	}
+	if sum()["edited_after_approval"] == true {
 		t.Fatal("fresh approval should not flag edited_after_approval")
 	}
 
@@ -372,12 +393,11 @@ func TestEditedAfterApproval(t *testing.T) {
 	if rr.Code != 200 {
 		t.Fatalf("post-approval block insert = %d: %s", rr.Code, shortBody(rr))
 	}
-	sum := apiGet(t, srv, issueURL)
-	if sum["status"] != "drafted" {
-		t.Fatalf("status after edit = %v, want drafted", sum["status"])
+	if sum()["status"] != "drafted" {
+		t.Fatalf("status after edit = %v, want drafted", sum()["status"])
 	}
-	if sum["edited_after_approval"] != true {
-		t.Fatalf("edited_after_approval = %v", sum["edited_after_approval"])
+	if sum()["edited_after_approval"] != true {
+		t.Fatalf("edited_after_approval = %v", sum()["edited_after_approval"])
 	}
 
 	// re-approval clears the marker
@@ -387,8 +407,7 @@ func TestEditedAfterApproval(t *testing.T) {
 	if rr := apiCall(t, srv, "POST", issueURL+"/approve", nil); rr.Code != 200 {
 		t.Fatalf("re-approve = %d: %s", rr.Code, shortBody(rr))
 	}
-	sum = apiGet(t, srv, issueURL)
-	if sum["status"] != "approved" || sum["edited_after_approval"] == true {
-		t.Fatalf("after re-approval status=%v marker=%v", sum["status"], sum["edited_after_approval"])
+	if sum()["status"] != "approved" || sum()["edited_after_approval"] == true {
+		t.Fatalf("after re-approval status=%v marker=%v", sum()["status"], sum()["edited_after_approval"])
 	}
 }

@@ -60,7 +60,7 @@ func TestDeterministicModeJourney(t *testing.T) {
 		rr := apiCall(t, srv, "POST", issueURL+"/items/"+fmt.Sprint(iid)+"/decisions",
 			map[string]string{"kind": kind})
 		if rr.Code != 200 {
-			t.Fatalf("decision %s on %d = %d %s", kind, iid, rr.Code, rr.Body.String()[:300])
+			t.Fatalf("decision %s on %d = %d %s", kind, iid, rr.Code, shortBody(rr))
 		}
 	}
 	decide(iis[0].ID, "alternative") // deterministic substitution
@@ -76,7 +76,7 @@ func TestDeterministicModeJourney(t *testing.T) {
 
 	rr := apiCall(t, srv, "POST", issueURL+"/draft", nil)
 	if rr.Code != http.StatusAccepted {
-		t.Fatalf("POST draft = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("POST draft = %d %s", rr.Code, shortBody(rr))
 	}
 	run := waitRun(t, srv, apiJSON(t, rr)["run"].(map[string]any)["id"].(string))
 	if run["status"] != "done" {
@@ -123,7 +123,7 @@ func TestDetRejectionLearnsGuideRule(t *testing.T) {
 	rr := apiCall(t, srv, "POST", issueURL+"/items/"+fmt.Sprint(iis[0].ID)+"/decisions",
 		map[string]string{"kind": "reject", "reason": "não é para meu público"})
 	if rr.Code != 200 {
-		t.Fatalf("reject = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("reject = %d %s", rr.Code, shortBody(rr))
 	}
 	resp := apiJSON(t, rr)
 	guide, ok := resp["guide"].(map[string]any)
@@ -155,7 +155,7 @@ func TestDetRejectionLearnsGuideRule(t *testing.T) {
 
 	// manual rebuild takes the same deterministic path — 200, no model
 	if rr := apiCall(t, srv, "POST", "/api/v1/publications/"+fmt.Sprint(pub.ID)+"/guide/rebuild", nil); rr.Code != 200 {
-		t.Fatalf("guide/rebuild = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("guide/rebuild = %d %s", rr.Code, shortBody(rr))
 	}
 }
 

@@ -66,7 +66,7 @@ func TestBulkRemoveFlagged(t *testing.T) {
 	}
 	rr := apiCall(t, srv, "POST", issueURL+"/draft", nil)
 	if rr.Code != 202 {
-		t.Fatalf("draft = %d: %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("draft = %d: %s", rr.Code, shortBody(rr))
 	}
 	waitRun(t, srv, apiJSON(t, rr)["run"].(map[string]any)["id"].(string))
 
@@ -131,7 +131,7 @@ func TestBulkRemoveFlagged(t *testing.T) {
 	// the bulk delete: one call drops every flagged sentence
 	rr = apiCall(t, srv, "DELETE", bulk, map[string]any{"version": ver})
 	if rr.Code != 200 {
-		t.Fatalf("bulk remove = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("bulk remove = %d: %s", rr.Code, shortBody(rr))
 	}
 	v := apiJSON(t, rr)
 	removed, _ := v["removed"].([]any)
@@ -195,7 +195,7 @@ func TestBulkRemoveFlagged(t *testing.T) {
 	rr = apiCall(t, srv, "POST", bulk,
 		map[string]any{"sentences": removed, "version": v["version"].(string)})
 	if rr.Code != 200 {
-		t.Fatalf("batch restore = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("batch restore = %d: %s", rr.Code, shortBody(rr))
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
 	if len(iss.Flags) != wantFlags {
@@ -218,6 +218,6 @@ func TestBulkRemoveFlagged(t *testing.T) {
 	rr = apiCall(t, srv, "DELETE", bulk,
 		map[string]any{"version": doc["version"].(string)})
 	if rr.Code != 200 {
-		t.Fatalf("second bulk remove = %d: %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("second bulk remove = %d: %s", rr.Code, shortBody(rr))
 	}
 }

@@ -51,7 +51,7 @@ func detApproveAll(t *testing.T, srv *web.Server, db *store.DB, issueID int64) {
 			rr := apiCall(t, srv, "POST", issueURL+"/items/"+fmt.Sprint(ii.ID)+"/decisions",
 				map[string]string{"kind": "approve"})
 			if rr.Code != 200 {
-				t.Fatalf("decision on %d = %d %s", ii.ID, rr.Code, rr.Body.String()[:300])
+				t.Fatalf("decision on %d = %d %s", ii.ID, rr.Code, shortBody(rr))
 			}
 		}
 	}
@@ -75,7 +75,7 @@ func TestDetGuardJourneyKillOn(t *testing.T) {
 
 	rr := apiCall(t, srv, "POST", "/api/v1/issues/"+fmt.Sprint(issueID)+"/draft", nil)
 	if rr.Code != http.StatusAccepted {
-		t.Fatalf("POST draft = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("POST draft = %d %s", rr.Code, shortBody(rr))
 	}
 	run := waitRun(t, srv, apiJSON(t, rr)["run"].(map[string]any)["id"].(string))
 	if run["status"] != "done" {
