@@ -14,6 +14,18 @@ export interface Workspace {
   mail_transport?: "outbox" | "resend" | "synthetic" | "custom";
 }
 
+// One newsletter section as the builder edits it: id is the stable
+// identity that survives renames, format shapes the issue slot, access
+// marks subscriber-only sections (KLOX-65).
+export interface NewsletterSection {
+  id: string;
+  title: string;
+  format: "featured" | "news" | "links";
+  items: number;
+  commentary: string; // required | optional | none
+  access: "all" | "subscribers";
+}
+
 export interface Publication {
   id: number;
   slug: string;
@@ -26,7 +38,7 @@ export interface Publication {
   tone: string;
   frequency: string;
   ai_disclosure: string;
-  sections: { title: string; items: number; commentary: string }[];
+  sections: NewsletterSection[];
   paywall: { enabled: boolean; paid_sections: string[]; price: string };
 }
 
@@ -147,14 +159,20 @@ export interface Candidate {
 }
 
 export interface BoardSection {
+  id?: string;
   title: string;
   capacity: number;
   commentary: string;
+  format?: string;
+  access?: string;
 }
 
 export interface CandidatesResponse {
   candidates: Candidate[];
   sections: BoardSection[];
+  // true when the builder was edited after this edition's run — the
+  // edition keeps its own sections (KLOX-65)
+  sections_changed?: boolean;
   demo: boolean;
   llm_mode: string;
   // bench pagination (KLOX-45): the ranked pool is capped at the top
@@ -223,6 +241,9 @@ export interface DocItem {
 
 export interface DocSection {
   title: string;
+  // featured | news | links — a links section's items are link-only:
+  // the link is the source, no written text is expected (KLOX-65/D2)
+  format?: string;
   commentary: { mode: string; text: string };
   items: DocItem[];
 }
@@ -285,7 +306,7 @@ export interface Proposal {
   language: string;
   frequency: string;
   ai_disclosure: string;
-  sections: { title: string; items: number; commentary: string }[];
+  sections: NewsletterSection[];
   sources: { type: string; url: string }[];
   paywall: { enabled: boolean; paid_sections: string[]; price: string };
 }
@@ -476,6 +497,10 @@ export const api = {
     request<{ proposal: Proposal }>("POST", "/api/v1/publications/propose", { material }).then((r) => r.proposal),
   createPublication: (p: Omit<Proposal, "sources">) =>
     request<{ publication: Publication }>("POST", "/api/v1/publications", p).then((r) => r.publication),
+  updatePublication: (id: string | number, p: Partial<Omit<Proposal, "sources">>) =>
+    request<{ publication: Publication }>("PUT", `/api/v1/publications/${id}`, p).then((r) => r.publication),
+  deletePublication: (id: string | number) =>
+    request<void>("DELETE", `/api/v1/publications/${id}`, { confirm: true }),
   sources: (pubID: number | string) =>
     request<{ sources: SourceRow[] }>("GET", `/api/v1/publications/${pubID}/sources`).then((r) => r.sources),
   sourceCatalog: (pubID: number | string) =>

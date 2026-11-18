@@ -536,6 +536,7 @@ export function IssuePage() {
                         item={sel ? findItem(doc, sel.ref) : null}
                         citeRef={sel?.citeRef}
                         sid={sel?.sid}
+                        linkOnly={!!sel && findItemFormat(doc, sel.ref) === "links"}
                       />
                     ) : (
                       <PreviewPane issueID={issueID} />
@@ -606,6 +607,12 @@ export function IssuePage() {
 
 function findItem(doc: IssueDocument | null, ref: number) {
   return doc?.sections.flatMap((s) => s.items ?? []).find((i) => i.ref === ref) ?? null;
+}
+
+// findItemFormat returns the format of the section holding item ref —
+// links-format sections are link-only (KLOX-65/D2).
+function findItemFormat(doc: IssueDocument | null, ref: number): string | undefined {
+  return doc?.sections.find((s) => (s.items ?? []).some((i) => i.ref === ref))?.format;
 }
 
 // --- approve popover + dialog ---

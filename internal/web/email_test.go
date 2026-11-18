@@ -112,7 +112,7 @@ func liveDeps(t *testing.T, mailer delivery.Sender, tweak func(*config.Config)) 
 func approvedIssue(t *testing.T, db *store.DB, pubID int64, num int, subject string) int64 {
 	t.Helper()
 	body := "# " + subject + "\n\n## Section\n\n### Item\n\nA short sourced sentence [1]."
-	iid, err := db.CreateIssue(context.Background(), pubID, num, subject, body)
+	iid, err := db.CreateIssue(context.Background(), pubID, num, subject, body, nil)
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}

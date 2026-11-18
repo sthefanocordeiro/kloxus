@@ -275,11 +275,15 @@ function CommentaryView({ node, editor, getPos }: NodeViewProps) {
 // selects it in the evidence pane. The headline lives in attrs so no
 // keystroke can rewrite or merge it into a sentence. A manual-compose
 // item with no sentences yet gets a dashed "write it" affordance that
-// opens the compose box in the evidence pane.
+// opens the compose box in the evidence pane — link-only items
+// (links-format sections) are exempt: the link is the source (D2).
 function ItemHeadingView({ node, editor }: NodeViewProps) {
   const { t } = useT();
   const actions = useContext(DocActionsCtx);
-  const a = node.attrs as { ref: number; issueItemId: number; headline: string; empty: boolean; flagged: number };
+  const a = node.attrs as {
+    ref: number; issueItemId: number; headline: string;
+    empty: boolean; flagged: number; linkOnly: boolean;
+  };
   const [busy, setBusy] = useState(false);
   const open = () => {
     blurEditor(editor);
@@ -311,7 +315,7 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
           </Button>
         )}
       </div>
-      {a.empty && !actions.readOnly && (
+      {a.empty && !a.linkOnly && !actions.readOnly && (
         <button
           type="button"
           contentEditable={false}
@@ -408,7 +412,7 @@ export const ItemHeading = Node.create({
   addAttributes() {
     return {
       ref: { default: 0 }, issueItemId: { default: 0 }, headline: { default: "" },
-      empty: { default: false }, flagged: { default: 0 },
+      empty: { default: false }, flagged: { default: 0 }, linkOnly: { default: false },
     };
   },
   parseHTML() {
