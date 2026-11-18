@@ -7,6 +7,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -71,6 +72,9 @@ func TestResearchKeyContentIdentity(t *testing.T) {
 	}
 }
 
+// TestResearcherDegradedNoLLM: with no provider configured ForStory
+// degrades to absence — owner D4: the unavailable element is hidden,
+// never replaced by a placeholder payload.
 func TestResearcherDegradedNoLLM(t *testing.T) {
 	rc := &Researcher{Model: "claude-haiku-5-5"} // no Pool, no LLM
 	story := &store.Story{Title: "S", Items: []store.Item{
@@ -83,14 +87,8 @@ func TestResearcherDegradedNoLLM(t *testing.T) {
 	if outcome != researchDegraded {
 		t.Fatalf("outcome = %v, want degraded", outcome)
 	}
-	if res.Summary != ResearchUnavailable {
-		t.Errorf("summary = %q", res.Summary)
-	}
-	if len(res.Facts) == 0 || res.Facts[0].Text != "Primeira frase da fonte" {
-		t.Errorf("degraded facts = %+v", res.Facts)
-	}
-	if len(res.Sources) != 1 || res.Sources[0].ItemID != 1 {
-		t.Errorf("sources = %+v", res.Sources)
+	if res != nil {
+		t.Fatalf("degraded research = %+v, want nil (no placeholder)", res)
 	}
 }
 
@@ -133,7 +131,8 @@ func TestResearcherFreshAndPaidCap(t *testing.T) {
 }
 
 // TestResearcherBlockedDegrades: a provider refusal (kill switch,
-// budget) returns the degraded payload, never an error — §7.3.
+// budget) returns no research, never an error — §7.3 as amended by
+// owner D4 (absence, not a placeholder payload).
 func TestResearcherBlockedDegrades(t *testing.T) {
 	rc := &Researcher{
 		Model: "claude-haiku-5-5",
@@ -146,8 +145,8 @@ func TestResearcherBlockedDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("blocked provider must degrade, not error: %v", err)
 	}
-	if outcome != researchDegraded || res.Summary != ResearchUnavailable {
-		t.Fatalf("outcome=%v summary=%q", outcome, res.Summary)
+	if outcome != researchDegraded || res != nil {
+		t.Fatalf("outcome=%v res=%+v — D4 degrades to absence, not placeholder text", outcome, res)
 	}
 }
 
@@ -533,9 +532,11 @@ func TestComposeSkeletonResearchPrefill(t *testing.T) {
 }
 
 // TestComposeSkeletonResearchDegraded: a provider refusal inside
-// ensureResearch still produces the dossier ("Resumo indisponível
-// agora" + excerpts) but the pauta stays a manual slot — no ai_draft
-// marker, no AI text in the body, no paid action (§7.3).
+// ensureResearch writes no research dossier (owner D4 — no
+// "unavailable" placeholders). ensureManualDossiers fills the pauta
+// with the deterministic dossier — real sourced material, no
+// placeholder text — and the slot stays manual: no ai_draft, no AI
+// text in the body, no paid action.
 func TestComposeSkeletonResearchDegraded(t *testing.T) {
 	pool := testdb.Pool(t)
 	db := testdb.WSOn(t, pool)
@@ -553,12 +554,26 @@ func TestComposeSkeletonResearchDegraded(t *testing.T) {
 		t.Fatalf("degraded pauta marked ai_draft: %+v %v", ii, err)
 	}
 	dj, err := db.Dossier(ctx, iiID)
-	if err != nil || !strings.Contains(dj, ResearchUnavailable) {
-		t.Fatalf("degraded dossier: %v %q", err, dj)
+	if err != nil {
+		t.Fatalf("degraded pauta must keep a deterministic dossier: %v", err)
+	}
+	if strings.Contains(strings.ToLower(dj), "indispon") || strings.Contains(strings.ToLower(dj), "unavailable") {
+		t.Fatalf("placeholder text in dossier: %q", dj)
+	}
+	var d Dossier
+	if err := json.Unmarshal([]byte(dj), &d); err != nil {
+		t.Fatalf("dossier json: %v", err)
+	}
+	if d.Origin != "manual" {
+		t.Fatalf("degraded dossier origin = %q, want manual (deterministic fill)", d.Origin)
+	}
+	if len(d.Sources) == 0 {
+		t.Fatal("deterministic dossier lost its sources")
 	}
 	iss, _ := db.GetIssue(ctx, issueID)
-	if strings.Contains(iss.BodyMD, ResearchUnavailable) {
-		t.Fatal("fallback text leaked into the issue body")
+	if strings.Contains(strings.ToLower(iss.BodyMD), "indispon") ||
+		strings.Contains(strings.ToLower(iss.BodyMD), "unavailable") {
+		t.Fatalf("placeholder text leaked into the issue body:\n%s", iss.BodyMD)
 	}
 	if n, _ := db.PaidActionCount(ctx, store.PaidActionResearch, storyID); n != 0 {
 		t.Fatalf("degraded path recorded a paid action: %d", n)

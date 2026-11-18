@@ -1692,11 +1692,14 @@ func (r *Runner) ensureManualDossiers(ctx context.Context, issueID int64) error 
 
 // ensureResearch fills the missing dossiers from the shared research
 // cache — generating one Haiku call per new story (a §7.3 paid action)
-// and marking each AI-filled pauta ai_draft. A degraded answer still
-// produces a dossier ("Resumo indisponível agora" + source excerpts)
-// but writes no body: the slot stays empty for the author, never
-// marked as AI text. draftByRef receives the item bodies for
-// assembleIssue.
+// and marking each AI-filled pauta ai_draft. A story the research
+// cannot serve (cap, kill switch, provider failure) gets no research
+// dossier at all — owner D4 hides the unavailable element instead of
+// labeling it: ensureManualDossiers then fills the slot with the same
+// deterministic dossier compose uses with the model off, so the pauta
+// keeps real sourced facts and stays a manual slot — empty body, no
+// ai_draft marker, edits checked by the deterministic rule only.
+// draftByRef receives the item bodies for assembleIssue.
 func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef map[int]struct {
 	headline, body string
 }) {
@@ -1727,13 +1730,16 @@ func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef m
 		if err != nil {
 			return // store failure — let ensureManualDossiers take over
 		}
+		if outcome == researchDegraded {
+			continue // no research dossier — the deterministic fill owns this slot
+		}
 		maxRef++
 		d := res.ToDossier(maxRef)
 		data, _ := json.Marshal(d)
 		if err := r.DB.SaveDossier(ctx, ii.ID, string(data)); err != nil {
 			return
 		}
-		if outcome != researchDegraded && strings.TrimSpace(res.DraftBody) != "" {
+		if strings.TrimSpace(res.DraftBody) != "" {
 			draftByRef[maxRef] = struct{ headline, body string }{body: res.DraftBody}
 			if err := r.DB.SetIssueItemAIDraft(ctx, ii.ID, true); err != nil {
 				return
@@ -1745,9 +1751,11 @@ func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef m
 // ComposeSkeleton writes the issue body for the board's lineup. With a
 // Researcher wired (AI on) each pauta arrives prefilled with the cached
 // AI draft — claims carrying [n] citations, marked ai_draft until the
-// author edits — and a story the research could not serve degrades to
-// the manual empty slot (§7.3). With no Researcher the manual skeleton
-// is exactly what it was: headlines + source lists only, no AI text.
+// author edits — while a story the research could not serve keeps the
+// same deterministic dossier and empty slot it would have with the
+// model off (owner D4: nothing renders an "unavailable" placeholder).
+// With no Researcher the manual skeleton is exactly what it was:
+// headlines + source lists only, no AI text.
 func (r *Runner) ComposeSkeleton(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
 	res := &Result{IssueID: issueID}
 	draftByRef := map[int]struct {

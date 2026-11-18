@@ -415,10 +415,13 @@ per-story research cache — sourced facts with `[n]` citations and an
 AI-written, author-editable draft body, marked `ai_draft` (one Haiku
 call per new story, capped by the workspace's 5 paid actions/day; a
 story the research cannot serve — cap, kill switch, provider failure —
-degrades to `"Resumo indisponível agora"` plus source excerpts and
-stays an empty slot, never an error). The research JSON is shared
-across newsletters: two publications picking the same story pay for it
-once. The author-only "Seu comentário" field is never AI-populated.
+gets no research dossier at all: the deterministic dossier fills the
+slot with real sourced material and the pauta stays an empty manual
+slot — owner decision D4 hides the unavailable element instead of
+showing any "unavailable" placeholder or error copy). The research
+JSON is shared across newsletters: two publications picking the same
+story pay for it once. The author-only "Seu comentário" field is never
+AI-populated.
 With the model off the path is exactly the deterministic one below.
 Deterministic: the lineup becomes the issue document as **empty item
 slots** — section headings, item headlines and `Sources:` lists, no
