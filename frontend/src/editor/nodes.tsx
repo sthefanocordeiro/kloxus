@@ -3,7 +3,7 @@ import { mergeAttributes, Node } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { createContext, useContext } from "react";
 import { AlertTriangle, PenLine, Quote, Trash2 } from "lucide-react";
-import { useT } from "../i18n";
+import { flagNote, sectionTitle, useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { Button } from "../ui";
 // What the sentence/commentary node views can ask the issue page to do.
@@ -13,9 +13,14 @@ export interface DocActions {
   editSentence: (sid: string, text: string, citations: number[]) => Promise<string | null>;
   interpret: (sid: string, text?: string) => Promise<boolean>;
   removeSentence: (sid: string) => Promise<boolean>;
+  // bulk action: drop every flagged sentence of an item in one call
+  removeFlagged: (itemRef: number) => Promise<boolean>;
   // open the evidence pane on item ref, optionally highlighting a
   // citation's passage and flashing the sentence
   showEvidence: (itemRef: number, opts?: { citeRef?: number; sid?: string; issueItemId?: number }) => void;
+  // manual compose: append editor-written text to an item — returns
+  // null on success or the refusal reason to show inline
+  addSentence: (itemRef: number, text: string, citations: number[], kind: "fact" | "interpretation") => Promise<string | null>;
   readOnly: boolean;
 }
 
@@ -36,11 +41,18 @@ function blurEditor(editor: NodeViewProps["editor"]) {
   editor.commands.blur();
 }
 
+// FIX_SENTENCE_EVENT is dispatched on a sentence's wrapper element by
+// "Fix now" and the readiness checklist — the sentence opens its edit
+// affordance instead of only flashing (KLOX-52).
+export const FIX_SENTENCE_EVENT = "kloxus:fix-sentence";
+
 export const DocActionsCtx = createContext<DocActions>({
   editSentence: async () => null,
   interpret: async () => false,
   removeSentence: async () => false,
+  removeFlagged: async () => false,
   showEvidence: () => {},
+  addSentence: async () => null,
   readOnly: true,
 });
 
@@ -58,7 +70,7 @@ interface Src {
 // treatment with its three actions — Edit / Mark as interpretation /
 // Remove, no "dismiss".
 function SentenceView({ node }: NodeViewProps) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const actions = useContext(DocActionsCtx);
   const a = node.attrs as {
     sid: string;
@@ -83,14 +95,33 @@ function SentenceView({ node }: NodeViewProps) {
     }
   }, [a.sid]);
 
+  // ...and can open this sentence's fix affordance — the edit box with
+  // its citation chips is where an uncited or unsupported claim is fixed
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const open = () => {
+      if (actions.readOnly) return;
+      setDraft(text);
+      setCites(a.citations);
+      setEditErr("");
+      setEditing(true);
+    };
+    el.addEventListener(FIX_SENTENCE_EVENT, open);
+    return () => el.removeEventListener(FIX_SENTENCE_EVENT, open);
+  }, [actions.readOnly, text, a.citations]);
+
   const interpretation = a.kind === "interpretation";
   const itemRef = Number(a.sid.split(".")[0]);
 
   const run = async (fn: () => Promise<boolean>) => {
     setBusy(true);
-    await fn();
-    setBusy(false);
-    setEditing(false);
+    try {
+      await fn();
+    } finally {
+      setBusy(false);
+      setEditing(false);
+    }
   };
 
   const saveEdit = async () => {
@@ -144,7 +175,7 @@ function SentenceView({ node }: NodeViewProps) {
         <div className="mt-1 flex flex-wrap items-center gap-2" contentEditable={false}>
           <span className="inline-flex items-center gap-1 text-xs text-warn">
             <AlertTriangle size={13} />
-            {a.flag}
+            {flagNote(lang, a.flag)}
           </span>
           <span className="flex-1" />
           <Button size="sm" variant="outline" disabled={busy}
@@ -242,21 +273,58 @@ function CommentaryView({ node, editor, getPos }: NodeViewProps) {
 
 // ItemHeadingView — the story's headline as a non-editable atom; click
 // selects it in the evidence pane. The headline lives in attrs so no
-// keystroke can rewrite or merge it into a sentence.
+// keystroke can rewrite or merge it into a sentence. A manual-compose
+// item with no sentences yet gets a dashed "write it" affordance that
+// opens the compose box in the evidence pane — link-only items
+// (links-format sections) are exempt: the link is the source (D2).
 function ItemHeadingView({ node, editor }: NodeViewProps) {
+  const { t } = useT();
   const actions = useContext(DocActionsCtx);
-  const a = node.attrs as { ref: number; issueItemId: number; headline: string };
+  const a = node.attrs as {
+    ref: number; issueItemId: number; headline: string;
+    empty: boolean; flagged: number; linkOnly: boolean;
+  };
+  const [busy, setBusy] = useState(false);
+  const open = () => {
+    blurEditor(editor);
+    actions.showEvidence(a.ref, { issueItemId: a.issueItemId });
+  };
   return (
-    <NodeViewWrapper
-      className="mt-6 cursor-pointer font-doc text-lg font-semibold hover:text-teal"
-      onMouseDown={(e: MouseEvent) => e.preventDefault()}
-      onClick={() => {
-        blurEditor(editor);
-        actions.showEvidence(a.ref, { issueItemId: a.issueItemId });
-      }}
-      data-item-ref={a.ref}
-    >
-      <h3>{a.headline}</h3>
+    <NodeViewWrapper className="mt-6" onMouseDown={(e: MouseEvent) => e.preventDefault()} data-item-ref={a.ref}>
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="cursor-pointer font-doc text-lg font-semibold hover:text-teal" onClick={open}>
+          {a.headline}
+        </h3>
+        {a.flagged > 0 && !actions.readOnly && (
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={busy}
+            contentEditable={false}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await actions.removeFlagged(a.ref);
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="shrink-0"
+          >
+            <Trash2 size={12} /> {t.doc.removeFlagged(a.flagged)}
+          </Button>
+        )}
+      </div>
+      {a.empty && !a.linkOnly && !actions.readOnly && (
+        <button
+          type="button"
+          contentEditable={false}
+          onClick={open}
+          className="mt-1 inline-flex w-full items-center gap-1.5 rounded-[var(--radius-card)] border border-dashed border-line px-3 py-2 text-left text-xs text-muted transition-colors hover:border-teal/60 hover:text-teal"
+        >
+          <PenLine size={12} /> {t.compose.emptySlot}
+        </button>
+      )}
     </NodeViewWrapper>
   );
 }
@@ -264,6 +332,7 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
 // SectionHeadingView — the section title atom; clicking it only defocuses
 // the editor, it is never a text target.
 function SectionHeadingView({ node, editor }: NodeViewProps) {
+  const { lang } = useT();
   const a = node.attrs as { title: string };
   return (
     <NodeViewWrapper
@@ -271,7 +340,7 @@ function SectionHeadingView({ node, editor }: NodeViewProps) {
       onClick={() => blurEditor(editor)}
       data-section-title="1"
     >
-      <h2 className="mb-1 mt-8 font-doc text-xl font-semibold">{a.title}</h2>
+      <h2 className="mb-1 mt-8 font-doc text-xl font-semibold">{sectionTitle(lang, a.title)}</h2>
     </NodeViewWrapper>
   );
 }
@@ -341,7 +410,10 @@ export const ItemHeading = Node.create({
   atom: true,
   selectable: false,
   addAttributes() {
-    return { ref: { default: 0 }, issueItemId: { default: 0 }, headline: { default: "" } };
+    return {
+      ref: { default: 0 }, issueItemId: { default: 0 }, headline: { default: "" },
+      empty: { default: false }, flagged: { default: 0 }, linkOnly: { default: false },
+    };
   },
   parseHTML() {
     return [{ tag: "h3[data-item-ref]" }];

@@ -16,12 +16,15 @@ import (
 )
 
 // Rebuild regenerates the guide from the publication's decisions.
-// Preferred path: the model condenses decisions into rules. Demo-mode
-// fallback (no fixture can cover arbitrary judge input): normalize and
-// merge rejection reasons into short general rules. Only effective
+// Preferred path: the model condenses decisions into rules. Fallback —
+// a nil provider (llm_mode=off, KLOX-55) or a demo replay without a
+// fixture: normalize and merge rejection reasons into short general
+// rules. Only effective
 // rejections feed the guide — approvals, alternatives and undone
 // rejections carry no editorial signal. Identical output is not
 // re-versioned (SaveGuide dedupes). Returns content and version.
+// A nil provider is the contract for "no model": the function never
+// invokes it, keeping deterministic mode free of model calls.
 func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider llm.Provider, model string) (string, int, error) {
 	decisions, err := db.Decisions(ctx, pub.ID)
 	if err != nil {
@@ -72,17 +75,23 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 		return "", 0, err
 	}
 
-	resp, err := provider.Complete(ctx, llm.Request{
-		Model: model, Template: "guide", User: user, MaxTokens: 2048,
-	})
 	var content string
-	switch {
-	case errors.Is(err, llm.ErrMissingFixture):
+	if provider == nil {
+		// Deterministic mode — no model exists to condense, so the
+		// reasons condense locally.
 		content = buildGuide(reasons)
-	case err != nil:
-		return "", 0, err
-	default:
-		content = strings.TrimSpace(resp.Text)
+	} else {
+		resp, err := provider.Complete(ctx, llm.Request{
+			Model: model, Template: "guide", User: user, MaxTokens: 2048,
+		})
+		switch {
+		case errors.Is(err, llm.ErrMissingFixture):
+			content = buildGuide(reasons)
+		case err != nil:
+			return "", 0, err
+		default:
+			content = strings.TrimSpace(resp.Text)
+		}
 	}
 	v, err := db.SaveGuide(ctx, pub.ID, content)
 	if err != nil {

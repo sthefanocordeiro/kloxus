@@ -4,6 +4,26 @@ export interface Workspace {
   label: string;
   mode: string;
   hosted: boolean;
+  llm_mode: string; // "auto" | "off" — off = deterministic pipeline, no AI calls
+  // live mail (a sender is configured) requires a claim before any send
+  claimed?: boolean;
+  owner_email?: string;
+  mail?: "live" | "outbox";
+  // the sender's wire identity — server-side evidence for verification
+  // preflights: outbox | resend | synthetic (loopback fake) | custom
+  mail_transport?: "outbox" | "resend" | "synthetic" | "custom";
+}
+
+// One newsletter section as the builder edits it: id is the stable
+// identity that survives renames, format shapes the issue slot, access
+// marks subscriber-only sections (KLOX-65).
+export interface NewsletterSection {
+  id: string;
+  title: string;
+  format: "featured" | "news" | "links";
+  items: number;
+  commentary: string; // required | optional | none
+  access: "all" | "subscribers";
 }
 
 export interface Publication {
@@ -18,7 +38,7 @@ export interface Publication {
   tone: string;
   frequency: string;
   ai_disclosure: string;
-  sections: { title: string; items: number; commentary: string }[];
+  sections: NewsletterSection[];
   paywall: { enabled: boolean; paid_sections: string[]; price: string };
 }
 
@@ -32,8 +52,13 @@ export interface IssueSummary {
   items: Record<string, number>;
   flags: number;
   missing_required_commentary: number;
+  // recorded model cost of the run steps attached to this issue
+  cost_usd?: number;
   document_version?: string;
   scheduled_at?: string;
+  // stamped by a test send — the issue stays in its lifecycle status
+  // (approved/editable); the marker unlocks the after-sending surface
+  test_sent_at?: string;
   receipt?: ApprovalReceipt;
 }
 
@@ -44,6 +69,12 @@ export interface OutboxEmail {
   subject: string;
   body_md?: string;
   body_html?: string;
+  // delivery-ledger fields: provider resend|outbox, status
+  // queued|sent|delivered|bounced|complained|refused|fallback
+  provider?: string;
+  provider_id?: string;
+  status?: string;
+  error?: string;
   created_at: string;
 }
 
@@ -128,15 +159,29 @@ export interface Candidate {
 }
 
 export interface BoardSection {
+  id?: string;
   title: string;
   capacity: number;
   commentary: string;
+  format?: string;
+  access?: string;
 }
 
 export interface CandidatesResponse {
   candidates: Candidate[];
   sections: BoardSection[];
+  // true when the builder was edited after this edition's run — the
+  // edition keeps its own sections (KLOX-65)
+  sections_changed?: boolean;
   demo: boolean;
+  llm_mode: string;
+  // bench pagination (KLOX-45): the ranked pool is capped at the top
+  // 150 and the bench pages at page_size — in-issue stories ride along
+  // on every page so the lineup column is always complete.
+  page: number;
+  page_size: number;
+  bench_total: number;
+  has_more: boolean;
 }
 
 export interface StoryItem {
@@ -165,11 +210,14 @@ export interface LineupEntry {
 export interface Run {
   id: string;
   kind: "prepare" | "draft";
-  status: "running" | "done" | "failed";
+  status: "running" | "done" | "failed" | "blocked";
   step: string;
   issue_id?: number;
   no_new_items: boolean;
   error?: string;
+  blocked?: boolean;
+  blocked_reason?: string;
+  sample?: boolean;
   events: RunEvent[];
 }
 
@@ -193,6 +241,9 @@ export interface DocItem {
 
 export interface DocSection {
   title: string;
+  // featured | news | links — a links section's items are link-only:
+  // the link is the source, no written text is expected (KLOX-65/D2)
+  format?: string;
   commentary: { mode: string; text: string };
   items: DocItem[];
 }
@@ -255,7 +306,7 @@ export interface Proposal {
   language: string;
   frequency: string;
   ai_disclosure: string;
-  sections: { title: string; items: number; commentary: string }[];
+  sections: NewsletterSection[];
   sources: { type: string; url: string }[];
   paywall: { enabled: boolean; paid_sections: string[]; price: string };
 }
@@ -301,9 +352,10 @@ export class ApiRequestError extends Error {
 // become ApiRequestError. Conflict responses may carry the fresh
 // document — callers use it to resync.
 export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const mutating = method !== "GET" && method !== "HEAD";
   const res = await fetch(path, {
     method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    headers: mutating ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
@@ -312,6 +364,23 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     throw new ApiRequestError(res.status, err, (data as { document?: IssueDocument }).document);
   }
   return data as T;
+}
+
+// The real-mode catalog lists only offered rows (launch/signal —
+// pickable). hold/blocked sources are never fetched and never appear
+// in user-facing source lists (KLOX-45).
+export interface CatalogOffer {
+  type: string;
+  url: string;
+  name?: string;
+  items_per_week?: number;
+  policy?: string;
+  kind?: string;
+  suspended?: boolean;
+  note?: string;
+}
+export interface SourceCatalog {
+  offered: CatalogOffer[];
 }
 
 export const api = {
@@ -327,14 +396,25 @@ export const api = {
   startRun: (pubID: number) => request<{ run: Run }>("POST", `/api/v1/publications/${pubID}/runs`, {}).then((r) => r.run),
   run: (id: string) => request<{ run: Run }>("GET", `/api/v1/runs/${id}`).then((r) => r.run),
   draft: (issueID: number) => request<{ run: Run }>("POST", `/api/v1/issues/${issueID}/draft`, {}).then((r) => r.run),
+  // manual compose: the lineup becomes empty item slots, no model calls
+  compose: (issueID: number) =>
+    request<{ issue: IssueSummary; selected: number }>("POST", `/api/v1/issues/${issueID}/compose`, {}),
+  composeSentence: (issueID: number, ref: number, text: string, citations: number[], kind: "fact" | "interpretation", version: string) =>
+    request<{ coverage: Coverage; flags: number; version: string; added?: number }>(
+      "POST", `/api/v1/issues/${issueID}/items/${ref}/compose`, { text, kind, citations, version },
+    ),
   decide: (issueID: number, itemID: number, kind: string, reason?: string) =>
     request<{ item: IssueItem; pending: number; guide?: { version: number; added?: string[] } }>(
       "POST", `/api/v1/issues/${issueID}/items/${itemID}/decisions`, { kind, reason },
     ),
-  candidates: (issueID: number) =>
-    request<CandidatesResponse>("GET", `/api/v1/issues/${issueID}/candidates`),
+  candidates: (issueID: number, page = 0) =>
+    request<CandidatesResponse>("GET", `/api/v1/issues/${issueID}/candidates?page=${page}`),
   lineup: (issueID: number, entries: LineupEntry[]) =>
-    request<{ candidates: Candidate[]; guide?: { version: number; added?: string[] } }>(
+    request<{
+      candidates: Candidate[];
+      bench_total?: number; has_more?: boolean; page?: number; page_size?: number;
+      guide?: { version: number; added?: string[] };
+    }>(
       "PUT", `/api/v1/issues/${issueID}/lineup`, { entries },
     ),
   story: (sid: number) => request<{ story: StoryDetail }>("GET", `/api/v1/stories/${sid}`).then((r) => r.story),
@@ -346,10 +426,19 @@ export const api = {
     request<{ coverage: Coverage; flags: number; version: string; removed?: RemovedSentence }>(
       "DELETE", `/api/v1/issues/${issueID}/sentences/${sid}`, { version },
     ),
+  removeFlagged: (issueID: number, ref: number, version: string) =>
+    request<{ coverage: Coverage; flags: number; version: string; removed?: RemovedSentence[] }>(
+      "DELETE", `/api/v1/issues/${issueID}/items/${ref}/sentences`, { version },
+    ),
   restoreSentence: (issueID: number, removed: RemovedSentence, version: string) =>
     request<{ coverage: Coverage; flags: number; version: string }>(
       "POST", `/api/v1/issues/${issueID}/items/${removed.ref}/sentences`,
       { index: removed.index, text: removed.text, kind: removed.kind, citations: removed.citations, flag: removed.flag, version },
+    ),
+  // batch undo for the bulk remove-flagged action: one POST restores the list
+  restoreSentences: (issueID: number, ref: number, removed: RemovedSentence[], version: string) =>
+    request<{ coverage: Coverage; flags: number; version: string }>(
+      "POST", `/api/v1/issues/${issueID}/items/${ref}/sentences`, { sentences: removed, version },
     ),
   markInterpretation: (issueID: number, sid: string, text: string | undefined, version: string) =>
     request<{ coverage: Coverage; flags: number; version: string }>(
@@ -362,8 +451,24 @@ export const api = {
   approve: (issueID: number) =>
     request<{ issue: IssueSummary; receipt: ApprovalReceipt }>("POST", `/api/v1/issues/${issueID}/approve`, {}),
   send: (issueID: number, audience: "test" | "readers", when: "now" | "schedule" = "now", to?: string, at?: string) =>
-    request<{ issue: IssueSummary; outbox_email_id?: number; audience?: string; scheduled?: boolean; scheduled_at?: string; to?: string[]; subject?: string }>(
+    request<{
+      issue: IssueSummary; outbox_email_id?: number; audience?: string; scheduled?: boolean; scheduled_at?: string;
+      to?: string[]; subject?: string; delivery?: string; sent?: number; refused?: string[]; deduped?: number;
+      fallback?: boolean; warnings?: string[];
+    }>(
       "POST", `/api/v1/issues/${issueID}/send`, { audience, when, to, at },
+    ),
+  // Workspace claim: mails a single-use magic link to the creator.
+  // Outbox mode answers with the link itself so the demo can open it.
+  claim: (email: string, lang: string) =>
+    request<{ sent: boolean; email: string; delivery?: string; claim_url?: string; refused?: string; outbox_email_id?: number }>(
+      "POST", "/api/v1/workspace/claim", { email, lang },
+    ),
+  // Reader double opt-in: mails a confirm link; nothing is sent to the
+  // reader until they open it. query carries the sealed ?tok.
+  subscribe: (slug: string, email: string, query = "") =>
+    request<{ sent: boolean; already_confirmed?: boolean; delivery?: string; confirm_url?: string; refused?: string }>(
+      "POST", `/api/v1/p/${slug}/subscribe${query}`, { email },
     ),
   hold: (issueID: number) =>
     request<{ issue: IssueSummary }>("POST", `/api/v1/issues/${issueID}/hold`, {}),
@@ -375,7 +480,7 @@ export const api = {
   outboxEmail: (id: number) =>
     request<{ email: OutboxEmail }>("GET", `/api/v1/outbox/${id}`).then((r) => r.email),
   reader: (pubID: number) =>
-    request<{ reader: { email: string; name: string }; subscribed: boolean; subscribers?: number; readers?: number; issue?: IssueSummary }>(
+    request<{ reader: { email: string; name: string }; subscribed: boolean; subscribers?: number; readers?: number; confirmed?: number; issue?: IssueSummary }>(
       "GET", `/api/v1/publications/${pubID}/reader`),
   paywallSimulate: (pubID: number | string, query = "") =>
     request<{ subscribed: boolean; outbox_email_id: number; magic_link: string }>(
@@ -392,11 +497,14 @@ export const api = {
     request<{ proposal: Proposal }>("POST", "/api/v1/publications/propose", { material }).then((r) => r.proposal),
   createPublication: (p: Omit<Proposal, "sources">) =>
     request<{ publication: Publication }>("POST", "/api/v1/publications", p).then((r) => r.publication),
+  updatePublication: (id: string | number, p: Partial<Omit<Proposal, "sources">>) =>
+    request<{ publication: Publication }>("PUT", `/api/v1/publications/${id}`, p).then((r) => r.publication),
+  deletePublication: (id: string | number) =>
+    request<void>("DELETE", `/api/v1/publications/${id}`, { confirm: true }),
   sources: (pubID: number | string) =>
     request<{ sources: SourceRow[] }>("GET", `/api/v1/publications/${pubID}/sources`).then((r) => r.sources),
   sourceCatalog: (pubID: number | string) =>
-    request<{ offered: { type: string; url: string; name?: string; items_per_week?: number }[] }>(
-      "GET", `/api/v1/publications/${pubID}/sources/catalog`).then((r) => r.offered),
+    request<SourceCatalog>("GET", `/api/v1/publications/${pubID}/sources/catalog`),
   sourcePreview: (pubID: number | string, type: string, url: string) =>
     request<{ items: PreviewItem[]; note?: string }>(
       "GET", `/api/v1/publications/${pubID}/sources/preview?type=${type}&url=${encodeURIComponent(url)}`),
@@ -406,6 +514,12 @@ export const api = {
     request<{ sources: SourceRow[] }>("POST", `/api/v1/publications/${pubID}/sources/confirm`, { include }).then((r) => r.sources),
   sourceDelete: (pubID: number | string, sid: number) =>
     request<{ ok: boolean }>("DELETE", `/api/v1/publications/${pubID}/sources/${sid}`),
+  guide: (pubID: number | string) =>
+    request<{ guide: { version: number; content: string } }>("GET", `/api/v1/publications/${pubID}/guide`).then((r) => r.guide),
+  guideSave: (pubID: number | string, content: string) =>
+    request<{ guide: { version: number; content: string } }>("PUT", `/api/v1/publications/${pubID}/guide`, { content }).then((r) => r.guide),
+  guideRebuild: (pubID: number | string) =>
+    request<{ guide: { version: number; content: string } }>("POST", `/api/v1/publications/${pubID}/guide/rebuild`, {}).then((r) => r.guide),
   demoReset: () => request<{ ok: boolean }>("POST", "/api/v1/demo/reset", {}),
   demoNew: () =>
     request<{ workspace: { id: string; label: string } }>("POST", "/api/v1/demo/new", {}),

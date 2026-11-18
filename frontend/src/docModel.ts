@@ -61,7 +61,13 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
     for (const item of sec.items ?? []) {
       content.push({
         type: "itemHeading",
-        attrs: { ref: item.ref, issueItemId: item.issue_item_id, headline: item.headline },
+        attrs: {
+          ref: item.ref, issueItemId: item.issue_item_id, headline: item.headline,
+          empty: (item.sentences ?? []).length === 0,
+          flagged: (item.sentences ?? []).filter((s) => s.flag).length,
+          // link-only pauta: an empty slot asks for no text (KLOX-65/D2)
+          linkOnly: sec.format === "links",
+        },
       });
       for (const s of item.sentences ?? []) {
         content.push({
