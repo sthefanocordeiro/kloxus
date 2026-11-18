@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,6 +14,21 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// ErrDisabled is returned by None when a code path reaches the model in
+// deterministic mode (KLOXUS_LLM_MODE=off) — a loud failure that proves
+// no outbound call can happen.
+var ErrDisabled = errors.New("llm: model calls are disabled (KLOXUS_LLM_MODE=off)")
+
+// None refuses every call. It is the inner provider of the deterministic
+// run mode: defense in depth so that a missed call site fails loudly
+// instead of reaching a paid API.
+type None struct{}
+
+// Complete implements Provider.
+func (None) Complete(context.Context, Request) (Response, error) {
+	return Response{}, ErrDisabled
+}
 
 // Replay serves recorded responses from a fixture FS (demo mode). A missing
 // key fails with ErrMissingFixture and, when DumpDir is set, writes the full
@@ -116,7 +132,7 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 		return Response{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Response{}, fmt.Errorf("anthropic: status %d: %s", resp.StatusCode, truncate(string(raw), 400))
+		return Response{}, &StatusError{Provider: "anthropic", Status: resp.StatusCode, Body: truncate(string(raw), 400)}
 	}
 	var ar anthropicResponse
 	if err := json.Unmarshal(raw, &ar); err != nil {
