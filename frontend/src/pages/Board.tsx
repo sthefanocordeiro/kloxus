@@ -681,6 +681,11 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
               {t.board.draftAction(total)}
             </Button>
           </div>
+          {candsQ.data?.sections_changed && (
+            <p className="mb-3 rounded-[var(--radius-card)] border border-line bg-surface px-3 py-2 text-xs text-muted">
+              {t.board.sectionsChanged}
+            </p>
+          )}
           {sections.map((s, si) => {
             const items = board.sections[s.title];
             const full = sectionFull(s.title);
@@ -701,6 +706,11 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                   </span>
                   <span className="text-[10px] text-muted">[{si + 1}]</span>
                 </div>
+                {!full && items.length > 0 && items.length < s.capacity && (
+                  <p className="mb-1.5 px-1 text-[11px] italic text-muted">
+                    {t.board.shortfall(items.length, sectionTitle(lang, s.title))}
+                  </p>
+                )}
                 <div className="space-y-2">
                   {items.map((c, i) => (
                     <div

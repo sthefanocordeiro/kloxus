@@ -731,10 +731,10 @@ type bundleItem struct {
 func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundle, error) {
 	var iss Issue
 	var pub Publication
-	var flags, commentary, sections, paywall, pairsJSON, itemsJSON string
+	var flags, commentary, issSections, sections, paywall, pairsJSON, itemsJSON string
 	err := db.QueryRowContext(ctx, `
 		SELECT i.id, i.publication_id, i.number, i.status, i.subject, i.body_md,
-		       i.flags_json, i.commentary_json, i.created_at, i.scheduled_at, i.test_sent_at,
+		       i.flags_json, i.commentary_json, i.sections_json, i.created_at, i.scheduled_at, i.test_sent_at,
 		       p.id, p.slug, p.name, p.language, p.topic, p.audience, p.editorial_line,
 		       p.tone, p.frequency, p.sections_json, p.paywall_json, p.ai_disclosure, p.custom,
 		       (SELECT COALESCE(json_agg(row_to_json(x) ORDER BY x.score DESC), '[]')
@@ -770,7 +770,7 @@ func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundl
 		JOIN publications p ON p.workspace_id = i.workspace_id AND p.id = i.publication_id
 		WHERE i.workspace_id = $1 AND i.id = $2`, db.ws, issueID).
 		Scan(&iss.ID, &iss.PublicationID, &iss.Number, &iss.Status, &iss.Subject,
-			&iss.BodyMD, &flags, &commentary, &iss.CreatedAt, &iss.ScheduledAt, &iss.TestSentAt,
+			&iss.BodyMD, &flags, &commentary, &issSections, &iss.CreatedAt, &iss.ScheduledAt, &iss.TestSentAt,
 			&pub.ID, &pub.Slug, &pub.Name, &pub.Language, &pub.Topic, &pub.Audience,
 			&pub.EditorialLine, &pub.Tone, &pub.Frequency, &sections, &paywall,
 			&pub.AIDisclosure, &pub.Custom, &pairsJSON, &itemsJSON)
@@ -779,6 +779,7 @@ func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundl
 	}
 	json.Unmarshal([]byte(flags), &iss.Flags)
 	json.Unmarshal([]byte(commentary), &iss.Commentary)
+	json.Unmarshal([]byte(issSections), &iss.Sections)
 	if err := json.Unmarshal([]byte(sections), &pub.Sections); err != nil {
 		return nil, fmt.Errorf("decoding sections for %q: %w", pub.Slug, err)
 	}

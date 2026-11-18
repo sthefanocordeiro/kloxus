@@ -205,7 +205,7 @@ func TestAIDraftLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SeedPublication: %v", err)
 	}
-	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "")
+	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "", nil)
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}

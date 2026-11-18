@@ -45,7 +45,7 @@ function callAll(fn: (...args: never[]) => string): string[] {
 
 // Strings allowed to read identically in both locales: proper names,
 // loanwords and brand terms.
-const IDENTICAL_OK = new Set(["Kloxus", "web"]);
+const IDENTICAL_OK = new Set(["Kloxus", "web", "Legal", "Menu", "Links"]);
 
 // Function leaves whose output is language-neutral by design
 // (joiners/formatters, not translated copy).

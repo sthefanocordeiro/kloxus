@@ -55,11 +55,11 @@ func TestRankedCandidatesBatched(t *testing.T) {
 		return sid
 	}
 
-	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "")
+	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "", nil)
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}
-	otherID, err := db.CreateIssue(ctx, pubID, 2, "s2", "")
+	otherID, err := db.CreateIssue(ctx, pubID, 2, "s2", "", nil)
 	if err != nil {
 		t.Fatalf("CreateIssue 2: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestIssueItemDossiersAndGetItems(t *testing.T) {
 	if err != nil || len(srcs) == 0 {
 		t.Fatalf("Sources: %v len=%d", err, len(srcs))
 	}
-	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "")
+	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "", nil)
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestIssueDocBundle(t *testing.T) {
 		db.ws, srcs[0].ID); err != nil {
 		t.Fatalf("name source: %v", err)
 	}
-	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "Body [1].")
+	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "Body [1].", nil)
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestIssueDocBundle(t *testing.T) {
 	}
 
 	// issue without dossiers still resolves with an empty pair/item set
-	empty, err := db.CreateIssue(ctx, pubID, 2, "s2", "")
+	empty, err := db.CreateIssue(ctx, pubID, 2, "s2", "", nil)
 	if err != nil {
 		t.Fatalf("CreateIssue 2: %v", err)
 	}
@@ -545,7 +545,7 @@ func TestSaveIssueEdit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SeedPublication: %v", err)
 	}
-	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "old body")
+	issueID, err := db.CreateIssue(ctx, pubID, 1, "s", "old body", nil)
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}

@@ -90,9 +90,12 @@ type docCommentary struct {
 	Text string `json:"text"`
 }
 
-// docSection is one section of the issue document.
+// docSection is one section of the issue document. Format comes from
+// the edition's section snapshot — "links" sections carry the link as
+// their source and skip the written-text checks (KLOX-65).
 type docSection struct {
 	Title      string        `json:"title"`
+	Format     string        `json:"format,omitempty"`
 	Commentary docCommentary `json:"commentary"`
 	Items      []docItem     `json:"items"`
 }
@@ -392,6 +395,10 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 // mutation handler can answer with the post-write document without a
 // second round of dossier/item queries.
 func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext) *issueDocument {
+	// The document — and every consumer holding doc.pub — works from
+	// the edition's own section snapshot, so builder edits made after
+	// the run never rewrite an in-progress issue (KLOX-65).
+	pub = pubWithIssueSections(iss, pub)
 	doc := &issueDocument{
 		IssueID: iss.ID, Number: iss.Number, Status: iss.Status, Subject: iss.Subject,
 		Version: docVersion(iss), Sections: []docSection{},
@@ -410,8 +417,10 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 	}
 
 	secMode := map[string]string{}
+	secFormat := map[string]string{}
 	for _, sc := range pub.Sections {
 		secMode[sc.Title] = sc.Commentary
+		secFormat[sc.Title] = sc.Format
 	}
 	commentary := iss.Commentary
 	if commentary == nil {
@@ -508,8 +517,9 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 				mode = "none"
 			}
 			doc.Sections = append(doc.Sections, docSection{
-				Title: m[1], Commentary: docCommentary{Mode: mode, Text: commentary[m[1]]},
-				Items: []docItem{},
+				Title: m[1], Format: secFormat[m[1]],
+				Commentary: docCommentary{Mode: mode, Text: commentary[m[1]]},
+				Items:      []docItem{},
 			})
 			sec = &doc.Sections[len(doc.Sections)-1]
 			pos += len(line) + 1
@@ -579,8 +589,9 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 		}
 		if !found {
 			doc.Sections = append(doc.Sections, docSection{
-				Title: sc.Title, Commentary: docCommentary{Mode: sc.Commentary, Text: commentary[sc.Title]},
-				Items: []docItem{},
+				Title: sc.Title, Format: sc.Format,
+				Commentary: docCommentary{Mode: sc.Commentary, Text: commentary[sc.Title]},
+				Items:      []docItem{},
 			})
 		}
 	}

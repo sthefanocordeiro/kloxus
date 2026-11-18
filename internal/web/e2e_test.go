@@ -534,7 +534,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	pubs, _ := wsA.DB.ListPublications(ctx)
 	pub := pubs[0]
 	body := "# Edição 1\n\n## O destaque\n\n### Manchete\n\nFrase de abertura curta. Conteúdo completo para assinantes [1]."
-	iid, _ := wsA.DB.CreateIssue(ctx, pub.ID, 1, "Edição 1", body)
+	iid, _ := wsA.DB.CreateIssue(ctx, pub.ID, 1, "Edição 1", body, nil)
 	if err := wsA.DB.UpdateIssue(ctx, iid, "sent", body, "[]"); err != nil {
 		t.Fatalf("UpdateIssue: %v", err)
 	}

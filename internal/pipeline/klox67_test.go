@@ -440,7 +440,7 @@ func composeFixture(t *testing.T, db *store.DB, slug, ext string) (pub *store.Pu
 	if err := db.SetStoryTriage(ctx, storyID, 9.0, "top"); err != nil {
 		t.Fatalf("SetStoryTriage: %v", err)
 	}
-	issueID, err = db.CreateIssue(ctx, pubID, 1, "s", "")
+	issueID, err = db.CreateIssue(ctx, pubID, 1, "s", "", nil)
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}

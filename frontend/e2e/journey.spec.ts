@@ -63,6 +63,10 @@ async function onboard(page: Page) {
 
   // the sample proposal pre-fills the five editable blocks
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
+  // step 2 is the section builder (KLOX-65): keep the classic template
+  // the proposal suggested — the edition totals travel with it
+  await page.getByRole("button", { name: "Next: sections", exact: true }).click();
+  await expect(page.getByText(/Your edition will have \d+ stor/)).toBeVisible();
   await page.getByRole("button", { name: "Continue to sources", exact: true }).click();
   await page.waitForURL(/\/publications\/\d+\/sources/);
 

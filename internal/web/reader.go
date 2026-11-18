@@ -46,7 +46,7 @@ func (s *Server) issueMessage(ctx context.Context, wdb *store.DB, wsID string, i
 		publicPage += "?tok=" + url.QueryEscape(s.d.WS.PublicToken(wsID))
 	}
 	if !active {
-		md = gateSections(md, cpub.Paywall.PaidSections, cpub.Language)
+		md = gateSections(md, paidSectionTitles(iss, cpub), cpub.Language)
 	}
 	md = s.localizeReaderMD(md, pub)
 	if !active {
