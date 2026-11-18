@@ -350,12 +350,11 @@ else
 		say "workspace unclaimed — claiming by magic link"
 		[ "$(req POST /api/v1/workspace/claim '{"email":"smoke@kloxus.dev"}')" = "200" ] \
 			|| die "claim: $(cat "$RESP")"
-		[ "$(req GET "/api/v1/publications/$PUB/outbox")" = "200" ] || die "outbox list failed"
-		EID="$(node -e '
-			const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-			const m = d.emails.find(e => e.kind === "magic_link");
-			console.log(m ? m.id : "");' "$RESP")"
-		[ -n "$EID" ] || die "no magic-link email in the outbox"
+		# The publication outbox listing hides account-level magic-link
+		# rows (KLOX-66 §8) — the claim response's outbox_email_id is the
+		# direct handle to the ledger row carrying the link.
+		EID="$(jget outbox_email_id)"
+		[ -n "$EID" ] || die "claim response carries no outbox_email_id"
 		[ "$(req GET "/api/v1/outbox/$EID")" = "200" ] || die "outbox email fetch failed"
 		CLAIM="$(node -e '
 			const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).email;

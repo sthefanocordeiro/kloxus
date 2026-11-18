@@ -464,7 +464,11 @@ async function sendToReaders(page: Page) {
     expect(noneBody.issue.status).toBe("approved");
     expect(Array.isArray(noneBody.warnings) && noneBody.warnings.length > 0).toBe(true);
     await expect(page.getByText(/nothing was delivered/i).first()).toBeVisible({ timeout: 15000 });
-    await expect(page.getByRole("link", { name: /reader page/ })).toHaveCount(0);
+    // A "none" delivery must not mint a sent surface: the only
+    // after-sending chrome allowed is the earlier test send's marker —
+    // sendTestKeepsEditable already stamped test_sent_at, so the
+    // reader-page link it unlocked keeps rendering here.
+    await expect(page.getByText(/Test send recorded/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
     // A test send goes to the claimed owner — and confirms them as a
     // reader, so the resend has a deliverable recipient. Success means
