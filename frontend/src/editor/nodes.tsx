@@ -315,7 +315,8 @@ function CommentaryView({ node, editor, getPos }: NodeViewProps) {
 // selects it in the evidence pane. The headline lives in attrs so no
 // keystroke can rewrite or merge it into a sentence. A manual-compose
 // item with no sentences yet gets a dashed "write it" affordance that
-// opens the compose box in the evidence pane.
+// opens the compose box in the evidence pane — link-only items
+// (links-format sections) are exempt: the link is the source (D2).
 function ItemHeadingView({ node, editor }: NodeViewProps) {
   const { t } = useT();
   const b = useComposer();

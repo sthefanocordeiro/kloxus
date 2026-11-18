@@ -52,6 +52,7 @@ async function onboard(page: Page) {
   await page.getByRole("button", { name: /Create your newsletter/ }).first().click();
   await page.waitForURL(/\/new/);
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Next: sections", exact: true }).click();
   await page.getByRole("button", { name: "Continue to sources", exact: true }).click();
   await page.waitForURL(/\/publications\/\d+\/sources/);
   await expect(page.getByText("Suggested sources")).toBeVisible();

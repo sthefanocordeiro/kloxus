@@ -169,7 +169,9 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
         attrs: {
           ref: item.ref, issueItemId: item.issue_item_id, headline: item.headline,
           section: sec.title, index: bi, format: sec.format ?? "",
-          linkOnly: item.link_only ?? false,
+          // link-only pauta — item toggle or links-format section —
+          // an empty slot asks for no text (KLOX-65/D2, KLOX-66)
+          linkOnly: (item.link_only ?? false) || sec.format === "links",
           empty: (item.sentences ?? []).length === 0,
           flagged: (item.sentences ?? []).filter((s) => s.flag).length,
         },

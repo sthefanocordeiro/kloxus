@@ -260,8 +260,8 @@ export interface DocBlock {
 
 export interface DocSection {
   title: string;
-  // edition's section format snapshot (KLOX-65) — "links" sections
-  // carry the link as their source
+  // featured | news | links — a links section's items are link-only:
+  // the link is the source, no written text is expected (KLOX-65/D2)
   format?: string;
   commentary: { mode: string; text: string };
   items: DocItem[];
