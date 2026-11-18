@@ -222,10 +222,12 @@ func TestEnricherNilSafe(t *testing.T) {
 	}
 }
 
-// TestEnricherSweep is the DB-backed batch path: new articles get one
-// batch call, the rows persist shared, and a second sweep finds nothing
-// left — idempotent per §7.2. Skips without DATABASE_URL.
-func TestEnricherSweep(t *testing.T) {
+// TestEnricherBatchCall covers the per-batch contract deterministically:
+// the items go out as ONE call and each answer ref maps back to its own
+// item id. The seeds use kind='signal' so UnenrichedItems — and any
+// sweep running against the shared items table — can never pull them
+// into a batch mid-test.
+func TestEnricherBatchCall(t *testing.T) {
 	pool := testdb.Pool(t)
 	db := testdb.WSOn(t, pool)
 	ctx := context.Background()
@@ -239,12 +241,13 @@ func TestEnricherSweep(t *testing.T) {
 		t.Fatalf("SeedPublication: %v", err)
 	}
 	srcs, _ := db.Sources(ctx, pubID)
+	nonce := fmt.Sprintf("-%d", time.Now().UnixNano())
 	var ids []int64
-	for _, ext := range []string{"es-a", "es-b"} {
+	for _, ext := range []string{"eb-a" + nonce, "eb-b" + nonce} {
 		var id int64
 		if err := db.QueryRowContext(ctx,
 			`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text, kind)
-			 VALUES ($1,$2,$3,$4,$5,'body','article') RETURNING id`,
+			 VALUES ($1,$2,$3,$4,$5,'body','signal') RETURNING id`,
 			db.Workspace(), srcs[0].ID, ext, "https://x.example/"+ext, "Article "+ext).Scan(&id); err != nil {
 			t.Fatalf("seed %s: %v", ext, err)
 		}
@@ -265,9 +268,12 @@ func TestEnricherSweep(t *testing.T) {
 			]`}, nil
 		}),
 	}
-	n, err := enr.Sweep(ctx, 40)
+	n, err := enr.enrichBatch(ctx, []store.UnenrichedItem{
+		{ID: ids[0], Title: "Article eb-a"},
+		{ID: ids[1], Title: "Article eb-b"},
+	})
 	if err != nil || n != 2 {
-		t.Fatalf("sweep: n=%d err=%v", n, err)
+		t.Fatalf("enrichBatch: n=%d err=%v", n, err)
 	}
 	if calls != 1 {
 		t.Fatalf("2 items must batch into 1 call, got %d", calls)
@@ -276,17 +282,118 @@ func TestEnricherSweep(t *testing.T) {
 	if err != nil || len(m) != 2 {
 		t.Fatalf("enrichments: %v len=%d", err, len(m))
 	}
-	var sawExcluded bool
-	for _, e := range m {
-		sawExcluded = sawExcluded || e.Excluded()
+	if e := m[ids[0]]; e.Kind != "noticia" || e.Excluded() {
+		t.Errorf("ref1 → ids[0] should be an included noticia: %+v", e)
 	}
-	if !sawExcluded {
-		t.Error("the 'lista' row should be excluded")
+	if e := m[ids[1]]; e.Kind != "lista" || !e.Excluded() {
+		t.Errorf("ref2 → ids[1] should be an excluded lista: %+v", e)
 	}
-	// Idempotent: everything is enriched — the next sweep does nothing.
-	if n, err := enr.Sweep(ctx, 40); err != nil || n != 0 || calls != 1 {
-		t.Fatalf("second sweep: n=%d calls=%d err=%v", n, calls, err)
+}
+
+// TestEnricherSweep is the DB-backed sweep path: unenriched articles get
+// an enrichment row and never resurface as pending — idempotent per §7.2.
+// Assertions are scoped to this test's seeded ids: UnenrichedItems scans
+// the shared items table, so package test binaries running on the same
+// DATABASE_URL can add their own rows to the same batch — global counts
+// (n, calls) are not deterministic here (QA FAIL #2: a second sweep
+// observed n=2 calls=2 on foreign rows). Skips without DATABASE_URL.
+func TestEnricherSweep(t *testing.T) {
+	pool := testdb.Pool(t)
+	db := testdb.WSOn(t, pool)
+	ctx := context.Background()
+
+	pubID, err := db.SeedPublication(ctx, &config.Publication{
+		Slug: "enrich-pub", Name: "P",
+		Sections: []config.Section{{Title: "Lead", Items: 1}},
+		Sources:  []config.SourceDef{{Type: "rss", URL: "fixtures/feeds/a.xml"}},
+	})
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
 	}
+	srcs, _ := db.Sources(ctx, pubID)
+	nonce := fmt.Sprintf("-%d", time.Now().UnixNano())
+	var ids []int64
+	for _, ext := range []string{"es-a" + nonce, "es-b" + nonce} {
+		var id int64
+		if err := db.QueryRowContext(ctx,
+			`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text, kind)
+			 VALUES ($1,$2,$3,$4,$5,'body','article') RETURNING id`,
+			db.Workspace(), srcs[0].ID, ext, "https://x.example/"+ext, "Article "+ext).Scan(&id); err != nil {
+			t.Fatalf("seed %s: %v", ext, err)
+		}
+		ids = append(ids, id)
+	}
+
+	enr := &Enricher{Pool: pool, Model: "claude-haiku-5-5", LLM: sweepLLM(t)}
+
+	// Sweep until the seeded rows are enriched (bounded): the pending
+	// scan runs newest-first and a burst of foreign inserts could
+	// outrank them — retrying keeps the outcome deterministic without
+	// asserting on global table state.
+	var m map[int64]*store.ItemEnrichment
+	for attempt := 0; ; attempt++ {
+		if _, err := enr.Sweep(ctx, 40); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		m, err = db.EnrichmentsForItems(ctx, ids)
+		if err != nil {
+			t.Fatalf("enrichments: %v", err)
+		}
+		if len(m) == len(ids) {
+			break
+		}
+		if attempt == 9 {
+			t.Fatalf("seeded items still unenriched after %d sweeps", attempt+1)
+		}
+	}
+	if pending := unenrichedAmong(t, ctx, db, ids); pending != 0 {
+		t.Fatalf("seeded items still pending: %d", pending)
+	}
+
+	// Idempotent: enriched rows never resurface as pending, however
+	// many sweeps run or whatever foreign rows join the table.
+	if _, err := enr.Sweep(ctx, 40); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if pending := unenrichedAmong(t, ctx, db, ids); pending != 0 {
+		t.Fatalf("seeded items pending again after re-sweep: %d", pending)
+	}
+}
+
+// sweepLLM fakes the enrichment call for Sweep tests: one row for every
+// ref a full batch can carry. The shared items table can add foreign
+// rows to a batch, so an answer covering only the seeded refs could
+// leave them unenriched or map enrichments onto foreign items;
+// enrichBatch ignores refs past the actual batch length.
+func sweepLLM(t *testing.T) llm.Provider {
+	return llm.Func(func(_ context.Context, req llm.Request) (llm.Response, error) {
+		if req.Template != "enrich" || req.Model != "claude-haiku-5-5" {
+			t.Errorf("req = template %q model %q", req.Template, req.Model)
+		}
+		var rows []string
+		for i := 1; i <= enrichBatchSize; i++ {
+			rows = append(rows, fmt.Sprintf(
+				`{"ref":%d,"kind":"noticia","promotional":false,"topics":["tecnologia"],"summary_pt":"Resumo.","language":"pt"}`, i))
+		}
+		return llm.Response{Text: "[" + strings.Join(rows, ",") + "]"}, nil
+	})
+}
+
+// unenrichedAmong counts how many of the given article ids still have
+// no enrichment row — the scoped equivalent of "the sweep left pending
+// work". Asserting on the whole items table is unsound while package
+// test binaries share one database.
+func unenrichedAmong(t *testing.T, ctx context.Context, db *store.DB, ids []int64) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM items it
+		 WHERE it.id = ANY($1) AND it.kind = 'article'
+		   AND NOT EXISTS (SELECT 1 FROM item_enrichment e WHERE e.item_id = it.id)`,
+		ids).Scan(&n); err != nil {
+		t.Fatalf("pending check: %v", err)
+	}
+	return n
 }
 
 func TestClampWords(t *testing.T) {
