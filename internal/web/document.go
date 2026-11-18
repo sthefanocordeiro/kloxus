@@ -641,8 +641,12 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 					cur += len(nl) + 1
 				}
 				if closed {
+					// re-sanitize on read: a fence that reached the
+					// body past the write path (legacy bodies, a
+					// bypassed guard) is served sanitized too, so raw
+					// markup never reaches the composer canvas
 					sec.Blocks = append(sec.Blocks, docBlock{Kind: "embed",
-						Text:      strings.Join(inner, "\n"),
+						Text:      delivery.SanitizeEmbed(strings.Join(inner, "\n")),
 						spanStart: pos, spanEnd: cur + len(lines[li])})
 					pos = cur + len(lines[li]) + 1
 				} else {

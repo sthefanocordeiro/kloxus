@@ -8,6 +8,10 @@ import type { ReactNode } from "react";
 // are always escaped, so raw HTML never reaches the DOM as markup.
 // Structural HTML comments (e.g. <!-- item 2 link -->) are document
 // markers, never reader content — they're skipped.
+// Web-safe URL guards: non-web schemes (javascript:, data:) never
+// become clickable href/src — the label renders as plain text instead.
+const safeHref = (u: string) => /^(https?:|mailto:|\/|#)/i.test(u.trim());
+const safeImgSrc = (u: string) => /^(https?:|\/)/i.test(u.trim());
 function inline(text: string, key: string | number): ReactNode {
   const parts: ReactNode[] = [];
   const re = /(\*\*[^*]+\*\*|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^)]+\))/g;
@@ -21,11 +25,15 @@ function inline(text: string, key: string | number): ReactNode {
     else if (s.startsWith("*") || s.startsWith("_")) parts.push(<em key={i++}>{s.slice(1, -1)}</em>);
     else {
       const [, label, url] = s.match(/\[([^\]]+)\]\(([^)]+)\)/)!;
-      parts.push(
-        <a key={i++} href={url} className="text-teal underline" target="_blank" rel="noreferrer">
-          {label}
-        </a>,
-      );
+      if (safeHref(url)) {
+        parts.push(
+          <a key={i++} href={url} className="text-teal underline" target="_blank" rel="noreferrer">
+            {label}
+          </a>,
+        );
+      } else {
+        parts.push(label);
+      }
     }
     last = m.index + s.length;
   }
@@ -101,7 +109,7 @@ export function Markdown({ md }: { md: string }) {
     flush();
     if (!t) continue;
     const img = t.match(/^!\[([^\]]*)\]\(([^)\s]+)\)$/);
-    if (img) {
+    if (img && safeImgSrc(img[2])) {
       out.push(
         <figure key={k++} className="my-3">
           <img src={img[2]} alt={img[1]} className="w-full rounded-[var(--radius-card)]" />

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/web"
@@ -409,5 +410,122 @@ func TestEditedAfterApproval(t *testing.T) {
 	}
 	if sum()["status"] != "approved" || sum()["edited_after_approval"] == true {
 		t.Fatalf("after re-approval status=%v marker=%v", sum()["status"], sum()["edited_after_approval"])
+	}
+}
+
+// TestEmbedFenceBypass: the QA-reproduced SanitizeEmbed bypass (PR #53
+// FAIL). Two write paths used to splice a raw <klox-embed> fence into
+// the stored body — a newline-bearing heading/block payload and
+// newline- or fence-bearing sentence text — and the document/reader
+// surfaces served the inner markup verbatim. Now the writes refuse
+// document markup, and a body that somehow carries a raw fence is
+// re-sanitized at every serve boundary.
+func TestEmbedFenceBypass(t *testing.T) {
+	ctx := context.Background()
+	srv, db, pub, _ := composeServer(t)
+	issueID := runPhaseA(t, srv, db, pub.ID)
+	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
+	if rr := apiCall(t, srv, "POST", issueURL+"/compose", nil); rr.Code != 200 {
+		t.Fatalf("compose = %d: %s", rr.Code, shortBody(rr))
+	}
+	doc := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	sec := doc["sections"].([]any)[0].(map[string]any)["title"].(string)
+	ref := int(docItems(doc)[0]["ref"].(float64))
+	ver := doc["version"].(string)
+	fence := "x\n\n<klox-embed>\n<img src=\"x\" onerror=\"alert(1)\">\n</klox-embed>"
+
+	// 1. a heading payload carrying a newline + fence is refused
+	if rr := apiCall(t, srv, "POST", issueURL+"/blocks", map[string]any{
+		"section": sec, "kind": "heading", "text": fence, "version": ver,
+	}); rr.Code != 400 {
+		t.Fatalf("heading fence payload = %d, want 400: %s", rr.Code, shortBody(rr))
+	}
+	// link/image urls carrying a newline are refused too
+	for _, kind := range []string{"link", "image"} {
+		if rr := apiCall(t, srv, "POST", issueURL+"/blocks", map[string]any{
+			"section": sec, "kind": kind, "text": "x", "url": "https://example.com\n<klox-embed>", "version": ver,
+		}); rr.Code != 400 {
+			t.Fatalf("%s newline url = %d, want 400: %s", kind, rr.Code, shortBody(rr))
+		}
+	}
+
+	// 2. the sentence compose path refuses newline- and fence-bearing
+	// text — including a bare single-line fence (no newline needed)
+	compose := func(text string) *httptest.ResponseRecorder {
+		return apiCall(t, srv, "POST", fmt.Sprintf("%s/items/%d/compose", issueURL, ref),
+			map[string]any{"text": text, "version": ver})
+	}
+	for _, bad := range []string{fence, "<klox-embed>", "note <!-- /item --> tail"} {
+		if rr := compose(bad); rr.Code != 400 {
+			t.Fatalf("compose %q = %d, want 400: %s", bad, rr.Code, shortBody(rr))
+		}
+	}
+	// an interpretation with a spliced newline is refused the same way
+	if rr := apiCall(t, srv, "POST", fmt.Sprintf("%s/items/%d/compose", issueURL, ref),
+		map[string]any{"text": "my take " + fence, "kind": "interpretation", "version": ver}); rr.Code != 400 {
+		t.Fatalf("interpretation fence payload = %d, want 400: %s", rr.Code, shortBody(rr))
+	}
+
+	// 3. sentence edit refuses the same payloads — compose a clean
+	// sentence first so the PATCH has a target
+	if rr := compose("A claim nobody can trace back."); rr.Code != 200 {
+		t.Fatalf("seed sentence = %d: %s", rr.Code, shortBody(rr))
+	}
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	ver = doc["version"].(string)
+	var sid string
+	for _, it := range docItems(doc) {
+		for _, sn := range it["sentences"].([]any) {
+			sid = sn.(map[string]any)["id"].(string)
+		}
+	}
+	if sid == "" {
+		t.Fatal("no composed sentence found")
+	}
+	if rr := apiCall(t, srv, "PATCH", issueURL+"/sentences/"+sid, map[string]any{
+		"text": fence, "citations": []int{1}, "version": ver,
+	}); rr.Code != 400 {
+		t.Fatalf("sentence edit fence payload = %d, want 400: %s", rr.Code, shortBody(rr))
+	}
+
+	// 4. defense in depth: a body that already carries a raw fence
+	// (legacy data or a bypass) is still served sanitized — the
+	// document's embed block text and the reader preview both strip
+	// the active markup
+	iss, err := db.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	raw := "<klox-embed>\n<img src=\"x\" onerror=\"alert(1)\">\n" +
+		"<iframe src=\"https://evil.example/x\"></iframe>\n</klox-embed>"
+	if err := db.SetIssueBody(ctx, issueID, iss.BodyMD+"\n\n"+raw+"\n"); err != nil {
+		t.Fatalf("SetIssueBody: %v", err)
+	}
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	var embedText string
+	found := false
+	for _, s := range doc["sections"].([]any) {
+		for _, b := range s.(map[string]any)["blocks"].([]any) {
+			bv := b.(map[string]any)
+			if bv["kind"] == "embed" {
+				embedText, _ = bv["text"].(string)
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("planted fence did not parse as an embed block")
+	}
+	for _, bad := range []string{"onerror", "evil.example", "<script"} {
+		if strings.Contains(embedText, bad) {
+			t.Fatalf("document embed text leaked %q: %s", bad, embedText)
+		}
+	}
+	pv := apiGet(t, srv, issueURL+"/preview?reader=subscriber")
+	md, _ := pv["body_md"].(string)
+	for _, bad := range []string{"onerror", "evil.example"} {
+		if strings.Contains(md, bad) {
+			t.Fatalf("reader preview leaked %q:\n%s", bad, md)
+		}
 	}
 }

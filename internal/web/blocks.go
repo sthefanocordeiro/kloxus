@@ -70,6 +70,13 @@ func blockSafeURL(u string) bool {
 		strings.HasPrefix(u, "/m/")
 }
 
+// oneLine flattens feed-supplied strings (story titles, source names)
+// to a single line — a newline inside a stored heading would break its
+// `### … <!-- item N -->` marker and splice raw lines into the body.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // splitBlockLink unpacks "[label](url)" or a bare url.
 func splitBlockLink(rest string) (label, url string) {
 	rest = strings.TrimSpace(rest)
@@ -79,13 +86,34 @@ func splitBlockLink(rest string) (label, url string) {
 	return rest, rest
 }
 
+// unsafeDocLine reports whether a line of author-supplied text would
+// become structural markup if stored as its own body line: HTML
+// comments close the running item and `<klox-embed` opens a raw-HTML
+// fence — both are document structure, never author text (KLOX-66 D3).
+func unsafeDocLine(t string) bool {
+	return strings.HasPrefix(t, "<!--") || strings.HasPrefix(t, "<klox-embed")
+}
+
+// authorTextOK reports whether author-supplied text can be written
+// into an item's stored body: a newline would splice a new stored
+// line, and `<!--`/`<klox-embed` markup breaks out of the item into
+// structural document syntax that reaches reader surfaces raw
+// (KLOX-66 D3). The check is intentionally anywhere-in-text: every
+// stored line is a substring of the submitted text.
+func authorTextOK(text string) bool {
+	return !strings.ContainsAny(text, "\r\n") &&
+		!strings.Contains(text, "<!--") && !strings.Contains(text, "<klox-embed")
+}
+
 // blockLine renders a block's stored markdown line — the only shapes
-// the parser above accepts back.
+// the parser above accepts back. Single-line kinds refuse CR/LF: a
+// newline in the payload would splice structural markup into the
+// stored body (KLOX-66 D3).
 func blockLine(kind, text, url string) (string, bool) {
 	t := strings.TrimSpace(text)
 	switch kind {
 	case "heading":
-		if t == "" || strings.Contains(t, "<!--") {
+		if t == "" || strings.Contains(t, "<!--") || strings.ContainsAny(t, "\r\n") {
 			return "", false
 		}
 		return "#### " + t, true
@@ -93,19 +121,19 @@ func blockLine(kind, text, url string) (string, bool) {
 		return "---", true
 	case "link":
 		u := strings.TrimSpace(url)
-		if u == "" || strings.ContainsAny(u, " \t()") || !blockSafeURL(u) {
+		if u == "" || strings.ContainsAny(u, " \t()\r\n") || !blockSafeURL(u) {
 			return "", false
 		}
-		if t == "" || strings.ContainsAny(t, "[]") {
+		if t == "" || strings.ContainsAny(t, "[]\r\n") {
 			t = u
 		}
 		return "- [" + t + "](" + u + ")", true
 	case "image":
 		u := strings.TrimSpace(url)
-		if u == "" || strings.ContainsAny(u, " \t()") || !blockSafeURL(u) {
+		if u == "" || strings.ContainsAny(u, " \t()\r\n") || !blockSafeURL(u) {
 			return "", false
 		}
-		if strings.ContainsAny(t, "[]\n") {
+		if strings.ContainsAny(t, "[]\r\n") {
 			return "", false
 		}
 		return "![" + t + "](" + u + ")", true
@@ -127,7 +155,7 @@ func blockLine(kind, text, url string) (string, bool) {
 			if ln == "" {
 				continue
 			}
-			if strings.HasPrefix(ln, "<!--") || strings.HasPrefix(ln, "<klox-embed") {
+			if unsafeDocLine(ln) {
 				return "", false
 			}
 			if b.Len() > 0 {
@@ -344,12 +372,12 @@ func (s *Server) insertItemBlock(r *http.Request, iss *store.Issue, section stri
 		return "", "the story has no reference material"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "### %s <!-- item %d -->\n\n", story.Title, d.Ref)
+	fmt.Fprintf(&b, "### %s <!-- item %d -->\n\n", oneLine(story.Title), d.Ref)
 	if len(d.Sources) > 0 {
 		b.WriteString("**Sources:** ")
 		parts := []string{}
 		for _, ds := range d.Sources {
-			name := ds.Name
+			name := oneLine(ds.Name)
 			if name == "" {
 				name = "source"
 			}

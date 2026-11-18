@@ -6,6 +6,7 @@ package web
 // stored-line shapes blockLine writes and parseBlockLine reads.
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -138,11 +139,18 @@ func TestBlockLineRoundTrip(t *testing.T) {
 			t.Fatalf("kind = %q, want %q (line %q)", blk.Kind, tc.kind, line)
 		}
 	}
-	// invalid content is refused, never stored half-formed
+	// invalid content is refused, never stored half-formed — including
+	// newline payloads that would splice a raw <klox-embed> fence into
+	// the stored body (KLOX-66 D3 embed-allowlist bypass, QA on PR #53)
 	for _, bad := range [][3]string{
 		{"heading", " ", ""},
+		{"heading", "title\n<klox-embed>\n<p>x</p>\n</klox-embed>", ""},
 		{"link", "x", "not a url"},
+		{"link", "x", "https://example.com/x\n<klox-embed>"},
+		{"image", "alt\n<klox-embed>", "/m/1-ab"},
+		{"image", "alt", "/m/1-ab\n<klox-embed>"},
 		{"text", "", ""},
+		{"text", "note\n<klox-embed>\n<p>x</p>\n</klox-embed>", ""},
 		{"video", "x", ""},
 	} {
 		if line, ok := blockLine(bad[0], bad[1], bad[2]); ok {
@@ -209,6 +217,59 @@ func TestUnclosedEmbedFenceIgnored(t *testing.T) {
 	for _, b := range blocks {
 		if b.Kind == "embed" {
 			t.Fatalf("unclosed fence produced embed block: %+v", b)
+		}
+	}
+}
+
+// A fence that bypassed the write path is re-sanitized when the
+// document is parsed — the composer canvas injects block text raw, so
+// stored active markup must never survive the read (KLOX-66 D3, QA
+// FAIL on PR #53).
+func TestEmbedBlockResanitizedAtParse(t *testing.T) {
+	body := "# Pub — Issue 1\n\n## Top\n\n" +
+		"<klox-embed>\n" +
+		"<img src=\"x\" onerror=\"alert(1)\">\n" +
+		"<iframe src=\"https://evil.example/x\"></iframe>\n" +
+		"<script>alert(2)</script>\n" +
+		"<iframe src=\"https://www.youtube.com/embed/abc\"></iframe>\n" +
+		"</klox-embed>\n"
+	blocks := blockList(t, testDoc(t, body))
+	if len(blocks) != 1 || blocks[0].Kind != "embed" {
+		t.Fatalf("blocks = %+v", blocks)
+	}
+	text := blocks[0].Text
+	for _, bad := range []string{"onerror", "<script", "evil.example", "alert"} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("embed text leaked %q: %s", bad, text)
+		}
+	}
+	if !strings.Contains(text, "youtube.com/embed/abc") {
+		t.Fatalf("allowed iframe dropped: %s", text)
+	}
+}
+
+// Author text that reaches the sentence write paths may not carry
+// document markup — a newline or a fence would splice raw lines into
+// the stored body (KLOX-66 D3).
+func TestAuthorTextOKRejectsMarkup(t *testing.T) {
+	for _, bad := range []string{
+		"line one\nline two",
+		"trailing\r\nnewline",
+		"plain <!-- marker --> text",
+		"<klox-embed>\npayload",
+		"prefix <klox-embed",
+	} {
+		if authorTextOK(bad) {
+			t.Fatalf("authorTextOK accepted %q", bad)
+		}
+	}
+	for _, ok := range []string{
+		"A normal sentence.",
+		"Inline <b>html</b> is harmless as sentence text.",
+		"a < b and c > d",
+	} {
+		if !authorTextOK(ok) {
+			t.Fatalf("authorTextOK rejected %q", ok)
 		}
 	}
 }

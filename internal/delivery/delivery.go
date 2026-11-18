@@ -125,7 +125,8 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string, aiUsed bo
 		}
 	}
 	current := ""
-	for _, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
 			if inFirstSection {
 				flush(current)
@@ -135,6 +136,21 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string, aiUsed bo
 		}
 		line = itemMarkerRe.ReplaceAllString(line, "")
 		if commentRe.MatchString(line) {
+			continue
+		}
+		if strings.TrimSpace(line) == EmbedFenceOpen {
+			// consume the whole fence region verbatim: inner lines are
+			// HTML, not markdown, so none of the line rewrites apply —
+			// and an unclosed fence swallows the rest of the body, the
+			// same shape the reader renderer gives it.
+			out = append(out, line)
+			for i+1 < len(lines) {
+				i++
+				out = append(out, lines[i])
+				if strings.TrimSpace(lines[i]) == EmbedFenceClose {
+					break
+				}
+			}
 			continue
 		}
 		// the sources footer is a sentence — it earns its full stop
@@ -165,7 +181,48 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string, aiUsed bo
 	if base != "" {
 		body = relLinkRe.ReplaceAllString(body, "]("+base+"$1)")
 	}
+	// The reader-page renderer injects fence content raw, so every
+	// embed region in the emitted markdown is re-sanitized on the way
+	// out — including fences smuggled in past the write path or inside
+	// multi-line commentary (KLOX-66 D3).
+	body = SanitizeEmbedFences(body)
 	return body
+}
+
+// SanitizeEmbedFences re-parses every <klox-embed> region of a rendered
+// markdown body through the embed allowlist. Any surface that injects
+// fence content raw — the reader page, the composer canvas, the
+// preview — can only ever receive sanitized HTML: a fence that
+// bypassed the write path loses its payload here.
+func SanitizeEmbedFences(md string) string {
+	if !strings.Contains(md, EmbedFenceOpen) {
+		return md
+	}
+	lines := strings.Split(md, "\n")
+	out := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		out = append(out, line)
+		if strings.TrimSpace(line) != EmbedFenceOpen {
+			continue
+		}
+		var inner strings.Builder
+		closed := false
+		for i+1 < len(lines) {
+			i++
+			if strings.TrimSpace(lines[i]) == EmbedFenceClose {
+				closed = true
+				break
+			}
+			inner.WriteString(lines[i])
+			inner.WriteByte('\n')
+		}
+		out = append(out, SanitizeEmbed(inner.String()))
+		if closed {
+			out = append(out, lines[i])
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // citePlaceRe finds a citation marker left dangling after a period so it
@@ -193,6 +250,24 @@ var (
 // only raw HTML allowed through to reader/email surfaces.
 const EmbedFenceOpen = "<klox-embed>"
 const EmbedFenceClose = "</klox-embed>"
+
+// renderSafeHref reports whether href may ship inside <a href> — web
+// schemes, mailto, and root-relative/anchor links only.
+func renderSafeHref(href string) bool {
+	l := strings.ToLower(strings.TrimSpace(href))
+	return strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "http://") ||
+		strings.HasPrefix(l, "mailto:") || strings.HasPrefix(l, "/") ||
+		strings.HasPrefix(l, "#")
+}
+
+// renderSafeImgSrc reports whether src may ship inside <img src> —
+// remote web images or the uploaded /m/ media path (any root-relative
+// path is same-origin).
+func renderSafeImgSrc(src string) bool {
+	l := strings.ToLower(strings.TrimSpace(src))
+	return strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "http://") ||
+		strings.HasPrefix(src, "/")
+}
 
 // RenderHTML converts the issue markdown subset to a simple HTML
 // document. Markdown links [text](url) become <a href>; a bare [url]
@@ -233,7 +308,13 @@ func RenderHTML(title, bodyMD, base string) string {
 				if strings.HasPrefix(href, "/") && base != "" {
 					href = base + href
 				}
-				anchor = `<a href="` + html.EscapeString(href) + `">` + html.EscapeString(sub[1]) + `</a>`
+				if renderSafeHref(href) {
+					anchor = `<a href="` + html.EscapeString(href) + `">` + html.EscapeString(sub[1]) + `</a>`
+				} else {
+					// a non-web scheme (javascript:, data:) renders as
+					// its label text — never a clickable URL
+					anchor = html.EscapeString(sub[1])
+				}
 			} else if sub := reBare.FindStringSubmatch(m); sub != nil {
 				anchor = `<a href="` + html.EscapeString(sub[1]) + `">` + html.EscapeString(sub[1]) + `</a>`
 			}
@@ -284,6 +365,12 @@ func RenderHTML(title, bodyMD, base string) string {
 		case reImage.MatchString(t):
 			m := reImage.FindStringSubmatch(t)
 			src := m[2]
+			if !renderSafeImgSrc(src) {
+				// non-web image schemes (javascript:, data:, file:)
+				// render as their literal markdown — never a tag
+				b.WriteString("<p>" + inline(t) + "</p>")
+				break
+			}
 			if strings.HasPrefix(src, "/") && base != "" {
 				src = base + src
 			}

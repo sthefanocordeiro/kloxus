@@ -2321,6 +2321,10 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 				Target: &apiTarget{Kind: "item", Ref: fmt.Sprint(ref)}})
 		return
 	}
+	if !authorTextOK(text) {
+		apiErr(w, 400, "validation", "item text must be a single line with no document markup")
+		return
+	}
 	kind := in.Kind
 	if kind == "" {
 		kind = "fact"
@@ -2562,6 +2566,10 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 				Target: &apiTarget{Kind: "sentence", Ref: loc.sentence.ID}})
 		return
 	}
+	if !authorTextOK(text) {
+		apiErr(w, 400, "validation", "edited sentence must be a single line with no document markup")
+		return
+	}
 	ctx := r.Context()
 	var replacement string
 	if loc.sentence.Kind == "interpretation" {
@@ -2784,6 +2792,10 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, 400, "validation", "restored sentence cannot be empty")
 			return
 		}
+		if !authorTextOK(text) {
+			apiErr(w, 400, "validation", "restored sentence must be a single line with no document markup")
+			return
+		}
 		if e.Kind == "interpretation" {
 			raws[i] = "> _Interpretação: " + text + "_"
 			continue
@@ -2969,6 +2981,10 @@ func (s *Server) apiSentenceInterpretation(w http.ResponseWriter, r *http.Reques
 	}
 	if text == "" {
 		apiErr(w, 400, "validation", "interpretation text cannot be empty")
+		return
+	}
+	if !authorTextOK(text) {
+		apiErr(w, 400, "validation", "interpretation text must be a single line with no document markup")
 		return
 	}
 	// (KLOX-48) a claim carrying a number, a date or a quotation is a
