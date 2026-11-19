@@ -147,7 +147,7 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
       if (b.kind === "text") {
         content.push({
           type: "blockText",
-          attrs: { section: sec.title, index: bi, md: b.text ?? "" },
+          attrs: { section: sec.title, index: bi, count: blocks.length, md: b.text ?? "" },
           content: mdToParas(b.text ?? ""),
         });
         return;
@@ -157,7 +157,7 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
         if (type) {
           content.push({
             type,
-            attrs: { section: sec.title, index: bi, text: b.text ?? "", url: b.url ?? "" },
+            attrs: { section: sec.title, index: bi, count: blocks.length, text: b.text ?? "", url: b.url ?? "" },
           });
         }
         return;

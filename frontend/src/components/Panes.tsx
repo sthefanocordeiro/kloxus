@@ -103,11 +103,9 @@ export function CoverageCounter({ coverage, onFixNow }: { coverage: Coverage; on
 
 export function ReadinessList({
   checks,
-  coverage,
   onTarget,
 }: {
   checks: Check[];
-  coverage: Coverage;
   onTarget: (c: Check) => void;
 }) {
   const { t, lang } = useT();
@@ -143,9 +141,6 @@ export function ReadinessList({
           </li>
         ))}
       </ul>
-      <div className="mt-3">
-        <CoverageCounter coverage={coverage} onFixNow={() => onTarget({ code: "fix", ok: false })} />
-      </div>
     </div>
   );
 }

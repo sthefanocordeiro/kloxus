@@ -430,7 +430,7 @@ function BlockTools({ node }: { node: NodeViewProps["node"] }) {
   const actions = useContext(DocActionsCtx);
   const { t } = useT();
   const b = useComposer();
-  const a = node.attrs as { section: string; index: number };
+  const a = node.attrs as { section: string; index: number; count: number };
   const [busy, setBusy] = useState(false);
   if (actions.readOnly) return null;
   const run = (fn: () => Promise<boolean>) => {
@@ -439,12 +439,12 @@ function BlockTools({ node }: { node: NodeViewProps["node"] }) {
   };
   return (
     <span className="ml-2 inline-flex shrink-0 items-center gap-0.5 align-middle opacity-0 transition-opacity group-hover:opacity-100" contentEditable={false}>
-      <button type="button" disabled={busy} aria-label={b.up}
+      <button type="button" disabled={busy || a.index === 0} aria-label={b.up}
         className="rounded p-1 text-muted hover:bg-line/60 hover:text-ink disabled:opacity-40"
         onClick={() => run(() => actions.moveBlock(a.section, a.index, -1))}>
         <ArrowUp size={12} />
       </button>
-      <button type="button" disabled={busy} aria-label={b.down}
+      <button type="button" disabled={busy || a.index >= a.count - 1} aria-label={b.down}
         className="rounded p-1 text-muted hover:bg-line/60 hover:text-ink disabled:opacity-40"
         onClick={() => run(() => actions.moveBlock(a.section, a.index, 1))}>
         <ArrowDown size={12} />
@@ -901,6 +901,7 @@ function blockNode(name: string, extra: Record<string, unknown>, view: FC<NodeVi
       return {
         section: { default: "" },
         index: { default: 0 },
+        count: { default: 0 },
         text: { default: "" },
         url: { default: "" },
         ...extra,
@@ -936,6 +937,7 @@ export const BlockText = Node.create({
     return {
       section: { default: "" },
       index: { default: 0 },
+      count: { default: 0 },
       md: { default: "" },
     };
   },

@@ -44,7 +44,9 @@ export function TemplatePage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-6">
-      <BackButton to={`/publications/${pub.id}/settings`} dest={t.nav.settings} />
+      {/* desktop already has the shell header's back button — the
+          in-card one is mobile-only (KLOX-72 design review) */}
+      <BackButton to={`/publications/${pub.id}/settings`} dest={t.nav.settings} className="sm:hidden" />
       <Card className="p-5">
         <h1 className="font-display text-lg font-bold">{t.templatePage.title}</h1>
         <p className="mt-1 text-sm text-muted">{t.templatePage.intro}</p>

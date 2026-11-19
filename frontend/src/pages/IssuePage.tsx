@@ -202,8 +202,15 @@ export function IssuePage() {
       // --- composer blocks (KLOX-66): every op answers with the fresh
       // document — swap it into the cache and keep its version
       moveBlock: async (section, index, dir) => {
+        // a move past the section's edge is a no-op — sending it anyway
+        // answered 400 validation and showed an unexplained error toast
+        const sec = doc?.sections.find((s) => s.title === section);
+        const n = sec?.blocks?.length ?? sec?.items?.length ?? 0;
+        const to = index + dir;
+        if (to < 0 || to >= n) return true;
         try {
-          const r = await api.blockMove(issueID, section, index, index + dir, versionRef.current);
+          await flushRef.current();
+          const r = await api.blockMove(issueID, section, index, to, versionRef.current);
           versionRef.current = r.document.version;
           qc.setQueryData(["document", issueID], r.document);
           invalidate();
@@ -215,6 +222,7 @@ export function IssuePage() {
       },
       removeBlock: async (section, index) => {
         try {
+          await flushRef.current();
           const r = await api.blockRemove(issueID, section, index, versionRef.current);
           versionRef.current = r.document.version;
           qc.setQueryData(["document", issueID], r.document);
@@ -339,9 +347,16 @@ export function IssuePage() {
         } catch (e) {
           // re-queue so a later drain retries instead of dropping the
           // typed text — a conflict carries the fresh document, so once
-          // resync lands the new version the retry can save it.
-          if (isText) dirtyText.current.set(key, text);
-          else dirtyCommentary.current.set(key, text);
+          // resync lands the new version the retry can save it. A
+          // deterministic 4xx (validation, not_found) can never succeed
+          // — drop it instead of re-toasting on every later drain and
+          // spinning flush-and-mutate ops forever.
+          const permanent =
+            e instanceof ApiRequestError && e.status >= 400 && e.status < 500 && !e.document;
+          if (!permanent) {
+            if (isText) dirtyText.current.set(key, text);
+            else dirtyCommentary.current.set(key, text);
+          }
           setSaved("");
           resync(e);
           if (e instanceof ApiRequestError && e.document) {
@@ -624,7 +639,6 @@ export function IssuePage() {
           issue={issue}
           issueID={issueID}
           checks={readinessQ.data?.checks ?? []}
-          coverage={doc?.coverage ?? readinessQ.data?.coverage ?? { ok: 0, cited: 0, total: 0, flagged: 0 }}
           onTarget={(c) => { setStep("escrever"); onCheckTarget(c); }}
           onChanged={() => invalidate()}
         />
@@ -887,7 +901,7 @@ function ApproveBar({
           </Button>
         }
       >
-        <ReadinessList checks={checks} coverage={coverage} onTarget={onTarget} />
+        <ReadinessList checks={checks} onTarget={onTarget} />
         {ready && issue.status !== "approved" && (
           <Button className="mt-3 w-full" size="sm" onClick={() => setConfirm(true)}>
             {t.readiness.approve}
@@ -1190,12 +1204,11 @@ function ReviewActions({ issue, onDone, onToast, onEdit }: {
 // A post-approval edit banner shows at the page level until the issue
 // is approved again.
 function ReviewStep({
-  issue, issueID, checks, coverage, onTarget, onChanged,
+  issue, issueID, checks, onTarget, onChanged,
 }: {
   issue: IssueSummary;
   issueID: number;
   checks: Check[];
-  coverage: { ok: number; cited: number; total: number; flagged: number };
   onTarget: (c: Check) => void;
   onChanged: () => void;
 }) {
@@ -1223,7 +1236,7 @@ function ReviewStep({
         <section className="space-y-3">
           <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
             <h2 className="mb-2 text-sm font-semibold">{t.readiness.title}</h2>
-            <ReadinessList checks={checks} coverage={coverage} onTarget={onTarget} />
+            <ReadinessList checks={checks} onTarget={onTarget} />
           </div>
           <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
             <h2 className="mb-2 text-sm font-semibold">{t.send.approveSend}</h2>

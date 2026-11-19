@@ -37,7 +37,7 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Newsletter template" }),
   ).toBeVisible({ timeout: 15000 });
-  const slots = page.getByRole("combobox", { name: "Story slot" });
+  const slots = page.getByRole("combobox", { name: "Story" });
   await expect(slots).toHaveCount(3);
 
   // a fixed text block edits inline and saves

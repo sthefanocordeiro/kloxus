@@ -549,8 +549,8 @@ export const dict = {
     },
     templatePage: {
       title: "Newsletter template",
-      intro: "The default layout every new edition starts from: fixed blocks are copied in and each story slot fills with that week's stories. Changes apply to editions created after you save — the edition you are writing keeps its own copy.",
-      sectionSlot: "Story slot",
+      intro: "The default layout every new edition starts from: fixed blocks are copied in and each story block fills with that week's stories. Changes apply to editions created after you save — the edition you are writing keeps its own copy.",
+      sectionSlot: "Story",
       sectionHint: "This week's stories for the section land here when the edition is created.",
       linkLabelPh: "Link label",
       hint: "Edits apply to new editions only. Inside an edition the blocks stay fully editable — changing them there never writes back here.",
@@ -1101,8 +1101,8 @@ export const dict = {
     },
     templatePage: {
       title: "Modelo da newsletter",
-      intro: "O layout padrão com que toda nova edição começa: os blocos fixos são copiados e cada vaga de pauta recebe as histórias daquela semana. Mudanças valem para edições criadas depois de salvar — a edição que você está escrevendo guarda a própria cópia.",
-      sectionSlot: "Vaga de pautas",
+      intro: "O layout padrão com que toda nova edição começa: os blocos fixos são copiados e cada bloco de pauta recebe as histórias daquela semana. Mudanças valem para edições criadas depois de salvar — a edição que você está escrevendo guarda a própria cópia.",
+      sectionSlot: "Pauta",
       sectionHint: "As histórias da semana desta seção entram aqui quando a edição é criada.",
       linkLabelPh: "Texto do link",
       hint: "Mudanças valem só para edições novas. Dentro de uma edição os blocos continuam editáveis — mudá-los lá nunca escreve de volta aqui.",
