@@ -135,7 +135,7 @@ describe("create-newsletter flow (KLOX-79)", () => {
     expect(back).toHaveAttribute("href", "/publications");
   });
 
-  it("uses one button pattern — Next alone on step 1, Next + Back on sections", async () => {
+  it("uses one button pattern — Next alone on step 1, Back + Next on sections", async () => {
     vi.mocked(api.publications).mockResolvedValue([]);
     renderAt("/new");
     const next = await screen.findByRole("button", { name: "Next" });
@@ -144,7 +144,10 @@ describe("create-newsletter flow (KLOX-79)", () => {
     fireEvent.click(next);
     expect(await screen.findByRole("heading", { name: "Your sections" })).toBeVisible();
     const back = screen.getByRole("button", { name: "Back" });
-    expect(screen.getByRole("button", { name: "Next" })).toBeVisible();
+    const fwd = screen.getByRole("button", { name: "Next" });
+    expect(fwd).toBeVisible();
+    // reading order is back ← forward (Voltar left, Avançar right)
+    expect(back.compareDocumentPosition(fwd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(back);
     expect(await screen.findByRole("heading", { name: "Create your newsletter" })).toBeVisible();
   });

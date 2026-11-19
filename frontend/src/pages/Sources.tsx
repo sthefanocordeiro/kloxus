@@ -213,26 +213,29 @@ export function SourcesPage() {
       )}
 
       {/* one button pattern across the onboarding steps (KLOX-79):
-          Fontes gets the same Avançar + Voltar pair as Seções — Voltar
-          returns to the publication's sections step. Once a first
-          issue exists this is the sources screen again and keeps its
-          original confirm. */}
+          Fontes gets the same pair as Seções — Voltar left, Avançar
+          right; the forward action keeps the same right-aligned spot.
+          Voltar returns to the publication's sections step. Once a
+          first issue exists this is the sources screen again and keeps
+          its original confirm. */}
       <div className="mt-6 flex items-center gap-3">
         {!pub.data?.latest_issue ? (
           <>
-            <Button disabled={count === 0 || confirm.isPending} onClick={() => confirm.mutate()}>
-              {confirm.isPending ? t.sourcesPage.confirming : t.create.next}
-            </Button>
-            <Button
-              variant="outline"
-              disabled={confirm.isPending}
-              onClick={() => nav(`/publications/${id}/sections`)}
-            >
-              {t.nav.back}
-            </Button>
             <span className="text-xs text-muted">
               {count === 0 && !loading ? t.sourcesPage.empty : count > 0 ? t.sourcesPage.selected(count) : null}
             </span>
+            <div className="ml-auto flex items-center gap-3">
+              <Button
+                variant="outline"
+                disabled={confirm.isPending}
+                onClick={() => nav(`/publications/${id}/sections`)}
+              >
+                {t.nav.back}
+              </Button>
+              <Button disabled={count === 0 || confirm.isPending} onClick={() => confirm.mutate()}>
+                {confirm.isPending ? t.sourcesPage.confirming : t.create.next}
+              </Button>
+            </div>
           </>
         ) : (
           <>
