@@ -1301,3 +1301,57 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 		t.Fatalf("settings PUT rewrote paid_sections: %v", paid)
 	}
 }
+
+// TestAPIPublicIssueFreeNewsletter locks the reader contract that
+// crashed the public page on free newsletters (KLOX-82): with no paid
+// sections the response must carry "paid_sections": [] — never null —
+// so the gated card's .length check cannot throw for a non-subscriber.
+func TestAPIPublicIssueFreeNewsletter(t *testing.T) {
+	srv, db := emptyServer(t)
+	ctx := context.Background()
+
+	// a publication where every section is free — the common case for a
+	// shared edition link (paywall disabled, no paid_sections at all)
+	rr := apiCall(t, srv, "POST", "/api/v1/publications", map[string]any{
+		"name":           "Free Gazette",
+		"topic":          "neighbourhood news",
+		"audience":       "everyone on the street",
+		"editorial_line": "Only verified neighbourhood stories.",
+		"tone":           "Friendly neighbour",
+		"language":       "en",
+		"frequency":      "daily",
+		"sections": []map[string]any{
+			{"title": "Top story", "format": "featured", "items": 1, "commentary": "required", "access": "all"},
+			{"title": "Quick hits", "format": "links", "items": 3, "commentary": "none", "access": "all"},
+		},
+		"paywall": map[string]any{"enabled": false, "price": ""},
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create free publication = %d: %s", rr.Code, shortBody(rr))
+	}
+	pub, _ := apiJSON(t, rr)["publication"].(map[string]any)
+	// the []-never-null contract applies to the paywall block too
+	if paid, ok := pub["paywall"].(map[string]any)["paid_sections"].([]any); !ok || paid == nil {
+		t.Fatalf("publication paywall.paid_sections = %v — must be [], not null",
+			pub["paywall"].(map[string]any)["paid_sections"])
+	}
+	pubID := int64(pub["id"].(float64))
+	slug := pub["slug"].(string)
+
+	issueID := approvedIssue(t, db, pubID, 1, "Free edition")
+	if err := db.SetIssueStatus(ctx, issueID, "sent"); err != nil {
+		t.Fatalf("mark sent: %v", err)
+	}
+
+	pu := apiGet(t, srv, "/api/v1/p/"+slug+"/1")
+	if pu["gated"] != true {
+		t.Fatal("public page should still be gated for a non-subscriber")
+	}
+	ps, ok := pu["paid_sections"].([]any)
+	if !ok || ps == nil {
+		t.Fatalf("reader paid_sections = %v — must be [], not null", pu["paid_sections"])
+	}
+	if len(ps) != 0 {
+		t.Fatalf("reader paid_sections = %v, want empty", ps)
+	}
+}

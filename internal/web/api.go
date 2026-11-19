@@ -301,7 +301,7 @@ func publicationView(p *store.Publication) apiPublication {
 		EditorialLine: localizeEditorialLine(p.EditorialLine, p.Language),
 		Tone:          p.Tone, Frequency: p.Frequency, AIDisclosure: p.AIDisclosure,
 		Paywall: apiPaywall{
-			Enabled: p.Paywall.Enabled, PaidSections: p.Paywall.PaidSections,
+			Enabled: p.Paywall.Enabled, PaidSections: orEmpty(p.Paywall.PaidSections),
 			Price: p.Paywall.Price,
 		},
 	}
@@ -3979,7 +3979,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 		"issue":       map[string]any{"number": iss.Number, "subject": localizeSubject(iss.Subject, rawPub.Language), "created_at": iss.CreatedAt},
 		"body_md":     md, "gated": !unlocked, "subscribed": active,
 		"reader":        map[string]string{"name": demoReaderName},
-		"paid_sections": paidSectionTitles(iss, pub),
+		"paid_sections": orEmpty(paidSectionTitles(iss, pub)),
 		// price on the reader page (KLOX-66): the gated card sells the
 		// subscription with the creator's price and the paid sections
 		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": rawPub.Paywall.Price},
