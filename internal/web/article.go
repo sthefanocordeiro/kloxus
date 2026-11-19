@@ -38,7 +38,7 @@ func (s *Server) articlePage(w http.ResponseWriter, r *http.Request) {
 		meta += " · " + it.Author
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>%s — %s</title>`+
+	fmt.Fprintf(w, `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>%s — %s</title>`+
 		`<style>body{font-family:Georgia,serif;max-width:38em;margin:3em auto;padding:0 1.2em;color:#1c1c1c;line-height:1.6}`+
 		`.site{color:#0e7a6d;font-size:.85em;text-transform:uppercase;letter-spacing:.08em}`+
 		`.muted{color:#666;font-size:.85em}.url{word-break:break-all}`+
