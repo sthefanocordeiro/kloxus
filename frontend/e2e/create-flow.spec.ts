@@ -63,6 +63,57 @@ test("one button pattern: Avançar alone on page 1, Voltar + Avançar on page 2"
   await expect(page.getByLabel("Linha editorial")).toBeVisible();
 });
 
+// KLOX-79 owner rework: at ≤390px nothing in the create flow may clip
+// horizontally — bare `grid` containers used to size an implicit auto
+// track to the widest child's max-content (~470px at phone widths),
+// pushing chips and the delete affordance past the right edge. Explicit
+// grid-cols-1 bounds every track to the viewport (same fix as KLOX-86).
+test("create flow has no horizontal clipping at 390px", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await onboard(page);
+
+  const fitsViewport = async () => {
+    const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+  };
+  const insideViewport = async (name: string | RegExp) => {
+    const box = await page.getByRole("button", { name, exact: true }).first().boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  };
+
+  // step 1 — Sua newsletter
+  await fitsViewport();
+
+  // step 2 — Seções: template chips wrap inside the viewport and every
+  // section row's delete affordance stays reachable
+  await page.getByRole("button", { name: "Avançar", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Suas seções" })).toBeVisible();
+  await fitsViewport();
+  for (const chip of ["Clássica", "Resumo curto", "Ensaio + links", "Em branco"]) {
+    await insideViewport(chip);
+  }
+  const removes = page.getByRole("button", { name: "Remover seção", exact: true });
+  const rows = await removes.count();
+  expect(rows).toBeGreaterThan(0);
+  for (let i = 0; i < rows; i++) {
+    const box = await removes.nth(i).boundingBox();
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  }
+
+  // step 3 — Fontes: the source cards fit the viewport as well
+  await page.getByRole("button", { name: "Avançar", exact: true }).click();
+  await page.waitForURL(/\/publications\/\d+\/sources/, { timeout: 15000 });
+  await expect(page.getByRole("button", { name: "Avançar", exact: true })).toBeVisible({
+    timeout: 15000,
+  });
+  await fitsViewport();
+});
+
 async function createViaAPI(page: import("@playwright/test").Page) {
   const proposal = (await (await page.request.get("/api/v1/proposal")).json()).proposal;
   const res = await page.request.post("/api/v1/publications", {

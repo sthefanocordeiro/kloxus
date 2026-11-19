@@ -90,7 +90,7 @@ export function SectionBuilder({
     onChange(templateSections(key, lang).map((s) => newSection(s)));
 
   const list = (
-    <div>
+    <div className="min-w-0">
       {showTemplates && (
         <div className="mb-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t.builder.templates}</p>
@@ -109,7 +109,7 @@ export function SectionBuilder({
         </div>
       )}
 
-      <ul className="grid gap-3">
+      <ul className="grid grid-cols-1 gap-3">
         {value.map((s, i) => (
           <li
             key={s.id}
@@ -179,7 +179,7 @@ export function SectionBuilder({
               </div>
             </div>
 
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wide text-muted">{t.builder.format}</span>
                 <select
@@ -266,9 +266,9 @@ export function SectionBuilder({
   if (!showPreview) return list;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
       {list}
-      <div>
+      <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t.builder.preview}</p>
         <div className="mt-1.5 rounded-[var(--radius-card)] border border-line bg-surface p-3" aria-hidden>
           {value.map((s) => (
