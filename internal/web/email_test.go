@@ -155,7 +155,7 @@ func claimWorkspace(t *testing.T, srv *web.Server, db *store.DB, email string) {
 	t.Helper()
 	rr := apiCall(t, srv, "POST", "/api/v1/workspace/claim", map[string]string{"email": email})
 	if rr.Code != 200 {
-		t.Fatalf("claim = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("claim = %d %s", rr.Code, shortBody(rr))
 	}
 	tok := claimToken(t, db)
 	if rr = apiCall(t, srv, "GET", "/claim?t="+tok, nil); rr.Code != 200 {
@@ -236,7 +236,7 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	// reader sends still require a claimed workspace
 	rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "readers"})
 	if rr.Code != 409 || apiErrCode(t, rr) != "unclaimed_workspace" {
-		t.Fatalf("send readers unclaimed = %d %s, want 409 unclaimed_workspace", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("send readers unclaimed = %d %s, want 409 unclaimed_workspace", rr.Code, shortBody(rr))
 	}
 	// an unclaimed test send lands in the outbox and finishes the
 	// journey: the test_sent_at marker unlocks the after-sending screen
@@ -244,7 +244,7 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	// (KLOX-53). No live delivery, no provider call.
 	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
 	if rr.Code != 200 {
-		t.Fatalf("unclaimed test send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("unclaimed test send = %d %s", rr.Code, shortBody(rr))
 	}
 	body := apiJSON(t, rr)
 	if body["delivery"] != "outbox" || body["outbox_email_id"] == nil {
@@ -281,7 +281,7 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	rr = apiCall(t, srv, "POST", sendURL,
 		map[string]string{"audience": "readers", "when": "schedule", "at": at})
 	if rr.Code != 200 {
-		t.Fatalf("schedule test-sent issue = %d: %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("schedule test-sent issue = %d: %s", rr.Code, shortBody(rr))
 	}
 	if rr := apiCall(t, srv, "POST", issueURL+"/hold", nil); rr.Code != 200 {
 		t.Fatalf("hold test-sent issue = %d", rr.Code)
@@ -320,7 +320,7 @@ func TestLiveSendNeedsClaimAndTestGoesToOwner(t *testing.T) {
 	}
 	rr = apiCall(t, srv, "POST", sendURL2, map[string]string{"audience": "test"})
 	if rr.Code != 200 {
-		t.Fatalf("test send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("test send = %d %s", rr.Code, shortBody(rr))
 	}
 	msgs = fake.messages()
 	last := msgs[len(msgs)-1]
@@ -359,7 +359,7 @@ func TestClaimLinkCanonicalAndSlashTolerant(t *testing.T) {
 
 	rr := apiCall(t, srv, "POST", "/api/v1/workspace/claim", map[string]string{"email": "link@x.dev"})
 	if rr.Code != 200 {
-		t.Fatalf("claim = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("claim = %d %s", rr.Code, shortBody(rr))
 	}
 	msgs := fake.messages()
 	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "https://kloxus.fly.dev/claim?t=") {
@@ -387,7 +387,7 @@ func TestClaimLinkCanonicalAndSlashTolerant(t *testing.T) {
 	// the reader confirm link is canonical too, and slash-tolerant
 	rr = apiCall(t, srv, "POST", "/api/v1/p/"+pub.Slug+"/subscribe", map[string]string{"email": "r@x.dev"})
 	if rr.Code != 200 {
-		t.Fatalf("subscribe = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("subscribe = %d %s", rr.Code, shortBody(rr))
 	}
 	mails, _ := db.OutboxEmails(ctx)
 	var confirmURL string
@@ -426,7 +426,7 @@ func TestClaimLinkCanonicalAndSlashTolerant(t *testing.T) {
 	rr2 := httptest.NewRecorder()
 	srv.ServeHTTP(rr2, req)
 	if rr2.Code != 200 {
-		t.Fatalf("POST /unsub/ = %d %s", rr2.Code, rr2.Body.String()[:200])
+		t.Fatalf("POST /unsub/ = %d %s", rr2.Code, shortBody(rr2))
 	}
 	if rd, _ := db.ReaderByEmail(ctx, pub.ID, "oneclick@x.dev"); rd == nil || !rd.Unsubscribed {
 		t.Fatal("reader not unsubscribed through the slash link")
@@ -445,7 +445,7 @@ func TestClaimLinkSurvivesPrefetch(t *testing.T) {
 
 	rr := apiCall(t, srv, "POST", "/api/v1/workspace/claim", map[string]string{"email": "prefetch@x.dev"})
 	if rr.Code != 200 {
-		t.Fatalf("claim = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("claim = %d %s", rr.Code, shortBody(rr))
 	}
 	tok := claimToken(t, db)
 
@@ -453,7 +453,7 @@ func TestClaimLinkSurvivesPrefetch(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		rr := apiCall(t, srv, "GET", "/claim?t="+tok, nil)
 		if rr.Code != 200 || !strings.Contains(rr.Body.String(), "Confirm") {
-			t.Fatalf("prefetch GET /claim = %d %q", rr.Code, rr.Body.String()[:200])
+			t.Fatalf("prefetch GET /claim = %d %q", rr.Code, shortBody(rr))
 		}
 	}
 
@@ -517,7 +517,7 @@ func TestReadersDoubleOptInAndSend(t *testing.T) {
 	for _, em := range []string{"reader1@x.dev", "reader2@x.dev"} {
 		rr := apiCall(t, srv, "POST", "/api/v1/p/"+pub.Slug+"/subscribe", map[string]string{"email": em})
 		if rr.Code != 200 {
-			t.Fatalf("subscribe %s = %d %s", em, rr.Code, rr.Body.String()[:300])
+			t.Fatalf("subscribe %s = %d %s", em, rr.Code, shortBody(rr))
 		}
 	}
 	if got := len(fake.messages()); got != 3 { // claim + 2 confirms
@@ -565,7 +565,7 @@ func TestReadersDoubleOptInAndSend(t *testing.T) {
 	rr = apiCall(t, srv, "POST", "/api/v1/issues/"+strconv.FormatInt(issueID2, 10)+"/send",
 		map[string]string{"audience": "readers"})
 	if rr.Code != 200 {
-		t.Fatalf("send readers = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("send readers = %d %s", rr.Code, shortBody(rr))
 	}
 	newMsgs := fake.messages()[before:]
 	if len(newMsgs) != 1 || newMsgs[0].To[0] != "reader1@x.dev" {
@@ -583,7 +583,7 @@ func TestReadersDoubleOptInAndSend(t *testing.T) {
 	rr2 := httptest.NewRecorder()
 	srv.ServeHTTP(rr2, req)
 	if rr2.Code != 200 {
-		t.Fatalf("one-click unsub = %d %s", rr2.Code, rr2.Body.String()[:200])
+		t.Fatalf("one-click unsub = %d %s", rr2.Code, shortBody(rr2))
 	}
 	if rd, _ := db.ReaderByEmail(ctx, pub.ID, "reader1@x.dev"); rd == nil || !rd.Unsubscribed {
 		t.Fatal("reader1 not unsubscribed after one-click")
@@ -622,7 +622,7 @@ func TestIdempotentSend(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		rr := apiCallHdr(t, srv, "POST", sendURL, map[string]string{"audience": "test"}, hdr)
 		if rr.Code != 200 {
-			t.Fatalf("send %d = %d %s", i, rr.Code, rr.Body.String()[:300])
+			t.Fatalf("send %d = %d %s", i, rr.Code, shortBody(rr))
 		}
 	}
 	if n := len(fake.messages()) - before; n != 1 {
@@ -655,7 +655,7 @@ func TestFallbackToOutbox(t *testing.T) {
 	rr := apiCall(t, srv, "POST", "/api/v1/issues/"+strconv.FormatInt(issueID, 10)+"/send",
 		map[string]string{"audience": "test"})
 	if rr.Code != 200 {
-		t.Fatalf("send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("send = %d %s", rr.Code, shortBody(rr))
 	}
 	res := apiJSON(t, rr)
 	if res["fallback"] != true || res["delivery"] != "outbox_fallback" {
@@ -688,7 +688,7 @@ func TestFallbackRetrySends(t *testing.T) {
 	fake.err = errors.New("resend api: 503 backend down")
 	rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
 	if rr.Code != 200 {
-		t.Fatalf("send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("send = %d %s", rr.Code, shortBody(rr))
 	}
 	res := apiJSON(t, rr)
 	if res["delivery"] != "outbox_fallback" {
@@ -700,7 +700,7 @@ func TestFallbackRetrySends(t *testing.T) {
 	before := len(fake.messages())
 	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
 	if rr.Code != 200 {
-		t.Fatalf("retry = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("retry = %d %s", rr.Code, shortBody(rr))
 	}
 	res = apiJSON(t, rr)
 	if res["delivery"] != "resend" || res["sent"].(float64) != 1 {
@@ -749,7 +749,7 @@ func TestFallbackIssueSendStaysApproved(t *testing.T) {
 	fake.err = errors.New("resend api: 503 backend down")
 	rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "readers"})
 	if rr.Code != 200 {
-		t.Fatalf("send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("send = %d %s", rr.Code, shortBody(rr))
 	}
 	res := apiJSON(t, rr)
 	if res["delivery"] != "outbox_fallback" || res["warnings"] == nil {
@@ -767,7 +767,7 @@ func TestFallbackIssueSendStaysApproved(t *testing.T) {
 	before := len(fake.messages())
 	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "readers"})
 	if rr.Code != 200 {
-		t.Fatalf("retry = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("retry = %d %s", rr.Code, shortBody(rr))
 	}
 	res = apiJSON(t, rr)
 	if res["delivery"] != "resend" || res["sent"].(float64) != 1 {
@@ -807,7 +807,7 @@ func TestAllRefusedSendStaysApproved(t *testing.T) {
 	rr := apiCall(t, srv, "POST", "/api/v1/issues/"+strconv.FormatInt(issueID, 10)+"/send",
 		map[string]string{"audience": "readers"})
 	if rr.Code != 200 {
-		t.Fatalf("send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("send = %d %s", rr.Code, shortBody(rr))
 	}
 	res := apiJSON(t, rr)
 	if res["sent"].(float64) != 0 || res["refused"] == nil || res["delivery"] != "none" {
@@ -842,12 +842,12 @@ func TestCapsPersistAcrossRestart(t *testing.T) {
 
 	rr := apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
 	if rr.Code != 200 {
-		t.Fatalf("first send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("first send = %d %s", rr.Code, shortBody(rr))
 	}
 	// cap now spent — refuse loudly, never silently drop
 	rr = apiCall(t, srv, "POST", sendURL, map[string]string{"audience": "test"})
 	if rr.Code != 429 {
-		t.Fatalf("over-cap send = %d %s, want 429", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("over-cap send = %d %s, want 429", rr.Code, shortBody(rr))
 	}
 	mails, _ := db.OutboxEmails(context.Background())
 	refused := 0
@@ -925,7 +925,7 @@ func TestGlobalCapAcrossWorkspaces(t *testing.T) {
 	cookieB := strings.SplitN(serve("GET", "/", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
 	rr := serve("POST", "/api/v1/workspace/claim", cookieB, map[string]string{"email": "b@x.dev"})
 	if rr.Code != 200 {
-		t.Fatalf("claim B = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("claim B = %d %s", rr.Code, shortBody(rr))
 	}
 	res := apiJSON(t, rr)
 	if res["sent"] == true || res["refused"] == nil {
@@ -1114,7 +1114,7 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 	cookieA := strings.SplitN(serve("GET", "/", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
 	rr := serve("POST", "/api/v1/workspace/claim", cookieA, map[string]string{"email": "host@hackbrazil.dev"})
 	if rr.Code != 200 {
-		t.Fatalf("claim = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("claim = %d %s", rr.Code, shortBody(rr))
 	}
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Cookie", cookieA)

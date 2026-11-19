@@ -45,12 +45,92 @@ export function failingChecks(checks: Check[]): Check[] {
   return checks.filter((c) => !c.ok);
 }
 
+// mdInline parses the composer text subset — **bold**, _italic_ and
+// [label](url) — into Tiptap inline nodes for a rich text block.
+export function mdInline(md: string): Record<string, unknown>[] {
+  const nodes: Record<string, unknown>[] = [];
+  const re = /(\*\*[^*]+\*\*)|(_[^_]+_)|(\[[^\]]*\]\([^)\s]+\))/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  const push = (text: string, marks?: Record<string, unknown>[]) => {
+    if (text) nodes.push(marks ? { type: "text", text, marks } : { type: "text", text });
+  };
+  while ((m = re.exec(md))) {
+    push(md.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith("**")) push(tok.slice(2, -2), [{ type: "bold" }]);
+    else if (tok.startsWith("_")) push(tok.slice(1, -1), [{ type: "italic" }]);
+    else {
+      const mm = /^\[([^\]]*)\]\(([^)\s]+)\)$/.exec(tok);
+      if (mm) push(mm[1], [{ type: "link", attrs: { href: mm[2] } }]);
+      else push(tok);
+    }
+    last = re.lastIndex;
+  }
+  push(md.slice(last));
+  return nodes;
+}
+
+// mdToParas splits a stored multi-line text block into paragraph nodes.
+export function mdToParas(md: string): Record<string, unknown>[] {
+  const paras = md.split("\n").map((ln) => ln.trim()).filter(Boolean);
+  if (paras.length === 0) paras.push("");
+  return paras.map((ln) => ({ type: "paragraph", content: mdInline(ln) }));
+}
+
+interface InlineMark {
+  type: string;
+  attrs?: { href?: string };
+}
+
+// inlineMd serializes one Tiptap inline node list back to the stored
+// markdown subset. A link wins over emphasis — the email renderer does
+// not nest marks inside an anchor label.
+export function inlineMd(nodes: { type: string; text?: string; marks?: InlineMark[] }[] | undefined): string {
+  let out = "";
+  for (const n of nodes ?? []) {
+    if (n.type !== "text" || !n.text) continue;
+    const marks = n.marks ?? [];
+    const link = marks.find((m) => m.type === "link")?.attrs?.href;
+    if (link) {
+      out += `[${n.text}](${link})`;
+      continue;
+    }
+    let s = n.text;
+    if (marks.some((m) => m.type === "italic")) s = `_${s}_`;
+    if (marks.some((m) => m.type === "bold")) s = `**${s}**`;
+    out += s;
+  }
+  return out;
+}
+
+// blockTextMd serializes a blockText node's JSON — paragraphs become
+// the stored `> ` lines (one markdown line per paragraph).
+export function blockTextMd(node: { content?: { content?: { type: string; text?: string; marks?: InlineMark[] }[] }[] }): string {
+  return (node.content ?? [])
+    .map((p) => inlineMd(p.content))
+    .filter((ln) => ln.trim() !== "")
+    .join("\n");
+}
+
 // docToTiptap converts the issue document into the Tiptap tree: section
 // headings, one commentary node per section, item headings, and one
 // sentence node per stored sentence. Attrs carry the API-facing data
-// (sid, kind, citations, flag) — node views read them back out.
+// (sid, kind, citations, flag) — node views read them back out. A
+// blockAdd gap sits before every block and after the last — insert
+// anywhere (KLOX-66 D3).
 export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
   const content: Record<string, unknown>[] = [];
+  const blockType: Record<string, string> = {
+    heading: "blockHeading",
+    divider: "blockDivider",
+    link: "blockLink",
+    image: "blockImage",
+    embed: "blockEmbed",
+  };
+  const gap = (sec: string, index: number) => {
+    content.push({ type: "blockAdd", attrs: { section: sec, index } });
+  };
   for (const sec of doc.sections ?? []) {
     if (sec.title) {
       content.push({
@@ -58,15 +138,42 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
         attrs: { title: sec.title },
       });
     }
-    for (const item of sec.items ?? []) {
+    const byRef = new Map((sec.items ?? []).map((i) => [i.ref, i]));
+    // blocks carry the edition's layout order (KLOX-66); documents
+    // written before the block model have none — items stand in.
+    const blocks = sec.blocks ?? (sec.items ?? []).map((i) => ({ kind: "item" as const, ref: i.ref }));
+    blocks.forEach((b, bi) => {
+      gap(sec.title, bi);
+      if (b.kind === "text") {
+        content.push({
+          type: "blockText",
+          attrs: { section: sec.title, index: bi, md: b.text ?? "" },
+          content: mdToParas(b.text ?? ""),
+        });
+        return;
+      }
+      if (b.kind !== "item") {
+        const type = blockType[b.kind];
+        if (type) {
+          content.push({
+            type,
+            attrs: { section: sec.title, index: bi, text: b.text ?? "", url: b.url ?? "" },
+          });
+        }
+        return;
+      }
+      const item = byRef.get(b.ref ?? -1);
+      if (!item) return;
       content.push({
         type: "itemHeading",
         attrs: {
           ref: item.ref, issueItemId: item.issue_item_id, headline: item.headline,
+          section: sec.title, index: bi, format: sec.format ?? "",
+          // link-only pauta — item toggle or links-format section —
+          // an empty slot asks for no text (KLOX-65/D2, KLOX-66)
+          linkOnly: (item.link_only ?? false) || sec.format === "links",
           empty: (item.sentences ?? []).length === 0,
           flagged: (item.sentences ?? []).filter((s) => s.flag).length,
-          // link-only pauta: an empty slot asks for no text (KLOX-65/D2)
-          linkOnly: sec.format === "links",
         },
       });
       for (const s of item.sentences ?? []) {
@@ -83,7 +190,9 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
           content: [{ type: "text", text: s.text }],
         });
       }
-    }
+    });
+    // the last gap — appending lands at the section's end
+    gap(sec.title, blocks.length);
     // commentary closes the section, where it appears in the output
     if (sec.commentary.mode !== "none") {
       content.push({

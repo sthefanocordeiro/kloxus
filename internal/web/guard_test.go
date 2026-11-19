@@ -44,7 +44,7 @@ func postRun(t *testing.T, srv *web.Server, pubID int64) map[string]any {
 	t.Helper()
 	rr := apiCall(t, srv, "POST", "/api/v1/publications/"+strconv.FormatInt(pubID, 10)+"/runs", nil)
 	if rr.Code != http.StatusAccepted {
-		t.Fatalf("POST run = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("POST run = %d: %s", rr.Code, shortBody(rr))
 	}
 	runID := apiJSON(t, rr)["run"].(map[string]any)["id"].(string)
 	return waitRun(t, srv, runID)
@@ -122,7 +122,7 @@ func TestKillSwitchNoRestart(t *testing.T) {
 		rr := httptest.NewRecorder()
 		srv.ServeHTTP(rr, req)
 		if rr.Code != 200 {
-			t.Fatalf("%s %s = %d: %s", method, path, rr.Code, rr.Body.String()[:300])
+			t.Fatalf("%s %s = %d: %s", method, path, rr.Code, shortBody(rr))
 		}
 		return apiJSON(t, rr)
 	}

@@ -99,7 +99,12 @@ describe("docToTiptap", () => {
   it("emits one sentence node per stored sentence, commentary last", () => {
     const tiptap = docToTiptap(doc()) as { content: { type: string }[] };
     const types = tiptap.content.map((n) => n.type);
-    expect(types).toEqual(["sectionHeading", "itemHeading", "sentence", "sentence", "commentary"]);
+    // a blockAdd gap sits before every block and after the last — the
+    // insert-anywhere affordance (KLOX-66); commentary still ends the
+    // section
+    expect(types).toEqual([
+      "sectionHeading", "blockAdd", "itemHeading", "sentence", "sentence", "blockAdd", "commentary",
+    ]);
   });
 
   it("keeps headings out of editable content — titles live in attrs", () => {

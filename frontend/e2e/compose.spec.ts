@@ -269,7 +269,9 @@ test("manual compose journey", async ({ page }) => {
   await page.getByRole("button", { name: "Send", exact: true }).click();
   const [sendResp] = await Promise.all([
     page.waitForResponse((r) => r.url().endsWith("/send") && r.request().method() === "POST"),
-    page.getByRole("button", { name: "Send a test" }).click(),
+    // the Revisar panel carries the same send row — the popover's copy
+    // is the one inside the portal
+    page.locator("[data-radix-popper-content-wrapper]").getByRole("button", { name: "Send a test" }).click(),
   ]);
   const sendBody = await sendResp.json();
   expect(sendBody.issue.status).toBe("approved");

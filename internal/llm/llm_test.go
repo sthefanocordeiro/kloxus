@@ -60,8 +60,8 @@ func TestReplayHitAndMiss(t *testing.T) {
 // call at 40k, so no request ever reaches the $0.50/$2.50 tier.
 func TestPricePerMillionCurrentPrices(t *testing.T) {
 	cases := []struct {
-		model    string
-		in, out  float64
+		model   string
+		in, out float64
 	}{
 		{"claude-haiku-5-5", 0.10, 0.50},
 		{"claude-sonnet-5-5", 2.00, 10.00},

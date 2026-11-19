@@ -278,7 +278,7 @@ outer0:
 	if rr := apiCall(t, srv, "PATCH", sents+flaggedID, map[string]any{
 		"text":      "Comentários podem ser enviados até 15 de dezembro pelo novo portal do órgão",
 		"citations": []int{1}, "version": ver}); rr.Code != 200 {
-		t.Fatalf("supported edit = %d: %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("supported edit = %d: %s", rr.Code, shortBody(rr))
 	}
 	iss, _ = db.GetIssue(ctx, issueID)
 	if len(iss.Flags) >= flagCount {
@@ -317,7 +317,7 @@ outer0:
 		t.Fatalf("commentary = %d", rr.Code)
 	}
 	if rr := apiCall(t, srv, "POST", issueURL+"/approve", nil); rr.Code != 200 {
-		t.Fatalf("approve = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("approve = %d %s", rr.Code, shortBody(rr))
 	}
 	// editing an approved issue reverts it to drafted
 	if rr := commentary("Minha análise v2."); rr.Code != 200 {
@@ -330,7 +330,7 @@ outer0:
 	apiCall(t, srv, "POST", issueURL+"/approve", nil)
 	// send — demo reader is not subscribed → teaser + unsubscribe
 	if rr := apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "readers"}); rr.Code != 200 {
-		t.Fatalf("send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("send = %d %s", rr.Code, shortBody(rr))
 	}
 	emails, _ := db.OutboxEmails(ctx)
 	var issueMail *store.OutboxEmail
@@ -367,7 +367,7 @@ outer0:
 	}
 	rr := apiCall(t, srv, "GET", apiPath, nil)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"unsubscribed":true`) {
-		t.Fatalf("unsubscribe = %d / %q", rr.Code, rr.Body.String()[:120])
+		t.Fatalf("unsubscribe = %d / %q", rr.Code, shortBody(rr))
 	}
 	if !db.ReaderUnsubscribed(ctx, rid) {
 		t.Error("unsubscribe not recorded on the reader")
@@ -566,7 +566,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	// visitor B (no cookie): the tok parameter lands them in wsA's issue
 	rr = serve("GET", apiLink, "", nil)
 	if !strings.Contains(rr.Body.String(), "Conteúdo completo") {
-		t.Fatalf("magic link cross-browser: got %d / %q", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("magic link cross-browser: got %d / %q", rr.Code, shortBody(rr))
 	}
 	// sanity: the same link minus tok opens the visitor's own (empty)
 	// workspace — the sent content must not render

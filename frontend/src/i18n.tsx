@@ -60,9 +60,7 @@ export const dict = {
       full: "full",
       swapWith: "swap with…",
       sectionFull: (name: string, cap: number) => `${name} is full (${cap}/${cap}) — pick a story to swap out`,
-      demoUnavailable: "not available here",
       openDossier: "Open research",
-      noDossier: "Research is generated at draft time",
       draftAction: (n: number) => `Draft the issue (${n} ${n === 1 ? "story" : "stories"})`,
       steps: ["Stories", "Write", "Review & send"],
       emptySlot: (n: number) => `Drop a story here · ${n} free`,
@@ -156,6 +154,7 @@ export const dict = {
       ready: "Ready to approve",
       approve: "Approve issue",
       approvedAt: "Approved",
+      blockedHint: "Fix the open items first",
       check: {
         pending_decisions: { ok: "All stories decided", fail: "stories still undecided" },
         uncited_sentences: { ok: "All facts sourced", fail: "sentences that need a source" },
@@ -200,6 +199,27 @@ export const dict = {
       noReaders: "No confirmed readers yet — readers confirm by email before they can receive an issue.",
     },
     receipt: { title: "Approval receipt", by: "by" },
+    blocks: {
+      add: "add block",
+      text: "Text",
+      heading: "Heading",
+      link: "Link",
+      divider: "Divider",
+      pauta: "Story",
+      insert: "Insert",
+      up: "Move up",
+      down: "Move down",
+      headingPh: "Heading…",
+      textPh: "Write a note for readers…",
+      pautaTitle: (section: string) => `Add story — ${section}`,
+      pautaSearch: "Search stories…",
+      pautaEmpty: "No stories on the bench — decided or already used stories don't return here.",
+      // composer-only strings live in editor/composerStrings.ts — the
+      // shared table is inside the landing-payload budget (KLOX-16)
+    },
+    review: {
+      editedAfterApproval: "You changed the issue after approving. Approve it again to send.",
+    },
     guide: {
       learned: "Rule learned",
       title: "Editorial guide",
@@ -279,6 +299,7 @@ export const dict = {
     reader: {
       forPaying: "For paying readers",
       unlockHint: "Subscribe to keep reading this and the paid sections.",
+      unlocksSections: "Subscribers read the full issue, including:",
       subscribe: "Subscribe",
       subscribed: "Subscribed",
       viewFree: "Preview as non-subscriber",
@@ -565,9 +586,7 @@ export const dict = {
       full: "cheia",
       swapWith: "trocar com…",
       sectionFull: (name: string, cap: number) => `A seção “${name}” está cheia (${cap}/${cap}) — escolha uma pauta para trocar`,
-      demoUnavailable: "indisponível aqui",
       openDossier: "Abrir pesquisa",
-      noDossier: "A pesquisa é gerada na etapa de escrita",
       draftAction: (n: number) => `Redigir a edição (${n === 1 ? "1 pauta" : `${n} pautas`})`,
       steps: ["Pautas", "Escrever", "Revisar e enviar"],
       emptySlot: (n: number) => `Solte uma pauta aqui · ${n} vaga${n > 1 ? "s" : ""}`,
@@ -661,6 +680,7 @@ export const dict = {
       ready: "Pronta para aprovação",
       approve: "Aprovar edição",
       approvedAt: "Aprovada",
+      blockedHint: "Resolva os itens pendentes primeiro",
       check: {
         pending_decisions: { ok: "Todas as pautas decididas", fail: "pautas por decidir" },
         uncited_sentences: { ok: "Todos os fatos com fonte", fail: "frases que precisam de fonte" },
@@ -705,6 +725,27 @@ export const dict = {
       noReaders: "Ainda não há leitores confirmados — leitores confirmam por e-mail antes de receber uma edição.",
     },
     receipt: { title: "Recibo de aprovação", by: "por" },
+    blocks: {
+      add: "adicionar bloco",
+      text: "Texto",
+      heading: "Título",
+      link: "Endereço",
+      divider: "Divisor",
+      pauta: "Pauta",
+      insert: "Inserir",
+      up: "Mover para cima",
+      down: "Mover para baixo",
+      headingPh: "Título…",
+      textPh: "Escreva uma nota para os leitores…",
+      pautaTitle: (section: string) => `Adicionar pauta — ${section}`,
+      pautaSearch: "Buscar pautas…",
+      pautaEmpty: "Nenhuma pauta na reserva — pautas decididas ou já usadas não voltam a aparecer.",
+      // composer-only strings live in editor/composerStrings.ts — the
+      // shared table is inside the landing-payload budget (KLOX-16)
+    },
+    review: {
+      editedAfterApproval: "Você mudou a edição depois de aprovar. Aprove de novo para enviar.",
+    },
     guide: {
       learned: "Regra aprendida",
       title: "Guia editorial",
@@ -784,6 +825,7 @@ export const dict = {
     reader: {
       forPaying: "Para assinantes",
       unlockHint: "Assine para continuar a ler esta e as seções pagas.",
+      unlocksSections: "Assinantes leem a edição inteira, incluindo:",
       subscribe: "Assinar",
       subscribed: "Assinante",
       viewFree: "Ver como não assinante",

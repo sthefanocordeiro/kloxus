@@ -122,7 +122,7 @@ type Board = { bench: Candidate[]; sections: Record<string, Candidate[]> };
 // the board's i18n strings (readonly — they come from the translation table)
 interface BoardStrings {
   add: string; remove: string; moveTo: string; full: string;
-  openDossier: string; demoUnavailable: string; removeWhy: string;
+  openDossier: string; removeWhy: string;
   reasonChips: readonly string[]; reasonOther: string; justRemove: string;
   [k: string]: unknown;
 }
@@ -863,6 +863,9 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
 function benchFiltered(bench: Candidate[], q: string, section: string): Candidate[] {
   const needle = q.trim().toLowerCase();
   return bench.filter((c) => {
+    // D4: unavailable candidates are hidden entirely — no badge, no
+    // disabled card, no "unavailable" copy on edition screens
+    if (!c.available) return false;
     if (section && c.suggested_section !== section && c.section !== section) return false;
     if (needle && !`${c.title} ${c.outlets.join(" ")}`.toLowerCase().includes(needle)) return false;
     return true;
@@ -1012,9 +1015,6 @@ function StoryCard({
         <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
           <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
           <p className="mt-0.5 text-xs text-muted">{c.outlets.join(", ")}</p>
-          {!c.available && (
-            <Badge tone="warn" className="mt-1">{board.demoUnavailable}</Badge>
-          )}
         </button>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {side === "bench" && c.available && (
@@ -1152,7 +1152,8 @@ function StorySheet({ cand, onClose }: { cand: Candidate | null; onClose: () => 
       ) : storyQ.data ? (
         <div className="space-y-3">
           <p className="text-xs text-muted">{storyQ.data.outlets.join(", ")}</p>
-          {cand && !cand.dossier && <p className="text-xs italic text-muted">{t.board.noDossier}</p>}
+          {/* D4: a pauta without research renders its story items only —
+              no "research pending" placeholder copy */}
           {storyQ.data.items.map((it) => (
             <div key={it.id} className="rounded-[var(--radius-card)] border border-line p-3">
               <a href={it.url} target="_blank" rel="noreferrer" className="text-sm font-medium text-teal underline">
