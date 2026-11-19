@@ -52,7 +52,7 @@ export function SectionsPage() {
         <p className="mt-3 text-xs text-muted">{t.builder.nextEdition}</p>
         {save.error && <p className="mt-2 text-xs text-danger">{errText(t, save.error)}</p>}
         {saved && <p className="mt-2 text-xs font-medium text-teal">{t.sectionsPage.saved}</p>}
-        <div className="mt-4">
+        <div className="mt-4 flex justify-end">
           <Button disabled={!valid || save.isPending} onClick={() => save.mutate()}>
             {save.isPending ? t.sectionsPage.saving : t.sectionsPage.save}
           </Button>

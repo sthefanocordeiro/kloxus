@@ -136,7 +136,7 @@ func TestSeedRefreshesConfig(t *testing.T) {
 	ctx := context.Background()
 
 	p := testPub()
-	p.Paywall = config.Paywall{Enabled: true, Price: "R$ 12/month", PaidSections: []string{"Lead"}}
+	p.Paywall = config.Paywall{Enabled: true, Price: "R$ 12/mês", PaidSections: []string{"Lead"}}
 	id, err := db.SeedPublication(ctx, p)
 	if err != nil {
 		t.Fatalf("SeedPublication: %v", err)
@@ -149,7 +149,7 @@ func TestSeedRefreshesConfig(t *testing.T) {
 	}
 
 	p2 := testPub()
-	p2.Paywall = config.Paywall{Enabled: true, Price: "V$ 12/month", PaidSections: []string{"Lead"}}
+	p2.Paywall = config.Paywall{Enabled: true, Price: "R$ 12/mês", PaidSections: []string{"Lead"}}
 	if _, err := db.SeedPublication(ctx, p2); err != nil {
 		t.Fatalf("re-seed: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestSeedRefreshesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPublication: %v", err)
 	}
-	if pub.Paywall.Price != "V$ 12/month" {
+	if pub.Paywall.Price != "R$ 12/mês" {
 		t.Fatalf("price not refreshed: %q", pub.Paywall.Price)
 	}
 	srcs, err := db.Sources(ctx, pub.ID)

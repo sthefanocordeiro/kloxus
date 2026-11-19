@@ -137,11 +137,13 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		defer func() {
 			if p := recover(); p != nil {
 				st.mu.Lock()
-				st.st.Done = true
-				st.st.Err = fmt.Sprintf("pipeline panic: %v", p)
 				issueID := st.st.IssueID
 				st.mu.Unlock()
 				s.markIssueBlocked(wsp, issueID)
+				st.mu.Lock()
+				st.st.Done = true
+				st.st.Err = fmt.Sprintf("pipeline panic: %v", p)
+				st.mu.Unlock()
 				slog.Error("pipeline run panicked", "pub", pub.ID, "panic", p, "rid", st.st.RunID)
 			}
 		}()
@@ -170,10 +172,17 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		ctx, cancel := context.WithTimeout(llm.WithRunScope(context.Background(), wsp.ID), s.runTimeout())
 		defer cancel()
 		res, err := runner.RunPhaseA(ctx, pub)
-		st.mu.Lock()
-		st.st.Done = true
-		issueID := st.st.IssueID
 		if err != nil {
+			st.mu.Lock()
+			issueID := st.st.IssueID
+			st.mu.Unlock()
+			// A failed step leaves the run resumable: the partial issue
+			// is marked blocked and a fresh run starts clean. The mark
+			// lands before the run reports done — a client that sees the
+			// terminal state must already find the issue blocked.
+			s.markIssueBlocked(wsp, issueID)
+			st.mu.Lock()
+			st.st.Done = true
 			st.st.Err = err.Error()
 			if b, ok := llm.AsBlocked(err); ok {
 				st.st.Blocked = true
@@ -181,12 +190,11 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 				st.st.Sample = true
 			}
 			st.mu.Unlock()
-			// A failed step leaves the run resumable: the partial issue
-			// is marked blocked and a fresh run starts clean.
-			s.markIssueBlocked(wsp, issueID)
 			slog.Error("pipeline run failed", "pub", pub.ID, "err", err, "rid", st.st.RunID)
 			return
 		}
+		st.mu.Lock()
+		st.st.Done = true
 		st.st.NoNewItems = res.NoNewItems
 		st.st.IssueID = res.IssueID
 		st.st.Step = pipeline.Steps[len(pipeline.Steps)-1] // report the final step, not the last one ticked

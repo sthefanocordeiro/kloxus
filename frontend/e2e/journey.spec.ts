@@ -27,10 +27,6 @@ const issueCol = (page: Page) => page.locator('section[aria-label="This issue"]'
 const benchCol = (page: Page) => page.locator('section[aria-label="Suggestions"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
-// the header Send popover's controls — the Revisar panel (the default
-// step once the issue is approved) carries an identical send row, so
-// every popover control is scoped to the portal (KLOX-66)
-const sendPopover = (page: Page) => page.locator("[data-radix-popper-content-wrapper]");
 
 // A supported claim: content words of the source excerpt picked at
 // non-consecutive positions — the citation floor verifies it and no
@@ -360,13 +356,11 @@ async function approveIssue(page: Page) {
 }
 
 async function scheduleAndHold(page: Page) {
-  // post-approval the send popover schedules with a real date+time —
-  // the datetime input defaults to tomorrow
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(sendPopover(page).getByLabel("Send at")).toBeVisible();
-  await sendPopover(page).getByRole("button", { name: "Schedule for later" }).click();
-  // scheduling confirms through the same dialog as sending — count, subject, sender
+  // the approved cluster's Schedule send opens the confirm dialog with
+  // the datetime inside it — the input defaults to tomorrow (KLOX-80)
+  await page.getByRole("button", { name: "Schedule send" }).click();
   const schedDialog = page.getByRole("dialog");
+  await expect(schedDialog.getByLabel("Send at")).toBeVisible();
   await expect(schedDialog.getByText(/reader.*paying/)).toBeVisible();
   await schedDialog.getByRole("button", { name: "Schedule for later" }).click();
   // the scheduled issue locks; the header chip shows the queued time
@@ -393,35 +387,40 @@ async function sendTestKeepsEditable(page: Page) {
   // the issue to sent.
   const ws = await workspaceInfo(page);
   neverRealMail(ws);
-  await page.getByRole("button", { name: "Send", exact: true }).click();
+  // the Revisar step carries the header action cluster (KLOX-80): the
+  // export dropdown and the direct send buttons live there now
+  const stepUrl = new URL(page.url());
+  stepUrl.searchParams.set("step", "revisar");
+  await page.goto(stepUrl.pathname + stepUrl.search);
+  // Export opens the format dropdown — HTML and Markdown are downloads,
+  // PDF prints through the browser's Save-as-PDF
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  await expect(page.getByRole("link", { name: "HTML", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Markdown", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "PDF", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
   const [resp] = await Promise.all([
     page.waitForResponse(
       (r) => r.url().endsWith("/send") && r.request().method() === "POST",
     ),
-    sendPopover(page).getByRole("button", { name: "Send a test" }).click(),
+    page.getByRole("button", { name: "Send a test" }).click(),
   ]);
   const body = await resp.json();
   expect(body.audience).toBe("test");
   expect(body.issue.status).toBe("approved");
   expect(body.issue.test_sent_at).toBeTruthy();
+  // a test send published the reader page — the cluster's Preview jump
+  // is a real link now, and the after-sending surface carries the same
+  // destination plus the test marker (no `sent` state)
+  await expect(page.getByRole("link", { name: "Preview", exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible();
+  await expect(page.getByText(/Test send recorded/)).toBeVisible();
   // still editable and still sendable — the lock never engaged. The
-  // composer lives on the Write step post-approval (Revisar is the
-  // default) — step back to it before checking editability. The
-  // StepCounter's revisit buttons are desktop-only (hidden on phone),
-  // so the step is set through its URL param (KLOX-66)
-  const stepUrl = new URL(page.url());
-  stepUrl.searchParams.set("step", "escrever");
-  await page.goto(stepUrl.pathname + stepUrl.search);
+  // cluster's Edit button steps back to the Write step where the
+  // composer lives post-approval (KLOX-80)
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(page.locator(".ProseMirror").first()).toHaveAttribute("contenteditable", "true");
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
-  // the after-sending surface + test-sent marker appear without `sent`
-  await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible({ timeout: 15000 });
-  await expect(page.getByText(/Test send recorded/)).toBeVisible();
-  // the send popover is uncontrolled (no Popover.Close on action) —
-  // dismiss it or the next "Send" click would toggle the still-open
-  // popover shut instead of opening it
-  await page.keyboard.press("Escape");
-  await expect(sendPopover(page).getByRole("button", { name: "Send a test" })).toBeHidden();
 }
 
 async function sendToReaders(page: Page) {
@@ -430,16 +429,8 @@ async function sendToReaders(page: Page) {
   const ws = await workspaceInfo(page);
   neverRealMail(ws);
   const synthetic = ws.mail === "live" && ws.mail_transport === "synthetic";
-  const sendBar = async () => {
-    const readersBtn = sendPopover(page).getByRole("button", { name: "Send to readers" });
-    if (!(await readersBtn.isVisible())) {
-      await page.getByRole("button", { name: "Send", exact: true }).click();
-    }
-    await expect(readersBtn).toBeVisible();
-  };
   const readersDialog = async () => {
-    await sendBar();
-    await sendPopover(page).getByRole("button", { name: "Send to readers" }).click();
+    await page.getByRole("button", { name: "Send", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByText(/reader.*paying/)).toBeVisible();
     await expect(dialog.getByText(/Subject|Assunto/)).toBeVisible();
@@ -474,10 +465,9 @@ async function sendToReaders(page: Page) {
     // reader, so the resend has a deliverable recipient. Success means
     // a real synthetic-provider receipt, never a fallback or a mix.
     const before = (await fakeRequests(page)).count;
-    await sendBar();
     const [testResp] = await Promise.all([
       sendPost(),
-      sendPopover(page).getByRole("button", { name: "Send a test" }).click(),
+      page.getByRole("button", { name: "Send a test" }).click(),
     ]);
     const testBody = await testResp.json();
     expect(testBody.delivery).toBe("resend");

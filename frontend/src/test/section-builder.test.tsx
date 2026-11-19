@@ -89,6 +89,16 @@ describe("SectionBuilder", () => {
     expect(screen.getByText(/the limit is 20 stories/)).toBeVisible();
   });
 
+  it("explains what a section is and what each format means (KLOX-81)", () => {
+    setup([make()]);
+    expect(screen.getByText(/Each block is a section of the edition/)).toBeVisible();
+    // the legend names all three formats; the picked format's help
+    // also sits under the Format select
+    expect(screen.getAllByText(/the one that opens the edition/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/cited facts plus your take/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/nothing to write/).length).toBeGreaterThanOrEqual(1);
+  });
+
   it("switches a section's format, commentary and access", () => {
     const sec = make({ id: "s1" });
     const onChange = setup([sec]);

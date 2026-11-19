@@ -163,7 +163,13 @@ export function SourcesPage() {
 
       {catalogOnly ? (
         <Card className="mt-6 p-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
+            {/* the option must read "still in development" before
+                anything else — submissions do not work today (KLOX-81) */}
+            <Badge tone="warn">{t.sourcesPage.ownDev}</Badge>
+          </div>
+          <p className="mt-2 text-sm text-muted">{t.sourcesPage.ownDevFlow}</p>
           <p className="mt-2 text-sm text-muted">{t.sourcesPage.ownCatalogOnly}</p>
         </Card>
       ) : (
@@ -238,7 +244,7 @@ export function SourcesPage() {
             </div>
           </>
         ) : (
-          <>
+          <div className="ml-auto flex items-center gap-3">
             <Button
               disabled={count === 0 || confirm.isPending}
               onClick={() => confirm.mutate()}
@@ -247,7 +253,7 @@ export function SourcesPage() {
               {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(count)}
             </Button>
             {count === 0 && !loading && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
-          </>
+          </div>
         )}
       </div>
       {confirm.error && <p className="mt-2 text-xs text-danger">{errText(t, confirm.error)}</p>}

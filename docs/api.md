@@ -128,7 +128,7 @@ workspace-free, so every citation opens an original inside the demo.
   "language": "pt-BR", "frequency": "weekly", "ai_disclosure": "short",
   "sections": [{"title": "O destaque", "items": 1, "commentary": "required"}],
   "sources": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml"}],
-  "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "V$ 12/month"}
+  "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "R$ 12/mês"}
 }}
 ```
 
@@ -160,7 +160,7 @@ by the canonical sample at run time so fixture replay stays stable.
     "editorial_line": "…", "tone": "…", "frequency": "weekly",
     "ai_disclosure": "short",
     "sections": [{"title": "O destaque", "items": 1, "commentary": "required"}],
-    "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "V$ 12/month"}
+    "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "R$ 12/mês"}
   },
   "latest_issue": {"id": 1, "number": 1, "status": "reviewing", "…": "…"}
 }
@@ -333,7 +333,9 @@ paged away.
   "in_issue": true, "section": "O destaque",
   "suggested_section": "O destaque",
   "status": "approved", "origin": "phaseA", "position": 0,
-  "dossier": true, "available": true
+  "dossier": true, "available": true,
+  "summary": "One-line AI summary of the story.",
+  "ai_draft": false
 }],
  "sections": [{"title": "O destaque", "capacity": 1, "commentary": "required"}],
  "page": 0, "page_size": 50, "bench_total": 137, "has_more": true,
@@ -347,8 +349,26 @@ paged away.
 - `suggested_section` only on AI-picked items (`origin: "phaseA"`).
 - `dossier` = a dossier already exists; creator-added stories get one
   generated during the draft run.
+- `summary` is the shared AI enrichment's one-line PT summary
+  (KLOX-67); absent while an item is un-enriched — enrichment fills in
+  asynchronously after ingest.
+- `ai_draft` on a lineup card means the pauta body arrived AI-written
+  and is still unedited; the composer renders its "Gerado por IA"
+  marker from the same flag, and any author edit clears it.
+- Items the enrichment marked promotional or a non-editorial kind
+  (buying guide, entertainment, sport, almanac, advertorial) never
+  enter the ranked pool at all.
 - In demo mode only the top-`14` ranked stories are `available`;
   adding another → `demo_unavailable`.
+
+### `POST /api/v1/issues/{id}/rerank` — "Ordenar pela minha linha editorial"
+User-triggered editorial rerank (KLOX-67 §7.2): one Haiku call
+re-orders at most 120 suggestions by the publication's editorial line
+(title + summary only) and persists the new order as triage scores.
+`200 {"reranked": true|false}` — `false` when the model is off, the
+kill switch is set, the per-newsletter cap (2/day) or the workspace
+paid-action cap (5/day) is reached, or the provider fails. Never an
+error page; the free ranking always stands.
 
 ### `PUT /api/v1/issues/{id}/lineup` — set the board
 `{"entries": [{"story_id": 4, "section": "Vale saber"}, …]}` —
@@ -390,12 +410,25 @@ lineup item — an empty one → `blocked` with `section_empty` reasons.
 Lineup items still `pending` are promoted to `approved` at draft.
 
 ### `POST /api/v1/issues/{id}/compose` → `200` `{"issue": {…}, "selected": N}`
-The model-free alternative to `draft`: the lineup becomes the issue
-document as **empty item slots** — section headings, item headlines and
-`Sources:` lists, no body text. Pending lineup items are promoted to
-`approved`, items missing a dossier get a deterministic one built from
-their collected articles (summary/facts are verbatim extractive, so
-excerpts and citations stay valid). Never calls the model.
+With AI on (KLOX-67): each pauta arrives **prefilled** from the shared
+per-story research cache — sourced facts with `[n]` citations and an
+AI-written, author-editable draft body, marked `ai_draft` (one Haiku
+call per new story, capped by the workspace's 5 paid actions/day; a
+story the research cannot serve — cap, kill switch, provider failure —
+gets no research dossier at all: the deterministic dossier fills the
+slot with real sourced material and the pauta stays an empty manual
+slot — owner decision D4 hides the unavailable element instead of
+showing any "unavailable" placeholder or error copy). The research
+JSON is shared across newsletters: two publications picking the same
+story pay for it once. The author-only "Seu comentário" field is never
+AI-populated.
+With the model off the path is exactly the deterministic one below.
+Deterministic: the lineup becomes the issue document as **empty item
+slots** — section headings, item headlines and `Sources:` lists, no
+body text. Pending lineup items are promoted to `approved`, items
+missing a dossier get a deterministic one built from their collected
+articles (summary/facts are verbatim extractive, so excerpts and
+citations stay valid). Never calls the model.
 - Same lineup gate as `draft` (`blocked` with `section_empty` reasons).
 - `409 not_empty` when the document already holds sentences — compose
   never overwrites written work.
@@ -565,7 +598,16 @@ suggestions) and drops its sentence flags.
 ```
 
 ### `POST /api/v1/issues/{id}/approve`
-Failed checks → `409 blocked` with the reasons. Otherwise the stored
+Failed checks → `409 blocked` with the reasons.
+When AI is on, approval then runs the citation check (KLOX-67 §7.5):
+the deterministic lexical floor first (uncited facts, unsupported or
+too-close claims already fail readiness), then exactly one Haiku call
+re-checks every cited fact — author-edited AI claims included — for
+inverted meaning. An `unsupported` verdict becomes a flag that blocks
+approval until the author edits or removes the sentence. Capped at 3
+checks per edition per day and counted against the workspace's 5 paid
+actions/day; on cap, kill switch or provider failure the deterministic
+results stand alone and approval proceeds. Otherwise the stored
 receipt is returned — the same receipt on every repeated approve, and
 from `GET /api/v1/issues/{id}` while the approval stands. An edit that
 reverts the issue to `drafted` voids it; the next approve records a

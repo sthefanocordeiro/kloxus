@@ -122,7 +122,7 @@ type Board = { bench: Candidate[]; sections: Record<string, Candidate[]> };
 // the board's i18n strings (readonly — they come from the translation table)
 interface BoardStrings {
   add: string; remove: string; moveTo: string; full: string;
-  openDossier: string; removeWhy: string;
+  openDossier: string; aiBadge: string; removeWhy: string;
   reasonChips: readonly string[]; reasonOther: string; justRemove: string;
   [k: string]: unknown;
 }
@@ -583,27 +583,28 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         >
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold">{t.board.bench}</h2>
-            <span className="flex-1" />
-            <div className="relative">
-              <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={t.board.search}
-                className="h-7 w-40 rounded-[var(--radius-input)] border border-line bg-paper pl-7 pr-2 text-xs"
-              />
+            <div className="ml-auto flex items-center gap-2">
+              <div className="relative">
+                <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t.board.search}
+                  className="h-7 w-40 rounded-[var(--radius-input)] border border-line bg-paper pl-7 pr-2 text-xs"
+                />
+              </div>
+              <select
+                value={sectionFilter}
+                onChange={(e) => setSectionFilter(e.target.value)}
+                className="h-7 rounded-[var(--radius-input)] border border-line bg-paper px-1 text-xs"
+                aria-label={t.board.allSections}
+              >
+                <option value="">{t.board.allSections}</option>
+                {sections.map((s) => (
+                  <option key={s.title} value={s.title}>{sectionTitle(lang, s.title)}</option>
+                ))}
+              </select>
             </div>
-            <select
-              value={sectionFilter}
-              onChange={(e) => setSectionFilter(e.target.value)}
-              className="h-7 rounded-[var(--radius-input)] border border-line bg-paper px-1 text-xs"
-              aria-label={t.board.allSections}
-            >
-              <option value="">{t.board.allSections}</option>
-              {sections.map((s) => (
-                <option key={s.title} value={s.title}>{sectionTitle(lang, s.title)}</option>
-              ))}
-            </select>
           </div>
           <div className={cn("space-y-2", dropZone === "bench" && "rounded-lg outline-dashed outline-2 outline-teal")}>
             {benchVisible.length === 0 && <p className="py-6 text-center text-xs text-muted">{t.board.emptyBench}</p>}
@@ -666,20 +667,21 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           className={cn("min-h-0 flex-col overflow-y-auto p-4 md:flex", boardTab === "issue" ? "flex" : "hidden md:flex")}
           aria-label={t.board.issue}
         >
-          <div className="sticky -top-4 z-10 -mt-4 mb-3 flex items-center gap-2 border-b border-line bg-paper pb-3 pt-4">
+          <div className="sticky -top-4 z-10 -mt-4 mb-3 flex flex-wrap items-center gap-2 border-b border-line bg-paper pb-3 pt-4">
             <h2 className="text-sm font-semibold">{t.board.issue}</h2>
-            <span className="flex-1" />
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!draftReady || composeMut.isPending || draftMut.isPending || !!draftRun}
-              onClick={() => composeMut.mutate()}
-            >
-              {composeMut.isPending ? t.board.composing : t.board.composeAction}
-            </Button>
-            <Button size="sm" disabled={!draftReady || draftMut.isPending || composeMut.isPending || !!draftRun} onClick={() => draftMut.mutate()}>
-              {t.board.draftAction(total)}
-            </Button>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!draftReady || composeMut.isPending || draftMut.isPending || !!draftRun}
+                onClick={() => composeMut.mutate()}
+              >
+                {composeMut.isPending ? t.board.composing : t.board.composeAction}
+              </Button>
+              <Button size="sm" disabled={!draftReady || draftMut.isPending || composeMut.isPending || !!draftRun} onClick={() => draftMut.mutate()}>
+                {t.board.draftAction(total)}
+              </Button>
+            </div>
           </div>
           {candsQ.data?.sections_changed && (
             <p className="mb-3 rounded-[var(--radius-card)] border border-line bg-surface px-3 py-2 text-xs text-muted">
@@ -1015,6 +1017,12 @@ function StoryCard({
         <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
           <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
           <p className="mt-0.5 text-xs text-muted">{c.outlets.join(", ")}</p>
+          {c.summary && <p className="mt-0.5 text-xs leading-4 text-ink/70">{c.summary}</p>}
+          {c.ai_draft && (
+            // KLOX-67: the pauta body arrived AI-written and is still
+            // unedited — the composer renders the full marker.
+            <Badge tone="teal" className="mt-1">{board.aiBadge}</Badge>
+          )}
         </button>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {side === "bench" && c.available && (
