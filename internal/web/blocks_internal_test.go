@@ -230,6 +230,7 @@ func TestEmbedBlockResanitizedAtParse(t *testing.T) {
 		"<klox-embed>\n" +
 		"<img src=\"x\" onerror=\"alert(1)\">\n" +
 		"<iframe src=\"https://evil.example/x\"></iframe>\n" +
+		"<iframe src=\"https://www.youtube.com:anything@evil.example/x\"></iframe>\n" +
 		"<script>alert(2)</script>\n" +
 		"<iframe src=\"https://www.youtube.com/embed/abc\"></iframe>\n" +
 		"</klox-embed>\n"
@@ -245,6 +246,27 @@ func TestEmbedBlockResanitizedAtParse(t *testing.T) {
 	}
 	if !strings.Contains(text, "youtube.com/embed/abc") {
 		t.Fatalf("allowed iframe dropped: %s", text)
+	}
+}
+
+// A headline carrying a literal `<!--` must not shadow the trailing
+// item marker: the link-only toggle rewrites the marker the item regex
+// anchors, not the first comment in the line (KLOX-73).
+func TestItemMarkerIndexSkipsHeadlineComments(t *testing.T) {
+	head := "### Breaking <!-- news --> alert <!-- item 7 link -->"
+	mi := itemMarkerIndex(head)
+	if mi < 0 || head[mi:] != "<!-- item 7 link -->" {
+		t.Fatalf("marker index = %d in %q", mi, head)
+	}
+	plain := "### Plain <!-- item 3 -->"
+	if mi := itemMarkerIndex(plain); mi < 0 || plain[mi:] != "<!-- item 3 -->" {
+		t.Fatalf("plain marker index = %d", mi)
+	}
+	if itemMarkerIndex("### Heading without marker") >= 0 {
+		t.Fatal("found marker in a heading without one")
+	}
+	if itemMarkerIndex("#### Author heading") >= 0 {
+		t.Fatal("found marker in an author heading")
 	}
 }
 

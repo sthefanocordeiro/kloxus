@@ -412,7 +412,10 @@ func TestRobotsAndSecurityHeaders(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", k, got, want)
 		}
 	}
-	if csp := rr.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
+	if csp := rr.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") ||
+		// frame-src covers every embed provider the sanitizer allows —
+		// www.facebook.com included (KLOX-73).
+		!strings.Contains(csp, "frame-src") || !strings.Contains(csp, "https://www.facebook.com") {
 		t.Fatalf("CSP missing: %q", csp)
 	}
 }
