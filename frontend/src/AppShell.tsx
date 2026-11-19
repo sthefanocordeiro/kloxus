@@ -91,7 +91,11 @@ export function AppShell() {
   const pub = pubQ.data?.publication;
   const latest = pubQ.data?.latest_issue;
   const chrome = chromeFor(pathname, t, pub?.name, issue.data?.number);
-  const pubBase = pub ? `/publications/${pub.id}` : "/publications";
+  // Nav targets come from the URL pubId (or the issue's publication_id on
+  // /issues/:id), not the fetched entity — deriving them from `pub` left
+  // every pub-scoped link pointing at /publications/<word> until pubQ
+  // resolved, a dead route that 404s and never recovers (KLOX-74).
+  const pubBase = pubKey ? `/publications/${pubKey}` : "/publications";
   const editionTo = latest ? `/issues/${latest.id}` : pubBase;
 
   const items = [
