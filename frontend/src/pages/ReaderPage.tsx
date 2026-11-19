@@ -108,7 +108,7 @@ export function PublicIssue() {
           {d.paywall?.enabled && d.paywall.price && (
             <p className="mt-3 font-doc text-lg font-semibold">{d.paywall.price}</p>
           )}
-          {d.paid_sections.length > 0 && (
+          {(d.paid_sections ?? []).length > 0 && (
             <p className="mt-1 text-sm text-muted">
               {t.reader.unlocksSections} {d.paid_sections.join(", ")}
             </p>

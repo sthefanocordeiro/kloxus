@@ -53,8 +53,15 @@ type Config struct {
 	TokensPerRun int
 	LLMRunCap    float64
 	LLMDailyCap  float64
-	LLMKillEnv   bool   // KLOXUS_LLM_KILL at boot; also checked live per call
-	AdminToken   string // bearer token for /api/v1/admin/*
+	// Paid-action caps (KLOX-67 §7.3): the user-triggered model calls —
+	// story research, citation check, editorial rerank — are bounded per
+	// workspace per UTC day; rerank and citecheck carry their own
+	// per-newsletter / per-edition limits.
+	PaidActionsPerDay    int
+	ReranksPerDay        int
+	CiteChecksPerEdition int
+	LLMKillEnv           bool   // KLOXUS_LLM_KILL at boot; also checked live per call
+	AdminToken           string // bearer token for /api/v1/admin/*
 	MasterKey    string
 	ResendAPIKey string
 	FromAddress  string
@@ -104,13 +111,16 @@ func Load() (*Config, error) {
 		OutDir:          getenv("KLOXUS_OUT_DIR", "out"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		ModelTriage:     getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),
-		ModelDraft:      getenv("KLOXUS_MODEL_DRAFT", "claude-sonnet-5-5"),
+		ModelDraft:      getenv("KLOXUS_MODEL_DRAFT", "claude-haiku-5-5"),
 		MaxDeepDives:    getint("KLOXUS_MAX_DEEP_DIVES", 3),
 		LLMMode:         getenv("KLOXUS_LLM_MODE", "auto"),
 		RunsPerDay:      getint("KLOXUS_RUNS_PER_DAY", 2),
 		TokensPerRun:    getint("KLOXUS_TOKENS_PER_RUN", 200000),
 		LLMRunCap:       getfloat("KLOXUS_LLM_RUN_CAP_USD", 0.25),
 		LLMDailyCap:     getfloat("KLOXUS_LLM_DAILY_CAP_USD", 1.00),
+		PaidActionsPerDay:    getint("KLOXUS_PAID_ACTIONS_PER_DAY", 5),
+		ReranksPerDay:        getint("KLOXUS_RERANKS_PER_DAY", 2),
+		CiteChecksPerEdition: getint("KLOXUS_CITECHECKS_PER_EDITION", 3),
 		LLMKillEnv:      os.Getenv("KLOXUS_LLM_KILL") != "",
 		AdminToken:      os.Getenv("KLOXUS_ADMIN_TOKEN"),
 		MasterKey:       os.Getenv("KLOXUS_MASTER_KEY"),

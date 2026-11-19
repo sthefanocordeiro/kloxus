@@ -39,10 +39,28 @@ type Replay struct {
 	DumpDir string // optional local dir for missing-request dumps
 }
 
+// legacyModelAliases are the model ids pre-KLOX-67 fixtures were
+// recorded under. KLOX-67 made every step Haiku-only; rather than
+// re-record the fixture set under the new model id (the owner freeze
+// forbids paid calls), Replay re-keys a Haiku request against these
+// aliases when the Haiku-keyed fixture is missing. The response text
+// does not depend on the id that recorded it.
+var legacyModelAliases = []string{"claude-sonnet-5-5"}
+
 // Complete implements Provider.
 func (r Replay) Complete(ctx context.Context, req Request) (Response, error) {
 	key := Key(req)
 	data, err := fs.ReadFile(r.FS, path.Join(r.Dir, key+".json"))
+	if err != nil && req.Model == AllowedModel {
+		for _, alias := range legacyModelAliases {
+			alt := req
+			alt.Model = alias
+			if d, aerr := fs.ReadFile(r.FS, path.Join(r.Dir, Key(alt)+".json")); aerr == nil {
+				data, err = d, nil
+				break
+			}
+		}
+	}
 	if err != nil {
 		if r.DumpDir != "" {
 			if mkErr := os.MkdirAll(r.DumpDir, 0o755); mkErr == nil {
@@ -93,10 +111,14 @@ type anthropicResponse struct {
 	} `json:"usage"`
 }
 
-// Complete implements Provider.
+// Complete implements Provider. The Haiku-only rule is enforced at this
+// edge (KLOX-67): a non-Haiku request can never become a paid call.
 func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) {
 	if a.APIKey == "" {
 		return Response{}, fmt.Errorf("ANTHROPIC_API_KEY is not set")
+	}
+	if err := CheckModel(req); err != nil {
+		return Response{}, err
 	}
 	base := a.BaseURL
 	if base == "" {
