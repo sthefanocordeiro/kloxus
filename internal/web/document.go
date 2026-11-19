@@ -73,6 +73,9 @@ type docItem struct {
 	Sentences   []docSentence `json:"sentences"`
 	Sources     []docSource   `json:"sources"`
 	Flags       []docItemFlag `json:"flags,omitempty"` // flags not matched to a sentence
+	// AIDraft marks the pauta whose body arrived AI-written (KLOX-67);
+	// the composer shows the AI marker until the author's first edit.
+	AIDraft bool `json:"ai_draft,omitempty"`
 	// LinkOnly marks a pauta the editor sends as a bare link — no
 	// written text required and no citation prompt (KLOX-66 D2). The
 	// whole section may also imply it via the "links" format.
@@ -338,6 +341,7 @@ func bestEvidence(d *pipeline.Dossier, ref int, sentence, fallback string) strin
 type docItemInfo struct {
 	issueItemID int64
 	dossier     *pipeline.Dossier
+	aiDraft     bool
 }
 
 type docContext struct {
@@ -366,7 +370,7 @@ func dcFromPairs(pairs []store.IssueItemDossier, items map[int64]*store.Item) *d
 		if p.Dossier == "" || json.Unmarshal([]byte(p.Dossier), &dd) != nil {
 			continue
 		}
-		dc.byRef[dd.Ref] = docItemInfo{issueItemID: p.Item.ID, dossier: &dd}
+		dc.byRef[dd.Ref] = docItemInfo{issueItemID: p.Item.ID, dossier: &dd, aiDraft: p.Item.AIDraft}
 	}
 	return dc
 }
@@ -569,6 +573,7 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			if info, ok := dc.byRef[ref]; ok {
 				it.IssueItemID = info.issueItemID
 				it.dossier = info.dossier
+				it.AIDraft = info.aiDraft
 				for _, ds := range info.dossier.Sources {
 					src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
 					if ds.ItemID != 0 {

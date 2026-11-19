@@ -254,6 +254,7 @@ export function EvidencePane({
           )}
         </>
       )}
+      {item.sources.length > 0 && (
       <section>
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{t.evidence.sources}</p>
         <div className="space-y-2">
@@ -295,6 +296,7 @@ export function EvidencePane({
           ))}
         </div>
       </section>
+      )}
     </div>
   );
 }

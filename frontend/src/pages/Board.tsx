@@ -122,7 +122,7 @@ type Board = { bench: Candidate[]; sections: Record<string, Candidate[]> };
 // the board's i18n strings (readonly — they come from the translation table)
 interface BoardStrings {
   add: string; remove: string; moveTo: string; full: string;
-  openDossier: string; removeWhy: string;
+  openDossier: string; aiBadge: string; removeWhy: string;
   reasonChips: readonly string[]; reasonOther: string; justRemove: string;
   [k: string]: unknown;
 }
@@ -1015,6 +1015,12 @@ function StoryCard({
         <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
           <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
           <p className="mt-0.5 text-xs text-muted">{c.outlets.join(", ")}</p>
+          {c.summary && <p className="mt-0.5 text-xs leading-4 text-ink/70">{c.summary}</p>}
+          {c.ai_draft && (
+            // KLOX-67: the pauta body arrived AI-written and is still
+            // unedited — the composer renders the full marker.
+            <Badge tone="teal" className="mt-1">{board.aiBadge}</Badge>
+          )}
         </button>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {side === "bench" && c.available && (

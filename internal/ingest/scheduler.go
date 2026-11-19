@@ -24,6 +24,10 @@ type Scheduler struct {
 	log       *log.Logger
 	now       func() time.Time
 	lastPurge time.Time
+	// AfterPoll, when set, runs once after each PollOnce — the shared
+	// AI enrichment sweep (KLOX-67) hooks in here so new items get
+	// classified without blocking feed polls.
+	AfterPoll func(ctx context.Context)
 }
 
 // NewScheduler wires the feed fetcher + retention on the pool.
@@ -109,6 +113,9 @@ func (s *Scheduler) PollOnce(ctx context.Context) {
 		}
 	}
 	s.purgeBodies(ctx)
+	if s.AfterPoll != nil {
+		s.AfterPoll(ctx)
+	}
 }
 
 // purgeBodies enforces the 30-day retention window hourly.
