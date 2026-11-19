@@ -6,6 +6,7 @@ package web
 // stable code, a human message and, for blocked actions, the list of
 // reasons with a pointer to what must be fixed.
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -13,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -25,6 +27,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -77,15 +80,24 @@ func apiJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // apiDecode reads a JSON request body (empty body is allowed → false).
+// The body must be valid UTF-8 — encoding/json silently rewrites
+// invalid bytes to U+FFFD, which would persist mojibake (a Windows-1252
+// "ó" once landed in the database as "Pr�ximo").
 func apiDecode(r *http.Request, v any) (bool, error) {
 	if r.Body == nil {
 		return false, nil
 	}
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(v); err != nil {
-		if err.Error() == "EOF" {
-			return false, nil
-		}
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return false, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return false, nil
+	}
+	if !utf8.Valid(data) {
+		return false, fmt.Errorf("request body is not valid UTF-8")
+	}
+	if err := json.Unmarshal(data, v); err != nil {
 		return false, err
 	}
 	return true, nil

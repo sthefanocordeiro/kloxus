@@ -217,18 +217,19 @@ function SentenceView({ node }: NodeViewProps) {
             <AlertTriangle size={13} />
             {flagNote(lang, a.flag)}
           </span>
-          <span className="flex-1" />
-          <Button size="sm" variant="outline" disabled={busy}
-            onClick={() => { setDraft(text); setCites(a.citations); setEditErr(""); setEditing(true); }}>
-            <PenLine size={12} /> {t.doc.edit}
-          </Button>
-          <Button size="sm" variant="outline" disabled={busy}
-            onClick={() => run(() => actions.interpret(a.sid, a.kind === "interpretation" ? undefined : text))}>
-            <Quote size={12} /> {t.doc.interpretation}
-          </Button>
-          <Button size="sm" variant="danger" disabled={busy} onClick={() => run(() => actions.removeSentence(a.sid))}>
-            <Trash2 size={12} /> {t.doc.remove}
-          </Button>
+          <span className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="outline" disabled={busy}
+              onClick={() => { setDraft(text); setCites(a.citations); setEditErr(""); setEditing(true); }}>
+              <PenLine size={12} /> {t.doc.edit}
+            </Button>
+            <Button size="sm" variant="outline" disabled={busy}
+              onClick={() => run(() => actions.interpret(a.sid, a.kind === "interpretation" ? undefined : text))}>
+              <Quote size={12} /> {t.doc.interpretation}
+            </Button>
+            <Button size="sm" variant="danger" disabled={busy} onClick={() => run(() => actions.removeSentence(a.sid))}>
+              <Trash2 size={12} /> {t.doc.remove}
+            </Button>
+          </span>
         </div>
       )}
 

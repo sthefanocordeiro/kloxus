@@ -220,6 +220,12 @@ export const dict = {
     },
     review: {
       editedAfterApproval: "You changed the issue after approving. Approve it again to send.",
+      edit: "Edit",
+      scheduleSend: "Schedule send",
+      export: "Export",
+      pdfHint: "PDF opens the print dialog — pick “Save as PDF”.",
+      exportFailed: "Export failed — try again",
+      previewHint: "Send a test first — the reader page goes live then",
     },
     guide: {
       learned: "Rule learned",
@@ -755,6 +761,12 @@ export const dict = {
     },
     review: {
       editedAfterApproval: "Você mudou a edição depois de aprovar. Aprove de novo para enviar.",
+      edit: "Editar",
+      scheduleSend: "Agendar envio",
+      export: "Exportar",
+      pdfHint: "O PDF abre a janela de impressão — escolha “Salvar como PDF”.",
+      exportFailed: "A exportação falhou — tente de novo",
+      previewHint: "Envie um teste primeiro — a página do leitor entra no ar",
     },
     guide: {
       learned: "Regra aprendida",
