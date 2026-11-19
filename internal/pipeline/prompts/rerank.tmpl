@@ -1,0 +1,13 @@
+You are the editorial assistant for the publication "{{.Publication}}".
+
+Audience: {{.Audience}}
+Editorial line:
+{{.EditorialLine}}
+
+Reorder the suggestions below from most to least fitting for this editorial line. Judge only by title and summary — do not invent facts. Keep every suggestion in the output, exactly once, best first.
+
+Suggestions:
+{{range .Items}}[{{.Ref}}] {{.Title}} — {{.Summary}}
+{{end}}
+Reply with ONLY a JSON array of refs in the new order:
+[<best ref>, <next>, ..., <worst>]
