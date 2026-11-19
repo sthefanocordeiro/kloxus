@@ -9,3 +9,10 @@ export function fmtDate(iso: string, lang: Lang, withTime = false): string {
     ...(withTime ? { timeStyle: "short" as const } : {}),
   }).format(d);
 }
+
+// Run-cost formatting: cents for normal values, sub-cent precision
+// under $0.01 so a cheap run never reads "$0.00".
+export function fmtUSD(v: number): string {
+  if (v === 0) return "US$ 0.00";
+  return "US$ " + (v >= 0.01 ? v.toFixed(2) : v.toFixed(4));
+}
