@@ -5,7 +5,8 @@ import { useT, type Lang } from "../i18n";
 import { Markdown } from "../markdown";
 import { fmtDate } from "../lib/fmt";
 import { Badge, Button, Card } from "../ui";
-import { useState } from "react";
+import { errText } from "../lib/errors";
+import { useEffect, useState } from "react";
 
 // ReaderShell is the chrome for reader-facing pages: the publication
 // name and a language switch — never editor navigation.
@@ -63,6 +64,15 @@ export function PublicIssue() {
   });
   const d = q.data;
 
+  // the browser tab is the edition's title (KLOX-66)
+  useEffect(() => {
+    if (d) {
+      const prev = document.title;
+      document.title = `${d.issue.subject} · ${d.publication.name}`;
+      return () => { document.title = prev; };
+    }
+  }, [d]);
+
   if (q.isLoading) return <div className="mx-auto max-w-2xl px-4 py-16 text-sm text-muted">…</div>;
   if (q.isError || !d)
     return (
@@ -94,8 +104,17 @@ export function PublicIssue() {
         <Card className="mt-8 border-ink/20 bg-paper-raised p-5">
           <Badge tone="ink">{t.reader.forPaying}</Badge>
           <p className="mt-2 text-sm text-muted">{t.reader.unlockHint}</p>
+          {/* price + what the subscription unlocks (KLOX-66) */}
+          {d.paywall?.enabled && d.paywall.price && (
+            <p className="mt-3 font-doc text-lg font-semibold">{d.paywall.price}</p>
+          )}
+          {d.paid_sections.length > 0 && (
+            <p className="mt-1 text-sm text-muted">
+              {t.reader.unlocksSections} {d.paid_sections.join(", ")}
+            </p>
+          )}
           {!simDone ? (
-            <Button className="mt-3" variant="teal" disabled={sim.isPending} onClick={() => sim.mutate()}>
+            <Button className="mt-3" disabled={sim.isPending} onClick={() => sim.mutate()}>
               {t.reader.subscribe}
             </Button>
           ) : (
@@ -116,7 +135,58 @@ export function PublicIssue() {
           </button>
         </div>
       )}
+
+      <SubscribeCard slug={d.publication.slug} tokQuery={tokQuery} />
     </div>
+  );
+}
+
+// Double opt-in signup: the address gets one confirmation email and
+// receives nothing until the link inside it is opened. In outbox mode
+// the API answers with the link itself so the demo can complete it.
+function SubscribeCard({ slug, tokQuery }: { slug: string; tokQuery: string }) {
+  const { t } = useT();
+  const [email, setEmail] = useState("");
+  const [done, setDone] = useState<{ confirm_url?: string; already?: boolean } | null>(null);
+  const sub = useMutation({
+    mutationFn: () => api.subscribe(slug, email.trim(), tokQuery),
+    onSuccess: (r) => setDone({ confirm_url: r.confirm_url, already: r.already_confirmed }),
+  });
+  return (
+    <Card className="mt-8 border-line bg-paper-raised p-5">
+      <p className="text-sm font-semibold">{t.reader.subscribeEmail}</p>
+      {done ? (
+        <p className="mt-2 text-sm text-muted">
+          {done.already ? t.reader.alreadySubscribed : t.reader.confirmSent}
+          {done.confirm_url && (
+            <a href={done.confirm_url} className="ml-2 font-semibold text-teal underline">
+              {t.reader.confirmLink}
+            </a>
+          )}
+        </p>
+      ) : (
+        <form
+          className="mt-3 flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (email.trim()) sub.mutate();
+          }}
+        >
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder={t.reader.emailPlaceholder}
+            className="w-64 rounded border border-line bg-paper px-2 py-1.5 text-sm text-ink"
+          />
+          <Button size="sm" disabled={sub.isPending}>
+            {sub.isPending ? t.reader.subscribing : t.reader.subscribeEmailAction}
+          </Button>
+        </form>
+      )}
+      {sub.error && <p className="mt-2 text-xs text-danger">{errText(t, sub.error)}</p>}
+    </Card>
   );
 }
 
