@@ -36,20 +36,27 @@ test("create flow: disabled paste option, realistic example, working Voltar", as
   await page.waitForURL(/\/publications$/);
 });
 
-test("one button pattern: Avançar alone on page 1, Avançar + Voltar on page 2", async ({ page }) => {
+test("one button pattern: Avançar alone on page 1, Voltar + Avançar on page 2", async ({ page }) => {
   await onboard(page);
 
-  // page 1 (Sua newsletter): the only in-flow action is Avançar
+  // page 1 (Sua newsletter): the only in-flow action is Avançar —
+  // it sits right-aligned, where the forward action lives
   const next = page.getByRole("button", { name: "Avançar", exact: true });
   await expect(next).toBeVisible();
   await expect(page.getByRole("button", { name: "Voltar", exact: true })).toHaveCount(0);
+  const field = page.getByLabel("Linha editorial");
+  const [nextBox, fieldBox] = await Promise.all([next.boundingBox(), field.boundingBox()]);
+  expect(Math.abs(nextBox!.x + nextBox!.width - (fieldBox!.x + fieldBox!.width))).toBeLessThan(12);
 
-  // page 2 (Seções): the same Avançar + Voltar pair
+  // page 2 (Seções): Voltar left, Avançar right
   await next.click();
   await expect(page.getByRole("heading", { name: "Suas seções" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Avançar", exact: true })).toBeVisible();
+  const fwd = page.getByRole("button", { name: "Avançar", exact: true });
+  await expect(fwd).toBeVisible();
   const back = page.getByRole("button", { name: "Voltar", exact: true });
   await expect(back).toBeVisible();
+  const [backBox, fwdBox] = await Promise.all([back.boundingBox(), fwd.boundingBox()]);
+  expect(backBox!.x).toBeLessThan(fwdBox!.x);
 
   // Voltar is live — it returns to the first step
   await back.click();
@@ -76,15 +83,17 @@ async function createViaAPI(page: import("@playwright/test").Page) {
   return ((await res.json()).publication as { id: number }).id;
 }
 
-test("page 3 (Fontes) carries the same Avançar + Voltar pair", async ({ page }) => {
+test("page 3 (Fontes) carries the same Voltar + Avançar pair", async ({ page }) => {
   const id = await createViaAPI(page);
 
   await page.goto(`/publications/${id}/sources`);
-  await expect(page.getByRole("button", { name: "Avançar", exact: true })).toBeVisible({
-    timeout: 15000,
-  });
+  const fwd = page.getByRole("button", { name: "Avançar", exact: true });
+  await expect(fwd).toBeVisible({ timeout: 15000 });
   const back = page.getByRole("button", { name: "Voltar", exact: true });
   await expect(back).toBeVisible();
+  // Voltar left, Avançar right — the same order as the other steps
+  const [backBox, fwdBox] = await Promise.all([back.boundingBox(), fwd.boundingBox()]);
+  expect(backBox!.x).toBeLessThan(fwdBox!.x);
   await back.click();
   await page.waitForURL(new RegExp(`/publications/${id}/sections`));
 });

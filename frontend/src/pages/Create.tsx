@@ -108,7 +108,10 @@ export function CreateNewsletter() {
               <Field label={t.create.editorialLine} value={form.editorial_line} onChange={(v) => set("editorial_line", v)} area />
               <Field label={t.create.tone} value={form.tone} onChange={(v) => set("tone", v)} />
 
-              <div className="mt-5 flex items-center gap-3">
+              {/* one button pattern across the onboarding steps (KLOX-79):
+                  the forward action lives on the right — Voltar left,
+                  Avançar right; the lone Avançar keeps the same spot */}
+              <div className="mt-5 flex items-center justify-end gap-3">
                 <Button disabled={!form.name.trim()} onClick={() => setStep(1)}>
                   {t.create.next}
                 </Button>
@@ -125,13 +128,14 @@ export function CreateNewsletter() {
             <p className="mt-3 text-xs text-danger">{errText(t, create.error)}</p>
           )}
           {/* one button pattern across the onboarding steps (KLOX-79):
-              Avançar + Voltar on later steps, only Avançar on the first */}
-          <div className="mt-5 flex items-center gap-3">
-            <Button disabled={create.isPending || !sectionsOK} onClick={() => create.mutate()}>
-              {create.isPending ? t.create.creating : t.create.next}
-            </Button>
+              Voltar left, Avançar right — the forward action keeps the
+              same right-aligned spot on every step */}
+          <div className="mt-5 flex items-center justify-end gap-3">
             <Button variant="outline" disabled={create.isPending} onClick={() => setStep(0)}>
               {t.nav.back}
+            </Button>
+            <Button disabled={create.isPending || !sectionsOK} onClick={() => create.mutate()}>
+              {create.isPending ? t.create.creating : t.create.next}
             </Button>
           </div>
         </Card>
