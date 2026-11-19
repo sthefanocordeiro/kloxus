@@ -266,12 +266,10 @@ test("manual compose journey", async ({ page }) => {
   // failure or fallback — and the recorded message must carry the
   // editor-written, cited body.
   neverRealMail(await workspaceInfo(page));
-  await page.getByRole("button", { name: "Send", exact: true }).click();
   const [sendResp] = await Promise.all([
     page.waitForResponse((r) => r.url().endsWith("/send") && r.request().method() === "POST"),
-    // the Revisar panel carries the same send row — the popover's copy
-    // is the one inside the portal
-    page.locator("[data-radix-popper-content-wrapper]").getByRole("button", { name: "Send a test" }).click(),
+    // the approved header cluster's direct button (KLOX-80)
+    page.getByRole("button", { name: "Send a test" }).click(),
   ]);
   const sendBody = await sendResp.json();
   expect(sendBody.issue.status).toBe("approved");

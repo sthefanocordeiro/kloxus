@@ -7,7 +7,9 @@ import { cn } from "./lib/cn";
 // Secondary = outline, destructive = red text. Touch targets never go
 // under 44 px on mobile / 40 px on desktop (the 36 px "sm" spec row is
 // overridden by the min-target rule — recorded in decisions.md).
-const buttonVariants = cva(
+// exported so non-button elements (links that should read as buttons,
+// like the review cluster's Preview jump) can share the same variants
+export const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 rounded-[var(--radius-btn)] font-medium transition-colors duration-150 disabled:opacity-50 disabled:pointer-events-none cursor-pointer",
   {
     variants: {

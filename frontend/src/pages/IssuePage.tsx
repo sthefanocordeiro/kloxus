@@ -4,7 +4,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
-import { BookOpen, ClipboardCheck, Eye, Plus, Send, Trash2, Wrench } from "lucide-react";
+import { BookOpen, CalendarClock, ChevronDown, ClipboardCheck, Download, ExternalLink, Eye, Pencil, Plus, Send, Trash2, Wrench } from "lucide-react";
 import { api, ApiRequestError, type Candidate, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
 import { blockTextMd, docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
 import { BlockAdd, BlockDivider, BlockEmbed, BlockHeading, BlockImage, BlockLink, BlockText, Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideEditable, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
@@ -20,7 +20,7 @@ function localInput(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-import { Badge, Button } from "../ui";
+import { Badge, Button, buttonVariants } from "../ui";
 import { KDialog, KPopover } from "../ui-overlays";
 import { ClaimEmail } from "../components/ClaimEmail";
 import { StepCounter } from "../components/StepCounter";
@@ -554,6 +554,11 @@ export function IssuePage() {
   const setStep = (s: string) =>
     setParams((p) => { p.set("step", s); return p; }, { replace: true });
   const stepNum = step === "pautas" ? 1 : step === "escrever" ? 2 : 3;
+  // validated = approved or past it: the edition is final on this
+  // screen, so the checklist and the empty-coverage badge go away
+  // (KLOX-80). A post-approval edit drops the status back to drafted,
+  // which reinstates the pendency affordances.
+  const validated = issue.status === "approved" || issue.status === "scheduled" || issue.status === "sent";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -576,26 +581,20 @@ export function IssuePage() {
             {saved === "saving" ? t.commentary.saving : t.commentary.saved}
           </span>
         )}
-        {!BOARD_STATUSES.has(issue.status) && doc && (
+        {!BOARD_STATUSES.has(issue.status) && doc && !(validated && doc.coverage.total === 0) && (
           <span className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />
           </span>
         )}
         {issue.status === "approved" && (
-          <KPopover
-            trigger={
-              <Button size="sm" variant="danger">
-                <Send size={12} /> {t.send.action}
-              </Button>
-            }
-          >
-            {issue.receipt?.approver && (
-              <p className="mb-2 text-xs text-muted">
-                {t.receipt.by} {issue.receipt.approver}
-              </p>
-            )}
-            <SendRow issue={issue} onDone={() => invalidate()} onToast={showToast} />
-          </KPopover>
+          // the action cluster lives in the header so it never scrolls
+          // out of reach, whatever the step body renders (KLOX-80)
+          <ReviewActions
+            issue={issue}
+            onDone={() => invalidate()}
+            onToast={showToast}
+            onEdit={step === "escrever" ? undefined : () => setStep("escrever")}
+          />
         )}
         {readinessQ.data && !BOARD_STATUSES.has(issue.status) && issue.status !== "sent" && (
           <ApproveBar
@@ -624,7 +623,6 @@ export function IssuePage() {
           coverage={doc?.coverage ?? readinessQ.data?.coverage ?? { ok: 0, cited: 0, total: 0, flagged: 0 }}
           onTarget={(c) => { setStep("escrever"); onCheckTarget(c); }}
           onChanged={() => invalidate()}
-          onToast={showToast}
         />
       ) : step === "pautas" || boardPhase ? (
         runID && !runDone ? (
@@ -792,7 +790,7 @@ export function IssuePage() {
         />
       )}
       {(issue.status === "sent" || issue.status === "scheduled" || !!issue.test_sent_at) && (
-        <AfterSend issue={issue} />
+        <AfterSend issue={issue} onToast={showToast} />
       )}
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink px-4 py-2 text-xs text-paper shadow-lg">
@@ -989,12 +987,45 @@ function ApproveBar({
   );
 }
 
-function SendRow({ issue, onDone, onToast }: {
-  issue: IssueSummary; onDone: () => void; onToast: (text: string) => void;
+// exportIssuePDF is the honest PDF path (KLOX-80): the approved HTML
+// export prints from a hidden frame and the browser's Save-as-PDF
+// produces the file — no dead-end menu item, no new dependency.
+async function exportIssuePDF(issueID: number) {
+  const res = await fetch(`/api/v1/issues/${issueID}/export?fmt=html`);
+  if (!res.ok) throw new Error(`export ${res.status}`);
+  const html = await res.text();
+  const f = document.createElement("iframe");
+  f.setAttribute("aria-hidden", "true");
+  f.style.cssText =
+    "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none";
+  f.srcdoc = html;
+  const done = () => f.remove();
+  f.onload = () => {
+    const w = f.contentWindow;
+    if (!w) return done();
+    w.addEventListener("afterprint", done);
+    setTimeout(done, 60_000);
+    w.focus();
+    w.print();
+  };
+  document.body.appendChild(f);
+}
+
+// ReviewActions is the approved edition's header cluster (KLOX-80):
+// edit, test send, send now, schedule, export and reader preview as
+// first-class buttons that never scroll out of reach — instead of an
+// action row buried at the bottom of the review column. Sends keep
+// the same confirm dialog, and the live-mail claim gate rides along
+// inside it.
+function ReviewActions({ issue, onDone, onToast, onEdit }: {
+  issue: IssueSummary;
+  onDone: () => void;
+  onToast: (text: string) => void;
+  onEdit?: () => void;
 }) {
   const { t } = useT();
+  const [dlg, setDlg] = useState<null | "now" | "schedule">(null);
   const [at, setAt] = useState(() => localInput(new Date(Date.now() + 24 * 3600e3)));
-  const [confirmSend, setConfirmSend] = useState<null | { when: "now" | "schedule" }>(null);
   const atOK = new Date(at).getTime() > Date.now();
   const pubQ = useQuery({
     queryKey: ["publication", issue.publication_id],
@@ -1005,13 +1036,22 @@ function SendRow({ issue, onDone, onToast }: {
     queryKey: ["reader", issue.publication_id],
     queryFn: () => api.reader(issue.publication_id),
   });
+  // the reader page only exists once a test send stamps test_sent_at
+  // (api.after 409s before that) — the link enables exactly when the
+  // page is real, so the button never dead-ends
+  const publicQ = useQuery({
+    queryKey: ["after", issue.id],
+    queryFn: () => api.after(issue.id),
+    enabled: !!issue.test_sent_at,
+    retry: false,
+  });
   const unclaimed = wsQ.data?.mail === "live" && !wsQ.data?.claimed;
   const sendMut = useMutation({
     mutationFn: ({ aud, when }: { aud: "test" | "readers"; when: "now" | "schedule" }) =>
       api.send(issue.id, aud, when, undefined,
         when === "schedule" ? new Date(at).toISOString() : undefined),
     onSuccess: (r, { aud }) => {
-      setConfirmSend(null);
+      setDlg(null);
       // a test send lands in the outbox — say where it went
       if (r.fallback) onToast(t.send.fallbackNote);
       else if (r.to?.length) onToast(aud === "test" ? t.send.testSentTo(r.to.join(", ")) : t.send.sentTo(r.to.join(", ")));
@@ -1026,43 +1066,74 @@ function SendRow({ issue, onDone, onToast }: {
       ? t.send.readerCount(readerQ.data.confirmed ?? 0, readerQ.data.subscribers ?? 0)
       : t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0)
     : "…";
+  const publicURL = publicQ.data?.public_url;
+  const exportURL = (fmt: string) => `/api/v1/issues/${issue.id}/export?fmt=${fmt}`;
+  const menuItem =
+    "block w-full rounded-[var(--radius-btn)] px-2 py-1.5 text-left text-sm text-ink hover:bg-surface";
   return (
-    <div className="mt-2 space-y-2">
-      {unclaimed && (
-        <div>
-          <p className="mb-1 text-xs text-muted">{t.claim.hint}</p>
-          <ClaimEmail />
-        </div>
+    <span className="flex flex-wrap items-center gap-1.5">
+      {onEdit && (
+        <Button size="sm" variant="ghost" onClick={onEdit}>
+          <Pencil size={12} /> {t.review.edit}
+        </Button>
       )}
-      <div className="flex gap-2">
-        <Button size="sm" variant="outline" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "test", when: "now" })}>
-          <Send size={12} /> {t.send.test}
-        </Button>
-        <Button size="sm" variant="danger" disabled={sendMut.isPending} onClick={() => setConfirmSend({ when: "now" })}>
-          {t.send.readers}
-        </Button>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          type="datetime-local"
-          aria-label={t.send.at}
-          className="rounded border border-line bg-paper px-2 py-1 text-xs text-ink"
-          min={localInput(new Date())}
-          value={at}
-          onChange={(e) => setAt(e.target.value)}
-        />
-        <Button
-          size="sm" variant="ghost"
-          disabled={sendMut.isPending || !atOK}
-          onClick={() => setConfirmSend({ when: "schedule" })}
+      <Button
+        size="sm" variant="outline" disabled={sendMut.isPending}
+        onClick={() => sendMut.mutate({ aud: "test", when: "now" })}
+      >
+        <Send size={12} /> {t.send.test}
+      </Button>
+      <Button size="sm" variant="danger" disabled={sendMut.isPending} onClick={() => setDlg("now")}>
+        {t.send.action}
+      </Button>
+      <Button size="sm" variant="outline" disabled={sendMut.isPending} onClick={() => setDlg("schedule")}>
+        <CalendarClock size={12} /> {t.review.scheduleSend}
+      </Button>
+      <KPopover
+        trigger={
+          <Button size="sm" variant="outline">
+            <Download size={12} /> {t.review.export} <ChevronDown size={11} />
+          </Button>
+        }
+      >
+        <a className={menuItem} href={exportURL("html")} download>HTML</a>
+        <a className={menuItem} href={exportURL("markdown")} download>Markdown</a>
+        <button
+          type="button"
+          className={menuItem}
+          onClick={() => void exportIssuePDF(issue.id).catch(() => onToast(t.review.exportFailed))}
         >
-          {t.send.schedule}
+          PDF
+        </button>
+        <p className="mt-1 px-2 text-[11px] text-muted">{t.review.pdfHint}</p>
+      </KPopover>
+      {publicURL ? (
+        <a
+          href={publicURL}
+          target="_blank"
+          rel="noreferrer"
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+        >
+          <ExternalLink size={12} /> {t.preview.title}
+        </a>
+      ) : (
+        <Button size="sm" variant="outline" disabled title={t.review.previewHint}>
+          <Eye size={12} /> {t.preview.title}
         </Button>
-        {!atOK && <span className="text-[11px] text-danger">{t.send.pickTime}</span>}
-      </div>
-      {sendMut.error && <p className="text-xs text-danger">{errText(t, sendMut.error)}</p>}
+      )}
+      {sendMut.error && <span className="text-xs text-danger">{errText(t, sendMut.error)}</span>}
 
-      <KDialog open={confirmSend !== null} onOpenChange={(o) => !o && setConfirmSend(null)} title={t.send.confirmSend}>
+      <KDialog
+        open={dlg !== null}
+        onOpenChange={(o) => !o && setDlg(null)}
+        title={dlg === "schedule" ? t.review.scheduleSend : t.send.confirmSend}
+      >
+        {unclaimed && (
+          <div className="mb-3">
+            <p className="mb-1 text-xs text-muted">{t.claim.hint}</p>
+            <ClaimEmail />
+          </div>
+        )}
         <dl className="mb-4 space-y-1 text-sm">
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.subject}</dt>
@@ -1076,35 +1147,46 @@ function SendRow({ issue, onDone, onToast }: {
             <dt className="text-muted">{t.send.sender}</dt>
             <dd>{pub?.name}</dd>
           </div>
-          {confirmSend?.when === "schedule" && (
-            <div className="flex justify-between gap-4">
-              <dt className="text-muted">{t.send.at}</dt>
-              <dd>{new Date(at).toLocaleString()}</dd>
-            </div>
-          )}
         </dl>
+        {dlg === "schedule" && (
+          <label className="mb-4 flex items-center gap-2 text-xs text-muted">
+            {t.send.at}
+            <input
+              type="datetime-local"
+              aria-label={t.send.at}
+              className="rounded border border-line bg-paper px-2 py-1 text-xs text-ink"
+              min={localInput(new Date())}
+              value={at}
+              onChange={(e) => setAt(e.target.value)}
+            />
+            {!atOK && <span className="text-[11px] text-danger">{t.send.pickTime}</span>}
+          </label>
+        )}
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setConfirmSend(null)}>{t.doc.cancel}</Button>
+          <Button variant="ghost" onClick={() => setDlg(null)}>{t.doc.cancel}</Button>
           <Button
             variant="danger"
-            disabled={sendMut.isPending}
-            onClick={() => sendMut.mutate({ aud: "readers", when: confirmSend!.when })}
+            disabled={sendMut.isPending || (dlg === "schedule" && !atOK)}
+            onClick={() => sendMut.mutate({ aud: "readers", when: dlg! })}
           >
-            {confirmSend?.when === "schedule" ? t.send.schedule : t.send.now}
+            {dlg === "schedule" ? t.send.schedule : t.send.now}
           </Button>
         </div>
       </KDialog>
-    </div>
+    </span>
   );
 }
 
-// ReviewStep is the "Revisar e enviar" screen (KLOX-66): the checklist
-// linked to pending items on the left, the preview switch on the
-// right, and approve / send as separate actions below — a test send,
-// a readers send or a schedule. A post-approval edit banner shows at
-// the page level until the issue is approved again.
+// ReviewStep is the "Revisar e enviar" screen (KLOX-66, redesigned in
+// KLOX-80): before approval the checklist and its linked pendencies
+// sit beside the preview with the approve action under them; once the
+// edition is validated (approved, scheduled or sent) the checklist is
+// redundant — the middle column holds only the validated edition with
+// its preview variables and every action lives in the header cluster.
+// A post-approval edit banner shows at the page level until the issue
+// is approved again.
 function ReviewStep({
-  issue, issueID, checks, coverage, onTarget, onChanged, onToast,
+  issue, issueID, checks, coverage, onTarget, onChanged,
 }: {
   issue: IssueSummary;
   issueID: number;
@@ -1112,7 +1194,6 @@ function ReviewStep({
   coverage: { ok: number; cited: number; total: number; flagged: number };
   onTarget: (c: Check) => void;
   onChanged: () => void;
-  onToast: (text: string) => void;
 }) {
   const { t } = useT();
   const ready = checks.length > 0 && checks.every((c) => c.ok);
@@ -1120,6 +1201,18 @@ function ReviewStep({
     mutationFn: () => api.approve(issueID),
     onSuccess: onChanged,
   });
+  const validated = issue.status === "approved" || issue.status === "scheduled" || issue.status === "sent";
+  if (validated) {
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl p-4">
+          <section className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+            <PreviewPane issueID={issueID} />
+          </section>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto grid w-full max-w-5xl gap-4 p-4 md:grid-cols-2">
@@ -1130,31 +1223,15 @@ function ReviewStep({
           </div>
           <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
             <h2 className="mb-2 text-sm font-semibold">{t.send.approveSend}</h2>
-            {issue.status !== "approved" ? (
-              <>
-                <Button
-                  size="sm"
-                  disabled={!ready || approveMut.isPending}
-                  title={ready ? undefined : t.readiness.blockedHint}
-                  onClick={() => approveMut.mutate()}
-                >
-                  {t.readiness.approve}
-                </Button>
-                {approveMut.error && <p className="mt-2 text-xs text-danger">{errText(t, approveMut.error)}</p>}
-              </>
-            ) : (
-              <>
-                {issue.receipt?.approver && (
-                  <p className="mb-2 text-xs text-muted">{t.receipt.by} {issue.receipt.approver}</p>
-                )}
-                <SendRow issue={issue} onDone={onChanged} onToast={onToast} />
-              </>
-            )}
-            {(issue.status === "scheduled" || issue.status === "sent") && (
-              <p className="mt-2 text-xs text-muted">
-                {issue.status === "scheduled" ? t.send.scheduled : t.send.sent}
-              </p>
-            )}
+            <Button
+              size="sm"
+              disabled={!ready || approveMut.isPending}
+              title={ready ? undefined : t.readiness.blockedHint}
+              onClick={() => approveMut.mutate()}
+            >
+              {t.readiness.approve}
+            </Button>
+            {approveMut.error && <p className="mt-2 text-xs text-danger">{errText(t, approveMut.error)}</p>}
           </div>
         </section>
         <section className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
@@ -1441,7 +1518,7 @@ function HoldBar({ issue, onDone }: { issue: IssueSummary; onDone: () => void })
 
 // AfterSend is the "after sending" surface: public link, downloads, the
 // receipt, what the guide learned and the way to the next issue.
-function AfterSend({ issue }: { issue: IssueSummary }) {
+function AfterSend({ issue, onToast }: { issue: IssueSummary; onToast: (text: string) => void }) {
   const { t, lang } = useT();
   const nav = useNavigate();
   const afterQ = useQuery({ queryKey: ["after", issue.id], queryFn: () => api.after(issue.id) });
@@ -1482,6 +1559,14 @@ function AfterSend({ issue }: { issue: IssueSummary }) {
               <a className="text-ink underline" href={a.export_html}>HTML</a>
               {" · "}
               <a className="text-ink underline" href={a.export_md}>Markdown</a>
+              {" · "}
+              <button
+                type="button"
+                className="text-ink underline"
+                onClick={() => void exportIssuePDF(issue.id).catch(() => onToast(t.review.exportFailed))}
+              >
+                PDF
+              </button>
             </span>
           )}
           <span className="flex-1" />
