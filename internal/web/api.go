@@ -217,6 +217,30 @@ func localizeSubject(subject, lang string) string {
 	return strings.Replace(subject, " — issue ", " — edição ", 1)
 }
 
+// localizePrice renders the paywall price in the publication's
+// language and drops the fictional Valdória "V$" for a real "R$" —
+// publications created from the sample proposal (and real-mode
+// workspaces, which are never reseeded) stored it before the fix
+// (KLOX-81). Only a billing-period suffix swaps: "/month" → "/mês" on
+// pt publications, "/mês" → "/month" on en ones. Display-only, like
+// localizeSubject: the stored value is untouched.
+func localizePrice(price, lang string) string {
+	price = strings.Replace(price, "V$", "R$", 1)
+	var swaps [][2]string
+	if strings.HasPrefix(strings.ToLower(lang), "pt") {
+		swaps = [][2]string{{"/month", "/mês"}, {"/mo", "/mês"}, {" per month", " por mês"}}
+	} else {
+		swaps = [][2]string{{"/mês", "/month"}, {" por mês", " per month"}}
+	}
+	lower := strings.ToLower(price)
+	for _, sw := range swaps {
+		if strings.HasSuffix(lower, strings.ToLower(sw[0])) && len(price) >= len(sw[0]) {
+			return price[:len(price)-len(sw[0])] + sw[1]
+		}
+	}
+	return price
+}
+
 // canonicalSectionPT maps the legacy canonical English section titles
 // to the pt names readers see — bodies stored before KLOX-64 keep the
 // English headings and swap at render time (KLOX-56).
@@ -302,7 +326,7 @@ func publicationView(p *store.Publication) apiPublication {
 		Tone:          p.Tone, Frequency: p.Frequency, AIDisclosure: p.AIDisclosure,
 		Paywall: apiPaywall{
 			Enabled: p.Paywall.Enabled, PaidSections: p.Paywall.PaidSections,
-			Price: p.Paywall.Price,
+			Price: localizePrice(p.Paywall.Price, p.Language),
 		},
 	}
 	for _, sc := range config.NormalizeSections(p.Sections, p.Paywall.PaidSections) {
@@ -908,7 +932,7 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 		"language": def.Language, "frequency": def.Frequency,
 		"ai_disclosure": def.AIDisclosure,
 		"sections":      secs, "sources": srcs,
-		"paywall": apiPaywall{Enabled: def.Paywall.Enabled, PaidSections: def.Paywall.PaidSections, Price: def.Paywall.Price},
+		"paywall": apiPaywall{Enabled: def.Paywall.Enabled, PaidSections: def.Paywall.PaidSections, Price: localizePrice(def.Paywall.Price, def.Language)},
 	}})
 }
 
@@ -3685,7 +3709,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 		"paid_sections": paidSectionTitles(iss, pub),
 		// price on the reader page (KLOX-66): the gated card sells the
 		// subscription with the creator's price and the paid sections
-		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": rawPub.Paywall.Price},
+		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": localizePrice(rawPub.Paywall.Price, rawPub.Language)},
 	})
 }
 
