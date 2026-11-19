@@ -6,7 +6,7 @@ import { Markdown } from "../markdown";
 import { fmtDate } from "../lib/fmt";
 import { Badge, Button, Card } from "../ui";
 import { errText } from "../lib/errors";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 // ReaderShell is the chrome for reader-facing pages: the publication
 // name and a language switch — never editor navigation.
@@ -64,6 +64,15 @@ export function PublicIssue() {
   });
   const d = q.data;
 
+  // the browser tab is the edition's title (KLOX-66)
+  useEffect(() => {
+    if (d) {
+      const prev = document.title;
+      document.title = `${d.issue.subject} · ${d.publication.name}`;
+      return () => { document.title = prev; };
+    }
+  }, [d]);
+
   if (q.isLoading) return <div className="mx-auto max-w-2xl px-4 py-16 text-sm text-muted">…</div>;
   if (q.isError || !d)
     return (
@@ -95,6 +104,15 @@ export function PublicIssue() {
         <Card className="mt-8 border-ink/20 bg-paper-raised p-5">
           <Badge tone="ink">{t.reader.forPaying}</Badge>
           <p className="mt-2 text-sm text-muted">{t.reader.unlockHint}</p>
+          {/* price + what the subscription unlocks (KLOX-66) */}
+          {d.paywall?.enabled && d.paywall.price && (
+            <p className="mt-3 font-doc text-lg font-semibold">{d.paywall.price}</p>
+          )}
+          {d.paid_sections.length > 0 && (
+            <p className="mt-1 text-sm text-muted">
+              {t.reader.unlocksSections} {d.paid_sections.join(", ")}
+            </p>
+          )}
           {!simDone ? (
             <Button className="mt-3" disabled={sim.isPending} onClick={() => sim.mutate()}>
               {t.reader.subscribe}

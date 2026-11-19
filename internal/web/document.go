@@ -19,6 +19,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -75,6 +76,10 @@ type docItem struct {
 	// AIDraft marks the pauta whose body arrived AI-written (KLOX-67);
 	// the composer shows the AI marker until the author's first edit.
 	AIDraft bool `json:"ai_draft,omitempty"`
+	// LinkOnly marks a pauta the editor sends as a bare link — no
+	// written text required and no citation prompt (KLOX-66 D2). The
+	// whole section may also imply it via the "links" format.
+	LinkOnly bool `json:"link_only,omitempty"`
 
 	// spanStart/spanEnd bound the item's block inside the stored body,
 	// so edits replace only inside their own item — an identical
@@ -90,6 +95,21 @@ type docCommentary struct {
 	Text string `json:"text"`
 }
 
+// docBlock is one ordered unit inside a section (KLOX-66): a pauta
+// (kind "item") or an author-inserted heading / divider / link-list /
+// text block. The composer renders a section's blocks in order; block
+// ops address one by its index inside the section.
+type docBlock struct {
+	Kind string `json:"kind"`          // item | heading | divider | link | text
+	Ref  int    `json:"ref,omitempty"` // item → dossier ref
+	Text string `json:"text,omitempty"`
+	URL  string `json:"url,omitempty"` // link → href
+
+	// spanStart/spanEnd bound the block inside the stored body —
+	// insert/move/remove/edit ops rewrite only their own block.
+	spanStart, spanEnd int
+}
+
 // docSection is one section of the issue document. Format comes from
 // the edition's section snapshot — "links" sections carry the link as
 // their source and skip the written-text checks (KLOX-65).
@@ -98,6 +118,12 @@ type docSection struct {
 	Format     string        `json:"format,omitempty"`
 	Commentary docCommentary `json:"commentary"`
 	Items      []docItem     `json:"items"`
+	Blocks     []docBlock    `json:"blocks"`
+
+	// spanStart/spanEnd bound the section's body region (between its
+	// `## ` heading and the next one); -1 when the section only exists
+	// in the snapshot and the body has no heading for it yet.
+	spanStart, spanEnd int
 }
 
 // docCoverage is the always-visible coverage summary: ok counts fact
@@ -127,7 +153,7 @@ type issueDocument struct {
 }
 
 var (
-	docItemRe    = regexp.MustCompile(`^### (.*?)\s*<!--\s*item\s+(\d+)\s*-->\s*$`)
+	docItemRe    = regexp.MustCompile(`^### (.*?)\s*<!--\s*item\s+(\d+)(?:\s+(link))?\s*-->\s*$`)
 	docSectionRe = regexp.MustCompile(`^## (.+?)\s*$`)
 	docCiteRe    = regexp.MustCompile(`\[(\d+)\]`)
 )
@@ -507,11 +533,19 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 		}
 		item.Sentences = append(item.Sentences, sn)
 	}
-	pos := 0 // byte offset of the current line inside the body
-	for _, line := range strings.Split(iss.BodyMD, "\n") {
+	pos := 0         // byte offset of the current line inside the body
+	textRun := false // previous line extended a section text block
+	lines := strings.Split(iss.BodyMD, "\n")
+	for li := 0; li < len(lines); li++ {
+		line := lines[li]
 		t := strings.TrimSpace(line)
+		wasText := textRun
+		textRun = false
 		if m := docSectionRe.FindStringSubmatch(t); m != nil {
 			finishItem(pos)
+			if sec != nil {
+				sec.spanEnd = pos
+			}
 			mode := secMode[m[1]]
 			if mode == "" {
 				mode = "none"
@@ -519,7 +553,8 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			doc.Sections = append(doc.Sections, docSection{
 				Title: m[1], Format: secFormat[m[1]],
 				Commentary: docCommentary{Mode: mode, Text: commentary[m[1]]},
-				Items:      []docItem{},
+				Items:      []docItem{}, Blocks: []docBlock{},
+				spanStart: pos + len(line) + 1, spanEnd: -1,
 			})
 			sec = &doc.Sections[len(doc.Sections)-1]
 			pos += len(line) + 1
@@ -528,12 +563,13 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 		if m := docItemRe.FindStringSubmatch(t); m != nil {
 			finishItem(pos)
 			if sec == nil {
-				doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"}, Items: []docItem{}})
+				doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"},
+					Items: []docItem{}, Blocks: []docBlock{}, spanStart: -1, spanEnd: -1})
 				sec = &doc.Sections[len(doc.Sections)-1]
 			}
 			ref, _ := strconv.Atoi(m[2])
 			it := docItem{Ref: ref, Headline: m[1], spanStart: pos, openings: map[int]string{},
-				Sentences: []docSentence{}, Sources: []docSource{}}
+				LinkOnly: m[3] == "link", Sentences: []docSentence{}, Sources: []docSource{}}
 			if info, ok := dc.byRef[ref]; ok {
 				it.IssueItemID = info.issueItemID
 				it.dossier = info.dossier
@@ -555,6 +591,92 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			}
 			sec.Items = append(sec.Items, it)
 			item = &sec.Items[len(sec.Items)-1]
+			sec.Blocks = append(sec.Blocks, docBlock{Kind: "item", Ref: ref,
+				spanStart: pos, spanEnd: pos})
+			pos += len(line) + 1
+			continue
+		}
+		// A `###`/`####` line without an item marker is an author
+		// heading block — it always closes the running item (KLOX-66).
+		if sec != nil && (strings.HasPrefix(t, "#### ") ||
+			(strings.HasPrefix(t, "### ") && docItemRe.FindStringSubmatch(t) == nil)) {
+			finishItem(pos)
+			hd := strings.TrimSpace(t[strings.Index(t, " ")+1:])
+			sec.Blocks = append(sec.Blocks, docBlock{Kind: "heading", Text: hd,
+				spanStart: pos, spanEnd: pos + len(line)})
+			pos += len(line) + 1
+			continue
+		}
+		// An `<!-- /item -->` marker closes the running item (KLOX-66):
+		// `> ` inside an item is an interpretation sentence, so an
+		// author text block that follows an item can only be told from
+		// one by an explicit boundary — the block ops write it. An
+		// embed fence opens a section-level block too — it closes a
+		// running item the same way, but the line itself still parses
+		// as a block below.
+		if sec != nil && item != nil && strings.HasPrefix(t, "<!--") {
+			finishItem(pos)
+			pos += len(line) + 1
+			continue
+		}
+		if sec != nil && item != nil && t == delivery.EmbedFenceOpen {
+			finishItem(pos)
+		}
+		// Section-level layout blocks (KLOX-66): divider, link-list,
+		// image, embed and author text live between items. Inside an
+		// item nothing changes — `> ` stays an interpretation sentence
+		// and other marks are folded into the item's span as before.
+		if sec != nil && item == nil {
+			if t == delivery.EmbedFenceOpen {
+				// multi-line embed block: sanitized HTML lives between
+				// the fence lines. An unclosed fence is stray markup —
+				// skip only its opening line.
+				liStart := li
+				cur := pos + len(line) + 1
+				var inner []string
+				closed := false
+				for li+1 < len(lines) {
+					li++
+					nl := lines[li]
+					if strings.TrimSpace(nl) == delivery.EmbedFenceClose {
+						closed = true
+						break
+					}
+					inner = append(inner, nl)
+					cur += len(nl) + 1
+				}
+				if closed {
+					// re-sanitize on read: a fence that reached the
+					// body past the write path (legacy bodies, a
+					// bypassed guard) is served sanitized too, so raw
+					// markup never reaches the composer canvas
+					sec.Blocks = append(sec.Blocks, docBlock{Kind: "embed",
+						Text:      delivery.SanitizeEmbed(strings.Join(inner, "\n")),
+						spanStart: pos, spanEnd: cur + len(lines[li])})
+					pos = cur + len(lines[li]) + 1
+				} else {
+					li = liStart
+					pos += len(line) + 1
+				}
+				continue
+			}
+			blk, isBlock := parseBlockLine(t)
+			if isBlock {
+				if blk.Kind == "text" && wasText && len(sec.Blocks) > 0 &&
+					sec.Blocks[len(sec.Blocks)-1].Kind == "text" {
+					// contiguous `> ` lines are one multi-paragraph
+					// text block — a blank line splits them
+					last := &sec.Blocks[len(sec.Blocks)-1]
+					last.Text += "\n" + blk.Text
+					last.spanEnd = pos + len(line)
+					textRun = true
+					pos += len(line) + 1
+					continue
+				}
+				blk.spanStart, blk.spanEnd = pos, pos+len(line)
+				sec.Blocks = append(sec.Blocks, blk)
+				textRun = blk.Kind == "text"
+			}
 			pos += len(line) + 1
 			continue
 		}
@@ -576,6 +698,26 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 		pos += len(line) + 1
 	}
 	finishItem(len(iss.BodyMD))
+	if sec != nil {
+		sec.spanEnd = len(iss.BodyMD)
+	}
+	// align each item block's span with its item — the item's end is
+	// only known once finishItem ran for it.
+	for si := range doc.Sections {
+		sec := &doc.Sections[si]
+		bi := 0
+		for i := range sec.Items {
+			for bi < len(sec.Blocks) && sec.Blocks[bi].Kind != "item" {
+				bi++
+			}
+			if bi >= len(sec.Blocks) {
+				break
+			}
+			sec.Blocks[bi].spanStart = sec.Items[i].spanStart
+			sec.Blocks[bi].spanEnd = sec.Items[i].spanEnd
+			bi++
+		}
+	}
 
 	// sections with required commentary that carry no items still matter
 	// for the readiness checklist — include them even when the body has
@@ -591,7 +733,8 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			doc.Sections = append(doc.Sections, docSection{
 				Title: sc.Title, Format: sc.Format,
 				Commentary: docCommentary{Mode: sc.Commentary, Text: commentary[sc.Title]},
-				Items:      []docItem{},
+				Items:      []docItem{}, Blocks: []docBlock{},
+				spanStart: -1, spanEnd: -1,
 			})
 		}
 	}

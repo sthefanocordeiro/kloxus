@@ -16,20 +16,20 @@ import (
 
 func TestLoopbackSenderEndpointValidation(t *testing.T) {
 	bad := []string{
-		"https://api.resend.com",              // the real provider
-		"http://example.com",                  // remote host
-		"http://10.0.0.5:8399",                // private but not loopback
-		"http://192.168.1.1:8399",             // private but not loopback
-		"http://localhost:8399",               // DNS name — not a literal
-		"https://127.0.0.1:8399",              // wrong scheme
-		"http://user:pass@127.0.0.1:8399",     // userinfo — credential smuggle
-		"http://127.0.0.1:8399/?next=evil",    // query
-		"http://127.0.0.1:8399/#frag",         // fragment
-		"http://127.0.0.1:8399/emails",        // path
-		"127.0.0.1:8399",                      // no scheme
-		"",                                    // empty
-		"not a url",                           // garbage
-		"http://[::ffff:8.8.8.8]:8399",        // non-loopback IPv4-in-IPv6
+		"https://api.resend.com",           // the real provider
+		"http://example.com",               // remote host
+		"http://10.0.0.5:8399",             // private but not loopback
+		"http://192.168.1.1:8399",          // private but not loopback
+		"http://localhost:8399",            // DNS name — not a literal
+		"https://127.0.0.1:8399",           // wrong scheme
+		"http://user:pass@127.0.0.1:8399",  // userinfo — credential smuggle
+		"http://127.0.0.1:8399/?next=evil", // query
+		"http://127.0.0.1:8399/#frag",      // fragment
+		"http://127.0.0.1:8399/emails",     // path
+		"127.0.0.1:8399",                   // no scheme
+		"",                                 // empty
+		"not a url",                        // garbage
+		"http://[::ffff:8.8.8.8]:8399",     // non-loopback IPv4-in-IPv6
 	}
 	for _, ep := range bad {
 		if rs, err := NewLoopbackSender(ep, "Kloxus <n@x.com>"); err == nil || rs != nil {
@@ -39,7 +39,7 @@ func TestLoopbackSenderEndpointValidation(t *testing.T) {
 	good := []string{
 		"http://127.0.0.1:8399",
 		"http://127.0.0.1:8399/",
-		"http://127.0.0.55:1",   // any 127/8 literal
+		"http://127.0.0.55:1", // any 127/8 literal
 		"http://[::1]:8399",
 	}
 	for _, ep := range good {

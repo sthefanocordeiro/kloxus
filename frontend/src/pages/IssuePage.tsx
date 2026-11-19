@@ -4,11 +4,12 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
-import { BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
-import { api, ApiRequestError, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
-import { docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
-import { Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideCommentary, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
+import { BookOpen, ClipboardCheck, Eye, Plus, Send, Trash2, Wrench } from "lucide-react";
+import { api, ApiRequestError, type Candidate, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
+import { blockTextMd, docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
+import { BlockAdd, BlockDivider, BlockEmbed, BlockHeading, BlockImage, BlockLink, BlockText, Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideEditable, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
+import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
 import { fmtDate } from "../lib/fmt";
@@ -198,9 +199,98 @@ export function IssuePage() {
           return errText(t, e);
         }
       },
+      // --- composer blocks (KLOX-66): every op answers with the fresh
+      // document — swap it into the cache and keep its version
+      moveBlock: async (section, index, dir) => {
+        try {
+          const r = await api.blockMove(issueID, section, index, index + dir, versionRef.current);
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      removeBlock: async (section, index) => {
+        try {
+          const r = await api.blockRemove(issueID, section, index, versionRef.current);
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          showToast(t.doc.removed);
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      updateBlock: async (section, index, text, url) => {
+        try {
+          await flushRef.current();
+          const r = await api.blockUpdate(issueID, { section, index, text, url, version: versionRef.current });
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return null;
+        } catch (e) {
+          if (e instanceof ApiRequestError && e.document) {
+            qc.setQueryData(["document", issueID], e.document);
+          }
+          return errText(t, e);
+        }
+      },
+      insertBlock: async (section, kind, position, text, url) => {
+        try {
+          await flushRef.current();
+          const r = await api.blockInsert(issueID, { section, kind, text, url, position, version: versionRef.current });
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return null;
+        } catch (e) {
+          if (e instanceof ApiRequestError && e.document) {
+            qc.setQueryData(["document", issueID], e.document);
+          }
+          return errText(t, e);
+        }
+      },
+      openInsert: (section, index, kind) => setInsertDlg({ section, index, kind }),
+      uploadImage: async (dataB64, contentType, name) => {
+        try {
+          const r = await api.uploadMedia(issueID, { content_type: contentType, data_b64: dataB64, name });
+          return r.media.url;
+        } catch {
+          return null;
+        }
+      },
+      toggleLinkOnly: async (ref, linkOnly) => {
+        try {
+          await flushRef.current();
+          const r = await api.itemLinkOnly(issueID, ref, linkOnly, versionRef.current);
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      pickPauta: (section, position) => setPautaPick({ section, position }),
     }),
     [doc, issueID, invalidate, resync, qc, showToast, t],
   );
+
+  // the "+ Pauta" affordance opens a picker over the bench — stories
+  // already in the edition (or rejected) never appear (KLOX-66)
+  const [pautaPick, setPautaPick] = useState<{ section: string; position?: number } | null>(null);
+  // the image / embed / standard-message insert dialogs the gap menu
+  // opens — the page owns them like the pauta picker (KLOX-66 D3)
+  const [insertDlg, setInsertDlg] = useState<
+    { section: string; index: number; kind: "image" | "embed" | "message" } | null
+  >(null);
 
   // --- commentary autosave: watch editor updates, diff commentary
   // nodes against what the server last saw, PUT debounced.
@@ -209,29 +299,49 @@ export function IssuePage() {
   // same base state, each writes only its own key → lost update). ---
   const savedCommentary = useRef<Map<string, string>>(new Map());
   const dirtyCommentary = useRef<Map<string, string>>(new Map());
+  // same pattern for rich-text blocks: `sec:index` → markdown baseline
+  // and dirty value, PUT through the block update endpoint (D3)
+  const savedText = useRef<Map<string, string>>(new Map());
+  const dirtyText = useRef<Map<string, string>>(new Map());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draining = useRef(false);
+  // the DocActions memo is created before the drain machinery — calls
+  // go through this ref, wired to flushSaves once it exists
+  const flushRef = useRef<() => Promise<void>>(async () => {});
   const drainSaves = useCallback(async () => {
     if (draining.current) return;
     draining.current = true;
     try {
       for (;;) {
-        const next = dirtyCommentary.current.entries().next();
-        if (next.done) return;
-        const [section, text] = next.value;
-        dirtyCommentary.current.delete(section);
+        const nextC = dirtyCommentary.current.entries().next();
+        const nextT = nextC.done ? dirtyText.current.entries().next() : null;
+        if (nextC.done && (!nextT || nextT.done)) return;
+        const isText = nextC.done;
+        const [key, text] = (isText ? nextT!.value : nextC.value) as [string, string];
+        if (isText) dirtyText.current.delete(key);
+        else dirtyCommentary.current.delete(key);
         try {
           setSaved("saving");
-          const r = await api.commentary(issueID, section, text, versionRef.current);
-          versionRef.current = r.version;
-          savedCommentary.current.set(section, text);
+          if (isText) {
+            const [section, idx] = key.split(":");
+            const r = await api.blockUpdate(issueID, {
+              section, index: Number(idx), text, version: versionRef.current,
+            });
+            versionRef.current = r.document.version;
+            savedText.current.set(key, text);
+          } else {
+            const r = await api.commentary(issueID, key, text, versionRef.current);
+            versionRef.current = r.version;
+            savedCommentary.current.set(key, text);
+          }
           setSaved("saved");
           qc.invalidateQueries({ queryKey: ["readiness", issueID] });
         } catch (e) {
           // re-queue so a later drain retries instead of dropping the
           // typed text — a conflict carries the fresh document, so once
           // resync lands the new version the retry can save it.
-          dirtyCommentary.current.set(section, text);
+          if (isText) dirtyText.current.set(key, text);
+          else dirtyCommentary.current.set(key, text);
           setSaved("");
           resync(e);
           if (e instanceof ApiRequestError && e.document) {
@@ -251,6 +361,20 @@ export function IssuePage() {
       drainSaves();
     }, 900);
   }, [drainSaves]);
+  // structural actions (block insert/move/delete, item edits) must see
+  // typed-but-unsaved text already persisted, so they flush the queue
+  // first instead of racing the debounce
+  const flushSaves = useCallback(async () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    for (;;) {
+      await drainSaves();
+      if (!dirtyCommentary.current.size && !dirtyText.current.size) return;
+    }
+  }, [drainSaves]);
+  flushRef.current = flushSaves;
 
   const editor = useEditor(
     {
@@ -258,12 +382,24 @@ export function IssuePage() {
         // no editable heading node, no gap cursor at atom boundaries and
         // a top-level schema that admits only the issue's real nodes —
         // free paragraphs simply cannot be created in this editor
-        StarterKit.configure({ heading: false, gapcursor: false, document: false }),
+        // StarterKit registers bold/italic/link already — link clicks
+        // must not navigate inside the editor
+        StarterKit.configure({
+          heading: false, gapcursor: false, document: false,
+          link: { openOnClick: false },
+        }),
         IssueDoc,
         Sentence,
         Commentary,
         ItemHeading,
         SectionHeading,
+        BlockHeading,
+        BlockDivider,
+        BlockLink,
+        BlockImage,
+        BlockEmbed,
+        BlockText,
+        BlockAdd,
       ],
       content: doc ? docToTiptap(doc) : { type: "doc", content: [] },
       editable: false, // enabled by the effect below once the document loads
@@ -272,24 +408,34 @@ export function IssuePage() {
         // the schema already forbids free paragraphs; these guards make
         // it airtight — a click landing on a boundary between atoms, or
         // a stray selection, can never turn a keystroke into text outside
-        // a commentary block
+        // an editable region (commentary or a rich-text block)
         handleTextInput: (view, from) =>
-          !insideCommentary(view.state.doc.resolve(from)),
+          !insideEditable(view.state.doc.resolve(from)),
         handleKeyDown: (view, event) =>
           ["Enter", "Backspace", "Delete"].includes(event.key) &&
-          !insideCommentary(view.state.selection.$from),
+          !insideEditable(view.state.selection.$from),
         handlePaste: (view) =>
-          !insideCommentary(view.state.selection.$from),
+          !insideEditable(view.state.selection.$from),
       },
       onUpdate: ({ editor: ed }) => {
         let dirty = false;
         ed.state.doc.descendants((n) => {
-          if (n.type.name !== "commentary") return true;
-          const section = String(n.attrs.section);
-          const text = n.textContent;
-          if (savedCommentary.current.get(section) === text) return true;
-          dirtyCommentary.current.set(section, text);
-          dirty = true;
+          if (n.type.name === "commentary") {
+            const section = String(n.attrs.section);
+            const text = n.textContent;
+            if (savedCommentary.current.get(section) === text) return true;
+            dirtyCommentary.current.set(section, text);
+            dirty = true;
+            return true;
+          }
+          if (n.type.name === "blockText") {
+            const key = `${n.attrs.section}:${n.attrs.index}`;
+            const md = blockTextMd(n.toJSON() as Parameters<typeof blockTextMd>[0]);
+            if (savedText.current.get(key) === md) return true;
+            dirtyText.current.set(key, md);
+            dirty = true;
+            return true;
+          }
           return true;
         });
         if (dirty) scheduleDrain();
@@ -303,6 +449,17 @@ export function IssuePage() {
     if (!editor || !doc) return;
     savedCommentary.current = new Map(doc.sections.map((s) => [s.title, s.commentary.text]));
     dirtyCommentary.current.clear();
+    // rich-text baselines keyed `sec:index` — the same identity the
+    // block update endpoint consumes
+    savedText.current = new Map(
+      doc.sections.flatMap((s) =>
+        (s.blocks ?? [])
+          .map((b, i) => [b, i] as const)
+          .filter(([b]) => b.kind === "text")
+          .map(([b, i]) => [`${s.title}:${i}`, b.text ?? ""]),
+      ),
+    );
+    dirtyText.current.clear();
     editor.commands.setContent(docToTiptap(doc));
     // setContent leaves a selection spanning the whole fresh document — a
     // keystroke arriving before a click's selection sync would replace the
@@ -385,6 +542,19 @@ export function IssuePage() {
   }
   const issue = issueQ.data;
 
+  // Edition steps (KLOX-66): Pautas → Escrever → Revisar e enviar. The
+  // counter navigates between visited steps; the board owns step 1
+  // until the edition exists (board statuses), writing owns step 2,
+  // review owns step 3 — a step can always be revisited.
+  const boardPhase = BOARD_STATUSES.has(issue.status);
+  const stepParam = params.get("step");
+  const step = boardPhase ? "pautas"
+    : stepParam === "pautas" || stepParam === "revisar" || stepParam === "escrever" ? stepParam
+    : issue.status === "drafted" ? "escrever" : "revisar";
+  const setStep = (s: string) =>
+    setParams((p) => { p.set("step", s); return p; }, { replace: true });
+  const stepNum = step === "pautas" ? 1 : step === "escrever" ? 2 : 3;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* top bar */}
@@ -396,11 +566,8 @@ export function IssuePage() {
         </div>
         <StepCounter
           steps={t.board.steps}
-          current={
-            issue.status === "drafted" ? 2
-            : issue.status === "approved" || issue.status === "sent" || issue.status === "scheduled" ? 3
-            : 1
-          }
+          current={stepNum}
+          onStep={(i) => setStep(["pautas", "escrever", "revisar"][i])}
           className="w-full shrink-0 sm:w-96"
         />
         <span className="flex-1" />
@@ -443,7 +610,23 @@ export function IssuePage() {
         {issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
       </header>
 
-      {BOARD_STATUSES.has(issue.status) ? (
+      {issue.edited_after_approval && (
+        <div className="border-b border-warn/40 bg-warn-soft/60 px-4 py-2 text-xs text-warn">
+          {t.review.editedAfterApproval}
+        </div>
+      )}
+
+      {step === "revisar" && doc ? (
+        <ReviewStep
+          issue={issue}
+          issueID={issueID}
+          checks={readinessQ.data?.checks ?? []}
+          coverage={doc?.coverage ?? readinessQ.data?.coverage ?? { ok: 0, cited: 0, total: 0, flagged: 0 }}
+          onTarget={(c) => { setStep("escrever"); onCheckTarget(c); }}
+          onChanged={() => invalidate()}
+          onToast={showToast}
+        />
+      ) : step === "pautas" || boardPhase ? (
         runID && !runDone ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="mx-auto w-full max-w-md p-6">
@@ -583,6 +766,31 @@ export function IssuePage() {
         )
       )}
 
+      {pautaPick && (
+        <PautaPicker
+          issueID={issueID}
+          section={pautaPick.section}
+          position={pautaPick.position}
+          version={versionRef.current}
+          onPicked={(d) => {
+            versionRef.current = d.version;
+            qc.setQueryData(["document", issueID], d);
+            setPautaPick(null);
+            invalidate();
+          }}
+          onError={(e) => resync(e)}
+          onClose={() => setPautaPick(null)}
+        />
+      )}
+      {insertDlg && (
+        <InsertBlockDialog
+          pubID={issue.publication_id}
+          dlg={insertDlg}
+          onInsert={(kind, text, url) => actions.insertBlock(insertDlg.section, kind, insertDlg.index, text, url)}
+          onUploaded={actions.uploadImage}
+          onDone={() => { setInsertDlg(null); }}
+        />
+      )}
       {(issue.status === "sent" || issue.status === "scheduled" || !!issue.test_sent_at) && (
         <AfterSend issue={issue} />
       )}
@@ -887,6 +1095,316 @@ function SendRow({ issue, onDone, onToast }: {
         </div>
       </KDialog>
     </div>
+  );
+}
+
+// ReviewStep is the "Revisar e enviar" screen (KLOX-66): the checklist
+// linked to pending items on the left, the preview switch on the
+// right, and approve / send as separate actions below — a test send,
+// a readers send or a schedule. A post-approval edit banner shows at
+// the page level until the issue is approved again.
+function ReviewStep({
+  issue, issueID, checks, coverage, onTarget, onChanged, onToast,
+}: {
+  issue: IssueSummary;
+  issueID: number;
+  checks: Check[];
+  coverage: { ok: number; cited: number; total: number; flagged: number };
+  onTarget: (c: Check) => void;
+  onChanged: () => void;
+  onToast: (text: string) => void;
+}) {
+  const { t } = useT();
+  const ready = checks.length > 0 && checks.every((c) => c.ok);
+  const approveMut = useMutation({
+    mutationFn: () => api.approve(issueID),
+    onSuccess: onChanged,
+  });
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto grid w-full max-w-5xl gap-4 p-4 md:grid-cols-2">
+        <section className="space-y-3">
+          <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+            <h2 className="mb-2 text-sm font-semibold">{t.readiness.title}</h2>
+            <ReadinessList checks={checks} coverage={coverage} onTarget={onTarget} />
+          </div>
+          <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+            <h2 className="mb-2 text-sm font-semibold">{t.send.approveSend}</h2>
+            {issue.status !== "approved" ? (
+              <>
+                <Button
+                  size="sm"
+                  disabled={!ready || approveMut.isPending}
+                  title={ready ? undefined : t.readiness.blockedHint}
+                  onClick={() => approveMut.mutate()}
+                >
+                  {t.readiness.approve}
+                </Button>
+                {approveMut.error && <p className="mt-2 text-xs text-danger">{errText(t, approveMut.error)}</p>}
+              </>
+            ) : (
+              <>
+                {issue.receipt?.approver && (
+                  <p className="mb-2 text-xs text-muted">{t.receipt.by} {issue.receipt.approver}</p>
+                )}
+                <SendRow issue={issue} onDone={onChanged} onToast={onToast} />
+              </>
+            )}
+            {(issue.status === "scheduled" || issue.status === "sent") && (
+              <p className="mt-2 text-xs text-muted">
+                {issue.status === "scheduled" ? t.send.scheduled : t.send.sent}
+              </p>
+            )}
+          </div>
+        </section>
+        <section className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+          <PreviewPane issueID={issueID} />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// PautaPicker lists bench candidates for "+ Pauta" — stories in the
+// edition and rejected ones never appear as suggestions. `position`
+// is the gap the picker opened from (append when undefined).
+function PautaPicker({
+  issueID, section, position, version, onPicked, onError, onClose,
+}: {
+  issueID: number;
+  section: string;
+  position?: number;
+  version: string;
+  onPicked: (d: IssueDocument) => void;
+  onError: (e: unknown) => void;
+  onClose: () => void;
+}) {
+  const { t } = useT();
+  const b = useComposer();
+  const [q, setQ] = useState("");
+  const candsQ = useQuery({
+    queryKey: ["candidates", issueID],
+    queryFn: () => api.candidates(issueID),
+  });
+  const pick = useMutation({
+    mutationFn: (c: Candidate) =>
+      api.blockInsert(issueID, { section, kind: "item", story_id: c.story_id, position, version }),
+    onSuccess: (r) => onPicked(r.document),
+    onError: onError,
+  });
+  const bench = (candsQ.data?.candidates ?? []).filter(
+    (c) => !c.in_issue && c.available && (!q || c.title.toLowerCase().includes(q.toLowerCase())),
+  );
+  return (
+    <KDialog open onOpenChange={(o) => !o && onClose()} title={b.pautaTitle(section)}>
+      <input
+        autoFocus
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={b.pautaSearch}
+        className="mb-3 w-full rounded-[var(--radius-input)] border border-line bg-paper px-3 py-2 text-sm"
+      />
+      <div className="max-h-72 space-y-1 overflow-y-auto">
+        {candsQ.isLoading && <p className="text-sm text-muted">…</p>}
+        {!candsQ.isLoading && bench.length === 0 && (
+          <p className="text-sm text-muted">{b.pautaEmpty}</p>
+        )}
+        {bench.map((c) => (
+          <button
+            key={c.story_id}
+            type="button"
+            disabled={pick.isPending}
+            onClick={() => pick.mutate(c)}
+            className="flex w-full items-start justify-between gap-2 rounded-[var(--radius-btn)] px-2 py-1.5 text-left hover:bg-surface disabled:opacity-50"
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{c.title}</span>
+              <span className="text-xs text-muted">{c.outlets.join(" · ")}</span>
+            </span>
+            <span className="shrink-0 text-teal"><Plus size={14} /></span>
+          </button>
+        ))}
+      </div>
+      {!!pick.error && <p className="mt-2 text-xs text-danger">{errText(t, pick.error)}</p>}
+    </KDialog>
+  );
+}
+
+// InsertBlockDialog is the page-owned half of the gap menu's image /
+// embed / standard-message entries (KLOX-66 D3): the node views open
+// it via `openInsert`, it gathers the payload and delegates the real
+// insert — and its version/conflict handling — to `insertBlock`.
+function InsertBlockDialog({
+  pubID, dlg, onInsert, onUploaded, onDone,
+}: {
+  pubID: number;
+  dlg: { section: string; index: number; kind: "image" | "embed" | "message" };
+  onInsert: (kind: "image" | "embed" | "text", text: string, url?: string) => Promise<string | null>;
+  onUploaded: (dataB64: string, contentType: string, name: string) => Promise<string | null>;
+  onDone: () => void;
+}) {
+  const { t } = useT();
+  const b = useComposer();
+  const qc = useQueryClient();
+  const [url, setUrl] = useState("");
+  const [alt, setAlt] = useState("");
+  const [html, setHtml] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const msgsQ = useQuery({
+    queryKey: ["messages", pubID],
+    queryFn: () => api.messages(pubID),
+    enabled: dlg.kind === "message",
+  });
+  const saveMsg = useMutation({
+    mutationFn: (body: { name: string; body: string }) => api.messageCreate(pubID, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["messages", pubID] }),
+  });
+  const delMsg = useMutation({
+    mutationFn: (mid: number) => api.messageDelete(pubID, mid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["messages", pubID] }),
+  });
+  const [newName, setNewName] = useState("");
+  const [newBody, setNewBody] = useState("");
+  const [newOpen, setNewOpen] = useState(false);
+
+  const insert = async (kind: "image" | "embed" | "text", text: string, u?: string) => {
+    setBusy(true);
+    const refused = await onInsert(kind, text, u);
+    setBusy(false);
+    if (refused === null) onDone();
+    else setErr(refused);
+  };
+  const onFile = async (f: File | undefined) => {
+    if (!f) return;
+    setBusy(true);
+    const buf = await f.arrayBuffer();
+    let bin = "";
+    new Uint8Array(buf).forEach((b) => (bin += String.fromCharCode(b)));
+    const res = await onUploaded(btoa(bin), f.type || "image/png", f.name);
+    setBusy(false);
+    if (res) setUrl(res);
+    else setErr(b.uploadErr);
+  };
+  const title =
+    dlg.kind === "image" ? b.imageTitle : dlg.kind === "embed" ? b.embedTitle : b.msgTitle;
+  return (
+    <KDialog open onOpenChange={(o) => !o && onDone()} title={title}>
+      {dlg.kind === "image" && (
+        <div className="space-y-2">
+          <div className="flex gap-1">
+            <input
+              autoFocus
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder={b.imageUrlPh}
+              className="min-w-0 flex-1 rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1.5 text-sm"
+            />
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
+              {b.upload}
+            </Button>
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden"
+              onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ""; }} />
+          </div>
+          <input
+            value={alt}
+            onChange={(e) => setAlt(e.target.value)}
+            placeholder={b.altPh}
+            className="w-full rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1.5 text-sm"
+          />
+          {err && <p className="text-xs text-danger" role="alert">{err}</p>}
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={onDone}>{t.doc.cancel}</Button>
+            <Button size="sm" disabled={busy || !url.trim()} onClick={() => void insert("image", alt, url.trim())}>
+              {b.insert}
+            </Button>
+          </div>
+        </div>
+      )}
+      {dlg.kind === "embed" && (
+        <div className="space-y-2">
+          <textarea
+            autoFocus
+            value={html}
+            onChange={(e) => setHtml(e.target.value)}
+            rows={7}
+            placeholder={b.embedPh}
+            className="w-full resize-y rounded-[var(--radius-input)] border border-line bg-paper p-2 font-mono text-xs leading-5"
+          />
+          <p className="text-[11px] text-muted">{b.embedHint}</p>
+          {err && <p className="text-xs text-danger" role="alert">{err}</p>}
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={onDone}>{t.doc.cancel}</Button>
+            <Button size="sm" disabled={busy || !html.trim()} onClick={() => void insert("embed", html)}>
+              {b.insert}
+            </Button>
+          </div>
+        </div>
+      )}
+      {dlg.kind === "message" && (
+        <div className="space-y-2">
+          <div className="max-h-64 space-y-1 overflow-y-auto">
+            {msgsQ.isLoading && <p className="text-sm text-muted">…</p>}
+            {!msgsQ.isLoading && !(msgsQ.data ?? []).length && !newOpen && (
+              <p className="text-sm text-muted">{b.msgEmpty}</p>
+            )}
+            {(msgsQ.data ?? []).map((m) => (
+              <div key={m.id} className="group flex items-start gap-2 rounded-[var(--radius-btn)] px-2 py-1.5 hover:bg-surface">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void insert("text", m.body)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <span className="block text-sm font-medium">{m.name}</span>
+                  <span className="block truncate text-xs text-muted">{m.body}</span>
+                </button>
+                <button type="button" aria-label={b.msgDelete}
+                  className="rounded p-1 text-muted opacity-0 hover:text-danger group-hover:opacity-100"
+                  onClick={() => delMsg.mutate(m.id)}>
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+          {!newOpen ? (
+            <button type="button"
+              className="inline-flex items-center gap-1 text-xs text-teal hover:underline"
+              onClick={() => setNewOpen(true)}>
+              <Plus size={12} /> {b.msgNew}
+            </button>
+          ) : (
+            <div className="space-y-1.5 rounded-[var(--radius-card)] border border-line bg-paper-raised p-2">
+              <input
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder={b.msgNamePh}
+                className="w-full rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1 text-xs"
+              />
+              <textarea
+                value={newBody}
+                onChange={(e) => setNewBody(e.target.value)}
+                rows={4}
+                placeholder={b.msgBodyPh}
+                className="w-full resize-y rounded-[var(--radius-input)] border border-line bg-paper p-2 font-doc text-sm"
+              />
+              <div className="flex gap-2">
+                <Button size="sm" disabled={saveMsg.isPending || !newName.trim() || !newBody.trim()}
+                  onClick={() => saveMsg.mutate({ name: newName.trim(), body: newBody }, {
+                    onSuccess: () => { setNewName(""); setNewBody(""); setNewOpen(false); },
+                  })}>
+                  {t.doc.save}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setNewOpen(false)}>{t.doc.cancel}</Button>
+              </div>
+            </div>
+          )}
+          {err && <p className="text-xs text-danger" role="alert">{err}</p>}
+        </div>
+      )}
+    </KDialog>
   );
 }
 

@@ -39,8 +39,13 @@ test("section builder onboarding, Seções screen and Configurações delete", a
   await page.waitForURL(/\/publications\/(\d+)\/sources/);
   const pubId = page.url().match(/publications\/(\d+)/)![1];
 
-  // Seções: the same builder edits the saved list; the new section is there
-  await page.getByRole("link", { name: "Sections", exact: true }).first().click();
+  // Seções: the same builder edits the saved list; the new section is there.
+  // Wait for the nav target to resolve to this publication before clicking —
+  // on hosted latency a click can land before the shell's links are pub-
+  // scoped, and /publications/<word> is an unrecoverable dead route (KLOX-74).
+  const sectionsNav = page.getByRole("link", { name: "Sections", exact: true }).first();
+  await expect(sectionsNav).toHaveAttribute("href", `/publications/${pubId}/sections`);
+  await sectionsNav.click();
   await page.waitForURL(new RegExp(`/publications/${pubId}/sections`));
   const added = page.getByPlaceholder("Section name").last();
   await expect(added).toHaveValue("Quick links");
@@ -52,7 +57,9 @@ test("section builder onboarding, Seções screen and Configurações delete", a
   ).toBeVisible({ timeout: 15000 });
 
   // Configurações: editable identity fields plus the danger zone
-  await page.getByRole("link", { name: "Settings", exact: true }).first().click();
+  const settingsNav = page.getByRole("link", { name: "Settings", exact: true }).first();
+  await expect(settingsNav).toHaveAttribute("href", `/publications/${pubId}/settings`);
+  await settingsNav.click();
   await page.waitForURL(new RegExp(`/publications/${pubId}/settings`));
   const nameField = page.getByLabel(/^Name$/);
   await expect(nameField).toBeVisible();

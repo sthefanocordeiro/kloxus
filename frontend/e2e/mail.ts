@@ -55,13 +55,15 @@ export async function claimIfSynthetic(page: Page) {
     data: { email: "smoke@kloxus.dev" },
   });
   expect(claim.ok()).toBeTruthy();
-  const pubs = await (await page.request.get("/api/v1/publications")).json();
-  const outbox = await (
-    await page.request.get(`/api/v1/publications/${pubs.publications[0].id}/outbox`)
-  ).json();
-  const ml = outbox.emails.find((e: { kind: string }) => e.kind === "magic_link");
-  expect(ml).toBeTruthy();
-  const mail = await (await page.request.get(`/api/v1/outbox/${ml.id}`)).json();
+  // The publication outbox listing hides account-level magic-link rows
+  // (KLOX-66 §8) — the claim response's outbox_email_id is the direct
+  // handle to the ledger row carrying the link.
+  const { outbox_email_id: eid } = (await claim.json()) as {
+    outbox_email_id?: number;
+  };
+  expect(eid).toBeTruthy();
+  const mail = await (await page.request.get(`/api/v1/outbox/${eid}`)).json();
+  expect(mail.email.kind).toBe("magic_link");
   const link = mail.email.body_md.match(/\/claim\?t=[A-Za-z0-9_-]+/)?.[0];
   expect(link).toBeTruthy();
   // Two-step claim: GET lands the confirm page (prefetch-safe); the

@@ -41,6 +41,23 @@ func demoServer(t *testing.T) (*web.Server, *store.DB, *store.Publication, *conf
 // demoServerOpt is demoServer with a hook to adjust Deps before New.
 func demoServerOpt(t *testing.T, opt func(*web.Deps)) (*web.Server, *store.DB, *store.Publication, *config.Config) {
 	t.Helper()
+	return testServer(t, true, opt)
+}
+
+// emptyServer builds the demo server on a fresh, unseeded workspace —
+// the state a brand-new account sees, so the onboarding create path
+// stays reachable under the one-newsletter rule (KLOX-66).
+func emptyServer(t *testing.T) (*web.Server, *store.DB) {
+	t.Helper()
+	srv, db, _, _ := testServer(t, false, nil)
+	return srv, db
+}
+
+// testServer is the shared builder behind demoServer and emptyServer:
+// with seedIt the workspace gets the example publication, without it
+// the workspace stays empty (pub is then nil).
+func testServer(t *testing.T, seedIt bool, opt func(*web.Deps)) (*web.Server, *store.DB, *store.Publication, *config.Config) {
+	t.Helper()
 	ctx := context.Background()
 	base := t.TempDir()
 	cfg := &config.Config{
@@ -62,14 +79,17 @@ func demoServerOpt(t *testing.T, opt func(*web.Deps)) (*web.Server, *store.DB, *
 		_, err = sdb.SeedPublication(ctx, def)
 		return err
 	}
-	if err := seed(ctx, db); err != nil {
-		t.Fatalf("seed: %v", err)
+	var pub *store.Publication
+	if seedIt {
+		if err := seed(ctx, db); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		pubs, err := db.ListPublications(ctx)
+		if err != nil || len(pubs) == 0 {
+			t.Fatalf("ListPublications: %v", err)
+		}
+		pub = pubs[0]
 	}
-	pubs, err := db.ListPublications(ctx)
-	if err != nil || len(pubs) == 0 {
-		t.Fatalf("ListPublications: %v", err)
-	}
-	pub := pubs[0]
 
 	deps := web.Deps{
 		WS: workspace.OpenLocal(db, seed), Cfg: cfg,
@@ -116,7 +136,7 @@ func TestDemoIssueLifecycle(t *testing.T) {
 		}
 		rr := apiCall(t, srv, "POST", issueURL+"/items/"+fmt.Sprint(iid)+"/decisions", body)
 		if rr.Code != 200 {
-			t.Fatalf("decision %s on item %d = %d %s", kind, iid, rr.Code, rr.Body.String()[:300])
+			t.Fatalf("decision %s on item %d = %d %s", kind, iid, rr.Code, shortBody(rr))
 		}
 	}
 	decide(iis[1].ID, "reject", "off the publication's angle")
@@ -145,7 +165,7 @@ func TestDemoIssueLifecycle(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		rr := apiCall(t, srv, "POST", issueURL+"/draft", nil)
 		if rr.Code != http.StatusAccepted {
-			t.Fatalf("POST draft #%d = %d %s", i+1, rr.Code, rr.Body.String()[:300])
+			t.Fatalf("POST draft #%d = %d %s", i+1, rr.Code, shortBody(rr))
 		}
 		waitRun(t, srv, apiJSON(t, rr)["run"].(map[string]any)["id"].(string))
 	}
@@ -185,7 +205,7 @@ func TestDemoIssueLifecycle(t *testing.T) {
 		}
 		if rr := apiCall(t, srv, "DELETE", sents+next,
 			map[string]any{"version": doc["version"].(string)}); rr.Code != 200 {
-			t.Fatalf("remove flagged sentence %s = %d: %s", next, rr.Code, rr.Body.String()[:200])
+			t.Fatalf("remove flagged sentence %s = %d: %s", next, rr.Code, shortBody(rr))
 		}
 		dbg, _ = db.GetIssue(ctx, issueID)
 	}
@@ -195,7 +215,7 @@ func TestDemoIssueLifecycle(t *testing.T) {
 
 	// --- approve, export, send ---
 	if rr := apiCall(t, srv, "POST", issueURL+"/approve", nil); rr.Code != 200 {
-		t.Fatalf("POST approve = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("POST approve = %d %s", rr.Code, shortBody(rr))
 	}
 	if rr := apiCall(t, srv, "GET", issueURL+"/export?fmt=markdown", nil); rr.Code != 200 || !strings.Contains(rr.Body.String(), "# Futuro Próximo") {
 		t.Fatal("markdown export failed")
@@ -224,7 +244,7 @@ func TestDemoIssueLifecycle(t *testing.T) {
 
 	// a test send records the outbox email but leaves the issue approved
 	if rr := apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "test"}); rr.Code != 200 {
-		t.Fatalf("POST test send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("POST test send = %d %s", rr.Code, shortBody(rr))
 	}
 	iss, err := db.GetIssue(ctx, issueID)
 	if err != nil {
@@ -235,7 +255,7 @@ func TestDemoIssueLifecycle(t *testing.T) {
 	}
 	// the readers send then marks it sent
 	if rr := apiCall(t, srv, "POST", issueURL+"/send", map[string]string{"audience": "readers"}); rr.Code != 200 {
-		t.Fatalf("POST send = %d %s", rr.Code, rr.Body.String()[:300])
+		t.Fatalf("POST send = %d %s", rr.Code, shortBody(rr))
 	}
 	iss, err = db.GetIssue(ctx, issueID)
 	if err != nil {

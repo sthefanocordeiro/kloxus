@@ -1054,6 +1054,17 @@ func (db *DB) LatestDecision(ctx context.Context, issueItemID int64) (kind, reas
 	return kind, reason, err
 }
 
+// DecisionExists reports whether a publication carries a decision with
+// the given kind and exact reason — used to detect "this issue was once
+// approved" after a post-approval edit voided the receipt (KLOX-66).
+func (db *DB) DecisionExists(ctx context.Context, pubID int64, kind, reason string) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM decisions WHERE workspace_id = $1 AND publication_id = $2 AND kind = $3 AND reason = $4`,
+		db.ws, pubID, kind, reason).Scan(&n)
+	return n > 0, err
+}
+
 // Decision is a stored review decision.
 type Decision struct {
 	ItemID    int64

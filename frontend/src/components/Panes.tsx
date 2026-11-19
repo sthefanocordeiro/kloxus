@@ -6,6 +6,7 @@ import { coverageDone, coverageLabel, readyFromChecks } from "../docModel";
 import { DocActionsCtx } from "../editor/nodes";
 import { ComposeBox, type ComposeInsert } from "./Compose";
 import { sectionTitle, useT } from "../i18n";
+import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
 import { fmtDate } from "../lib/fmt";
 import { Markdown } from "../markdown";
@@ -25,6 +26,7 @@ export function PautasPane({
   onSelect: (ref: number, issueItemId: number) => void;
 }) {
   const { t, lang } = useT();
+  const b = useComposer();
   const statusOf = (iid: number) => items?.find((i) => i.id === iid)?.status ?? "pending";
   const statusLabel = (s: string) => (t.itemStatus as Record<string, string>)[s] ?? s;
   return (
@@ -50,6 +52,7 @@ export function PautasPane({
                   <Badge tone={statusOf(it.issue_item_id) === "approved" ? "teal" : "muted"}>
                     {statusLabel(statusOf(it.issue_item_id))}
                   </Badge>
+                  {it.link_only && <Badge tone="muted">{b.linkOnly}</Badge>}
                   <span className="text-[10px] text-muted">
                     {sec.format === "links"
                       // a link-only pauta needs no text — "0 sentences"
@@ -171,6 +174,7 @@ export function EvidencePane({
   linkOnly?: boolean;
 }) {
   const { t, lang } = useT();
+  const b = useComposer();
   const actions = useContext(DocActionsCtx);
   const [insert, setInsert] = useState<ComposeInsert | null>(null);
   const dossier = useQuery({
@@ -208,10 +212,18 @@ export function EvidencePane({
     return `“${clip}” — ${name}`;
   };
 
+  // D2: a link-only pauta ships its story link with zero commentary —
+  // no compose box, no "insert excerpt" prompt, nothing pressuring the
+  // author to write. Sources stay: the link is what ships. Link-only is
+  // the section format (prop) or the item's own toggle (KLOX-66).
+  const linkItem = !!linkOnly || !!item.link_only;
   return (
     <div ref={flash} className="h-full space-y-4 overflow-y-auto p-3 text-sm">
-      <p className="font-doc font-semibold leading-6">{item.headline}</p>
-      {item.issue_item_id !== 0 && !actions.readOnly && !linkOnly && (
+      <p className="font-doc font-semibold leading-6">
+        {item.headline}
+        {linkItem && <Badge tone="muted" className="ml-2 align-middle">{b.linkOnly}</Badge>}
+      </p>
+      {item.issue_item_id !== 0 && !linkItem && !actions.readOnly && (
         <ComposeBox item={item} insert={insert} />
       )}
       {d && (
@@ -264,7 +276,7 @@ export function EvidencePane({
               <p className="mt-1 border-l-2 border-line pl-2 text-[13px] leading-5 text-muted">
                 {evFor(s.ref) ?? s.excerpt}
               </p>
-              {item.issue_item_id !== 0 && !actions.readOnly && !linkOnly && (
+              {item.issue_item_id !== 0 && !linkItem && !actions.readOnly && (
                 <button
                   type="button"
                   onClick={() =>

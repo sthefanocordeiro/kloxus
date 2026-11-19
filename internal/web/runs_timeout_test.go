@@ -94,7 +94,7 @@ func TestRunTimeoutReleasesPublication(t *testing.T) {
 	srv := web.New(deps(1500 * time.Millisecond))
 	rr := apiCall(t, srv, "POST", runsURL, nil)
 	if rr.Code != http.StatusAccepted {
-		t.Fatalf("start wedged run = %d: %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("start wedged run = %d: %s", rr.Code, shortBody(rr))
 	}
 	run1ID := apiJSON(t, rr)["run"].(map[string]any)["id"].(string)
 	run1 := waitRun(t, srv, run1ID)
@@ -108,7 +108,7 @@ func TestRunTimeoutReleasesPublication(t *testing.T) {
 	srv2 := web.New(deps(3 * time.Minute))
 	rr = apiCall(t, srv2, "POST", runsURL, nil)
 	if rr.Code != http.StatusAccepted {
-		t.Fatalf("start recovery run = %d: %s", rr.Code, rr.Body.String()[:200])
+		t.Fatalf("start recovery run = %d: %s", rr.Code, shortBody(rr))
 	}
 	run2ID := apiJSON(t, rr)["run"].(map[string]any)["id"].(string)
 	if run2ID == run1ID {

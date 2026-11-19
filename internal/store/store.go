@@ -605,6 +605,8 @@ func (db *DB) DeletePublication(ctx context.Context, pubID int64) error {
 		`DELETE FROM subscriptions WHERE workspace_id = $1 AND reader_id IN (SELECT id FROM readers WHERE workspace_id = $1 AND publication_id = $2)`,
 		`DELETE FROM readers WHERE workspace_id = $1 AND publication_id = $2`,
 		`DELETE FROM editorial_guides WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM media WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM standard_messages WHERE workspace_id = $1 AND publication_id = $2`,
 		`DELETE FROM payment_accounts WHERE workspace_id = $1 AND publication_id = $2`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, db.ws, pubID); err != nil {

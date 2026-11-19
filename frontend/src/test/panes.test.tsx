@@ -57,6 +57,14 @@ const writableActions: DocActions = {
   removeFlagged: async () => false,
   showEvidence: () => {},
   addSentence: async () => null,
+  moveBlock: async () => false,
+  removeBlock: async () => false,
+  updateBlock: async () => null,
+  insertBlock: async () => null,
+  openInsert: () => {},
+  uploadImage: async () => null,
+  toggleLinkOnly: async () => false,
+  pickPauta: () => {},
   readOnly: false,
 };
 

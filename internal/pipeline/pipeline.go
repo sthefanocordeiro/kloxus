@@ -1655,14 +1655,22 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 // that lack one — the compose flow's version of ensureDossiers, except
 // it never calls the model.
 func (r *Runner) ensureManualDossiers(ctx context.Context, issueID int64) error {
-	iis, err := r.DB.IssueItems(ctx, issueID)
+	return EnsureManualDossiers(ctx, r.DB, issueID)
+}
+
+// EnsureManualDossiers is the package-level form of
+// ensureManualDossiers — the block-insert path uses it to give a pauta
+// block dropped into a drafted edition its reference dossier without
+// any model call (KLOX-66).
+func EnsureManualDossiers(ctx context.Context, db *store.DB, issueID int64) error {
+	iis, err := db.IssueItems(ctx, issueID)
 	if err != nil {
 		return err
 	}
 	maxRef := 0
 	var missing []store.IssueItem
 	for _, ii := range iis {
-		if dj, err := r.DB.Dossier(ctx, ii.ID); err == nil {
+		if dj, err := db.Dossier(ctx, ii.ID); err == nil {
 			var d Dossier
 			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
 				maxRef = d.Ref
@@ -1674,7 +1682,7 @@ func (r *Runner) ensureManualDossiers(ctx context.Context, issueID int64) error 
 		}
 	}
 	for _, ii := range missing {
-		cand, err := r.DB.StoryWithItems(ctx, ii.StoryID)
+		cand, err := db.StoryWithItems(ctx, ii.StoryID)
 		if err != nil {
 			return err
 		}
@@ -1686,7 +1694,7 @@ func (r *Runner) ensureManualDossiers(ctx context.Context, issueID int64) error 
 		d.Interpretation = nil
 		d.Origin = "manual"
 		data, _ := json.Marshal(d)
-		if err := r.DB.SaveDossier(ctx, ii.ID, string(data)); err != nil {
+		if err := db.SaveDossier(ctx, ii.ID, string(data)); err != nil {
 			return err
 		}
 	}

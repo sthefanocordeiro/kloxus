@@ -152,6 +152,11 @@ func New(d Deps) *Server {
 	m.HandleFunc("DELETE /api/v1/issues/{id}/items/{ref}/sentences", s.apiItemRemoveFlagged)
 	m.HandleFunc("POST /api/v1/issues/{id}/sentences/{sid}/interpretation", s.apiSentenceInterpretation)
 	m.HandleFunc("PUT /api/v1/issues/{id}/commentary", s.apiCommentary)
+	m.HandleFunc("PUT /api/v1/issues/{id}/items/{ref}/link", s.apiItemLinkOnly)
+	m.HandleFunc("POST /api/v1/issues/{id}/blocks", s.apiBlockInsert)
+	m.HandleFunc("PUT /api/v1/issues/{id}/blocks", s.apiBlockUpdate)
+	m.HandleFunc("POST /api/v1/issues/{id}/blocks/move", s.apiBlockMove)
+	m.HandleFunc("DELETE /api/v1/issues/{id}/blocks", s.apiBlockRemove)
 	m.HandleFunc("POST /api/v1/issues/{id}/approve", s.apiApprove)
 	m.HandleFunc("POST /api/v1/issues/{id}/send", s.apiSend)
 	m.HandleFunc("POST /api/v1/issues/{id}/hold", s.apiHold)
@@ -160,6 +165,11 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/unsub", s.apiUnsub)
 	m.HandleFunc("GET /api/v1/issues/{id}/export", s.apiExport)
 	m.HandleFunc("GET /api/v1/issues/{id}/preview", s.apiPreview)
+	m.HandleFunc("POST /api/v1/issues/{id}/media", s.apiMediaUpload)
+	m.HandleFunc("GET /m/{id}", s.apiMediaGet)
+	m.HandleFunc("GET /api/v1/publications/{id}/messages", s.apiMessages)
+	m.HandleFunc("POST /api/v1/publications/{id}/messages", s.apiMessageCreate)
+	m.HandleFunc("DELETE /api/v1/publications/{id}/messages/{mid}", s.apiMessageDelete)
 	m.HandleFunc("GET /api/v1/outbox/{id}", s.apiOutboxEmail)
 	m.HandleFunc("POST /api/v1/demo/reset", s.apiDemoReset)
 	m.HandleFunc("POST /api/v1/demo/new", s.apiDemoNew)
@@ -192,10 +202,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// frame-src covers the outbox preview's sandboxed srcdoc iframe.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	// HSTS on every response (KLOX-66 §8): the hosted app only serves
+	// TLS behind Fly's proxy; local http listeners ignore the header.
+	w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	// frame-src also covers the sanitized embed block's provider
+	// allowlist (KLOX-66 D3) and img-src any https image a composer
+	// image block or embed references — remote images are content an
+	// author chose to show, never script (D3 trust boundary).
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-			"img-src 'self' data:; connect-src 'self'; frame-src 'self' about:; "+
+			"img-src 'self' data: https:; connect-src 'self'; "+
+			"frame-src 'self' about: https://youtube.com https://www.youtube.com "+
+			"https://youtube-nocookie.com https://www.youtube-nocookie.com "+
+			"https://player.vimeo.com https://open.spotify.com https://w.soundcloud.com "+
+			"https://player.twitch.tv; "+
 			"frame-ancestors 'self'; base-uri 'self'; form-action 'self'")
 	r = r.WithContext(context.WithValue(r.Context(), ctxReqID, rid))
 
@@ -206,7 +227,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Path == "/healthz" || r.URL.Path == "/robots.txt" ||
-		r.URL.Path == "/api/v1/sample" || strings.HasPrefix(r.URL.Path, "/sample/a") {
+		r.URL.Path == "/api/v1/sample" || strings.HasPrefix(r.URL.Path, "/sample/a") ||
+		strings.HasPrefix(r.URL.Path, "/m/") {
+		// /m/ serves uploaded composer media — email clients and
+		// anonymous reader-page visitors carry no workspace cookie and
+		// must not mint one.
 		s.mux.ServeHTTP(w, r)
 		return
 	}

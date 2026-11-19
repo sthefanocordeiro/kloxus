@@ -544,6 +544,44 @@ as interpretation and resolves its flag.
 — the only write path for commentary; the AI never writes here. Reverts
 an approved issue to `drafted` and voids its receipt.
 
+## Composer blocks (KLOX-66)
+
+Each section of the edition is an ordered list of blocks, reported in
+`sections[].blocks` on the document: a pauta (`{"kind": "item",
+"ref": N}`) or an author block (`{"kind": "heading"|"divider"|"link"|
+"text", "text", "url?"}`). Blocks persist inside the stored markdown —
+`####`, `---`, `- [label](url)`, `> text` — so every output surface
+renders them with no schema change. A non-item block written right
+after an item carries an `<!-- /item -->` boundary line (the parser
+honors it, outputs never render it) since `> ` inside an item is an
+interpretation sentence. Mutations address one block by
+`(section, index)` inside that array, carry the document `version`
+(stale → `409 conflict`), answer with the fresh `{"document": {…}}`,
+and revert an approved issue to `drafted` like a sentence edit.
+
+### `POST /api/v1/issues/{id}/blocks` — insert a block
+`{"section": "O destaque", "kind": "heading", "text": "…",
+"version": "…"}` — `position` (0-based) defaults to the end of the
+section. `kind: "item"` takes `story_id` instead of `text`: the story
+joins the edition as an approved `origin=manual` issue item and gets a
+deterministic manual dossier — no model call. A story already in the
+edition answers `409 blocked`; a rejected one must be un-rejected on
+the board first. `link` needs a valid `url`.
+
+### `PUT /api/v1/issues/{id}/blocks` — update a block's content
+`{"section": "…", "index": 2, "text": "…", "url": "…", "version": "…"}`
+— heading/link/text only; `item` and `divider` blocks have no editable
+content (`400 validation`).
+
+### `POST /api/v1/issues/{id}/blocks/move` — reorder inside a section
+`{"section": "…", "from": 0, "to": 2, "version": "…"}` — an item block
+moves with its whole story body.
+
+### `DELETE /api/v1/issues/{id}/blocks` — remove a block
+`{"section": "…", "index": 1, "version": "…"}` — removing an `item`
+block also marks the issue item `removed` (it resurfaces in
+suggestions) and drops its sentence flags.
+
 ## Readiness / approve / send
 
 ### `GET /api/v1/issues/{id}/readiness`
