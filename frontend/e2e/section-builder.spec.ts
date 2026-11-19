@@ -22,7 +22,7 @@ test("section builder onboarding, Seções screen and Configurações delete", a
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({
     timeout: 15000,
   });
-  await page.getByRole("button", { name: "Next: sections", exact: true }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
 
   // step 2: the builder lists the proposal's sections; adding a section
   // moves the live edition total
@@ -35,7 +35,7 @@ test("section builder onboarding, Seções screen and Configurações delete", a
   ).toBeVisible();
   const newName = page.getByPlaceholder("Section name").last();
   await newName.fill("Quick links");
-  await page.getByRole("button", { name: "Continue to sources", exact: true }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.waitForURL(/\/publications\/(\d+)\/sources/);
   const pubId = page.url().match(/publications\/(\d+)/)![1];
 

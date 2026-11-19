@@ -65,9 +65,9 @@ async function onboard(page: Page) {
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
   // step 2 is the section builder (KLOX-65): keep the classic template
   // the proposal suggested — the edition totals travel with it
-  await page.getByRole("button", { name: "Next: sections", exact: true }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.getByText(/Your edition will have \d+ stor/)).toBeVisible();
-  await page.getByRole("button", { name: "Continue to sources", exact: true }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.waitForURL(/\/publications\/\d+\/sources/);
 
   // the sources screen offers the fixture sources — preview one, then
@@ -75,7 +75,7 @@ async function onboard(page: Page) {
   await expect(page.getByText("Suggested sources")).toBeVisible();
   await page.getByRole("button", { name: "Latest items", exact: true }).first().click();
   await expect(page.locator("ul li a").first()).toBeVisible({ timeout: 15000 });
-  await page.getByRole("button", { name: /Confirm \d+ sources & collect/ }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   // the first real-mode run collects, dedupes and triages live feeds —
   // ~10-13 min hosted, seconds against fixtures
   await page.waitForURL(/\/issues\/\d+/, { timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
