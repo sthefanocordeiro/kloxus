@@ -857,3 +857,119 @@ func TestAssembleIssueFlattensFeedStrings(t *testing.T) {
 		t.Fatal("source name kept its newline")
 	}
 }
+
+// The stored template (KLOX-72) arranges the edition: fixed blocks
+// copy in at their slot position, section slots emit that section's
+// `##` heading and this week's items, and a text/link/image/divider
+// landing right after an item needs the `<!-- /item -->` boundary or
+// the parser folds it into the item's span.
+func TestAssembleIssueTemplate(t *testing.T) {
+	pub := &store.Publication{
+		Name: "Pub", Language: "en",
+		Template: []store.TemplateBlock{
+			{Kind: "image", Text: "Banner", URL: "/m/12-ab34"},
+			{Kind: "text", Text: "Editor's note."},
+			{Kind: "section", Section: "Lead"},
+			{Kind: "divider"},
+			{Kind: "section", Section: "Empty"},
+			{Kind: "link", Text: "Read more", URL: "https://example.com/x"},
+		},
+	}
+	entries := []entry{
+		{ref: 1, title: "Story one", section: "Lead"},
+		{ref: 2, title: "Story two", section: "Extra"},
+	}
+	drafts := map[int]struct {
+		headline, body string
+	}{
+		1: {body: "Fact one [1]."},
+		2: {body: "Fact two [1]."},
+	}
+	dossiers := map[int]*Dossier{1: {Ref: 1}, 2: {Ref: 2}}
+	// "Extra" is a snapshot section the template never names; "Empty"
+	// is a template slot with no items this week.
+	body := assembleIssue(pub, 1, entries, drafts, dossiers,
+		[]string{"Lead", "Extra", "Empty"})
+
+	wantOrder := []string{
+		"![Banner](/m/12-ab34)",
+		"> Editor's note.",
+		"## Lead",
+		"### Story one <!-- item 1 -->",
+		"<!-- /item -->",
+		"---",
+		"## Empty",
+		"- [Read more](https://example.com/x)",
+		"## Extra",
+		"### Story two <!-- item 2 -->",
+	}
+	pos := 0
+	for _, want := range wantOrder {
+		i := strings.Index(body[pos:], want)
+		if i < 0 {
+			t.Fatalf("%q missing or out of order in body:\n%s", want, body)
+		}
+		pos += i + len(want)
+	}
+	// the slot with no items keeps its `##` heading but emits no item
+	if strings.Count(body, "## Empty") != 1 {
+		t.Fatalf("empty slot heading missing:\n%s", body)
+	}
+	// "Extra" landed once, after every template block
+	if strings.Count(body, "## Extra") != 1 {
+		t.Fatalf("fallback section duplicated:\n%s", body)
+	}
+}
+
+// A template whose fixed blocks sit between two section slots keeps
+// item spans closed: the divider after Lead's item gets the marker,
+// the heading closes nothing extra (it is its own boundary).
+func TestAssembleIssueTemplateFixedBetweenSections(t *testing.T) {
+	pub := &store.Publication{
+		Name: "Pub", Language: "en",
+		Template: []store.TemplateBlock{
+			{Kind: "section", Section: "Lead"},
+			{Kind: "text", Text: "Mid note."},
+			{Kind: "section", Section: "Wire"},
+		},
+	}
+	entries := []entry{
+		{ref: 1, title: "Story one", section: "Lead"},
+		{ref: 2, title: "Story two", section: "Wire"},
+	}
+	drafts := map[int]struct {
+		headline, body string
+	}{
+		1: {body: "Fact one [1]."},
+		2: {body: "Fact two [1]."},
+	}
+	body := assembleIssue(pub, 1, entries, drafts,
+		map[int]*Dossier{1: {Ref: 1}, 2: {Ref: 2}},
+		[]string{"Lead", "Wire"})
+	mid := strings.Index(body, "> Mid note.")
+	if mid < 0 || !strings.Contains(body[:mid], "<!-- /item -->") {
+		t.Fatalf("text block after item lacks its boundary:\n%s", body)
+	}
+	if strings.Count(body, "### ") != 2 {
+		t.Fatalf("items = %d:\n%s", strings.Count(body, "### "), body)
+	}
+}
+
+// No template stored: the body is exactly the legacy layout — one `##`
+// per snapshot section in order, no leading blocks.
+func TestAssembleIssueNoTemplate(t *testing.T) {
+	pub := &store.Publication{Name: "Pub", Language: "en"}
+	entries := []entry{{ref: 1, title: "Story one", section: "Lead"}}
+	body := assembleIssue(pub, 1, entries,
+		map[int]struct {
+			headline, body string
+		}{1: {body: "Fact [1]."}},
+		map[int]*Dossier{1: {Ref: 1}},
+		[]string{"Lead", "Empty"})
+	if strings.Contains(body, "> ") || strings.Contains(body, "####") {
+		t.Fatalf("fixed block materialized without a template:\n%s", body)
+	}
+	if strings.Contains(body, "## Empty") {
+		t.Fatalf("empty snapshot section emitted without a slot:\n%s", body)
+	}
+}

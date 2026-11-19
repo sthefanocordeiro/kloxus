@@ -62,14 +62,6 @@ var (
 	blockImageRe = regexp.MustCompile(`^!\[([^\]]*)\]\(([^)\s]+)\)\s*$`)
 )
 
-// blockSafeURL reports whether u can be stored as a block URL —
-// http(s) links out, or an uploaded image's /m/ path.
-func blockSafeURL(u string) bool {
-	l := strings.ToLower(u)
-	return strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "http://") ||
-		strings.HasPrefix(u, "/m/")
-}
-
 // oneLine flattens feed-supplied strings (story titles, source names)
 // to a single line — a newline inside a stored heading would break its
 // `### … <!-- item N -->` marker and splice raw lines into the body.
@@ -86,14 +78,6 @@ func splitBlockLink(rest string) (label, url string) {
 	return rest, rest
 }
 
-// unsafeDocLine reports whether a line of author-supplied text would
-// become structural markup if stored as its own body line: HTML
-// comments close the running item and `<klox-embed` opens a raw-HTML
-// fence — both are document structure, never author text (KLOX-66 D3).
-func unsafeDocLine(t string) bool {
-	return strings.HasPrefix(t, "<!--") || strings.HasPrefix(t, "<klox-embed")
-}
-
 // authorTextOK reports whether author-supplied text can be written
 // into an item's stored body: a newline would splice a new stored
 // line, and `<!--`/`<klox-embed` markup breaks out of the item into
@@ -105,70 +89,11 @@ func authorTextOK(text string) bool {
 		!strings.Contains(text, "<!--") && !strings.Contains(text, "<klox-embed")
 }
 
-// blockLine renders a block's stored markdown line — the only shapes
-// the parser above accepts back. Single-line kinds refuse CR/LF: a
-// newline in the payload would splice structural markup into the
-// stored body (KLOX-66 D3).
+// blockLine renders a block's stored markdown line — it delegates to
+// delivery.BlockLine so the composer ops and the newsletter-template
+// materializer validate against the same rules (KLOX-72).
 func blockLine(kind, text, url string) (string, bool) {
-	t := strings.TrimSpace(text)
-	switch kind {
-	case "heading":
-		if t == "" || strings.Contains(t, "<!--") || strings.ContainsAny(t, "\r\n") {
-			return "", false
-		}
-		return "#### " + t, true
-	case "divider":
-		return "---", true
-	case "link":
-		u := strings.TrimSpace(url)
-		if u == "" || strings.ContainsAny(u, " \t()\r\n") || !blockSafeURL(u) {
-			return "", false
-		}
-		if t == "" || strings.ContainsAny(t, "[]\r\n") {
-			t = u
-		}
-		return "- [" + t + "](" + u + ")", true
-	case "image":
-		u := strings.TrimSpace(url)
-		if u == "" || strings.ContainsAny(u, " \t()\r\n") || !blockSafeURL(u) {
-			return "", false
-		}
-		if strings.ContainsAny(t, "[]\r\n") {
-			return "", false
-		}
-		return "![" + t + "](" + u + ")", true
-	case "embed":
-		// the stored body keeps the sanitized form only — the raw
-		// paste never reaches a reader surface (KLOX-66 D3)
-		clean := delivery.SanitizeEmbed(t)
-		if clean == "" {
-			return "", false
-		}
-		return delivery.EmbedFenceOpen + "\n" + clean + "\n" + delivery.EmbedFenceClose, true
-	case "text":
-		if t == "" {
-			return "", false
-		}
-		var b strings.Builder
-		for _, ln := range strings.Split(t, "\n") {
-			ln = strings.TrimSpace(ln)
-			if ln == "" {
-				continue
-			}
-			if unsafeDocLine(ln) {
-				return "", false
-			}
-			if b.Len() > 0 {
-				b.WriteByte('\n')
-			}
-			b.WriteString("> " + ln)
-		}
-		if b.Len() == 0 {
-			return "", false
-		}
-		return b.String(), true
-	}
-	return "", false
+	return delivery.BlockLine(kind, text, url)
 }
 
 // endItemMarker closes an open item in the stored body — written by

@@ -282,13 +282,30 @@ type Publication struct {
 	Paywall       config.Paywall
 	AIDisclosure  string
 	Custom        bool
+	Template      []TemplateBlock
+	// TemplateRaw is the stored template_json — the compare-and-swap
+	// key template saves check so a concurrent write conflicts instead
+	// of clobbering (KLOX-72).
+	TemplateRaw string
+}
+
+// TemplateBlock is one entry in the newsletter's default edition
+// template (KLOX-72): a fixed composer block copied into every new
+// edition — or a "section" slot the week's pautas fill at
+// materialization. Kind/text/url mirror the composer block schema;
+// section carries the section title for kind=section.
+type TemplateBlock struct {
+	Kind    string `json:"kind"` // section | heading | divider | link | image | embed | text
+	Text    string `json:"text,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Section string `json:"section,omitempty"`
 }
 
 func (db *DB) scanPublication(row *sql.Row) (*Publication, error) {
 	var p Publication
-	var sections, paywall string
+	var sections, paywall, template string
 	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Language, &p.Topic, &p.Audience,
-		&p.EditorialLine, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom)
+		&p.EditorialLine, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template)
 	if err != nil {
 		return nil, err
 	}
@@ -298,10 +315,14 @@ func (db *DB) scanPublication(row *sql.Row) (*Publication, error) {
 	if err := json.Unmarshal([]byte(paywall), &p.Paywall); err != nil {
 		return nil, fmt.Errorf("decoding paywall for %q: %w", p.Slug, err)
 	}
+	if err := json.Unmarshal([]byte(template), &p.Template); err != nil {
+		return nil, fmt.Errorf("decoding template for %q: %w", p.Slug, err)
+	}
+	p.TemplateRaw = template
 	return &p, nil
 }
 
-const publicationCols = `id, slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure, custom`
+const publicationCols = `id, slug, name, language, topic, audience, editorial_line, tone, frequency, sections_json, paywall_json, ai_disclosure, custom, template_json`
 
 // GetPublication resolves a publication by numeric id or slug.
 func (db *DB) GetPublication(ctx context.Context, ref string) (*Publication, error) {
@@ -324,13 +345,15 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 	var out []*Publication
 	for rows.Next() {
 		var p Publication
-		var sections, paywall string
+		var sections, paywall, template string
 		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Language, &p.Topic, &p.Audience,
-			&p.EditorialLine, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom); err != nil {
+			&p.EditorialLine, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(sections), &p.Sections)
 		json.Unmarshal([]byte(paywall), &p.Paywall)
+		json.Unmarshal([]byte(template), &p.Template)
+		p.TemplateRaw = template
 		out = append(out, &p)
 	}
 	return out, rows.Err()
@@ -567,6 +590,29 @@ func (db *DB) UpdatePublication(ctx context.Context, id int64, p *config.Publica
 		WHERE workspace_id = $10 AND id = $11`,
 		p.Name, p.Topic, p.Audience, p.EditorialLine, p.Tone, p.Frequency,
 		string(sections), string(paywall), p.AIDisclosure, db.ws, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// SetPublicationTemplate replaces the newsletter's default edition
+// template (KLOX-72). want is the template_json the caller read — the
+// update is a compare-and-swap on it, so a concurrent save fails with
+// sql.ErrNoRows instead of silently clobbering (the API maps that to a
+// 409 like the document version contract).
+func (db *DB) SetPublicationTemplate(ctx context.Context, pubID int64, want string, blocks []TemplateBlock) error {
+	data, err := json.Marshal(blocks)
+	if err != nil {
+		return err
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE publications SET template_json = $3
+		 WHERE workspace_id = $1 AND id = $2 AND template_json = $4`,
+		db.ws, pubID, string(data), want)
 	if err != nil {
 		return err
 	}
