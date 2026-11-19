@@ -217,6 +217,30 @@ func localizeSubject(subject, lang string) string {
 	return strings.Replace(subject, " — issue ", " — edição ", 1)
 }
 
+// localizePrice renders the paywall price in the publication's
+// language and drops the fictional Valdória "V$" for a real "R$" —
+// publications created from the sample proposal (and real-mode
+// workspaces, which are never reseeded) stored it before the fix
+// (KLOX-81). Only a billing-period suffix swaps: "/month" → "/mês" on
+// pt publications, "/mês" → "/month" on en ones. Display-only, like
+// localizeSubject: the stored value is untouched.
+func localizePrice(price, lang string) string {
+	price = strings.Replace(price, "V$", "R$", 1)
+	var swaps [][2]string
+	if strings.HasPrefix(strings.ToLower(lang), "pt") {
+		swaps = [][2]string{{"/month", "/mês"}, {"/mo", "/mês"}, {" per month", " por mês"}}
+	} else {
+		swaps = [][2]string{{"/mês", "/month"}, {" por mês", " per month"}}
+	}
+	lower := strings.ToLower(price)
+	for _, sw := range swaps {
+		if strings.HasSuffix(lower, strings.ToLower(sw[0])) && len(price) >= len(sw[0]) {
+			return price[:len(price)-len(sw[0])] + sw[1]
+		}
+	}
+	return price
+}
+
 // canonicalSectionPT maps the legacy canonical English section titles
 // to the pt names readers see — bodies stored before KLOX-64 keep the
 // English headings and swap at render time (KLOX-56).
@@ -245,7 +269,7 @@ func (s *Server) sampleArticle(w http.ResponseWriter, r *http.Request) {
 		title = u.Host
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>%s — %s</title>`+
+	fmt.Fprintf(w, `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>%s — %s</title>`+
 		`<style>body{font-family:Georgia,serif;max-width:38em;margin:3em auto;padding:0 1.2em;color:#1c1c1c;line-height:1.6}`+
 		`.site{color:#0e7a6d;font-size:.85em;text-transform:uppercase;letter-spacing:.08em}`+
 		`.note{margin-top:3em;padding:.9em 1.1em;border:1px dashed #bbb;border-radius:.5em;color:#666;font-size:.85em;font-family:system-ui,sans-serif}`+
@@ -302,7 +326,7 @@ func publicationView(p *store.Publication) apiPublication {
 		Tone:          p.Tone, Frequency: p.Frequency, AIDisclosure: p.AIDisclosure,
 		Paywall: apiPaywall{
 			Enabled: p.Paywall.Enabled, PaidSections: orEmpty(p.Paywall.PaidSections),
-			Price: p.Paywall.Price,
+			Price: localizePrice(p.Paywall.Price, p.Language),
 		},
 	}
 	for _, sc := range config.NormalizeSections(p.Sections, p.Paywall.PaidSections) {
@@ -910,7 +934,7 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 		"language": def.Language, "frequency": def.Frequency,
 		"ai_disclosure": def.AIDisclosure,
 		"sections":      secs, "sources": srcs,
-		"paywall": apiPaywall{Enabled: def.Paywall.Enabled, PaidSections: def.Paywall.PaidSections, Price: def.Paywall.Price},
+		"paywall": apiPaywall{Enabled: def.Paywall.Enabled, PaidSections: def.Paywall.PaidSections, Price: localizePrice(def.Paywall.Price, def.Language)},
 	}})
 }
 
@@ -1330,7 +1354,7 @@ func (s *Server) apiRunEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
+	h.Set("Content-Type", "text/event-stream; charset=utf-8")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "keep-alive")
 	send := func(event string, data any) {
@@ -3982,7 +4006,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 		"paid_sections": orEmpty(paidSectionTitles(iss, pub)),
 		// price on the reader page (KLOX-66): the gated card sells the
 		// subscription with the creator's price and the paid sections
-		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": rawPub.Paywall.Price},
+		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": localizePrice(rawPub.Paywall.Price, rawPub.Language)},
 	})
 }
 

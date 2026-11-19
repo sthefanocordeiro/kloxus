@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowDown, ArrowUp, GripVertical, Link2, Minus, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, GripVertical, Link2, Minus, Newspaper, Plus, Star, Trash2 } from "lucide-react";
 import type { NewsletterSection } from "../api";
 import { useT, type Lang } from "../i18n";
 import { cn } from "../lib/cn";
@@ -94,7 +94,7 @@ export function SectionBuilder({
       {showTemplates && (
         <div className="mb-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t.builder.templates}</p>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
             {(["classic", "short", "essay", "blank"] as const).map((key) => (
               <button
                 key={key}
@@ -191,6 +191,9 @@ export function SectionBuilder({
                   <option value="news">{t.builder.formats.news}</option>
                   <option value="links">{t.builder.formats.links}</option>
                 </select>
+                {/* one line on the picked format — first-time creators
+                    can't tell Destaque/Notícias/Links apart (KLOX-81) */}
+                <p className="mt-1 text-sm text-muted">{t.builder.formatHelp[s.format]}</p>
               </label>
 
               <div>
@@ -292,6 +295,32 @@ export function SectionBuilder({
             </div>
           ))}
           {value.length === 0 && <div className="h-20 rounded border border-dashed border-line" />}
+        </div>
+        <div className="mt-2 text-sm text-muted">
+          <p>{t.builder.previewIntro}</p>
+          <ul className="mt-1.5 space-y-1">
+            <li className="flex items-center gap-1.5">
+              <Star size={13} className="shrink-0" aria-hidden />
+              <span>
+                <span className="font-medium text-ink">{t.builder.formats.featured}</span>
+                {" — "}{t.builder.formatHelp.featured}
+              </span>
+            </li>
+            <li className="flex items-center gap-1.5">
+              <Newspaper size={13} className="shrink-0" aria-hidden />
+              <span>
+                <span className="font-medium text-ink">{t.builder.formats.news}</span>
+                {" — "}{t.builder.formatHelp.news}
+              </span>
+            </li>
+            <li className="flex items-center gap-1.5">
+              <Link2 size={13} className="shrink-0" aria-hidden />
+              <span>
+                <span className="font-medium text-ink">{t.builder.formats.links}</span>
+                {" — "}{t.builder.formatHelp.links}
+              </span>
+            </li>
+          </ul>
         </div>
       </div>
     </div>

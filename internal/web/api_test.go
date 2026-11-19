@@ -1246,7 +1246,7 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 			{"title": "Main dish", "format": "featured", "items": 1, "commentary": "required", "access": "all"},
 			{"title": "Around the block", "format": "news", "items": 3, "commentary": "optional", "access": "subscribers"},
 		},
-		"paywall": map[string]any{"enabled": true, "price": "V$ 5/month"},
+		"paywall": map[string]any{"enabled": true, "price": "R$ 5/mês"},
 	}
 	rr = apiCall(t, srv, "POST", "/api/v1/publications", create)
 	if rr.Code != 201 {

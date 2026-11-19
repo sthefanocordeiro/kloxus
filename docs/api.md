@@ -128,7 +128,7 @@ workspace-free, so every citation opens an original inside the demo.
   "language": "pt-BR", "frequency": "weekly", "ai_disclosure": "short",
   "sections": [{"title": "O destaque", "items": 1, "commentary": "required"}],
   "sources": [{"type": "rss", "url": "fixtures/feeds/radar-tech.xml"}],
-  "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "V$ 12/month"}
+  "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "R$ 12/mês"}
 }}
 ```
 
@@ -160,7 +160,7 @@ by the canonical sample at run time so fixture replay stays stable.
     "editorial_line": "…", "tone": "…", "frequency": "weekly",
     "ai_disclosure": "short",
     "sections": [{"title": "O destaque", "items": 1, "commentary": "required"}],
-    "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "V$ 12/month"}
+    "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "R$ 12/mês"}
   },
   "latest_issue": {"id": 1, "number": 1, "status": "reviewing", "…": "…"}
 }

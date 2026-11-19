@@ -384,6 +384,28 @@ func TestLocalizeSubject(t *testing.T) {
 	}
 }
 
+// TestLocalizePrice: the fictional "V$" and the English period suffix
+// never reach a pt reader; an en publication gets the en suffix back;
+// creator-typed values without a suffix pass through (KLOX-81).
+func TestLocalizePrice(t *testing.T) {
+	cases := []struct{ in, lang, want string }{
+		{"V$ 12/month", "pt-BR", "R$ 12/mês"},
+		{"R$ 12/month", "pt-BR", "R$ 12/mês"},
+		{"R$ 12/mês", "pt-BR", "R$ 12/mês"},
+		{"R$ 12 per month", "pt-BR", "R$ 12 por mês"},
+		{"V$ 5/month", "en", "R$ 5/month"},
+		{"R$ 12/mês", "en", "R$ 12/month"},
+		{"R$ 12", "pt-BR", "R$ 12"},
+		{"free", "pt-BR", "free"},
+		{"", "pt-BR", ""},
+	}
+	for _, c := range cases {
+		if got := localizePrice(c.in, c.lang); got != c.want {
+			t.Errorf("localizePrice(%q, %q) = %q, want %q", c.in, c.lang, got, c.want)
+		}
+	}
+}
+
 // TestRobotsAndSecurityHeaders: /robots.txt answers without minting a
 // workspace cookie, and baseline security headers ride every response
 // (KLOX-56).
