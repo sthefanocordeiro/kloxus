@@ -36,9 +36,27 @@ test("create flow: disabled paste option, realistic example, working Voltar", as
   await page.waitForURL(/\/publications$/);
 });
 
-test("an account with a newsletter never reaches the create flow", async ({ page }) => {
-  // create the publication via API first — the UI path must then refuse
-  // entry to /new and land on the publication's editions instead
+test("one button pattern: Avançar alone on page 1, Avançar + Voltar on page 2", async ({ page }) => {
+  await onboard(page);
+
+  // page 1 (Sua newsletter): the only in-flow action is Avançar
+  const next = page.getByRole("button", { name: "Avançar", exact: true });
+  await expect(next).toBeVisible();
+  await expect(page.getByRole("button", { name: "Voltar", exact: true })).toHaveCount(0);
+
+  // page 2 (Seções): the same Avançar + Voltar pair
+  await next.click();
+  await expect(page.getByRole("heading", { name: "Suas seções" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Avançar", exact: true })).toBeVisible();
+  const back = page.getByRole("button", { name: "Voltar", exact: true });
+  await expect(back).toBeVisible();
+
+  // Voltar is live — it returns to the first step
+  await back.click();
+  await expect(page.getByLabel("Linha editorial")).toBeVisible();
+});
+
+async function createViaAPI(page: import("@playwright/test").Page) {
   const proposal = (await (await page.request.get("/api/v1/proposal")).json()).proposal;
   const res = await page.request.post("/api/v1/publications", {
     data: {
@@ -55,6 +73,27 @@ test("an account with a newsletter never reaches the create flow", async ({ page
     },
   });
   expect(res.status()).toBe(201);
+  return ((await res.json()).publication as { id: number }).id;
+}
+
+test("page 3 (Fontes) carries the same Avançar + Voltar pair", async ({ page }) => {
+  const id = await createViaAPI(page);
+
+  await page.goto(`/publications/${id}/sources`);
+  await expect(page.getByRole("button", { name: "Avançar", exact: true })).toBeVisible({
+    timeout: 15000,
+  });
+  const back = page.getByRole("button", { name: "Voltar", exact: true });
+  await expect(back).toBeVisible();
+  await back.click();
+  await page.waitForURL(new RegExp(`/publications/${id}/sections`));
+});
+
+test("an account with a newsletter never reaches the create flow", async ({ page }) => {
+  // create the publication via API first — the UI path must then refuse
+  // entry to /new and land on the publication's editions instead
+  const id = await createViaAPI(page);
+  expect(id).toBeGreaterThan(0);
 
   await page.goto("/new");
   await page.waitForURL(/\/publications\/\d+/, { timeout: 15000 });
