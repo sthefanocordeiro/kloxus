@@ -126,6 +126,9 @@ var (
 	// case-sensitive so a lowercase mid-sentence "a imagem do produto"
 	// is never mistaken for a credit.
 	creditCapRe = regexp.MustCompile(`(?:^|\s)(?:Foto|Imagem|Ilustra\S*)\s*:[^)\n]{0,120}$`)
+	// "… | Crédito: Agência X" — wire-service caption credits (KLOX-67
+	// prefilter). The colon keeps a bare "créditos" mid-sentence safe.
+	creditoTailRe = regexp.MustCompile(`(?i)(?:[|–—-]\s*|\()cr[eé]ditos?\b[^)\n:]{0,60}:[^)\n]*\)?\s*$`)
 	// Tecnoblog's AI-summary box renders as a "Resumo IA" heading
 	// followed by bullet paragraphs and a "Gerado com IA…" tail — the
 	// whole block is model filler, not reporting.
@@ -165,7 +168,7 @@ func normalizeText(s string) string {
 		case feedFooterRe.MatchString(l), offerCallRe.MatchString(l):
 			continue
 		}
-		for _, re := range []*regexp.Regexp{creditTailRe, creditCapRe} {
+		for _, re := range []*regexp.Regexp{creditTailRe, creditCapRe, creditoTailRe} {
 			if c := re.FindString(l); c != "" {
 				l = strings.TrimSpace(l[:len(l)-len(c)])
 			}

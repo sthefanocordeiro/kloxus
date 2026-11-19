@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
@@ -177,6 +178,107 @@ func scoreStories(stories []store.Story, lang string) (scores []float64, reasons
 	}
 	return scores, reasons
 }
+
+// enrichmentKindWeight is the §7.2 kind weight the free ranking applies
+// on top of recency + diversity: news and analysis outrank product
+// launches; excluded kinds never reach the ranker (the candidate
+// queries already filter them).
+var enrichmentKindWeight = map[string]float64{
+	"noticia":    1.0,
+	"analise":    1.0,
+	"lancamento": 0.5,
+	"outro":      -0.5,
+}
+
+// scoreStoriesEnriched extends scoreStories with the shared AI
+// enrichment signals (KLOX-67 §7.2): a topic match between the story's
+// enrichment tags and the publication's topic/editorial line adds 2,
+// and the story's best member kind applies its weight. Stories with no
+// enrichment rows score exactly as before — the ranker degrades to the
+// deterministic heuristic, never to an error.
+func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publication, enrich map[int64]*store.ItemEnrichment) (scores []float64, reasons []string) {
+	scores, reasons = scoreStories(stories, lang)
+	if len(enrich) == 0 || pub == nil {
+		return scores, reasons
+	}
+	// The folded keyword set the tags match against — the publication's
+	// declared topic plus its editorial line.
+	tokens := foldedTokens(pub.Topic + " " + pub.EditorialLine)
+	pt := ptLang(lang)
+	for i := range stories {
+		bestW := 0.0
+		haveKind := false
+		onTopic := false
+		for j := range stories[i].Items {
+			e := enrich[stories[i].Items[j].ID]
+			if e == nil {
+				continue
+			}
+			w := enrichmentKindWeight[e.Kind] // 0 for unlisted kinds
+			if !haveKind || w > bestW {
+				bestW, haveKind = w, true
+			}
+			for _, t := range e.Topics {
+				if topicMatches(t, tokens, pub) {
+					onTopic = true
+					break
+				}
+			}
+		}
+		if haveKind {
+			scores[i] += bestW
+		}
+		if onTopic {
+			scores[i] += 2
+			if pt {
+				reasons[i] += " · no tema"
+			} else {
+				reasons[i] += " · on topic"
+			}
+		}
+	}
+	return scores, reasons
+}
+
+// foldedTokens lowercases, strips accents and splits on word
+// boundaries — the same fold the deals list uses.
+func foldedTokens(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range strings.FieldsFunc(foldAccents.Replace(strings.ToLower(s)), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		out[w] = true
+	}
+	return out
+}
+
+// topicMatches reports whether an enrichment tag hits the publication's
+// topic tokens. "IA" is special-cased: the folded token "ia" is a
+// Portuguese verb form, so it only counts as a literal uppercase "IA"
+// in the original text or as "inteligência artificial".
+func topicMatches(tag string, tokens map[string]bool, pub *store.Publication) bool {
+	if tag == "IA" {
+		if tokens["inteligencia"] && tokens["artificial"] {
+			return true
+		}
+		for _, w := range strings.Fields(pub.Topic + " " + pub.EditorialLine) {
+			if w == "IA" || w == "AI" {
+				return true
+			}
+		}
+		return false
+	}
+	return tokens[tag]
+}
+
+var foldAccents = strings.NewReplacer(
+	"á", "a", "à", "a", "â", "a", "ã", "a", "ä", "a",
+	"é", "e", "è", "e", "ê", "e", "ë", "e",
+	"í", "i", "ì", "i", "î", "i", "ï", "i",
+	"ó", "o", "ò", "o", "ô", "o", "õ", "o", "ö", "o",
+	"ú", "u", "ù", "u", "û", "u", "ü", "u",
+	"ç", "c", "ñ", "n",
+)
 
 // agoLabel renders story freshness for the reader-facing reason:
 // relative under a week ("há 3 h" / "3 h ago"), the date beyond it.

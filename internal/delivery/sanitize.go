@@ -10,6 +10,7 @@ package delivery
 
 import (
 	"html"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -80,17 +81,18 @@ func embedSafeImgSrc(v string) bool {
 
 func embedSafeIframeSrc(v string) bool {
 	v = strings.TrimSpace(v)
-	if !strings.HasPrefix(strings.ToLower(v), "https://") {
+	u, err := url.Parse(v)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") {
 		return false
 	}
-	rest := v[len("https://"):]
-	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
-		rest = rest[:i]
+	// Any userinfo means the authority is not the host it looks like —
+	// "https://youtube.com:x@evil.example/" loads evil.example, so the
+	// allowlist must compare the parsed hostname, never a raw prefix
+	// (KLOX-73).
+	if u.User != nil {
+		return false
 	}
-	if i := strings.LastIndex(rest, ":"); i >= 0 { // strip :port
-		rest = rest[:i]
-	}
-	return embedIframeHosts[strings.ToLower(rest)]
+	return embedIframeHosts[strings.ToLower(u.Hostname())]
 }
 
 // sanitizeNode appends the allowed form of n to out. Element handling:

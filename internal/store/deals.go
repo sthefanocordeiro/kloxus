@@ -11,8 +11,9 @@ import "strings"
 
 var promoTerms = []string{
 	"promocao", "promocoes", "oferta", "desconto", "cupom", "% off",
-	"black friday", "black november", "black da", "esquenta black",
+	"black friday", "black november", "black da", "black do", "esquenta black",
 	"11.11", "cyber monday", "menor preco", "preco historico",
+	"preco imbativel", "cupom de desconto", "frete gratis",
 	"selecionados", "veja uma selecao", "em ate 12x",
 	"na amazon", "no magalu", "no mercado livre",
 	"aliexpress", "achados do",

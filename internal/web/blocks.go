@@ -576,6 +576,25 @@ func approveDecisionReason(issueID int64) string {
 	return fmt.Sprintf("issue %d approved", issueID)
 }
 
+// itemMarkerIndex returns the offset of an item heading's `<!--` marker
+// inside its stored line, or -1 when the line is not an item heading.
+// The docItemRe match locates it — a headline may itself carry a
+// literal `<!--`, so the first comment in the line is not the marker
+// (KLOX-73).
+func itemMarkerIndex(head string) int {
+	m := docItemRe.FindStringSubmatchIndex(head)
+	if m == nil {
+		return -1
+	}
+	// Group 1 ends where the marker's whitespace run starts; the first
+	// '<' after it opens the trailing `<!-- item N -->`.
+	i := m[3]
+	for i < len(head) && head[i] != '<' {
+		i++
+	}
+	return i
+}
+
 // apiItemLinkOnly toggles a pauta between written and link-only
 // (KLOX-66 D2): the stored heading marker gains/loses its `link`
 // flag. A link-only pauta ships the story link with no written text —
@@ -623,7 +642,7 @@ func (s *Server) apiItemLinkOnly(w http.ResponseWriter, r *http.Request) {
 		lineEnd += it.spanStart
 	}
 	head := body[it.spanStart:lineEnd]
-	mi := strings.Index(head, "<!--")
+	mi := itemMarkerIndex(head)
 	if mi < 0 {
 		apiErr(w, 409, "blocked", "could not locate the pauta marker")
 		return
