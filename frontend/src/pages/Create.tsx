@@ -18,24 +18,18 @@ export function CreateNewsletter() {
   const proposal = useQuery({ queryKey: ["proposal"], queryFn: api.proposal });
   // one newsletter per account (KLOX-66): onboarding is the only
   // create path — an account that already has a newsletter goes
-  // straight to it
+  // straight to its editions and never sees the form (KLOX-79)
   const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
+  const existing = pubs.data?.[0];
   useEffect(() => {
-    if (pubs.data?.length) nav(`/publications/${pubs.data[0].id}`, { replace: true });
-  }, [pubs.data, nav]);
+    if (existing) nav(`/publications/${existing.id}`, { replace: true });
+  }, [existing, nav]);
   const [form, setForm] = useState<Proposal | null>(null);
   const [step, setStep] = useState(0); // 0 = newsletter, 1 = sections
-  const [material, setMaterial] = useState("");
-  const [liveOnly, setLiveOnly] = useState(false);
 
   useEffect(() => {
     if (proposal.data && !form) setForm(proposal.data);
   }, [proposal.data, form]);
-
-  const propose = useMutation({
-    mutationFn: () => api.propose(material),
-    onError: () => setLiveOnly(true),
-  });
 
   const create = useMutation({
     mutationFn: () => {
@@ -49,6 +43,18 @@ export function CreateNewsletter() {
   const sectionsOK =
     !!form && form.sections.length > 0 && totalStories(form.sections) <= SECTION_LIMITS.totalMax &&
     form.sections.every((s) => s.title.trim() !== "");
+
+  // the flow renders only once the account is known to have no
+  // newsletter — while the query is in flight (or a publication
+  // exists) the screen stays empty; a failed query falls through and
+  // the API still refuses creation with a localized error
+  if (existing || (!pubs.data && !pubs.isError)) {
+    return (
+      <div className="grid flex-1 place-items-center py-24 text-muted" aria-busy="true">
+        …
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-8">
@@ -67,21 +73,15 @@ export function CreateNewsletter() {
             <div className="mt-2 flex gap-2">
               <input
                 id="paste"
-                value={material}
-                onChange={(e) => { setMaterial(e.target.value); setLiveOnly(false); }}
+                disabled
                 placeholder={t.create.pastePlaceholder}
-                className="min-w-0 flex-1 rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+                className="min-w-0 flex-1 rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal disabled:opacity-60"
               />
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!material.trim() || propose.isPending}
-                onClick={() => propose.mutate()}
-              >
+              <Button variant="outline" size="sm" disabled>
                 {t.create.pasteAction}
               </Button>
             </div>
-            {liveOnly && <p className="mt-2 text-xs text-muted">{t.create.pasteLiveOnly}</p>}
+            <p className="mt-2 text-xs text-muted">{t.create.pasteSoon}</p>
           </Card>
 
           {form && (

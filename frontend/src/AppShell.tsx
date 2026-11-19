@@ -37,7 +37,9 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
   const pub = pubM?.params.id;
   const pubCrumb: Crumb = { label: pubName ?? t.publications, to: pub ? `/publications/${pub}` : "/publications" };
 
-  if (pathname === "/new") return { title: t.nav.creating, crumbs: [{ label: t.nav.newNewsletter, to: "/new" }], section: "new" };
+  // /new's crumb used to point at /new itself — a Voltar that went
+  // nowhere (KLOX-79). Publicações is the real parent.
+  if (pathname === "/new") return { title: t.nav.creating, crumbs: [{ label: t.publications, to: "/publications" }], section: "new" };
   if (pathname === "/publications") return { title: t.publications, crumbs: [], section: "editions" };
   if (issueM) {
     return {
