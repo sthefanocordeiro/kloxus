@@ -1494,6 +1494,21 @@ func extractSentences(body string) []sentRec {
 	return out
 }
 
+// docMarkupRe removes the tokens that would read as document structure
+// inside a stored line: closed comments (`<!-- /item -->`), an unclosed
+// comment opener, and the embed-fence tags.
+var docMarkupRe = regexp.MustCompile(`<!--.*?-->|<!--|</?klox-embed>?`)
+
+// oneLine flattens feed-supplied strings (story titles, dossier source
+// names, picked section titles) to a single line and strips document
+// markup: a newline, a `<!--` or a `<klox-embed` inside a stored
+// heading would splice raw structural lines into the generated body —
+// the same guard the composer's insertItemBlock applies (KLOX-73).
+func oneLine(s string) string {
+	s = docMarkupRe.ReplaceAllString(s, "")
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // assembleIssue builds the stored issue markdown. The stored body is the
 // canonical reader draft: headlines, cited bodies and linked sources,
 // with <!-- item N --> markers kept so the citation check can attribute
@@ -1521,13 +1536,13 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 		if headline == "" {
 			headline = e.title
 		}
-		fmt.Fprintf(&b, "### %s <!-- item %d -->\n\n", headline, e.ref)
+		fmt.Fprintf(&b, "### %s <!-- item %d -->\n\n", oneLine(headline), e.ref)
 		b.WriteString(de.body + "\n\n")
 		if len(d.Sources) > 0 {
 			b.WriteString("**Sources:** ")
 			parts := []string{}
 			for _, s := range d.Sources {
-				name := s.Name
+				name := oneLine(s.Name)
 				if name == "" {
 					name = "source"
 				}
@@ -1541,7 +1556,7 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "## %s\n\n", sec)
+		fmt.Fprintf(&b, "## %s\n\n", oneLine(sec))
 		for _, e := range list {
 			writeItem(e)
 		}
@@ -1554,7 +1569,7 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 			}
 		}
 		if !found {
-			fmt.Fprintf(&b, "## %s\n\n", sec)
+			fmt.Fprintf(&b, "## %s\n\n", oneLine(sec))
 			for _, e := range list {
 				writeItem(e)
 			}

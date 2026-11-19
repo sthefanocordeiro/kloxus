@@ -807,3 +807,53 @@ func TestCitationsAfterPeriodAllStayAttached(t *testing.T) {
 		t.Fatalf("sentence 1 = %q", recs[1].text)
 	}
 }
+
+// Feed-supplied titles, section names and outlet names are written into
+// structural body lines (`###`, `##`, `**Sources:**`) — a newline or a
+// `<!--`/`<klox-embed` inside them would splice fake structure into the
+// generated issue (KLOX-73).
+func TestAssembleIssueFlattensFeedStrings(t *testing.T) {
+	pub := &store.Publication{Name: "Pub", Language: "en"}
+	entries := []entry{
+		{ref: 1, title: "Story one\n## Injected\n### Fake <!-- item 9 -->", section: "Lead"},
+		{ref: 2, title: "Story two", section: "Wire\n<!-- /item -->"},
+	}
+	drafts := map[int]struct {
+		headline, body string
+	}{
+		1: {headline: "", body: "Fato um [1]."},
+		2: {headline: "Has <klox-embed> inside", body: "Fato dois [2]."},
+	}
+	dossiers := map[int]*Dossier{
+		1: {Ref: 1, Sources: []DossierSource{{Ref: 1, ItemID: 11, Name: "Out\nlet <!-- x -->"}}},
+		2: {Ref: 2},
+	}
+	body := assembleIssue(pub, 1, entries, drafts, dossiers, []string{"Lead", "Wire\n<!-- /item -->"})
+	heads, sections := 0, 0
+	for _, l := range strings.Split(body, "\n") {
+		if strings.HasPrefix(l, "### ") {
+			heads++
+			if !strings.Contains(l, "<!-- item ") {
+				t.Fatalf("item heading without its marker (spliced line?): %q", l)
+			}
+		}
+		if strings.HasPrefix(l, "## ") {
+			sections++
+			if l != "## Lead" && l != "## Wire" {
+				t.Fatalf("injected section line survived: %q", l)
+			}
+		}
+	}
+	if heads != 2 || sections != 2 {
+		t.Fatalf("heads=%d sections=%d, want 2/2:\n%s", heads, sections, body)
+	}
+	if got := strings.Count(body, "<!--"); got != 2 {
+		t.Fatalf("body holds %d comments, want exactly the 2 item markers:\n%s", got, body)
+	}
+	if strings.Contains(body, "<klox-embed") {
+		t.Fatalf("embed fence spliced into body:\n%s", body)
+	}
+	if strings.Contains(body, "Out\nlet") {
+		t.Fatal("source name kept its newline")
+	}
+}

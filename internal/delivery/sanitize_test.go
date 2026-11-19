@@ -16,6 +16,8 @@ func TestSanitizeEmbedDropsActiveContent(t *testing.T) {
 		`<form><input type="text"></form>`,
 		`<svg><script>alert(1)</script></svg>`,
 		`<iframe src="https://evil.example/x"></iframe>`,
+		`<iframe src="https://youtube.com@evil.example/x"></iframe>`,
+		`<iframe src="https://youtube.com:anything@evil.example/x"></iframe>`,
 		`<iframe src="javascript:alert(1)"></iframe>`,
 		`<a href="javascript:alert(1)">x</a>`,
 		`<img src="javascript:alert(1)">`,
@@ -41,6 +43,39 @@ func TestSanitizeEmbedKeepsProviderIframes(t *testing.T) {
 	out = SanitizeEmbed(`<iframe src="https://player.vimeo.com/video/1"></iframe>`)
 	if !strings.Contains(out, "player.vimeo.com") {
 		t.Fatalf("vimeo iframe dropped: %q", out)
+	}
+}
+
+// The host check must compare the parsed hostname — a userinfo
+// authority (`https://<allowed>:<anything>@<foreign>/`) loads the
+// foreign host while looking allowlisted (KLOX-73).
+func TestEmbedIframeHostParse(t *testing.T) {
+	for _, bad := range []string{
+		"https://youtube.com@evil.example/x",
+		"https://youtube.com:anything@evil.example/x",
+		"https://user:youtube.com@evil.example/x",
+		"https://youtube.com.evil.example/x",
+		"http://youtube.com/embed/x",
+		"javascript:alert(1)",
+		"https://youtube.com\\@evil.example/x",
+		"//youtube.com/embed/x",
+		"https:///embed/x",
+	} {
+		if embedSafeIframeSrc(bad) {
+			t.Errorf("embedSafeIframeSrc(%q) = true, want false", bad)
+		}
+	}
+	for _, good := range []string{
+		"https://www.youtube.com/embed/abc",
+		"https://youtube.com/embed/abc",
+		"https://youtube.com:8443/embed/abc",
+		"https://player.vimeo.com/video/1?h=abc&autoplay=1",
+		"https://open.spotify.com/embed/track/1",
+		"  https://w.soundcloud.com/player/?url=x  ",
+	} {
+		if !embedSafeIframeSrc(good) {
+			t.Errorf("embedSafeIframeSrc(%q) = false, want true", good)
+		}
 	}
 }
 

@@ -216,7 +216,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"frame-src 'self' about: https://youtube.com https://www.youtube.com "+
 			"https://youtube-nocookie.com https://www.youtube-nocookie.com "+
 			"https://player.vimeo.com https://open.spotify.com https://w.soundcloud.com "+
-			"https://player.twitch.tv; "+
+			"https://player.twitch.tv https://www.facebook.com; "+
 			"frame-ancestors 'self'; base-uri 'self'; form-action 'self'")
 	r = r.WithContext(context.WithValue(r.Context(), ctxReqID, rid))
 
