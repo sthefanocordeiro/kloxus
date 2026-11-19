@@ -804,7 +804,7 @@ export const dict = {
       generic: "Algo deu errado",
     },
     claim: {
-      emailPlaceholder: "voce@exemplo.com",
+      emailPlaceholder: "você@exemplo.com",
       action: "Salvar com seu e-mail",
       sending: "Enviando…",
       sent: (email: string) => `Enviamos um link para ${email} — ele expira em 15 minutos.`,
@@ -846,7 +846,7 @@ export const dict = {
       unsubFailed: "Este link de cancelamento não é válido.",
       subscriberView: "Visão do leitor",
       subscribeEmail: "Receba edições novas por e-mail",
-      emailPlaceholder: "voce@exemplo.com",
+      emailPlaceholder: "você@exemplo.com",
       subscribeEmailAction: "Enviar link de acesso",
       subscribing: "Enviando…",
       confirmSent: "Confira sua caixa de entrada — confirme a inscrição para receber as edições.",
