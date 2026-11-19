@@ -1,7 +1,7 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type Proposal } from "../api";
+import { api, ApiRequestError, type Proposal } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
@@ -15,6 +15,7 @@ import { SectionBuilder, totalStories, SECTION_LIMITS } from "../components/Sect
 export function CreateNewsletter() {
   const { t } = useT();
   const nav = useNavigate();
+  const qc = useQueryClient();
   const proposal = useQuery({ queryKey: ["proposal"], queryFn: api.proposal });
   // one newsletter per account (KLOX-66): onboarding is the only
   // create path — an account that already has a newsletter goes
@@ -37,6 +38,16 @@ export function CreateNewsletter() {
       return api.createPublication(body);
     },
     onSuccess: (pub) => nav(`/publications/${pub.id}/sources`, { replace: true }),
+    // a one_newsletter 409 means the entry guard was raced — it never
+    // becomes a notice inside the flow: the account's own editions are
+    // the only landing (KLOX-79 owner rule: block entry, don't warn)
+    onError: (err) => {
+      if (err instanceof ApiRequestError && err.body.code === "one_newsletter") {
+        qc.fetchQuery({ queryKey: ["publications"], queryFn: api.publications })
+          .then((list) => nav(list[0] ? `/publications/${list[0].id}` : "/publications", { replace: true }))
+          .catch(() => nav("/publications", { replace: true }));
+      }
+    },
   });
 
   const set = (k: keyof Proposal, v: string) => form && setForm({ ...form, [k]: v });
@@ -99,7 +110,7 @@ export function CreateNewsletter() {
 
               <div className="mt-5 flex items-center gap-3">
                 <Button disabled={!form.name.trim()} onClick={() => setStep(1)}>
-                  {t.create.nextSections}
+                  {t.create.next}
                 </Button>
               </div>
             </Card>
@@ -110,10 +121,17 @@ export function CreateNewsletter() {
       {step === 1 && form && (
         <Card className="mt-6 p-5">
           <SectionBuilder value={form.sections} onChange={(sections) => setForm({ ...form, sections })} />
-          {create.error && <p className="mt-3 text-xs text-danger">{errText(t, create.error)}</p>}
+          {create.error && !(create.error instanceof ApiRequestError && create.error.body.code === "one_newsletter") && (
+            <p className="mt-3 text-xs text-danger">{errText(t, create.error)}</p>
+          )}
+          {/* one button pattern across the onboarding steps (KLOX-79):
+              Avançar + Voltar on later steps, only Avançar on the first */}
           <div className="mt-5 flex items-center gap-3">
             <Button disabled={create.isPending || !sectionsOK} onClick={() => create.mutate()}>
-              {create.isPending ? t.create.creating : t.create.action}
+              {create.isPending ? t.create.creating : t.create.next}
+            </Button>
+            <Button variant="outline" disabled={create.isPending} onClick={() => setStep(0)}>
+              {t.nav.back}
             </Button>
           </div>
         </Card>

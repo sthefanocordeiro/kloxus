@@ -4,7 +4,6 @@
 package sources
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha1"
 	"fmt"
@@ -18,6 +17,8 @@ import (
 
 	"github.com/mmcdole/gofeed"
 	"golang.org/x/net/html"
+
+	"github.com/sthefanocordeiro/kloxus/internal/decode"
 )
 
 // RawItem is one collected item before deduplication.
@@ -230,10 +231,13 @@ func (f LiveFetcher) Fetch(ctx context.Context, typ, url string) ([]RawItem, err
 		return nil, fmt.Errorf("reading %q: %w", url, err)
 	}
 	f.dump(typ, url, body)
+	// Bodies decode to UTF-8 before parsing: html.Parse assumes UTF-8
+	// and gofeed only honors the XML prolog — a Latin-1 page or an
+	// HTTP-charset-only feed used to reach the UI as mojibake (KLOX-79).
 	if typ == "rss" {
-		return parseFeed(bytes.NewReader(body), url)
+		return parseFeed(decode.FeedReader(body, resp.Header.Get("Content-Type")), url)
 	}
-	return parseIndexPage(bytes.NewReader(body), url)
+	return parseIndexPage(decode.Reader(body, resp.Header.Get("Content-Type")), url)
 }
 
 // dump saves a fetched body as a fixture file under DumpDir. Failures

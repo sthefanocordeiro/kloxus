@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mmcdole/gofeed"
+	"github.com/sthefanocordeiro/kloxus/internal/decode"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -138,7 +139,10 @@ func (f *FeedFetcher) Fetch(ctx context.Context, cs *store.CatalogSource) FetchO
 		return f.fail(ctx, cs, err)
 	}
 	fp := gofeed.NewParser()
-	feed, err := fp.ParseString(string(body))
+	// decode to UTF-8 before parsing: gofeed honors only the XML
+	// prolog, so a feed whose charset lives solely in the HTTP header
+	// (or a BOM) used to land in stored items as mojibake (KLOX-79).
+	feed, err := fp.Parse(decode.FeedReader(body, res.Header.Get("Content-Type")))
 	if err != nil {
 		return f.fail(ctx, cs, fmt.Errorf("parse feed: %w", err))
 	}

@@ -5,10 +5,10 @@
 // notice, and the shell's Voltar on /new points at a real parent
 // (/publications), not at the page itself.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { api, type Proposal, type Publication } from "../api";
+import { api, ApiRequestError, type Proposal, type Publication } from "../api";
 import { LangProvider } from "../i18n";
 import { AppShell } from "../AppShell";
 import { CreateNewsletter } from "../pages/Create";
@@ -133,5 +133,38 @@ describe("create-newsletter flow (KLOX-79)", () => {
     renderAt("/new", true);
     const back = await screen.findByRole("link", { name: "Back to Publications" });
     expect(back).toHaveAttribute("href", "/publications");
+  });
+
+  it("uses one button pattern — Next alone on step 1, Next + Back on sections", async () => {
+    vi.mocked(api.publications).mockResolvedValue([]);
+    renderAt("/new");
+    const next = await screen.findByRole("button", { name: "Next" });
+    // the first step carries no in-flow Back
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    fireEvent.click(next);
+    expect(await screen.findByRole("heading", { name: "Your sections" })).toBeVisible();
+    const back = screen.getByRole("button", { name: "Back" });
+    expect(screen.getByRole("button", { name: "Next" })).toBeVisible();
+    fireEvent.click(back);
+    expect(await screen.findByRole("heading", { name: "Create your newsletter" })).toBeVisible();
+  });
+
+  it("a raced one_newsletter 409 leaves the flow — no in-flow notice", async () => {
+    // entry guard says "no publications", the POST still races into
+    // the server's one-newsletter 409 — the account's own editions
+    // are the only landing; the message never renders inside the flow
+    vi.mocked(api.publications)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([pub]);
+    vi.mocked(api.createPublication).mockRejectedValue(
+      new ApiRequestError(409, { code: "one_newsletter", message: "already one" }),
+    );
+    renderAt("/new");
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    await screen.findByRole("heading", { name: "Your sections" });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("editions screen")).toBeVisible();
+    expect(screen.queryByText(/already has a newsletter/i)).toBeNull();
+    expect(screen.queryByText(/já tem uma newsletter/i)).toBeNull();
   });
 });

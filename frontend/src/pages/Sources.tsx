@@ -212,15 +212,40 @@ export function SourcesPage() {
       </Card>
       )}
 
+      {/* one button pattern across the onboarding steps (KLOX-79):
+          Fontes gets the same Avançar + Voltar pair as Seções — Voltar
+          returns to the publication's sections step. Once a first
+          issue exists this is the sources screen again and keeps its
+          original confirm. */}
       <div className="mt-6 flex items-center gap-3">
-        <Button
-          disabled={count === 0 || confirm.isPending}
-          onClick={() => confirm.mutate()}
-          size="lg"
-        >
-          {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(count)}
-        </Button>
-        {count === 0 && !loading && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
+        {!pub.data?.latest_issue ? (
+          <>
+            <Button disabled={count === 0 || confirm.isPending} onClick={() => confirm.mutate()}>
+              {confirm.isPending ? t.sourcesPage.confirming : t.create.next}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={confirm.isPending}
+              onClick={() => nav(`/publications/${id}/sections`)}
+            >
+              {t.nav.back}
+            </Button>
+            <span className="text-xs text-muted">
+              {count === 0 && !loading ? t.sourcesPage.empty : count > 0 ? t.sourcesPage.selected(count) : null}
+            </span>
+          </>
+        ) : (
+          <>
+            <Button
+              disabled={count === 0 || confirm.isPending}
+              onClick={() => confirm.mutate()}
+              size="lg"
+            >
+              {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(count)}
+            </Button>
+            {count === 0 && !loading && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
+          </>
+        )}
       </div>
       {confirm.error && <p className="mt-2 text-xs text-danger">{errText(t, confirm.error)}</p>}
     </div>
