@@ -6,6 +6,7 @@ package web_test
 // invalid actions.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1299,5 +1300,41 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 	paid, _ := got["paywall"].(map[string]any)["paid_sections"].([]any)
 	if len(paid) != 1 || paid[0] != "Around the block" {
 		t.Fatalf("settings PUT rewrote paid_sections: %v", paid)
+	}
+}
+
+// TestAPIDecodeRejectsNonUTF8 — JSON must be UTF-8 (RFC 8259). A body
+// carrying single-byte encodings (the classic Windows-1252 0xF3 "ó"
+// from a shell POST) used to be silently rewritten to U+FFFD by
+// encoding/json and persisted — the broken "Pr�ximo" on review
+// screenshots. The API now refuses the write outright (KLOX-80).
+func TestAPIDecodeRejectsNonUTF8(t *testing.T) {
+	srv, _ := emptyServer(t)
+	// Windows-1252 bytes for {"name":"Futuro Próximo"} — 0xF3 is not
+	// valid UTF-8 — inside an otherwise complete create body.
+	raw := append([]byte(`{"name":"Futuro Pr`), 0xF3)
+	raw = append(raw, []byte(`ximo","sections":[{"title":"A","items":1,"format":"news","commentary":"none","access":"all"}],"paywall":{"enabled":false}}`)...)
+	req := httptest.NewRequest("POST", "/api/v1/publications", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != 400 || apiErrCode(t, rr) != "bad_json" {
+		t.Fatalf("non-UTF-8 create = %d %q, want 400 bad_json", rr.Code, shortBody(rr))
+	}
+	// the same name as proper UTF-8 stores — and reads back — intact
+	ok := map[string]any{
+		"name": "Futuro Próximo",
+		"sections": []map[string]any{
+			{"title": "A", "items": 1, "format": "news", "commentary": "none", "access": "all"},
+		},
+		"paywall": map[string]any{"enabled": false},
+	}
+	rr = apiCall(t, srv, "POST", "/api/v1/publications", ok)
+	if rr.Code != 201 {
+		t.Fatalf("UTF-8 create = %d: %s", rr.Code, shortBody(rr))
+	}
+	pub := apiJSON(t, rr)["publication"].(map[string]any)
+	if pub["name"] != "Futuro Próximo" {
+		t.Fatalf("stored name = %q, want intact accents", pub["name"])
 	}
 }

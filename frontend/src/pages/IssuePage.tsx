@@ -575,38 +575,42 @@ export function IssuePage() {
           onStep={(i) => setStep(["pautas", "escrever", "revisar"][i])}
           className="w-full shrink-0 sm:w-96"
         />
-        <span className="flex-1" />
-        {saved && (
-          <span className="rounded-full bg-teal-soft px-2 py-0.5 text-[11px] text-teal">
-            {saved === "saving" ? t.commentary.saving : t.commentary.saved}
-          </span>
-        )}
-        {!BOARD_STATUSES.has(issue.status) && doc && !(validated && doc.coverage.total === 0) && (
-          <span className="flex shrink-0 items-center gap-2 whitespace-nowrap">
-            <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />
-          </span>
-        )}
-        {issue.status === "approved" && (
-          // the action cluster lives in the header so it never scrolls
-          // out of reach, whatever the step body renders (KLOX-80)
-          <ReviewActions
-            issue={issue}
-            onDone={() => invalidate()}
-            onToast={showToast}
-            onEdit={step === "escrever" ? undefined : () => setStep("escrever")}
-          />
-        )}
-        {readinessQ.data && !BOARD_STATUSES.has(issue.status) && issue.status !== "sent" && (
-          <ApproveBar
-            issue={issue}
-            checks={readinessQ.data.checks}
-            coverage={doc?.coverage ?? readinessQ.data.coverage}
-            onTarget={onCheckTarget}
-            onApproved={() => invalidate()}
-          />
-        )}
-        {issue.status === "scheduled" && <HoldBar issue={issue} onDone={() => invalidate()} />}
-        {issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
+        {/* chrome convention: header/action clusters sit right-aligned —
+            ml-auto keeps the whole group on the right edge even when it
+            wraps to its own line (owner note on KLOX-80) */}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
+          {saved && (
+            <span className="rounded-full bg-teal-soft px-2 py-0.5 text-[11px] text-teal">
+              {saved === "saving" ? t.commentary.saving : t.commentary.saved}
+            </span>
+          )}
+          {!BOARD_STATUSES.has(issue.status) && doc && !(validated && doc.coverage.total === 0) && (
+            <span className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+              <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />
+            </span>
+          )}
+          {issue.status === "approved" && (
+            // the action cluster lives in the header so it never scrolls
+            // out of reach, whatever the step body renders (KLOX-80)
+            <ReviewActions
+              issue={issue}
+              onDone={() => invalidate()}
+              onToast={showToast}
+              onEdit={step === "escrever" ? undefined : () => setStep("escrever")}
+            />
+          )}
+          {readinessQ.data && !BOARD_STATUSES.has(issue.status) && issue.status !== "sent" && (
+            <ApproveBar
+              issue={issue}
+              checks={readinessQ.data.checks}
+              coverage={doc?.coverage ?? readinessQ.data.coverage}
+              onTarget={onCheckTarget}
+              onApproved={() => invalidate()}
+            />
+          )}
+          {issue.status === "scheduled" && <HoldBar issue={issue} onDone={() => invalidate()} />}
+          {issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
+        </div>
       </header>
 
       {issue.edited_after_approval && (
@@ -1071,7 +1075,7 @@ function ReviewActions({ issue, onDone, onToast, onEdit }: {
   const menuItem =
     "block w-full rounded-[var(--radius-btn)] px-2 py-1.5 text-left text-sm text-ink hover:bg-surface";
   return (
-    <span className="flex flex-wrap items-center gap-1.5">
+    <span className="flex flex-wrap items-center justify-end gap-1.5">
       {onEdit && (
         <Button size="sm" variant="ghost" onClick={onEdit}>
           <Pencil size={12} /> {t.review.edit}
@@ -1569,8 +1573,7 @@ function AfterSend({ issue, onToast }: { issue: IssueSummary; onToast: (text: st
               </button>
             </span>
           )}
-          <span className="flex-1" />
-          <Button size="sm" disabled={next.isPending} onClick={() => next.mutate()}>
+          <Button size="sm" className="ml-auto" disabled={next.isPending} onClick={() => next.mutate()}>
             {t.after.next}
           </Button>
         </div>
