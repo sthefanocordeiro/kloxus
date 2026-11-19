@@ -50,9 +50,9 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
 
   // reload keeps the saved list — four rows now
   await page.reload();
-  await expect(page.getByDisplayValue("Bom dia — header note")).toBeVisible({
-    timeout: 15000,
-  });
+  await expect(
+    page.getByPlaceholder("Write a note for readers…"),
+  ).toHaveValue("Bom dia — header note", { timeout: 15000 });
   await expect(slots).toHaveCount(3);
 
   // cleanup: delete the newsletter so the workspace returns to empty
