@@ -152,9 +152,24 @@ function lineupOf(board: Board): LineupEntry[] {
 
 // --- the build board ---
 
+// Drag is a desktop affordance (the grip icon hides below md, and
+// touch scrolling must not fight a draggable card) — track the same
+// md breakpoint the grip uses.
+function useIsDesktop() {
+  const [is, setIs] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const h = () => setIs(mq.matches);
+    mq.addEventListener("change", h);
+    return () => mq.removeEventListener("change", h);
+  }, []);
+  return is;
+}
+
 export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafted?: () => void }) {
   const { t, lang } = useT();
   const qc = useQueryClient();
+  const isDesktop = useIsDesktop();
   const candsQ = useQuery({ queryKey: ["candidates", issue.id], queryFn: () => api.candidates(issue.id) });
   const [board, setBoard] = useState<Board | null>(null);
   // bench pagination (KLOX-45): the API pages the top-150 bench at 50
@@ -418,6 +433,12 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(storyID));
   };
+  // a cancelled or off-target drag never fires onDrop — clear the ref
+  // on dragend so a stale story id can't ride into the next drop
+  const onDragEnd = () => {
+    dragRef.current = null;
+    setDropZone(null);
+  };
   const onDrop = (section: string, idx?: number) => (e: React.DragEvent) => {
     e.preventDefault();
     setDropZone(null);
@@ -435,6 +456,12 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const allow = (zone: string) => (e: React.DragEvent) => {
     e.preventDefault();
     setDropZone(zone);
+  };
+  // dragleave also fires when the pointer moves onto a child of the
+  // zone — only clear when it truly left the zone's subtree, or the
+  // drop highlight flickers on the way to a slot
+  const allowLeave = (e: React.DragEvent) => {
+    if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) setDropZone(null);
   };
 
   // Merge the loaded pages (page 0 lives in board.bench, later pages in
@@ -592,7 +619,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         <section
           className={cn("min-h-0 flex-col overflow-y-auto border-line p-4 md:flex md:border-r", boardTab === "bench" ? "flex" : "hidden md:flex")}
           onDragOver={allow("bench")}
-          onDragLeave={() => setDropZone(null)}
+          onDragLeave={allowLeave}
           onDrop={onDropBench}
           aria-label={t.board.bench}
         >
@@ -632,7 +659,9 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 delay={Math.min(bi * 40, 480)}
                 focused={focusKey === `b${c.story_id}`}
                 onFocus={() => setFocusKey(`b${c.story_id}`)}
+                canDrag={isDesktop}
                 onDragStart={onDragStart(c.story_id)}
+                onDragEnd={onDragEnd}
                 onOpen={() => setSheet(c)}
                 onAdd={() =>
                   c.suggested_section && !sectionFull(c.suggested_section)
@@ -712,7 +741,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 data-section={s.title}
                 className={cn("mb-4", dropZone === `sec:${s.title}` && "rounded-lg outline-dashed outline-2 outline-teal")}
                 onDragOver={allow(`sec:${s.title}`)}
-                onDragLeave={() => setDropZone(null)}
+                onDragLeave={allowLeave}
                 onDrop={onDrop(s.title)}
               >
                 <div className="mb-1.5 flex items-baseline gap-2 px-1">
@@ -748,7 +777,9 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                           lead={si === 0 && i === 0}
                           focused={focusKey === `s${c.story_id}`}
                           onFocus={() => setFocusKey(`s${c.story_id}`)}
+                          canDrag={isDesktop}
                           onDragStart={onDragStart(c.story_id)}
+                          onDragEnd={onDragEnd}
                           onOpen={() => setSheet(c)}
                           onRemove={() => removeToBench(c.story_id)}
                           onReject={(reason) => rejectWith(c, reason)}
@@ -990,7 +1021,9 @@ function StoryCard({
   delay,
   lead,
   onFocus,
+  canDrag,
   onDragStart,
+  onDragEnd,
   onOpen,
   onAdd,
   onRemove,
@@ -1006,7 +1039,9 @@ function StoryCard({
   delay?: number;
   lead?: boolean;
   onFocus: () => void;
+  canDrag: boolean;
   onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
   onOpen: () => void;
   onAdd?: () => void;
   onRemove?: () => void;
@@ -1017,6 +1052,11 @@ function StoryCard({
 }) {
   const [otherReason, setOtherReason] = useState("");
   const needsReasonOffer = side === "issue" && c.origin === "phaseA" && !!c.item_id;
+  // KLOX-97: the whole card is the drag source — the explainer promises
+  // "drop a story here", and a 14px low-contrast grip was the only
+  // draggable element, so grabbing the card (the natural gesture) did
+  // nothing. The grip stays as the visible affordance.
+  const draggable = canDrag && c.available;
   return (
     <Card
       className={cn(
@@ -1024,12 +1064,16 @@ function StoryCard({
         lead && "border-ink/30 p-4",
         focused && "ring-2 ring-teal",
         !c.available && "opacity-60",
+        draggable && "cursor-grab active:cursor-grabbing",
       )}
       style={delay ? { animationDelay: `${delay}ms` } : undefined}
       onFocus={onFocus}
       tabIndex={0}
       role="button"
       aria-label={`${c.title} — ${board[side === "bench" ? "add" : "remove"] as string}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onKeyDown={(e) => {
         if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON") onOpen();
       }}
@@ -1038,6 +1082,7 @@ function StoryCard({
         <span
           draggable={c.available}
           onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
           className="mt-1 hidden cursor-grab text-muted/60 hover:text-muted md:block"
           aria-hidden="true"
         >
