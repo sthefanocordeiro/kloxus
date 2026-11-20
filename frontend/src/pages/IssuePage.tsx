@@ -738,7 +738,7 @@ export function IssuePage() {
                 so the editor is never double-mounted (KLOX-96: the old
                 left/right columns merged into one supporting rail) */}
             <DocActionsCtx.Provider value={actions}>
-              <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+              <div className="flex min-h-0 flex-1 flex-col pb-16 md:flex-row md:pb-0">
                 <main
                   ref={editorWrapRef}
                   className={cn(
@@ -840,8 +840,9 @@ export function IssuePage() {
 
             {/* phone tab bar — fixed just above the global bottom nav
                 (3.5rem bar + home-indicator inset) so it never scrolls
-                out of reach mid-document; pb-16 on the panes above
-                keeps the last content line clear of it (KLOX-89) */}
+                out of reach mid-document; pb-16 on the panes above keeps
+                the last content line clear of it (design review KLOX-96,
+                same defect as KLOX-89) */}
             <nav
               aria-label={t.nav.issueTabs}
               className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-40 flex border-t border-line bg-paper-raised text-xs md:hidden"
@@ -865,7 +866,7 @@ export function IssuePage() {
                   }}
                   aria-pressed={k === "doc" ? mobileTab === "doc" : mobileTab === "rail" && railTab === k}
                   className={cn(
-                    "flex flex-1 flex-col items-center gap-0.5 py-2",
+                    "flex min-h-11 flex-1 flex-col items-center gap-0.5 py-2",
                     (k === "doc" ? mobileTab === "doc" : mobileTab === "rail" && railTab === k)
                       ? "text-teal"
                       : "text-muted",
