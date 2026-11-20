@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { GripVertical, Minus, Plus, Search } from "lucide-react";
 import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dossier, type IssueSummary, type LineupEntry, type Run, type RunEvent } from "../api";
 import { sectionTitle, useT } from "../i18n";
+import { useBoardStrings } from "./boardStrings";
 
 import { cn } from "../lib/cn";
 import { errText, isNoItemsFailure, runErrText } from "../lib/errors";
@@ -177,6 +178,10 @@ function lineupOf(board: Board): LineupEntry[] {
 
 export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafted?: () => void }) {
   const { t, lang } = useT();
+  // KLOX-95 board-only strings (article-type chip, hidden toggle,
+  // badges) live in boardStrings.ts — the shared dict is part of the
+  // 150 KiB landing budget.
+  const boardStrings = useBoardStrings();
   const qc = useQueryClient();
   // KLOX-95: foreign-language and off-topic suggestions are hidden by
   // default; the toggle serves them back (hidden_bench keeps the
@@ -642,8 +647,8 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
               className="mb-2 text-[11px] text-muted underline underline-offset-2 hover:text-ink"
               onClick={() => setShowHidden((v) => !v)}
             >
-              {t.board.hiddenBench(candsQ.data.hidden_bench!)} ·{" "}
-              {showHidden ? t.board.hideHidden : t.board.showHidden}
+              {boardStrings.hiddenBench(candsQ.data.hidden_bench!)} ·{" "}
+              {showHidden ? boardStrings.hideHidden : boardStrings.showHidden}
             </button>
           )}
           <div className={cn("space-y-2", dropZone === "bench" && "rounded-lg outline-dashed outline-2 outline-teal")}>
@@ -652,7 +657,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
               <StoryCard
                 key={c.story_id}
                 c={c}
-                board={t.board}
+                board={boardStrings}
                 side="bench"
                 delay={Math.min(bi * 40, 480)}
                 focused={focusKey === `b${c.story_id}`}
@@ -765,7 +770,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                       <div className="min-w-0 flex-1">
                         <StoryCard
                           c={c}
-                          board={t.board}
+                          board={boardStrings}
                           side="issue"
                           lead={si === 0 && i === 0}
                           focused={focusKey === `s${c.story_id}`}

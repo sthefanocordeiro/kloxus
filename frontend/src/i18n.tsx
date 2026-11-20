@@ -99,18 +99,6 @@ export const dict = {
       composeAction: "Write it myself",
       composing: "Preparing empty slots…",
       sheet: "Story",
-      // KLOX-95: AI classification label, the hidden-suggestions toggle
-      // and the filter badges on suggestion cards.
-      kinds: {
-        noticia: "news", analise: "analysis", tutorial: "tutorial",
-        forum: "forum", lancamento: "launch", lista: "list",
-        publieditorial: "sponsored", entretenimento: "entertainment",
-        esporte: "sports", efemeride: "almanac", outro: "other",
-      },
-      hiddenBench: (n: number) => `${n} hidden — off-topic or another language`,
-      showHidden: "show",
-      hideHidden: "hide",
-      badgeOffTopic: "off-topic",
     },
     compose: {
       title: "Write this story",
@@ -684,18 +672,6 @@ export const dict = {
       composeAction: "Escrever eu mesmo",
       composing: "Preparando vagas vazias…",
       sheet: "Pauta",
-      // KLOX-95: rótulo da classificação por IA, o seletor de sugestões
-      // ocultas e os selos de filtro nos cartões de sugestão.
-      kinds: {
-        noticia: "notícia", analise: "análise", tutorial: "passo a passo",
-        forum: "fórum", lancamento: "lançamento", lista: "lista",
-        publieditorial: "publieditorial", entretenimento: "entretenimento",
-        esporte: "esporte", efemeride: "efeméride", outro: "outro",
-      },
-      hiddenBench: (n: number) => `${n} ${n === 1 ? "oculta" : "ocultas"} — fora do tema ou outro idioma`,
-      showHidden: "mostrar",
-      hideHidden: "ocultar",
-      badgeOffTopic: "fora do tema",
     },
     compose: {
       title: "Escrever esta pauta",
