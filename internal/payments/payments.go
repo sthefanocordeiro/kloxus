@@ -1,9 +1,9 @@
 // Package payments abstracts the paid-section checkout provider
-// (KLOX-13, D34/D55). AbacatePay is the real provider; the fake stays
+// (KLOX-13, D34/D56). AbacatePay is the real provider; the fake stays
 // for tests and as the runtime fallback when the key is missing or the
 // provider cannot be reached.
 //
-// Access model (D55): AbacatePay has recurring billing
+// Access model (D56): AbacatePay has recurring billing
 // (/v2/subscriptions) but it charges cards only — PIX subscriptions
 // need "PIX Automático", which is gated per store and not offered in
 // test mode. The reader flow is PIX, so a subscription is sold as a

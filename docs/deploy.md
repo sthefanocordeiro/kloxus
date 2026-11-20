@@ -29,13 +29,76 @@ the file, the repo or a PR.
   `Kloxus <news@kloxus-ai.trendfi.com.br>` — a display name is required.
 - `RESEND_WEBHOOK_SECRET` verifies the Svix signature on
   `POST /webhooks/resend`, which feeds delivered/bounced/complained into
-  the send ledger and the global suppression list. Point the Resend
-  webhook at `https://kloxus.fly.dev/webhooks/resend` and subscribe to
-  those three events; the Resend key cannot query delivery status, so
-  without the webhook every send stalls at `sent` and bounces keep
-  mailing dead addresses.
+  the send ledger and the global suppression list. The Resend key
+  cannot query delivery status, so without the webhook every send
+  stalls at `sent` and bounces keep mailing dead addresses.
 - `KLOXUS_EMAIL_DAILY_CAP` (80) and `KLOXUS_EMAIL_WS_DAILY_CAP` (25)
   are env-tunable; the ledger in Postgres makes them survive restarts.
+
+#### Resend dashboard state (required — check after any outage)
+
+The app cannot see the dashboard: a disabled or misconfigured endpoint
+fails silently from its side — every send stays `sent` forever. Keep
+this checklist green; the workspace posture and smoke script trip on
+it (below).
+
+- **Domain** — `kloxus-ai.trendfi.com.br` verified: SPF + DKIM records
+  green in Resend → Domains. An unverified domain still accepts sends
+  but delivery is unreliable.
+- **API key** — sending-only, scoped to that domain; lives only in the
+  Fly secret `RESEND_API_KEY`.
+- **Webhook endpoint** — Resend → Webhooks: one endpoint,
+  `https://kloxus.fly.dev/webhooks/resend`, **enabled**, subscribed to
+  `email.delivered`, `email.bounced`, `email.complained`.
+- **Signing secret** — the endpoint's `whsec_…` value is the Fly
+  secret `RESEND_WEBHOOK_SECRET`. Rotating the endpoint (delete +
+  recreate) means rotating the secret too.
+
+#### When the webhook dies
+
+Svix (Resend's webhook layer) disables an endpoint after sustained
+delivery failures — e.g. while the app was down, or while it answered
+401/503 because the secret was missing. Reactivation is dashboard-only:
+open the endpoint, click **Enable**, then re-send a test email.
+
+The app-side tripwires so it never dies silently again:
+
+- `GET /api/v1/workspace` reports `mail_webhook` (`configured` /
+  `unconfigured` — is the secret loaded) and `mail_stale_sent` (sends
+  the provider accepted more than 24h ago that no event ever marked).
+  `mail_stale_sent > 0` with `mail_webhook = "configured"` is the exact
+  signature of a dashboard-disabled endpoint.
+- Every real send logs
+  `resend webhook silent: sends older than 24h still 'sent'` while
+  stale rows exist — visible in `fly logs -a kloxus`.
+- `scripts/smoke.sh` fails a live target whose webhook secret is not
+  configured, and probes `POST /webhooks/resend` for a 401 (route up,
+  secret loaded) — a dead route or missing secret fails smoke before
+  any send check runs.
+
+Manual re-verify after re-enabling: approve an issue on the app and
+send a test email to the claimed address; the outbox row must flip
+`sent` → `delivered` within a minute and `mail_stale_sent` must be 0.
+
+### Payments (AbacatePay)
+
+- `ABACATEPAY_API_KEY` — the hackathon test-mode key (`abc_dev_…`)
+  flips the paid-section checkout to the real provider (D34/D56).
+  Unset or unreachable, the fake provider completes the checkout and
+  the UI labels it "simulated"; the UI shows "test mode — no real
+  charge" whenever the configured key is a dev key.
+- `ABACATEPAY_WEBHOOK_SECRET` — the shared secret chosen in the
+  AbacatePay dashboard for the webhook endpoint below; it arrives as
+  `X-Webhook-Secret` or `?webhookSecret=`. Empty fails the receiver
+  closed (`503`), like the other webhooks.
+- **Webhook endpoint** — AbacatePay → Webhooks: one endpoint,
+  `https://kloxus.fly.dev/webhooks/abacatepay`, subscribed to
+  `billing.paid`. Confirmation is not webhook-dependent: the reader's
+  return page also polls the provider (throttled), so a missing or
+  delayed webhook only slows the grant.
+- One PIX checkout buys 30 days of access (`subscriptions.paid_until`,
+  D56) — PIX has no recurring rail on AbacatePay, so each expiry is a
+  new one-time checkout.
 
 ## Postgres (Supabase)
 

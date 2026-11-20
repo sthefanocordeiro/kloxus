@@ -1,6 +1,6 @@
 package web
 
-// Paid-section checkout (KLOX-13, D34/D55): the reader opens a one-time
+// Paid-section checkout (KLOX-13, D34/D56): the reader opens a one-time
 // PIX checkout at AbacatePay (test-mode key for the hackathon), a
 // verified webhook or the throttled status poll confirms it, and the
 // reader receives a magic link that unlocks the paid sections for
@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	// payAccessDays is the window one PIX checkout buys (D55): PIX has
+	// payAccessDays is the window one PIX checkout buys (D56): PIX has
 	// no recurring billing on AbacatePay, so "subscription" is sold as
 	// a one-time charge granting a fixed access window.
 	payAccessDays = 30
@@ -362,7 +362,8 @@ type abacateEvent struct {
 }
 
 // abacateBillRef extracts (billing id, our externalId, status) from the
-// event data, unwrapping a nested billing object when present.
+// event data. The v2 envelope nests it under data.checkout; the legacy
+// shape carried it under data.billing or flat — try all three.
 func abacateBillRef(data json.RawMessage) (id, externalID, status string) {
 	var bill struct {
 		ID         string `json:"id"`
@@ -372,10 +373,18 @@ func abacateBillRef(data json.RawMessage) (id, externalID, status string) {
 	_ = json.Unmarshal(data, &bill)
 	if bill.ID == "" && bill.ExternalID == "" {
 		var nested struct {
-			Billing json.RawMessage `json:"billing"`
+			Checkout json.RawMessage `json:"checkout"`
+			Billing  json.RawMessage `json:"billing"`
 		}
-		if json.Unmarshal(data, &nested) == nil && len(nested.Billing) > 0 {
-			_ = json.Unmarshal(nested.Billing, &bill)
+		if json.Unmarshal(data, &nested) == nil {
+			for _, raw := range []json.RawMessage{nested.Checkout, nested.Billing} {
+				if len(raw) > 0 {
+					_ = json.Unmarshal(raw, &bill)
+				}
+				if bill.ID != "" || bill.ExternalID != "" {
+					break
+				}
+			}
 		}
 	}
 	return bill.ID, bill.ExternalID, bill.Status

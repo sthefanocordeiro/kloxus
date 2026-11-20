@@ -426,7 +426,7 @@ func (db *DB) ActivateSubscription(ctx context.Context, readerID int64, provider
 }
 
 // ActivateSubscriptionUntil is ActivateSubscription with an expiry —
-// one-time checkouts grant a fixed window (D55); an empty paidUntil
+// one-time checkouts grant a fixed window (D56); an empty paidUntil
 // keeps the subscription lifetime-scoped (fake provider, demo paths).
 func (db *DB) ActivateSubscriptionUntil(ctx context.Context, readerID int64, provider, ref, magicToken, paidUntil string) error {
 	var id int64
@@ -501,7 +501,7 @@ func (db *DB) SubscriberCount(ctx context.Context, pubID int64) (int, error) {
 }
 
 // HasActiveSubscription reports an active, unexpired subscription; an
-// empty paid_until never lapses (D55).
+// empty paid_until never lapses (D56).
 func (db *DB) HasActiveSubscription(ctx context.Context, readerID int64) (bool, error) {
 	var n int
 	err := db.QueryRowContext(ctx,

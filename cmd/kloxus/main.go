@@ -240,12 +240,19 @@ func cmdDemo(args []string) error {
 // KLOXUS_DATA_DIR is set (Fly.io), a single local workspace otherwise.
 func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, guard *llm.Guard, seed func(context.Context, *store.DB) error) error {
 	var monitor sources.MonitorProvider = sources.FakeMonitor{}
+	var scraper sources.Scraper = sources.FakeScraper{}
 	if cfg.Mode == "real" && cfg.FirecrawlAPIKey != "" {
 		monitor = sources.FirecrawlMonitor{
 			APIKey:     cfg.FirecrawlAPIKey,
 			WebhookURL: strings.TrimRight(cfg.PublicURL, "/") + "/webhooks/firecrawl",
 			Secret:     cfg.WebhookSecret,
 		}
+		scraper = sources.FirecrawlScraper{APIKey: cfg.FirecrawlAPIKey}
+	}
+	if cfg.Mode == "real" && cfg.FirecrawlAPIKey == "" {
+		// no provider, no pretend scrape — apiPropose answers
+		// scrape_unavailable instead of inventing a proposal
+		scraper = nil
 	}
 	var mailer delivery.Sender
 	switch {
@@ -290,7 +297,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	}
 	srv := web.New(web.Deps{
 		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider, Guard: guard,
-		Monitor: monitor, Mailer: mailer, Seed: seed, Pool: pool,
+		Monitor: monitor, Scraper: scraper, Mailer: mailer, Seed: seed, Pool: pool,
 		Pay: pay,
 	})
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)

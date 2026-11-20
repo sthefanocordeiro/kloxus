@@ -32,6 +32,11 @@ type Deps struct {
 	// admin kill switch (D32/D36). Nil disables the guards (tests).
 	Guard   *llm.Guard
 	Monitor sources.MonitorProvider
+	// Scraper powers the "paste a link" proposal flow (KLOX-99):
+	// Firecrawl in real mode, FakeScraper in demo. Nil means the
+	// provider is unconfigured — the endpoint says so instead of
+	// faking a result.
+	Scraper sources.Scraper
 	// Pay creates paid-section checkouts (AbacatePay in production).
 	// Nil means the fake provider: checkouts complete the grant path
 	// with no external call and the UI labels them simulated (KLOX-13).

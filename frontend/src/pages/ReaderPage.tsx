@@ -106,7 +106,9 @@ export function PublicIssue() {
               {t.reader.unlocksSections} {d.paid_sections.join(", ")}
             </p>
           )}
-          <PayGate slug={d.publication.slug} num={d.issue.number} tokQuery={tokQuery} paywall={d.paywall} />
+          {d.paywall?.enabled && (
+            <PayGate slug={d.publication.slug} num={d.issue.number} tokQuery={tokQuery} paywall={d.paywall} />
+          )}
         </Card>
       )}
       {d.subscribed && (

@@ -1,6 +1,6 @@
 -- KLOX-13: paid-section checkouts. `payments` records each checkout
 -- (AbacatePay billing or fake-provider grant); subscriptions.paid_until
--- ends an active subscription when the 30-day window lapses (D55: PIX
+-- ends an active subscription when the 30-day window lapses (D56: PIX
 -- has no recurring billing on AbacatePay — one-time checkout + expiry).
 
 ALTER TABLE subscriptions ADD COLUMN paid_until TEXT NOT NULL DEFAULT '';

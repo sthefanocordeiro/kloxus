@@ -87,7 +87,15 @@ func webhookCall(t *testing.T, srv *web.Server, secret, body string, sign bool) 
 	return rr
 }
 
+// paidEvent is the documented webhook v2 envelope: the billing sits
+// under data.checkout (docs.abacatepay.com/pages/webhooks/events/
+// checkout). The handler must unwrap it.
 func paidEvent(ref string) string {
+	return fmt.Sprintf(`{"id":"log_1","event":"checkout.completed","apiVersion":2,"devMode":true,"data":{"checkout":{"id":"bill_42","externalId":%q,"status":"PAID"},"customer":{"id":"cust_1"}},"payerInformation":{"method":"PIX"}}`, ref)
+}
+
+// paidEventLegacy is the pre-v2 flat data shape — still accepted.
+func paidEventLegacy(ref string) string {
 	return fmt.Sprintf(`{"event":"billing.paid","devMode":true,"data":{"id":"bill_42","externalId":%q,"status":"PAID"}}`, ref)
 }
 
@@ -178,8 +186,9 @@ func TestPayWebhookFlow(t *testing.T) {
 		t.Fatalf("access mails = %d, want 1", n)
 	}
 
-	// a replayed delivery grants nothing twice
-	if rr := webhookCall(t, srv, cfg.AbacatePayWebhookSecret, paidEvent(ref), true); rr.Code != 204 {
+	// a replayed delivery grants nothing twice — the legacy flat event
+	// shape is accepted the same way
+	if rr := webhookCall(t, srv, cfg.AbacatePayWebhookSecret, paidEventLegacy(ref), true); rr.Code != 204 {
 		t.Fatalf("replay = %d", rr.Code)
 	}
 	if n := readerAccessMails(t, db); n != 1 {
