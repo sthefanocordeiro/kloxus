@@ -2,9 +2,11 @@ import { expect, test } from "@playwright/test";
 
 // KLOX-79: the create-newsletter flow guards its entry — an account
 // that already has a newsletter never sees the form (redirected to its
-// editions), the paste-to-create option stays disabled behind an
-// in-development notice, the sample's editorial line carries no
-// fictional place names, and Voltar is a working control.
+// editions), the sample's editorial line carries no fictional place
+// names, and Voltar is a working control. KLOX-99: the "Cole um link"
+// option is live — a pasted URL goes to the scraper and the extracted
+// proposal fills the editable form for review before anything is
+// created (demo runs the simulated provider and says so).
 test.use({ locale: "pt-BR" });
 
 async function onboard(page: import("@playwright/test").Page) {
@@ -17,15 +19,33 @@ async function onboard(page: import("@playwright/test").Page) {
   await expect(page.getByLabel("Linha editorial")).toBeVisible({ timeout: 15000 });
 }
 
-test("create flow: disabled paste option, realistic example, working Voltar", async ({ page }) => {
+test("create flow: live paste option, realistic example, working Voltar", async ({ page }) => {
   await onboard(page);
 
-  // the paste/link option is not launched — disabled control + notice
-  await expect(page.getByLabel("Cole um link ou uma edição")).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Criar a partir disso" })).toBeDisabled();
-  await expect(
-    page.getByText("Esta função ainda não foi lançada — está em desenvolvimento."),
-  ).toBeVisible();
+  // the paste/link option is live — enabled control, no dead notice
+  const paste = page.getByLabel("Cole um link");
+  await expect(paste).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Criar a partir disso" })).toBeDisabled(); // empty input
+  await expect(page.getByText("está em desenvolvimento")).toHaveCount(0);
+
+  // pasting a URL proposes a template for review — the demo's provider
+  // is simulated and the preview says so honestly
+  await paste.fill("https://meu-blog.com.br");
+  await page.getByRole("button", { name: "Criar a partir disso" }).click();
+  const preview = page.getByTestId("scrape-preview");
+  await expect(preview).toBeVisible();
+  await expect(preview.getByText("Demonstração — nenhuma página foi buscada")).toBeVisible();
+  await expect(preview).toContainText("Do seu link");
+  // the extracted proposal replaced the sample in the editable form —
+  // the fake provider derives the site name from the pasted host
+  await expect(page.getByLabel("Nome")).toHaveValue("Meu Blog");
+  await expect(page.getByLabel("Linha editorial")).toHaveValue(/Priorize/);
+  // nothing was created — the flow still waits at step 1
+  await expect(page.getByRole("button", { name: "Avançar", exact: true })).toBeVisible();
+});
+
+test("create flow: sample fields stay realistic and Voltar works", async ({ page }) => {
+  await onboard(page);
 
   // the sample's fields read realistic — no fictional place names
   await expect(page.getByLabel("Linha editorial")).not.toHaveValue(/Valdória/i);
@@ -157,5 +177,5 @@ test("an account with a newsletter never reaches the create flow", async ({ page
 
   await page.goto("/new");
   await page.waitForURL(/\/publications\/\d+/, { timeout: 15000 });
-  await expect(page.getByLabel("Cole um link ou uma edição")).toHaveCount(0);
+  await expect(page.getByLabel("Cole um link")).toHaveCount(0);
 });
