@@ -219,3 +219,142 @@ func TestCandidatesLineupKeepsHiddenSeats(t *testing.T) {
 		t.Errorf("seated card = in_issue %v foreign %v", seat["in_issue"], seat["foreign"])
 	}
 }
+
+// TestCandidatesRejectTermsSurviveHiddenFilter is the KLOX-94 x KLOX-95
+// interaction contract: reject-term bench candidates keep their marker
+// and the hidden filter never swallows or double-counts them. A
+// rejected story that is also foreign/off-topic is hidden exactly once
+// (hidden_bench counts it once, identically in both ?all states) and
+// comes back with every marker on ?all=1; a rejected story that is
+// on-topic and same-language stays visible by default, marked.
+func TestCandidatesRejectTermsSurviveHiddenFilter(t *testing.T) {
+	ctx := context.Background()
+	srv, db, pub, _ := demoServer(t)
+	if _, err := db.ExecContext(ctx,
+		`UPDATE publications SET reject_terms = $1 WHERE id = $2`, "cripto", pub.ID); err != nil {
+		t.Fatalf("set reject_terms: %v", err)
+	}
+
+	issueID, err := db.CreateIssue(ctx, pub.ID, 1, "s", "", nil)
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	srcs, err := db.Sources(ctx, pub.ID)
+	if err != nil || len(srcs) == 0 {
+		t.Fatalf("Sources: %v", err)
+	}
+	nonce := fmt.Sprintf("rej-%d", time.Now().UnixNano())
+	mkStory := func(ext, title string, score float64) (storyID, itemID int64) {
+		if err := db.QueryRowContext(ctx,
+			`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text, kind)
+			 VALUES ($1,$2,$3,$4,$5,'body','article') RETURNING id`,
+			db.Workspace(), srcs[0].ID, ext, "https://x.example/"+ext, title).Scan(&itemID); err != nil {
+			t.Fatalf("insert item %s: %v", ext, err)
+		}
+		var err error
+		if storyID, err = db.CreateStory(ctx, pub.ID, title, 1, "https://x.example/"+ext); err != nil {
+			t.Fatalf("CreateStory %s: %v", title, err)
+		}
+		if err := db.AddStoryItem(ctx, storyID, itemID); err != nil {
+			t.Fatalf("AddStoryItem %s: %v", title, err)
+		}
+		if err := db.SetStoryTriage(ctx, storyID, score, "seeded"); err != nil {
+			t.Fatalf("SetStoryTriage %s: %v", title, err)
+		}
+		return storyID, itemID
+	}
+	enrich := func(itemID int64, kind, summary, lang, topics string) {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO item_enrichment (item_id, ai_kind, promotional, topics_json, summary_pt, language, model)
+			 VALUES ($1,$2,false,$3,$4,$5,'test')`, itemID, kind, topics, summary, lang); err != nil {
+			t.Fatalf("enrich item %d: %v", itemID, err)
+		}
+	}
+
+	// "cripto" is the reject term; the fixture topic vocabulary is
+	// "tecnologia…" — a cripto enrichment tag is off-topic, a
+	// tecnologia tag is on-topic, and the pub is pt-BR.
+	_, keepItem := mkStory(nonce+"-a", "Pauta no tema", 9)
+	_, rejVisibleItem := mkStory(nonce+"-b", "Cripto e regulação", 8)
+	_, rejOffItem := mkStory(nonce+"-c", "Cripto despenca", 7)
+	_, rejForeignItem := mkStory(nonce+"-d", "Cripto boom nos EUA", 6)
+	enrich(keepItem, "noticia", "Resumo da pauta.", "pt", `["tecnologia"]`)
+	enrich(rejVisibleItem, "noticia", "Regulação de cripto.", "pt", `["tecnologia"]`)
+	enrich(rejOffItem, "analise", "Cripto cai.", "pt", `["cripto"]`)
+	enrich(rejForeignItem, "noticia", "Crypto rises.", "en", `["cripto"]`)
+
+	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
+	get := func(q string) map[string]any {
+		rr := apiCall(t, srv, "GET", issueURL+"/candidates"+q, nil)
+		if rr.Code != 200 {
+			t.Fatalf("candidates %q = %d: %s", q, rr.Code, shortBody(rr))
+		}
+		return apiJSON(t, rr)
+	}
+	byTitle := func(resp map[string]any) map[string]map[string]any {
+		out := map[string]map[string]any{}
+		for _, c := range resp["candidates"].([]any) {
+			m := c.(map[string]any)
+			out[m["title"].(string)] = m
+		}
+		return out
+	}
+
+	// Default view: the rejected-but-clean story stays (marked, at the
+	// bench tail); the rejected stories that are also foreign or
+	// off-topic are hidden — each counted exactly once, however many
+	// flags it owns.
+	def := get("")
+	if n := def["hidden_bench"].(float64); n != 2 {
+		t.Fatalf("hidden_bench = %v, want 2", n)
+	}
+	if n := def["bench_total"].(float64); n != 2 {
+		t.Fatalf("default bench_total = %v, want 2", n)
+	}
+	m := byTitle(def)
+	if _, ok := m["Cripto despenca"]; ok {
+		t.Error("rejected + off-topic story leaked into the default bench")
+	}
+	if _, ok := m["Cripto boom nos EUA"]; ok {
+		t.Error("rejected + foreign story leaked into the default bench")
+	}
+	vis := m["Cripto e regulação"]
+	if vis == nil {
+		t.Fatal("rejected on-topic story must stay visible, not be swallowed")
+	}
+	if vis["rejected_editorial"] != true {
+		t.Errorf("visible rejected card lacks the marker: %v", vis["rejected_editorial"])
+	}
+	if vis["off_topic"] != nil || vis["foreign"] != nil {
+		t.Errorf("visible rejected card wrongly hidden-flagged: %v %v", vis["off_topic"], vis["foreign"])
+	}
+
+	// ?all=1: the two hidden rejected stories come back with every
+	// marker they own — and hidden_bench does not move.
+	all := get("?all=1")
+	if n := all["hidden_bench"].(float64); n != 2 {
+		t.Fatalf("hidden_bench with all=1 = %v, want 2", n)
+	}
+	if n := all["bench_total"].(float64); n != 4 {
+		t.Fatalf("all=1 bench_total = %v, want 4", n)
+	}
+	am := byTitle(all)
+	off := am["Cripto despenca"]
+	if off == nil {
+		t.Fatal("rejected + off-topic story missing from ?all=1")
+	}
+	if off["rejected_editorial"] != true || off["off_topic"] != true {
+		t.Errorf("rejected+off-topic card markers = %v %v", off["rejected_editorial"], off["off_topic"])
+	}
+	if off["foreign"] != nil {
+		t.Error("pt rejected card must not be flagged foreign")
+	}
+	fr := am["Cripto boom nos EUA"]
+	if fr == nil {
+		t.Fatal("rejected + foreign story missing from ?all=1")
+	}
+	if fr["rejected_editorial"] != true || fr["foreign"] != true {
+		t.Errorf("rejected+foreign card markers = %v %v", fr["rejected_editorial"], fr["foreign"])
+	}
+}
+

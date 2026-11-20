@@ -122,7 +122,7 @@ type Board = { bench: Candidate[]; sections: Record<string, Candidate[]> };
 // the board's i18n strings (readonly — they come from the translation table)
 interface BoardStrings {
   add: string; remove: string; moveTo: string; full: string;
-  openDossier: string; aiBadge: string; removeWhy: string;
+  openDossier: string; aiBadge: string; rejectBadge: string; removeWhy: string;
   reasonChips: readonly string[]; reasonOther: string; justRemove: string;
   kinds: Record<string, string>; badgeOffTopic: string;
   hiddenBench: (n: number) => string; showHidden: string; hideHidden: string;
@@ -1086,6 +1086,11 @@ function StoryCard({
             // KLOX-67: the pauta body arrived AI-written and is still
             // unedited — the composer renders the full marker.
             <Badge tone="teal" className="mt-1">{board.aiBadge}</Badge>
+          )}
+          {c.rejected_editorial && (
+            // KLOX-94: the story hits the newsletter's reject terms —
+            // it sits at the bench tail, marked, never auto-slotted.
+            <Badge tone="warn" className="mt-1">{board.rejectBadge}</Badge>
           )}
         </button>
         <div className="flex shrink-0 flex-col items-end gap-1">
