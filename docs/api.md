@@ -844,6 +844,34 @@ RFC 8058 one-click unsubscribe: issue emails carry
 `List-Unsubscribe`/`List-Unsubscribe-Post` headers pointing here, so
 mail clients unsubscribe with no page load (`200` empty, `403` forged).
 
+### `POST /api/v1/p/{slug}/checkout`
+Opens the paid-section checkout (KLOX-13, D58):
+`{"email": "reader@example.com", "issue": "3"}` — `issue` is the
+number of the page the reader came from, so the hosted checkout
+returns there. `409 blocked` when the publication does not sell a paid
+section; `already_subscribed` when the address is already active. A
+still-pending checkout for the same reader is reused rather than
+opening a second billing.
+```json
+{"ref": "pay_…", "status": "pending", "provider": "abacatepay",
+ "checkout_url": "https://pay.abacatepay.com/bill-…",
+ "test_mode": true, "simulated": false}
+```
+`provider: "fake"` + `simulated: true` is the documented fallback —
+`ABACATEPAY_API_KEY` unset or the provider unreachable; the fake
+checkout completes the grant path immediately so the demo never
+strands a reader. `test_mode` mirrors the provider key's own sandbox
+flag (dev keys start `abc_dev_`).
+
+### `GET /api/v1/p/{slug}/pay/{ref}`
+Reports a checkout's status (`pending | paid | expired | cancelled`).
+While `pending`, it also polls the provider — throttled to one call
+per 10 s per payment — and runs the same idempotent grant the webhook
+does, so a billing.paid webhook that never arrives does not strand the
+payment. When paid, `paid_until` reports the access window's end; in
+outbox mode (no mail sender configured) the response also re-serves
+`magic_link` so the demo can complete without an inbox.
+
 ## Inbound webhooks
 
 ### `POST /webhooks/resend`
@@ -854,6 +882,20 @@ requests get `401`. `delivered` marks the ledger row; `bounced` and
 `complained` mark it, suppress the address globally (no workspace ever
 mails it again) and unsubscribe every matching reader. Unknown event
 types or unknown email ids answer `202` without work.
+
+### `POST /webhooks/abacatepay`
+AbacatePay checkout events (`checkout.completed`, webhook v2 — also
+the legacy `billing.paid` shape). The per-webhook secret is compared
+in constant time (`X-Webhook-Secret` header or `?webhookSecret=`
+query) and, when `X-Webhook-Signature` is present, the documented
+public-key HMAC-SHA256 over the raw body must match — forged or
+tampered requests get `401`; an unset `ABACATEPAY_WEBHOOK_SECRET`
+fails the endpoint closed (`503`). A confirmed billing resolves the
+payment across workspaces by provider ref or `externalId` and grants
+`subscriptions.paid_until = now + 30d` (D58): the `pending→paid` CAS
+makes replays and raced polls single-fire, and the reader's access
+link goes out on the `reader_access` mail path. Unknown billings or
+events answer `202`/`204` without work.
 
 ## Editorial guide
 

@@ -422,22 +422,29 @@ func (db *DB) UpsertReader(ctx context.Context, pubID int64, email, name string)
 // ActivateSubscription marks the reader's subscription active and stores
 // the magic-link token that unlocks the reader view.
 func (db *DB) ActivateSubscription(ctx context.Context, readerID int64, provider, ref, magicToken string) error {
+	return db.ActivateSubscriptionUntil(ctx, readerID, provider, ref, magicToken, "")
+}
+
+// ActivateSubscriptionUntil is ActivateSubscription with an expiry —
+// one-time checkouts grant a fixed window (D56); an empty paidUntil
+// keeps the subscription lifetime-scoped (fake provider, demo paths).
+func (db *DB) ActivateSubscriptionUntil(ctx context.Context, readerID int64, provider, ref, magicToken, paidUntil string) error {
 	var id int64
 	err := db.QueryRowContext(ctx,
 		`SELECT id FROM subscriptions WHERE workspace_id = $1 AND reader_id = $2`, db.ws, readerID).Scan(&id)
 	if err == sql.ErrNoRows {
 		_, err = db.ExecContext(ctx,
-			`INSERT INTO subscriptions (workspace_id, reader_id, status, provider, provider_ref, magic_token)
-			 VALUES ($1,$2,$3,$4,$5,$6)`, db.ws, readerID, "active", provider, ref, magicToken)
+			`INSERT INTO subscriptions (workspace_id, reader_id, status, provider, provider_ref, magic_token, paid_until)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7)`, db.ws, readerID, "active", provider, ref, magicToken, paidUntil)
 		return err
 	}
 	if err != nil {
 		return err
 	}
 	_, err = db.ExecContext(ctx,
-		`UPDATE subscriptions SET status = 'active', provider = $1, provider_ref = $2, magic_token = $3
-		 WHERE workspace_id = $4 AND reader_id = $5`,
-		provider, ref, magicToken, db.ws, readerID)
+		`UPDATE subscriptions SET status = 'active', provider = $1, provider_ref = $2, magic_token = $3, paid_until = $4
+		 WHERE workspace_id = $5 AND reader_id = $6`,
+		provider, ref, magicToken, paidUntil, db.ws, readerID)
 	return err
 }
 
@@ -487,28 +494,32 @@ func (db *DB) SubscriberCount(ctx context.Context, pubID int64) (int, error) {
 	err := db.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT s.reader_id) FROM subscriptions s
 		JOIN readers r ON r.id = s.reader_id
-		WHERE r.workspace_id = $1 AND r.publication_id = $2 AND s.status = 'active' AND r.unsubscribed_at = ''`,
-		db.ws, pubID).Scan(&n)
+		WHERE r.workspace_id = $1 AND r.publication_id = $2 AND s.status = 'active' AND r.unsubscribed_at = ''
+		  AND (s.paid_until = '' OR s.paid_until > $3)`,
+		db.ws, pubID, NowUTC()).Scan(&n)
 	return n, err
 }
 
+// HasActiveSubscription reports an active, unexpired subscription; an
+// empty paid_until never lapses (D56).
 func (db *DB) HasActiveSubscription(ctx context.Context, readerID int64) (bool, error) {
 	var n int
 	err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM subscriptions WHERE workspace_id = $1 AND reader_id = $2 AND status = 'active'`,
-		db.ws, readerID).Scan(&n)
+		`SELECT count(*) FROM subscriptions WHERE workspace_id = $1 AND reader_id = $2 AND status = 'active' AND (paid_until = '' OR paid_until > $3)`,
+		db.ws, readerID, NowUTC()).Scan(&n)
 	return n > 0, err
 }
 
 // ReaderByMagicToken resolves a magic-link token to a reader id within a
-// publication (sql.ErrNoRows when invalid).
+// publication (sql.ErrNoRows when invalid or the access window lapsed).
 func (db *DB) ReaderByMagicToken(ctx context.Context, pubID int64, token string) (int64, error) {
 	var id int64
 	err := db.QueryRowContext(ctx, `
 		SELECT r.id FROM readers r
 		JOIN subscriptions s ON s.reader_id = r.id
-		WHERE r.workspace_id = $1 AND r.publication_id = $2 AND s.magic_token = $3 AND s.magic_token != '' AND s.status = 'active'`,
-		db.ws, pubID, token).Scan(&id)
+		WHERE r.workspace_id = $1 AND r.publication_id = $2 AND s.magic_token = $3 AND s.magic_token != '' AND s.status = 'active'
+		  AND (s.paid_until = '' OR s.paid_until > $4)`,
+		db.ws, pubID, token, NowUTC()).Scan(&id)
 	return id, err
 }
 

@@ -78,8 +78,13 @@ type Config struct {
 	// the paid_actions ledger like the §7.3 AI counters.
 	ScrapesPerDay int
 	AbacatePayKey string
-	PublicURL       string
-	WebhookSecret   string
+	// AbacatePayWebhookSecret verifies /webhooks/abacatepay deliveries:
+	// the dashboard sends it as X-Webhook-Secret / ?webhookSecret=
+	// (KLOX-13). Empty fails the endpoint closed like the other
+	// receivers.
+	AbacatePayWebhookSecret string
+	PublicURL               string
+	WebhookSecret           string
 	// ResendWebhookSecret verifies Svix signatures on /webhooks/resend.
 	ResendWebhookSecret string
 	// EmailDailyCap bounds real sends across all workspaces per UTC day
@@ -138,6 +143,7 @@ func Load() (*Config, error) {
 		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
 		ScrapesPerDay:   getint("KLOXUS_SCRAPES_PER_DAY", 5),
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
+		AbacatePayWebhookSecret: os.Getenv("ABACATEPAY_WEBHOOK_SECRET"),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
 		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),
