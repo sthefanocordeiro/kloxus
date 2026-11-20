@@ -1,9 +1,9 @@
 // KLOX-79 regression: one newsletter per account means /new never
 // renders the create flow for an account that already has one — it
-// redirects to the editions. The paste-to-create option is not
-// launched, so its control stays disabled behind an in-development
-// notice, and the shell's Voltar on /new points at a real parent
-// (/publications), not at the page itself.
+// redirects to the editions. KLOX-99: the paste-a-link option is live —
+// a pasted URL goes to the scraper and the extracted proposal fills the
+// editable form for review. The shell's Voltar on /new points at a real
+// parent (/publications), not at the page itself.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,6 +25,7 @@ vi.mock("../api", async (importOriginal) => {
       proposal: vi.fn(),
       publication: vi.fn(),
       publications: vi.fn(),
+      propose: vi.fn(),
       createPublication: vi.fn(),
     },
   };
@@ -104,7 +105,7 @@ describe("create-newsletter flow (KLOX-79)", () => {
     renderAt("/new");
     expect(await screen.findByText("editions screen")).toBeVisible();
     // the create flow never renders — no heading, no paste card
-    expect(screen.queryByLabelText("Paste a link or an issue")).toBeNull();
+    expect(screen.queryByLabelText("Paste a link")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Create your newsletter" })).toBeNull();
   });
 
@@ -113,19 +114,61 @@ describe("create-newsletter flow (KLOX-79)", () => {
     renderAt("/new");
     // the query never resolves — the flow must never appear in the meantime
     await waitFor(() => expect(document.querySelector("[aria-busy]")).not.toBeNull());
-    expect(screen.queryByLabelText("Paste a link or an issue")).toBeNull();
+    expect(screen.queryByLabelText("Paste a link")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Create your newsletter" })).toBeNull();
   });
 
-  it("shows the paste option as in-development with a disabled control", async () => {
+  it("paste-a-link is live — the scraped proposal fills the form for review", async () => {
     vi.mocked(api.publications).mockResolvedValue([]);
+    vi.mocked(api.propose).mockResolvedValue({
+      proposal: {
+        ...proposal,
+        name: "Radar Fintech",
+        sections: [
+          { id: "s1", title: "O pix fora do ar", format: "featured", items: 1, commentary: "required", access: "all" },
+          { id: "s2", title: "Bancos sob pressão", format: "news", items: 3, commentary: "optional", access: "all" },
+          { id: "s3", title: "Links da semana", format: "links", items: 5, commentary: "none", access: "all" },
+        ],
+      },
+      scrape: {
+        url: "https://radar.example.com",
+        title: "Radar Fintech",
+        provider: "firecrawl (simulated)",
+        simulated: true,
+        words: 220,
+        warnings: ["thin_content"],
+      },
+    });
     renderAt("/new");
-    const paste = await screen.findByLabelText("Paste a link or an issue");
-    expect(paste).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Create from this" })).toBeDisabled();
-    expect(
-      screen.getByText("This feature hasn't launched yet — it's in development."),
-    ).toBeVisible();
+    const paste = await screen.findByLabelText("Paste a link");
+    expect(paste).toBeEnabled();
+    fireEvent.change(paste, { target: { value: "https://radar.example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create from this" }));
+    // the "what we extracted" preview shows before anything is created
+    const preview = await screen.findByTestId("scrape-preview");
+    expect(preview).toHaveTextContent("Radar Fintech");
+    expect(preview).toHaveTextContent("Simulated — no page was fetched");
+    expect(preview).toHaveTextContent("little readable text");
+    // the extracted proposal replaced the sample in the editable form
+    expect(screen.getByLabelText("Name")).toHaveValue("Radar Fintech");
+    expect(vi.mocked(api.propose).mock.calls[0][0]).toBe("https://radar.example.com");
+    // nothing is created until the steps are completed
+    expect(api.createPublication).not.toHaveBeenCalled();
+  });
+
+  it("shows a localized scrape error and keeps the sample form", async () => {
+    vi.mocked(api.publications).mockResolvedValue([]);
+    vi.mocked(api.propose).mockRejectedValue(
+      new ApiRequestError(502, { code: "scrape_failed", message: "upstream" }),
+    );
+    renderAt("/new");
+    const paste = await screen.findByLabelText("Paste a link");
+    fireEvent.change(paste, { target: { value: "https://x.example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create from this" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldn't be read");
+    // no preview, and the form still carries the sample proposal
+    expect(screen.queryByTestId("scrape-preview")).toBeNull();
+    expect(screen.getByLabelText("Name")).toHaveValue("Futuro Próximo");
   });
 
   it("points the /new Voltar at /publications, not at the page itself", async () => {

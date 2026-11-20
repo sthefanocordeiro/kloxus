@@ -279,6 +279,11 @@ export const dict = {
       section_full: "That section is full — swap a story out first",
       live_only: "Not available in this session",
       ai_disabled: "Not available in this session",
+      invalid_url: "Paste a full http(s) address",
+      scrape_unavailable: "Link import isn't configured on this deployment",
+      scrape_cap: "Today's link-import limit was reached — try again tomorrow",
+      scrape_failed: "The page couldn't be read — check the link or try again later",
+      scrape_blocked: "The page gave almost no readable text — it may be paywalled, sign-in only or too script-heavy",
       no_runs: "No run yet — prepare the issue first",
       not_sent: "This issue has not been sent yet",
       not_approved: "Approve the issue first",
@@ -410,10 +415,11 @@ export const dict = {
     },
     create: {
       title: "Create your newsletter",
-      pasteLabel: "Paste a link or an issue",
-      pastePlaceholder: "https://… or paste a newsletter issue",
+      pasteLabel: "Paste a link",
+      pastePlaceholder: "https://your-newsletter-or-blog…",
       pasteAction: "Create from this",
-      pasteSoon: "This feature hasn't launched yet — it's in development.",
+      // scrape-flow strings live in pages/createStrings.ts — the
+      // shared table is inside the landing-payload budget (KLOX-16)
       sampleBadge: "Sample newsletter",
       sampleHint: "This option creates the sample publication — every section is editable.",
       name: "Name",
@@ -844,6 +850,11 @@ export const dict = {
       section_full: "Essa seção está cheia — troque uma pauta primeiro",
       live_only: "Indisponível aqui",
       ai_disabled: "Indisponível aqui",
+      invalid_url: "Cole um endereço http(s) completo",
+      scrape_unavailable: "A importação por link não está configurada neste ambiente",
+      scrape_cap: "O limite diário de importação por link foi atingido — tente amanhã",
+      scrape_failed: "Não conseguimos ler a página — confira o link ou tente mais tarde",
+      scrape_blocked: "A página quase não deu texto legível — pode ter paywall, exigir login ou depender de scripts",
       no_runs: "Ainda não houve preparo — prepare a edição primeiro",
       not_sent: "Esta edição ainda não foi enviada",
       not_approved: "Aprove a edição primeiro",
@@ -975,10 +986,11 @@ export const dict = {
     },
     create: {
       title: "Crie sua newsletter",
-      pasteLabel: "Cole um link ou uma edição",
-      pastePlaceholder: "https://… ou cole uma edição de newsletter",
+      pasteLabel: "Cole um link",
+      pastePlaceholder: "https://sua-newsletter-ou-blog…",
       pasteAction: "Criar a partir disso",
-      pasteSoon: "Esta função ainda não foi lançada — está em desenvolvimento.",
+      // scrape-flow strings live in pages/createStrings.ts — the
+      // shared table is inside the landing-payload budget (KLOX-16)
       sampleBadge: "Newsletter de exemplo",
       sampleHint: "Esta opção cria a publicação de exemplo — todas as seções editáveis.",
       name: "Nome",

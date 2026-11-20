@@ -31,6 +31,11 @@ type Deps struct {
 	// admin kill switch (D32/D36). Nil disables the guards (tests).
 	Guard   *llm.Guard
 	Monitor sources.MonitorProvider
+	// Scraper powers the "paste a link" proposal flow (KLOX-99):
+	// Firecrawl in real mode, FakeScraper in demo. Nil means the
+	// provider is unconfigured — the endpoint says so instead of
+	// faking a result.
+	Scraper sources.Scraper
 	// Mailer transports real email when configured (Resend in
 	// production, a fake in tests). Nil means outbox-only mode: every
 	// send is recorded in the workspace outbox and nothing leaves.
