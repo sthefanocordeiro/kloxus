@@ -15,6 +15,11 @@ const en = {
   payOpen: "Open my subscriber access",
   payExpired: "This checkout expired — start a new one.",
   alreadyPaid: "This address already has an active subscription.",
+  // the /p/{slug} newsletter landing page (KLOX-102)
+  editionsArchive: "Editions",
+  latestBadge: "Latest",
+  noEditions: "No editions out yet — subscribe to get the next one.",
+  newsletterPaid: (price: string) => `${price} · paid sections are for subscribers.`,
 };
 
 const pt: typeof en = {
@@ -28,6 +33,11 @@ const pt: typeof en = {
   payOpen: "Abrir meu acesso de assinante",
   payExpired: "Este checkout expirou — comece um novo.",
   alreadyPaid: "Este endereço já tem uma assinatura ativa.",
+  // a página pública /p/{slug} (KLOX-102)
+  editionsArchive: "Edições",
+  latestBadge: "Mais recente",
+  noEditions: "Nenhuma edição publicada ainda — inscreva-se para receber a próxima.",
+  newsletterPaid: (price: string) => `${price} · seções pagas são para assinantes.`,
 };
 
 export type ReaderStrings = typeof en;

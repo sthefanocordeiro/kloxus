@@ -3903,12 +3903,20 @@ func (s *Server) apiReader(w http.ResponseWriter, r *http.Request) {
 	subs, _ := db(r).SubscriberCount(r.Context(), pub.ID)
 	readers, _ := db(r).ReaderCount(r.Context(), pub.ID)
 	confirmed, _ := db(r).ConfirmedReaderCount(r.Context(), pub.ID)
+	// the copyable subscribe link (KLOX-102): the stable public
+	// newsletter page — ?tok= sealed in hosted mode so it opens for an
+	// anonymous visitor, never the editor's workspace id
+	publicURL := fmt.Sprintf("%s/p/%s", s.publicBase(r), pub.Slug)
+	if tok := s.readerToken(r); tok != "" {
+		publicURL += "?tok=" + url.QueryEscape(tok)
+	}
 	resp := map[string]any{
 		"reader":      map[string]string{"email": demoReaderEmail, "name": demoReaderName},
 		"subscribed":  active,
 		"subscribers": subs,
 		"readers":     readers,
 		"confirmed":   confirmed,
+		"public_url":  publicURL,
 	}
 	if iss, err := db(r).LatestFinishedIssue(r.Context(), pub.ID); err == nil {
 		resp["issue"] = s.issueSummary(r, iss)
@@ -4072,6 +4080,39 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 		// fake fallback is labeled simulated.
 		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": localizePrice(rawPub.Paywall.Price, rawPub.Language),
 			"test_mode": s.payProvider().TestMode(), "simulated": s.payProvider().Name() == payments.FakeName},
+	})
+}
+
+// apiPublicNewsletter serves the /p/{slug} landing page data (KLOX-102):
+// the publication's own brand — never the editor chrome — plus its
+// editions archive (the same sent/scheduled/test-sent visibility the
+// issue page enforces) and the paywall summary the subscribe CTA sells.
+// Reading an edition stays on /p/{slug}/{num}, where the existing
+// paywall gating applies per access rules.
+func (s *Server) apiPublicNewsletter(w http.ResponseWriter, r *http.Request) {
+	r = s.withWS(r)
+	rawPub, loadErr := db(r).GetPublication(r.Context(), r.PathValue("slug"))
+	pub, err := s.canonicalPub(rawPub, loadErr)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	issues, err := db(r).PublicIssues(r.Context(), pub.ID, 50)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	archive := []map[string]any{}
+	for _, iss := range issues {
+		archive = append(archive, map[string]any{
+			"number":     iss.Number,
+			"subject":    localizeSubject(iss.Subject, rawPub.Language),
+			"created_at": iss.CreatedAt,
+		})
+	}
+	apiJSON(w, 200, map[string]any{
+		"publication": map[string]any{"name": rawPub.Name, "slug": rawPub.Slug, "language": rawPub.Language},
+		"editions":    archive,
+		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled,
+			"price": localizePrice(rawPub.Paywall.Price, rawPub.Language)},
 	})
 }
 

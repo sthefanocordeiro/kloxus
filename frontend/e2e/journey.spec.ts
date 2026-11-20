@@ -485,10 +485,39 @@ async function sendToReaders(page: Page) {
 }
 
 async function readerJourney(page: Page) {
-  // the after-sending view links to the public issue page — open it and
-  // confirm the non-subscriber gets the gated cut
+  // the after-sending view we arrived from — its reader-page link also
+  // carries the sealed workspace token the public pages need in hosted
+  // mode (local mode links simply have no query)
   const href = await page.getByRole("link", { name: /reader page/ }).getAttribute("href");
   expect(href).toContain("/p/futuro-proximo/");
+  const tokQ = href!.includes("?") ? href!.slice(href!.indexOf("?")) : "";
+  const afterURL = page.url();
+
+  // the newsletter landing (KLOX-102): the newsletter's own brand, the
+  // subscribe entry point and the editions archive — an anonymous
+  // visitor's first stop
+  await page.goto("/p/futuro-proximo" + tokQ);
+  await expect(page.getByRole("heading", { level: 1, name: "Futuro Próximo" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("heading", { name: "Editions" })).toBeVisible();
+  await expect(page.getByText("Latest")).toBeVisible();
+  // subscribe capture runs the existing double opt-in — outbox mode
+  // answers with the confirm link itself, so the flow completes here
+  await page.getByPlaceholder("you@example.com").fill("reader@example.com");
+  await page.getByRole("button", { name: "Send sign-in link" }).click();
+  const confirm = page.getByRole("link", { name: "Confirm the subscription" });
+  await expect(confirm).toBeVisible({ timeout: 15000 });
+  await confirm.click();
+  // confirming lands back on the reader page — the latest issue
+  await expect(page.getByText("For paying readers")).toBeVisible({ timeout: 15000 });
+  // the editions archive lists the edition just sent — browsing it
+  // opens the same gated issue page
+  await page.goto("/p/futuro-proximo" + tokQ);
+  await page.locator('a[href*="/p/futuro-proximo/"]').first().click();
+  await expect(page.getByText("For paying readers")).toBeVisible({ timeout: 15000 });
+
+  // back on the after-sending view: its link opens the public issue
+  // page — confirm the non-subscriber gets the gated cut
+  await page.goto(afterURL);
   await page.goto(href!.replace(/^https?:\/\/[^/]+/, ""));
   await expect(page.getByText("For paying readers")).toBeVisible({ timeout: 15000 });
   // paid checkout (KLOX-13): the label must say test/simulated before
