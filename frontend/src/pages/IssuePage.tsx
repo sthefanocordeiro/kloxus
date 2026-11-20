@@ -748,7 +748,14 @@ export function IssuePage() {
                           <span className="shrink-0 text-xs font-medium text-muted">
                             {t.doc.writing(p.done, p.total)}
                           </span>
-                          <div className="h-1.5 min-w-0 flex-1 rounded-full bg-line/60">
+                          <div
+                            role="progressbar"
+                            aria-label={t.doc.writing(p.done, p.total)}
+                            aria-valuemin={0}
+                            aria-valuemax={p.total}
+                            aria-valuenow={p.done}
+                            className="h-1.5 min-w-0 flex-1 rounded-full bg-line/60"
+                          >
                             <div
                               className="h-full rounded-full bg-teal transition-all"
                               style={{ width: `${Math.round((p.done / p.total) * 100)}%` }}
