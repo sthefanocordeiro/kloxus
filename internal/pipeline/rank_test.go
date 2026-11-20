@@ -80,7 +80,7 @@ func TestNonEditorialDemotion(t *testing.T) {
 		t.Errorf("real story wrongly demoted: %q", reasons[4])
 	}
 	picks := pickLineup(stories, scores, reasons,
-		[]config.Section{{Title: "Lead", Items: 1, Commentary: "none"}})
+		&store.Publication{Sections: []config.Section{{Title: "Lead", Items: 1, Commentary: "none"}}}, nil)
 	if len(picks) != 1 || picks[0].Refs[0] != 5 {
 		t.Fatalf("picks = %+v, want only the real story", picks)
 	}
@@ -103,11 +103,11 @@ func TestPickLineupSkipsSignalOnlyStory(t *testing.T) {
 		detStory(4, "third article", "2025-01-02", 1),
 	}
 	scores, reasons := scoreStories(stories, "")
-	picks := pickLineup(stories, scores, reasons, []config.Section{
+	picks := pickLineup(stories, scores, reasons, &store.Publication{Sections: []config.Section{
 		{Title: "The big one", Items: 1},
 		{Title: "Worth knowing", Items: 1},
 		{Title: "Quick links", Items: 1},
-	})
+	}}, nil)
 	if len(picks) != 3 {
 		t.Fatalf("picks = %d, want 3 — every section gets a draftable story", len(picks))
 	}
@@ -195,7 +195,7 @@ func TestPickLineupSectionCapsAndOutletCap(t *testing.T) {
 		mk(4, "2025-01-02", "b.example"),
 	}
 	scores, reasons := scoreStories(stories, "")
-	picks := pickLineup(stories, scores, reasons, sections)
+	picks := pickLineup(stories, scores, reasons, &store.Publication{Sections: sections}, nil)
 	if len(picks) != 3 {
 		t.Fatalf("picks = %d, want 3 (capacity 1+2)", len(picks))
 	}
@@ -290,5 +290,123 @@ func TestDeterministicRunMakesNoModelCalls(t *testing.T) {
 	}
 	if !strings.Contains(iss.BodyMD, "[1]") {
 		t.Fatalf("draft body lacks citations:\n%s", iss.BodyMD)
+	}
+}
+
+// TestRejectTermsDemoteAndSkip is the KLOX-94 editorial-line contract:
+// a story hitting the newsletter's reject terms sinks below every real
+// candidate with a marked reason, and the auto-lineup never slots it —
+// it stays a visible bench candidate instead of silently dropping.
+func TestRejectTermsDemoteAndSkip(t *testing.T) {
+	stories := []store.Story{
+		detStory(1, "Novo celular dobrável chega às lojas", "2025-01-05", 1),
+		detStory(2, "Banco Central abre consulta sobre Pix", "2025-01-05", 1),
+		detStory(3, "Games: GTA VI ganha nova data de lançamento", "2025-01-04", 1),
+		detStory(4, "Fintechs respondem a nova regra do BC", "2025-01-03", 1),
+	}
+	pub := &store.Publication{
+		Language:    "pt-BR",
+		RejectTerms: "celular, games",
+		Sections:    []config.Section{{Title: "Fintech", Items: 2, Topic: "fintech, banco central"}},
+	}
+	scores, reasons := scoreStoriesEnriched(stories, "pt-BR", pub, nil)
+	if scores[0] >= scores[1] || scores[2] >= scores[3] {
+		t.Fatalf("reject stories not demoted: %v", scores)
+	}
+	if !strings.Contains(reasons[0], "rejeitada pela linha editorial") ||
+		!strings.Contains(reasons[2], "rejeitada pela linha editorial") {
+		t.Fatalf("reject marker missing: %q / %q", reasons[0], reasons[2])
+	}
+	picks := pickLineup(stories, scores, reasons, pub, nil)
+	for _, p := range picks {
+		if p.Refs[0] == 1 || p.Refs[0] == 3 {
+			t.Fatalf("rejected story %d auto-slotted: %+v", p.Refs[0], picks)
+		}
+	}
+	// the topic-matched fintech stories fill the section — and the
+	// strongest match leads
+	if len(picks) != 2 || picks[0].Refs[0] != 2 || picks[1].Refs[0] != 4 {
+		t.Fatalf("picks = %+v, want stories 2 then 4 in Fintech", picks)
+	}
+	if !strings.Contains(picks[0].Why, "no tema da seção") {
+		t.Fatalf("section-topic reason marker missing: %q", picks[0].Why)
+	}
+}
+
+// TestRejectMemberHeadline: a clean story title can't hide a rejected
+// member headline — same rule as the non-editorial demotion.
+func TestRejectMemberHeadline(t *testing.T) {
+	s := detStory(1, "Resumo da semana", "2025-01-05", 1)
+	s.Items[0].Title = "Review: o novo celular dobrável"
+	pub := &store.Publication{RejectTerms: "celular"}
+	scores, reasons := scoreStoriesEnriched([]store.Story{s}, "", pub, nil)
+	if !strings.Contains(reasons[0], "rejected by the editorial line") {
+		t.Fatalf("member-headline reject missed: %q (score %.1f)", reasons[0], scores[0])
+	}
+}
+
+// TestSectionTopicPrefersMatch: an older on-topic story beats a newer
+// off-topic one for its section, while a section without a topic keeps
+// global order.
+func TestSectionTopicPrefersMatch(t *testing.T) {
+	stories := []store.Story{
+		detStory(1, "iPhone dobrável vazou", "2025-01-06", 1),
+		detStory(2, "Banco Central corta juros", "2025-01-02", 1),
+	}
+	pub := &store.Publication{
+		Language: "en",
+		Sections: []config.Section{
+			{Title: "Economy", Items: 1, Topic: "banco central, juros, fintech"},
+			{Title: "Gadgets", Items: 1, Topic: "iphone, celular, gadget"},
+		},
+	}
+	scores, reasons := scoreStoriesEnriched(stories, "en", pub, nil)
+	picks := pickLineup(stories, scores, reasons, pub, nil)
+	if len(picks) != 2 || picks[0].Refs[0] != 2 || picks[1].Refs[0] != 1 {
+		t.Fatalf("picks = %+v, want story 2 in Economy, story 1 in Gadgets", picks)
+	}
+	// no topic declared anywhere → global order stands
+	pub.Sections[0].Topic = ""
+	pub.Sections[1].Topic = ""
+	picks = pickLineup(stories, scores, reasons, pub, nil)
+	if len(picks) != 2 || picks[0].Refs[0] != 1 {
+		t.Fatalf("topic-less picks = %+v, want story 1 first", picks)
+	}
+}
+
+// TestPublicationTopicBonus: the newsletter theme lifts direct title
+// hits even without enrichment rows (KLOX-94 free stand-in).
+func TestPublicationTopicBonus(t *testing.T) {
+	stories := []store.Story{
+		detStory(1, "Nova regra muda o mercado", "2025-01-05", 1),
+		detStory(2, "Fintechs comemoram decisão do BC", "2025-01-05", 1),
+	}
+	pub := &store.Publication{Topic: "fintech e regulação"}
+	scores, _ := scoreStoriesEnriched(stories, "", pub, nil)
+	if scores[1] <= scores[0] {
+		t.Fatalf("theme hit not rewarded: %v", scores)
+	}
+}
+
+func TestParseTermsAndSuggestSection(t *testing.T) {
+	terms := parseTerms("celular e games, banco central")
+	if !termsAny(terms, "novo celular dobravel chega", foldedTokens("novo celular dobravel chega")) {
+		t.Fatal("celular should hit")
+	}
+	if !termsAny(terms, "banco central corta juros", foldedTokens("banco central corta juros")) {
+		t.Fatal("banco central should hit")
+	}
+	if termsAny(terms, "gamescom abre inscricoes", foldedTokens("gamescom abre inscricoes")) {
+		t.Fatal("phrase 'games' should not hit inside 'gamescom'")
+	}
+	secs := []config.Section{
+		{Title: "Gadgets", Topic: "iphone, celular"},
+		{Title: "Economy", Topic: "banco central, fintech"},
+	}
+	if got := SuggestSection("Banco Central abre consulta", secs); got != "Economy" {
+		t.Fatalf("SuggestSection = %q, want Economy", got)
+	}
+	if got := SuggestSection("Receita de bolo de fubá", secs); got != "" {
+		t.Fatalf("SuggestSection = %q, want empty", got)
 	}
 }

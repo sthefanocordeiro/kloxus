@@ -371,7 +371,7 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
               disabled={busy}
               title={t.compose.addLine}
               aria-label={t.compose.addLine}
-              className="flex h-11 w-11 items-center justify-center rounded text-muted transition-opacity hover:text-teal focus-visible:opacity-100 md:h-auto md:w-auto md:p-1 md:opacity-0 md:group-hover:opacity-100"
+              className="flex h-11 w-11 items-center justify-center rounded text-muted transition-opacity hover:text-teal focus-visible:opacity-100 md:size-auto md:p-1 md:opacity-0 md:group-hover:opacity-100"
               onClick={writeHere}
             >
               <PenLine size={13} />
@@ -385,7 +385,7 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
               title={linkItem ? b.linkOnlyOff : b.linkOnlyOn}
               aria-pressed={a.linkOnly}
               className={cn(
-                "flex h-11 w-11 items-center justify-center rounded transition-opacity md:h-auto md:w-auto md:p-1",
+                "flex h-11 w-11 items-center justify-center rounded transition-opacity md:size-auto md:p-1",
                 a.linkOnly
                   ? "text-teal"
                   : "text-muted opacity-100 hover:text-teal md:opacity-0 md:group-hover:opacity-100",

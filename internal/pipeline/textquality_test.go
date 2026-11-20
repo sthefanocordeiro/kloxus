@@ -96,3 +96,71 @@ func TestHasNumberDateOrQuote(t *testing.T) {
 		}
 	}
 }
+
+// KLOX-100 audit: the lexical floor let a sentence claim "3 de
+// novembro" while the source said the 16th, and "as empresas negaram"
+// while the source said "confirmaram". The two checks below close
+// those gaps without a model.
+
+func TestUnsupportedDate(t *testing.T) {
+	src := "As empresas informaram que os dados foram obtidos em 16 de novembro, durante auditoria interna."
+	for _, c := range []struct {
+		name string
+		sent string
+		want bool
+	}{
+		{"audit: wrong pt day", "Os dados foram obtidos em 3 de novembro [1].", true},
+		{"matching pt date", "Os dados foram obtidos em 16 de novembro [1].", false},
+		{"no date literal", "As empresas obtiveram os dados durante uma auditoria [1].", false},
+		{"wrong en date", "The data was obtained on November 3 [1].", true},
+		{"matching en date", "The data was obtained on November 16 [1].", false},
+		{"slash date either order", "Os dados são de 16/11 [1].", false},
+		{"monthless number ignored", "Foram analisados 3 registros das empresas [1].", false},
+	} {
+		if got := UnsupportedDate(c.sent, src); got != c.want {
+			t.Errorf("UnsupportedDate(%s) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestUnsupportedDateAmbiguousSource(t *testing.T) {
+	// A dd/mm source date satisfies either interpretation of an
+	// ambiguous slash date in the sentence.
+	src := "Documento interno datado de 03/11 detalha o caso."
+	if UnsupportedDate("O caso consta de documento de 03/11 [1].", src) {
+		t.Error("identical ambiguous date should pass")
+	}
+	if UnsupportedDate("O caso consta de documento de 11/03 [1].", src) {
+		t.Error("swapped-order ambiguous date should pass against an ambiguous source")
+	}
+}
+
+func TestNegationUnsupported(t *testing.T) {
+	src := "As empresas confirmaram o incidente e informaram os clientes afetados."
+	for _, c := range []struct {
+		name string
+		sent string
+		want bool
+	}{
+		{"audit: inverted sense", "As empresas negaram qualquer incidente [1].", true},
+		{"no denial cue", "As empresas confirmaram o incidente [1].", false},
+		{"en denial absent", "The companies denied any incident [1].", true},
+	} {
+		if got := NegationUnsupported(c.sent, src); got != c.want {
+			t.Errorf("NegationUnsupported(%s) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestNegationStemMatch(t *testing.T) {
+	// Inflections share a stem: the sentence's "denied" accepts the
+	// source's "denial".
+	src := "The company issued a denial late on Friday."
+	if NegationUnsupported("The company denied the incident [1].", src) {
+		t.Error("denied should accept the source's denial")
+	}
+	srcPT := "A empresa desmentiu o incidente na sexta-feira."
+	if NegationUnsupported("A empresa desmente o incidente [1].", srcPT) {
+		t.Error("desmente should accept the source's desmentiu")
+	}
+}

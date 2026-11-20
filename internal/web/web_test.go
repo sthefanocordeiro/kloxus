@@ -96,6 +96,9 @@ func testServer(t *testing.T, seedIt bool, opt func(*web.Deps)) (*web.Server, *s
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
 		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir(filepath.Join(cfg.OutDir, "llm-dump"))},
 		Monitor: sources.FakeMonitor{},
+		// the demo wires the simulated scraper, same as main.go —
+		// tests covering the unconfigured path set d.Scraper = nil
+		Scraper: sources.FakeScraper{},
 		Seed:    seed,
 	}
 	if opt != nil {

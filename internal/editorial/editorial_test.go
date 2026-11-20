@@ -71,3 +71,59 @@ func TestRebuildDeterministicNoProvider(t *testing.T) {
 		t.Fatalf("deterministic guide content=%q version=%d", content, version)
 	}
 }
+
+// TestBuildGuideDistinctReasonsSharedContext is the KLOX-100
+// regression: rejections from stories sharing kind/outlet produce the
+// same rejection-context suffix ("tipo: article · veículo: X"). The
+// context must ride alongside the learned rule, not feed the
+// near-duplicate check — otherwise every objection collapses into one
+// rule and the guide loses the recorded reasons.
+func TestBuildGuideDistinctReasonsSharedContext(t *testing.T) {
+	reasons := []string{
+		"off the publication's angle",
+		"too thin for this issue",
+		"duplicates a stronger item",
+		"prioritize policy with direct Brazil impact",
+	}
+	ctxs := []string{
+		"tipo: article · veículo: Outlet A",
+		"tipo: article · veículo: Outlet B",
+		"tipo: article · veículo: Outlet A",
+		"tipo: article · veículo: Outlet C",
+	}
+	got := buildGuide(reasons, ctxs)
+	for _, want := range []string{
+		"Off the publication's angle",
+		"Too thin for this issue",
+		"Duplicates a stronger item",
+		"Prioritize policy with direct Brazil impact",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("guide missing %q:\n%s", want, got)
+		}
+	}
+	for _, want := range []string{"Outlet A", "Outlet B", "Outlet C"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("guide missing context %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestBuildGuideMergesSameObjection keeps the dedupe contract on the
+// objection itself: same reason on different stories still collapses
+// to one rule, which then carries each rejection's context.
+func TestBuildGuideMergesSameObjection(t *testing.T) {
+	got := buildGuide(
+		[]string{"not for my audience", "not for my audience"},
+		[]string{"tipo: article · veículo: Outlet A", "tipo: video · veículo: Outlet B"},
+	)
+	if n := strings.Count(got, "\n"); n != 0 {
+		t.Fatalf("expected a single merged rule, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Skip stories that don't serve this newsletter's audience") {
+		t.Fatalf("merged rule missing: %s", got)
+	}
+	if !strings.Contains(got, "Outlet A") || !strings.Contains(got, "Outlet B") {
+		t.Fatalf("merged rule should keep both contexts: %s", got)
+	}
+}
