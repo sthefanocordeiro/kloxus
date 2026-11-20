@@ -35,6 +35,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/payments"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -1289,6 +1290,7 @@ type apiRun struct {
 	Status        string         `json:"status"` // running | done | failed | blocked
 	Step          string         `json:"step"`
 	IssueID       int64          `json:"issue_id,omitempty"`
+	PublicationID int64          `json:"publication_id,omitempty"`
 	NoNewItems    bool           `json:"no_new_items"`
 	Error         string         `json:"error,omitempty"`
 	Blocked       bool           `json:"blocked,omitempty"`
@@ -1308,7 +1310,8 @@ func runView(st *runProgress) apiRun {
 	defer st.mu.Unlock()
 	v := apiRun{
 		ID: st.st.RunID, Kind: st.st.Kind, Step: st.st.Step,
-		IssueID: st.st.IssueID, NoNewItems: st.st.NoNewItems, Error: st.st.Err,
+		IssueID: st.st.IssueID, PublicationID: st.st.PubID,
+		NoNewItems: st.st.NoNewItems, Error: st.st.Err,
 		Blocked: st.st.Blocked, BlockedReason: st.st.BlockedReason, Sample: st.st.Sample,
 		Status: "running",
 	}
@@ -2457,7 +2460,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	wsp := reqWS(r)
-	st := &runProgress{st: runState{RunID: newReqID(), Kind: "draft", Step: "starting", IssueID: iss.ID}}
+	st := &runProgress{st: runState{RunID: newReqID(), Kind: "draft", Step: "starting", IssueID: iss.ID, PubID: iss.PublicationID}}
 	key := "draft-" + fmt.Sprint(iss.ID)
 	if prev, running := wsp.Runs.LoadOrStore(key, st); running {
 		pst := prev.(*runProgress)
@@ -4140,13 +4143,17 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	rid, _ := db(r).UpsertReader(ctx, pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := db(r).HasActiveSubscription(ctx, rid)
 	key := r.URL.Query().Get("key")
+	keyValid := false
 	if key != "" {
-		if mrid, err := db(r).ReaderByMagicToken(ctx, pub.ID, key); err == nil && mrid == rid {
-			active = true
+		// The token is the bearer credential a paying reader's magic
+		// link carries (KLOX-13) — any active subscriber's token
+		// unlocks, not only the demo reader's.
+		if _, err := db(r).ReaderByMagicToken(ctx, pub.ID, key); err == nil {
+			keyValid = true
 		}
 	}
 	forceFree := r.URL.Query().Get("view") == "free"
-	unlocked := active && !forceFree
+	unlocked := (active || keyValid) && !forceFree
 	aiUsed, _ := db(r).IssueUsedAI(ctx, iss.ID)
 	md := delivery.ReaderBody(iss, pub, s.publicBase(r), aiUsed)
 	if !unlocked {
@@ -4156,12 +4163,16 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{
 		"publication": map[string]any{"name": rawPub.Name, "slug": rawPub.Slug, "language": rawPub.Language},
 		"issue":       map[string]any{"number": iss.Number, "subject": localizeSubject(iss.Subject, rawPub.Language), "created_at": iss.CreatedAt},
-		"body_md":     md, "gated": !unlocked, "subscribed": active,
+		"body_md":     md, "gated": !unlocked, "subscribed": active || keyValid,
 		"reader":        map[string]string{"name": demoReaderName},
 		"paid_sections": orEmpty(paidSectionTitles(iss, pub)),
 		// price on the reader page (KLOX-66): the gated card sells the
 		// subscription with the creator's price and the paid sections
-		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": localizePrice(rawPub.Paywall.Price, rawPub.Language)},
+		// test_mode/simulated label the checkout step before the reader
+		// pays (KLOX-13): dev-key checkouts carry "no real charge", the
+		// fake fallback is labeled simulated.
+		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": localizePrice(rawPub.Paywall.Price, rawPub.Language),
+			"test_mode": s.payProvider().TestMode(), "simulated": s.payProvider().Name() == payments.FakeName},
 	})
 }
 

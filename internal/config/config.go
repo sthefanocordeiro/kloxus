@@ -78,8 +78,13 @@ type Config struct {
 	// the paid_actions ledger like the §7.3 AI counters.
 	ScrapesPerDay int
 	AbacatePayKey string
-	PublicURL       string
-	WebhookSecret   string
+	// AbacatePayWebhookSecret verifies /webhooks/abacatepay deliveries:
+	// the dashboard sends it as X-Webhook-Secret / ?webhookSecret=
+	// (KLOX-13). Empty fails the endpoint closed like the other
+	// receivers.
+	AbacatePayWebhookSecret string
+	PublicURL               string
+	WebhookSecret           string
 	// ResendWebhookSecret verifies Svix signatures on /webhooks/resend.
 	ResendWebhookSecret string
 	// EmailDailyCap bounds real sends across all workspaces per UTC day
@@ -91,6 +96,10 @@ type Config struct {
 	// Ingest governs the global source scheduler (D29). IngestEnabled
 	// starts the poll loop (real mode defaults it on, demo off).
 	IngestEnabled bool
+	// DailyJournalEnabled polls the Daily Journal public API — the
+	// primary source since KLOX-93. On by default;
+	// KLOXUS_INGEST_DAILY_JOURNAL=0 opts out (RSS stays as fallback).
+	DailyJournalEnabled bool
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
@@ -134,6 +143,7 @@ func Load() (*Config, error) {
 		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
 		ScrapesPerDay:   getint("KLOXUS_SCRAPES_PER_DAY", 5),
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
+		AbacatePayWebhookSecret: os.Getenv("ABACATEPAY_WEBHOOK_SECRET"),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
 		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),
@@ -170,6 +180,12 @@ func Load() (*Config, error) {
 	cfg.IngestEnabled = cfg.Mode == "real"
 	if v := os.Getenv("KLOXUS_INGEST"); v != "" {
 		cfg.IngestEnabled = v == "1" || v == "true" || v == "yes"
+	}
+	// Daily Journal is the primary source (KLOX-93) — on by default;
+	// KLOXUS_INGEST_DAILY_JOURNAL=0 falls back to RSS-only ingestion.
+	cfg.DailyJournalEnabled = true
+	if v := os.Getenv("KLOXUS_INGEST_DAILY_JOURNAL"); v != "" {
+		cfg.DailyJournalEnabled = v == "1" || v == "true" || v == "yes"
 	}
 	return cfg, nil
 }

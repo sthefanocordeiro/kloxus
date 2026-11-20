@@ -116,7 +116,9 @@ type UnenrichedItem struct {
 
 // UnenrichedItems lists up to limit article-kind items with no
 // enrichment row, newest first. Promo rows are already out by the
-// deterministic prefilter and never get an AI classification.
+// deterministic prefilter and never get an AI classification. Rows
+// carrying only a 'local-%' (deterministic, KLOX-93) classification
+// still count as un-enriched — the AI sweep upgrades them in place.
 func (p *Pool) UnenrichedItems(ctx context.Context, limit int) ([]UnenrichedItem, error) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT it.id, it.title,
@@ -125,7 +127,7 @@ func (p *Pool) UnenrichedItems(ctx context.Context, limit int) ([]UnenrichedItem
 		FROM items it
 		LEFT JOIN sources s ON s.id = it.source_id
 		LEFT JOIN source_catalog c ON c.id = it.catalog_id
-		LEFT JOIN item_enrichment e ON e.item_id = it.id
+		LEFT JOIN item_enrichment e ON e.item_id = it.id AND e.model NOT LIKE 'local-%'
 		WHERE e.item_id IS NULL AND it.kind = 'article'
 		ORDER BY it.fetched_at DESC, it.id DESC
 		LIMIT $1`, limit)
