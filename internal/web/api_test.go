@@ -1044,10 +1044,26 @@ func TestAPIOnboarding(t *testing.T) {
 		t.Fatal("proposal has no sections")
 	}
 
-	// pasted material is live-only in demo mode
-	if code := apiErrCode(t, apiCall(t, srv, "POST", "/api/v1/publications/propose",
-		map[string]any{"material": "https://example.com/issue"})); code != "live_only" {
-		t.Fatalf("propose = %q, want live_only", code)
+	// a pasted URL goes through the demo's simulated scraper and comes
+	// back as a labeled, reviewable proposal (KLOX-99)
+	rr = apiCall(t, srv, "POST", "/api/v1/publications/propose",
+		map[string]any{"material": "https://example.com/issue"})
+	if rr.Code != 200 {
+		t.Fatalf("propose = %d: %s", rr.Code, shortBody(rr))
+	}
+	pbody := apiJSON(t, rr)
+	linkProp, _ := pbody["proposal"].(map[string]any)
+	if linkProp["name"] != "Example" {
+		t.Fatalf("propose proposal = %v", pbody["proposal"])
+	}
+	if secs, _ := linkProp["sections"].([]any); len(secs) == 0 {
+		t.Fatal("propose proposal has no sections")
+	}
+	if srcs, _ := linkProp["sources"].([]any); len(srcs) != 0 {
+		t.Fatalf("pasted URL must not become an offered source: %v", srcs)
+	}
+	if sc, _ := pbody["scrape"].(map[string]any); sc["simulated"] != true {
+		t.Fatalf("scrape = %v, want the labeled simulated provider", pbody["scrape"])
 	}
 
 	// create — the blocks become a custom publication
