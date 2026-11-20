@@ -133,8 +133,18 @@ workspace-free, so every citation opens an original inside the demo.
 ```
 
 ### `POST /api/v1/publications/propose`
-`{"material": "https://… or pasted text"}` — turns pasted material into a
-proposal. Demo mode: `422 live_only` (only the sample is offered).
+`{"material": "https://…"}` — KLOX-99 "cole um link": scrapes the pasted
+newsletter/blog URL through the configured provider (Firecrawl in real
+mode, the offline fake in demo) and deterministically proposes the
+publication definition for review — `proposal` has the same shape as
+`GET /proposal` (with empty `sources`: the pasted URL feeds the template
+only, never the source catalog) and `scrape` reports what the provider
+extracted (`url`, `title`, `provider`, `simulated`, `words`, `warnings`
+— `thin_content`/`generic_sections`). Errors: `400 invalid_url`,
+`503 scrape_unavailable` (no provider configured), `429 scrape_cap`
+(`KLOXUS_SCRAPES_PER_DAY`, default 5 — the paid_actions ledger counts
+every attempt), `502 scrape_failed`, `422 scrape_blocked` (the page gave
+almost no readable text — paywall, sign-in or script-heavy).
 
 ### `POST /api/v1/publications` → `201`
 Creates a publication from the (possibly edited) proposal blocks.
