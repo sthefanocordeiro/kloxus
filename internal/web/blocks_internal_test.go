@@ -270,6 +270,67 @@ func TestItemMarkerIndexSkipsHeadlineComments(t *testing.T) {
 	}
 }
 
+// Template header blocks materialize before the first `##` (KLOX-72):
+// they parse into an untitled leading section so the composer addresses
+// them like any other block — (section="", index). The `#` title line
+// itself must not leave an empty section behind.
+func TestLeadingBlocksLandInUntitledSection(t *testing.T) {
+	body := "# Pub — Issue 1\n\n" +
+		"![Banner](/m/12-ab34)\n\n" +
+		"> Editor's note.\n\n" +
+		"#### Also\n\n" +
+		"## Top\n\n" +
+		"### Story one <!-- item 1 -->\n\n" +
+		"A fact [1].\n"
+	doc := testDoc(t, body)
+	if len(doc.Sections) != 2 {
+		t.Fatalf("sections = %d, want 2 (untitled + Top)", len(doc.Sections))
+	}
+	lead := doc.Sections[0]
+	if lead.Title != "" {
+		t.Fatalf("leading section title = %q, want \"\"", lead.Title)
+	}
+	if got, want := kinds(lead.Blocks), []string{"image", "text", "heading"}; len(got) != 3 ||
+		got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("leading blocks = %v, want %v", got, want)
+	}
+	if lead.Blocks[0].URL != "/m/12-ab34" || lead.Blocks[1].Text != "Editor's note." ||
+		lead.Blocks[2].Text != "Also" {
+		t.Fatalf("leading block contents = %+v", lead.Blocks)
+	}
+	if doc.Sections[1].Title != "Top" || len(doc.Sections[1].Items) != 1 {
+		t.Fatalf("named section = %+v", doc.Sections[1])
+	}
+}
+
+// No template header blocks: the `#` title line is structural noise —
+// the document must not grow an empty leading section.
+func TestNoLeadingSectionWithoutBlocks(t *testing.T) {
+	body := "# Pub — Issue 1\n\n## Top\n\n" +
+		"### Story one <!-- item 1 -->\n\n" +
+		"A fact [1].\n"
+	doc := testDoc(t, body)
+	if len(doc.Sections) != 1 || doc.Sections[0].Title != "Top" {
+		t.Fatalf("sections = %+v, want [Top]", doc.Sections)
+	}
+}
+
+// An embed fence before the first `##` opens an embed block in the
+// untitled leading section — still re-sanitized on read (KLOX-72).
+func TestLeadingEmbedBlock(t *testing.T) {
+	body := "# Pub — Issue 1\n\n" +
+		"<klox-embed>\n<p>promo</p><script>x</script>\n</klox-embed>\n\n" +
+		"## Top\n\n"
+	doc := testDoc(t, body)
+	if len(doc.Sections) != 2 || doc.Sections[0].Title != "" {
+		t.Fatalf("sections = %+v", doc.Sections)
+	}
+	blocks := doc.Sections[0].Blocks
+	if len(blocks) != 1 || blocks[0].Kind != "embed" || strings.Contains(blocks[0].Text, "script") {
+		t.Fatalf("leading embed = %+v", blocks)
+	}
+}
+
 // Author text that reaches the sentence write paths may not carry
 // document markup — a newline or a fence would splice raw lines into
 // the stored body (KLOX-66 D3).

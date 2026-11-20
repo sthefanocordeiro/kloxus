@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
@@ -1551,28 +1552,61 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 			b.WriteString(strings.Join(parts, " · ") + "\n\n")
 		}
 	}
-	for _, sec := range sectionOrder {
-		list, ok := bySection[sec]
-		if !ok {
-			continue
+	// The newsletter's stored template (KLOX-72) arranges the edition:
+	// fixed blocks are copied in verbatim, "section" slots emit their
+	// `##` heading plus this week's pautas — a slot keeps its place
+	// even when the section has no items yet, so the edition opens
+	// already shaped like the template. Sections the template does
+	// not name fall back to the legacy tail order.
+	emitted := map[string]bool{}
+	writeSection := func(sec string, forceHeading bool) {
+		list := bySection[sec]
+		if emitted[sec] || (!forceHeading && len(list) == 0) {
+			return
 		}
 		fmt.Fprintf(&b, "## %s\n\n", oneLine(sec))
 		for _, e := range list {
 			writeItem(e)
 		}
+		emitted[sec] = true
 	}
-	for sec, list := range bySection {
-		found := false
-		for _, s := range sectionOrder {
-			if s == sec {
-				found = true
+	inSnapshot := map[string]bool{}
+	for _, sec := range sectionOrder {
+		inSnapshot[sec] = true
+	}
+	// needsEndItem mirrors the composer's boundary rule: a divider,
+	// link, image or text block landing right after an item would fold
+	// into that item's span without the `<!-- /item -->` marker —
+	// heading and embed blocks close an item on their own.
+	needsEndItem := map[string]bool{"divider": true, "link": true, "image": true, "text": true}
+	fixedAfterItem := false
+	writeFixed := func(kind, line string) {
+		if fixedAfterItem && needsEndItem[kind] {
+			b.WriteString("<!-- /item -->\n\n")
+		}
+		b.WriteString(line + "\n\n")
+		fixedAfterItem = false
+	}
+	for _, tb := range pub.Template {
+		switch tb.Kind {
+		case "section":
+			if !inSnapshot[tb.Section] || emitted[tb.Section] {
+				continue
+			}
+			writeSection(tb.Section, true)
+			fixedAfterItem = len(bySection[tb.Section]) > 0
+		default:
+			if line, ok := delivery.BlockLine(tb.Kind, tb.Text, tb.URL); ok {
+				writeFixed(tb.Kind, line)
 			}
 		}
-		if !found {
-			fmt.Fprintf(&b, "## %s\n\n", oneLine(sec))
-			for _, e := range list {
-				writeItem(e)
-			}
+	}
+	for _, sec := range sectionOrder {
+		writeSection(sec, false)
+	}
+	for sec, list := range bySection {
+		if !emitted[sec] && len(list) > 0 {
+			writeSection(sec, false)
 		}
 	}
 	return b.String()

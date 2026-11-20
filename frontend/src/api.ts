@@ -287,6 +287,22 @@ export interface StdMessage {
   body: string;
 }
 
+// One entry in the newsletter's default edition template (KLOX-72): a
+// fixed composer block copied into every new edition, or a "section"
+// slot that materializes the week's pautas of that section. Same
+// kind/text/url shape as the composer blocks.
+export interface TemplateBlock {
+  kind: "section" | "heading" | "divider" | "link" | "image" | "embed" | "text";
+  text?: string;
+  url?: string;
+  section?: string; // kind=section → section title
+}
+
+export interface Template {
+  blocks: TemplateBlock[];
+  version: string;
+}
+
 export interface Coverage {
   ok: number;
   cited: number;
@@ -524,6 +540,17 @@ export const api = {
     request<{ message: StdMessage }>("POST", `/api/v1/publications/${pubID}/messages`, body).then((r) => r.message),
   messageDelete: (pubID: number, mid: number) =>
     request<void>("DELETE", `/api/v1/publications/${pubID}/messages/${mid}`),
+  // newsletter template (KLOX-72): the default block layout every new
+  // edition materializes — saves carry the version like document ops
+  template: (pubID: number) =>
+    request<{ template: Template }>("GET", `/api/v1/publications/${pubID}/template`).then((r) => r.template),
+  saveTemplate: (pubID: number, blocks: TemplateBlock[], version: string) =>
+    request<{ template: Template }>("PUT", `/api/v1/publications/${pubID}/template`, { blocks, version }).then((r) => r.template),
+  // template image upload — same JSON base64 contract as the issue's,
+  // scoped to the publication since no edition exists yet
+  uploadPubMedia: (pubID: number, body: { content_type: string; data_b64: string; name: string }) =>
+    request<{ media: { id: number; url: string; content_type: string; bytes: number } }>(
+      "POST", `/api/v1/publications/${pubID}/media`, body),
   approve: (issueID: number) =>
     request<{ issue: IssueSummary; receipt: ApprovalReceipt }>("POST", `/api/v1/issues/${issueID}/approve`, {}),
   send: (issueID: number, audience: "test" | "readers", when: "now" | "schedule" = "now", to?: string, at?: string) =>

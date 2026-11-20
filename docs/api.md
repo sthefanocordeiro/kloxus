@@ -582,6 +582,48 @@ moves with its whole story body.
 block also marks the issue item `removed` (it resurfaces in
 suggestions) and drops its sentence flags.
 
+## Newsletter template (KLOX-72)
+
+The publication's default edition layout is an ordered block list on
+the same vocabulary as the composer, plus `{"kind": "section",
+"section": "O destaque"}` slots. Edition creation materializes it:
+fixed blocks copy into the stored body verbatim, a `section` slot
+emits that section's `##` heading and the week's items (the heading
+keeps its place even with no items), and a `divider`/`link`/`image`/
+`text` landing right after an item is written behind an
+`<!-- /item -->` boundary. Sections the template never names fall back
+to the stored section order at the tail; sections the template names
+but the snapshot no longer has are skipped. Changes apply to editions
+created after the save — in-progress editions keep the blocks their
+body already materialized, and no edition edit writes back. Template
+header blocks (before the first `##`) parse into an untitled leading
+section the composer addresses as `section: ""`.
+
+### `GET /api/v1/publications/{id}/template`
+```json
+{"template": {"version": "9f1c04ab22dd77ee",
+              "blocks": [{"kind": "section", "section": "O destaque"}, …]}}
+```
+Until the first save the effective template is one `section` slot per
+configured section — which materializes exactly like the legacy
+layout. `version` is a hash of the stored list, shaped like the
+document version.
+
+### `PUT /api/v1/publications/{id}/template`
+`{"blocks": […], "version": "…"}` — max 100 blocks; each entry
+validates against the same `blockLine` rules the composer insert path
+applies (`400 validation` otherwise: `section` slots need a title,
+fixed kinds need renderable content, embeds store sanitized). A stale
+or missing `version`, or a concurrent save, answers `409 conflict`;
+the response carries the saved blocks and the rotated `version`.
+
+### `POST /api/v1/publications/{id}/media`
+Same base64 JSON contract as `POST /api/v1/issues/{id}/media`
+(`content_type`, `data_b64`, `name`) scoped to the publication — the
+template editor attaches banner art before any edition exists. The
+media row is publication-scoped either way and serves publicly at
+`/m/{id}-{token}`.
+
 ## Readiness / approve / send
 
 ### `GET /api/v1/issues/{id}/readiness`

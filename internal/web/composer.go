@@ -34,6 +34,28 @@ var mediaTypes = map[string][]byte{
 // multipart. Bytes are validated against the declared type's magic
 // prefix, never trusted from the header alone.
 func (s *Server) apiMediaUpload(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.issue(r)
+	if err != nil {
+		apiErr(w, 404, "not_found", "issue not found")
+		return
+	}
+	s.saveMediaUpload(w, r, iss.PublicationID)
+}
+
+// apiPubMediaUpload is the same upload scoped to a publication instead
+// of an issue — the template editor (KLOX-72) attaches banner art
+// before any edition exists. The media row is publication-scoped
+// either way.
+func (s *Server) apiPubMediaUpload(w http.ResponseWriter, r *http.Request) {
+	pub, err := s.pub(r)
+	if err != nil {
+		apiErr(w, 404, "not_found", "publication not found")
+		return
+	}
+	s.saveMediaUpload(w, r, pub.ID)
+}
+
+func (s *Server) saveMediaUpload(w http.ResponseWriter, r *http.Request, pubID int64) {
 	var in struct {
 		ContentType string `json:"content_type"`
 		DataB64     string `json:"data_b64"`
@@ -61,15 +83,10 @@ func (s *Server) apiMediaUpload(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "file content does not match its declared type")
 		return
 	}
-	iss, err := s.issue(r)
-	if err != nil {
-		apiErr(w, 404, "not_found", "issue not found")
-		return
-	}
 	tok := make([]byte, 8)
 	rand.Read(tok)
 	token := hex.EncodeToString(tok)
-	id, err := db(r).SaveMedia(r.Context(), iss.PublicationID, token, in.ContentType, data)
+	id, err := db(r).SaveMedia(r.Context(), pubID, token, in.ContentType, data)
 	if apiDBErr(w, r, err, "media") {
 		return
 	}

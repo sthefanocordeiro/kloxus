@@ -8,6 +8,7 @@ import {
   Inbox,
   Layers,
   LayoutGrid,
+  LayoutTemplate,
   Newspaper,
   Plus,
   Rss,
@@ -54,6 +55,7 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
       readers: [t.nav.readers, "readers"],
       sections: [t.nav.sections, "sections"],
       settings: [t.nav.settings, "settings"],
+      template: [t.nav.template, "more"],
       outbox: [t.outbox, "more"],
       guide: [t.guide.title, "more"],
     };
@@ -345,6 +347,7 @@ function MoreMenu({ pubBase }: { pubBase: string }) {
   const links = [
     { to: `${pubBase}/sources`, label: t.sources, icon: Rss },
     { to: `${pubBase}/sections`, label: t.nav.sections, icon: LayoutGrid },
+    { to: `${pubBase}/template`, label: t.nav.template, icon: LayoutTemplate },
     { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings },
     { to: `${pubBase}/guide`, label: t.guide.title, icon: BookOpen },
     { to: `${pubBase}/outbox`, label: t.outbox, icon: Inbox },

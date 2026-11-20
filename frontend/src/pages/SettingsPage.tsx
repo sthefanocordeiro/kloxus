@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { BookOpen, Inbox } from "lucide-react";
+import { BookOpen, Inbox, LayoutTemplate } from "lucide-react";
 import { api, type Publication } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
@@ -86,6 +86,10 @@ export function SettingsPage() {
       </Card>
 
       <Card className="flex flex-wrap gap-4 p-5">
+        <Link to={`/publications/${p.id}/template`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
+          <LayoutTemplate size={15} aria-hidden />
+          {t.templatePage.title}
+        </Link>
         <Link to={`/publications/${p.id}/guide`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
           <BookOpen size={15} aria-hidden />
           {t.settingsPage.guideLink}

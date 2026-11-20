@@ -564,7 +564,7 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			finishItem(pos)
 			if sec == nil {
 				doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"},
-					Items: []docItem{}, Blocks: []docBlock{}, spanStart: -1, spanEnd: -1})
+					Items: []docItem{}, Blocks: []docBlock{}, spanStart: 0, spanEnd: -1})
 				sec = &doc.Sections[len(doc.Sections)-1]
 			}
 			ref, _ := strconv.Atoi(m[2])
@@ -626,7 +626,21 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 		// image, embed and author text live between items. Inside an
 		// item nothing changes — `> ` stays an interpretation sentence
 		// and other marks are folded into the item's span as before.
-		if sec != nil && item == nil {
+		// Before the first `##` they land in the untitled leading
+		// section (KLOX-72) — template header blocks like the banner
+		// stay ordinary composer blocks addressed as (section="", i).
+		if item == nil {
+			// The untitled leading section (KLOX-72) is created lazily —
+			// only when the line actually opens a fence or parses as a
+			// block, so the `#` title line and structural noise before
+			// the first `##` never leave an empty section behind.
+			leadSection := func() {
+				if sec == nil {
+					doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"},
+						Items: []docItem{}, Blocks: []docBlock{}, spanStart: 0, spanEnd: -1})
+					sec = &doc.Sections[len(doc.Sections)-1]
+				}
+			}
 			if t == delivery.EmbedFenceOpen {
 				// multi-line embed block: sanitized HTML lives between
 				// the fence lines. An unclosed fence is stray markup —
@@ -650,6 +664,7 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 					// body past the write path (legacy bodies, a
 					// bypassed guard) is served sanitized too, so raw
 					// markup never reaches the composer canvas
+					leadSection()
 					sec.Blocks = append(sec.Blocks, docBlock{Kind: "embed",
 						Text:      delivery.SanitizeEmbed(strings.Join(inner, "\n")),
 						spanStart: pos, spanEnd: cur + len(lines[li])})
@@ -662,6 +677,7 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			}
 			blk, isBlock := parseBlockLine(t)
 			if isBlock {
+				leadSection()
 				if blk.Kind == "text" && wasText && len(sec.Blocks) > 0 &&
 					sec.Blocks[len(sec.Blocks)-1].Kind == "text" {
 					// contiguous `> ` lines are one multi-paragraph
