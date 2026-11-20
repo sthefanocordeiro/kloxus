@@ -74,8 +74,13 @@ type Config struct {
 	FakeResendURL   string
 	FirecrawlAPIKey string
 	AbacatePayKey   string
-	PublicURL       string
-	WebhookSecret   string
+	// AbacatePayWebhookSecret verifies /webhooks/abacatepay deliveries:
+	// the dashboard sends it as X-Webhook-Secret / ?webhookSecret=
+	// (KLOX-13). Empty fails the endpoint closed like the other
+	// receivers.
+	AbacatePayWebhookSecret string
+	PublicURL               string
+	WebhookSecret           string
 	// ResendWebhookSecret verifies Svix signatures on /webhooks/resend.
 	ResendWebhookSecret string
 	// EmailDailyCap bounds real sends across all workspaces per UTC day
@@ -129,6 +134,7 @@ func Load() (*Config, error) {
 		FakeResendURL:   os.Getenv("KLOXUS_FAKE_RESEND_URL"),
 		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
+		AbacatePayWebhookSecret: os.Getenv("ABACATEPAY_WEBHOOK_SECRET"),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
 		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),

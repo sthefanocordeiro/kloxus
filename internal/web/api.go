@@ -35,6 +35,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/payments"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -3997,13 +3998,17 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	rid, _ := db(r).UpsertReader(ctx, pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := db(r).HasActiveSubscription(ctx, rid)
 	key := r.URL.Query().Get("key")
+	keyValid := false
 	if key != "" {
-		if mrid, err := db(r).ReaderByMagicToken(ctx, pub.ID, key); err == nil && mrid == rid {
-			active = true
+		// The token is the bearer credential a paying reader's magic
+		// link carries (KLOX-13) — any active subscriber's token
+		// unlocks, not only the demo reader's.
+		if _, err := db(r).ReaderByMagicToken(ctx, pub.ID, key); err == nil {
+			keyValid = true
 		}
 	}
 	forceFree := r.URL.Query().Get("view") == "free"
-	unlocked := active && !forceFree
+	unlocked := (active || keyValid) && !forceFree
 	aiUsed, _ := db(r).IssueUsedAI(ctx, iss.ID)
 	md := delivery.ReaderBody(iss, pub, s.publicBase(r), aiUsed)
 	if !unlocked {
@@ -4013,12 +4018,16 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{
 		"publication": map[string]any{"name": rawPub.Name, "slug": rawPub.Slug, "language": rawPub.Language},
 		"issue":       map[string]any{"number": iss.Number, "subject": localizeSubject(iss.Subject, rawPub.Language), "created_at": iss.CreatedAt},
-		"body_md":     md, "gated": !unlocked, "subscribed": active,
+		"body_md":     md, "gated": !unlocked, "subscribed": active || keyValid,
 		"reader":        map[string]string{"name": demoReaderName},
 		"paid_sections": orEmpty(paidSectionTitles(iss, pub)),
 		// price on the reader page (KLOX-66): the gated card sells the
 		// subscription with the creator's price and the paid sections
-		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": localizePrice(rawPub.Paywall.Price, rawPub.Language)},
+		// test_mode/simulated label the checkout step before the reader
+		// pays (KLOX-13): dev-key checkouts carry "no real charge", the
+		// fake fallback is labeled simulated.
+		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": localizePrice(rawPub.Paywall.Price, rawPub.Language),
+			"test_mode": s.payProvider().TestMode(), "simulated": s.payProvider().Name() == payments.FakeName},
 	})
 }
 

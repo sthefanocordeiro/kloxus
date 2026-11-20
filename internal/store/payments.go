@@ -41,11 +41,12 @@ func scanPayment(row *sql.Row) (*Payment, error) {
 }
 
 // CreatePayment opens a checkout row in pending state.
-func (db *DB) CreatePayment(ctx context.Context, pubID, readerID int64, ref, provider string, amountCents int) error {
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO payments (workspace_id, publication_id, reader_id, ref, provider, amount_cents) VALUES ($1,$2,$3,$4,$5,$6)`,
-		db.ws, pubID, readerID, ref, provider, amountCents)
-	return err
+func (db *DB) CreatePayment(ctx context.Context, pubID, readerID int64, ref, provider string, amountCents int) (int64, error) {
+	var id int64
+	err := db.QueryRowContext(ctx,
+		`INSERT INTO payments (workspace_id, publication_id, reader_id, ref, provider, amount_cents) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+		db.ws, pubID, readerID, ref, provider, amountCents).Scan(&id)
+	return id, err
 }
 
 // SetPaymentCheckout records the provider billing id + hosted URL after
@@ -64,6 +65,23 @@ func (db *DB) PaymentByRef(ctx context.Context, pubID int64, ref string) (*Payme
 	return scanPayment(db.QueryRowContext(ctx,
 		`SELECT `+paymentCols+` FROM payments WHERE workspace_id = $1 AND ref = $2 AND publication_id = $3`,
 		db.ws, ref, pubID))
+}
+
+// PaymentByProviderRef resolves a provider billing id inside this
+// workspace — the local-mode half of the webhook lookup (hosted mode
+// scans every workspace through Pool.FindPaymentByProviderRef).
+func (db *DB) PaymentByProviderRef(ctx context.Context, provider, providerRef string) (*Payment, error) {
+	return scanPayment(db.QueryRowContext(ctx,
+		`SELECT `+paymentCols+` FROM payments WHERE workspace_id = $1 AND provider = $2 AND provider_ref = $3`,
+		db.ws, provider, providerRef))
+}
+
+// PaymentByRefUnscoped resolves our local ref without the publication
+// pin — the webhook fallback when the event carries only externalId.
+func (db *DB) PaymentByRefUnscoped(ctx context.Context, ref string) (*Payment, error) {
+	return scanPayment(db.QueryRowContext(ctx,
+		`SELECT `+paymentCols+` FROM payments WHERE workspace_id = $1 AND ref = $2`,
+		db.ws, ref))
 }
 
 // PendingPaymentForReader returns the reader's still-payable checkout
@@ -145,4 +163,32 @@ func (db *DB) TouchPaymentPoll(ctx context.Context, id int64, at string) error {
 	_, err := db.ExecContext(ctx,
 		`UPDATE payments SET last_polled_at = $1 WHERE id = $2 AND workspace_id = $3`, at, id, db.ws)
 	return err
+}
+
+// ReaderByID returns the reader row the grant path needs — the access
+// email's recipient — by id (sql.ErrNoRows when unknown).
+func (db *DB) ReaderByID(ctx context.Context, readerID int64) (*Reader, error) {
+	var r Reader
+	err := db.QueryRowContext(ctx,
+		`SELECT id, email, name FROM readers WHERE workspace_id = $1 AND id = $2`,
+		db.ws, readerID).Scan(&r.ID, &r.Email, &r.Name)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// SubscriptionToken returns the active subscription's magic-link token —
+// the status endpoint re-reads it to re-serve the access link after the
+// grant already fired (webhook won the race, or the reader reopened the
+// return page). Empty when there is no active token.
+func (db *DB) SubscriptionToken(ctx context.Context, readerID int64) (string, error) {
+	var tok string
+	err := db.QueryRowContext(ctx,
+		`SELECT magic_token FROM subscriptions WHERE workspace_id = $1 AND reader_id = $2 AND status = 'active'`,
+		db.ws, readerID).Scan(&tok)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return tok, err
 }

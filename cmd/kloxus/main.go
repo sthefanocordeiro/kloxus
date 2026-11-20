@@ -26,6 +26,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/ingest"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/payments"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
@@ -281,9 +282,16 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	} else {
 		wsm = workspace.OpenLocal(db, seed)
 	}
+	var pay payments.Provider
+	if cfg.AbacatePayKey != "" {
+		// The one Kloxus test-mode key (D34); unset means the fake
+		// provider serves the checkout and the UI labels it simulated.
+		pay = payments.AbacatePay{APIKey: cfg.AbacatePayKey}
+	}
 	srv := web.New(web.Deps{
 		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider, Guard: guard,
 		Monitor: monitor, Mailer: mailer, Seed: seed, Pool: pool,
+		Pay: pay,
 	})
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
 	// one pooled conn stays warm so the remote pooler never reaps

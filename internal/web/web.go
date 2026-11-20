@@ -16,6 +16,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/payments"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
@@ -31,6 +32,10 @@ type Deps struct {
 	// admin kill switch (D32/D36). Nil disables the guards (tests).
 	Guard   *llm.Guard
 	Monitor sources.MonitorProvider
+	// Pay creates paid-section checkouts (AbacatePay in production).
+	// Nil means the fake provider: checkouts complete the grant path
+	// with no external call and the UI labels them simulated (KLOX-13).
+	Pay payments.Provider
 	// Mailer transports real email when configured (Resend in
 	// production, a fake in tests). Nil means outbox-only mode: every
 	// send is recorded in the workspace outbox and nothing leaves.
@@ -79,6 +84,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/admin/llm", s.apiAdminLLM)
 	m.HandleFunc("POST /api/v1/admin/llm", s.apiAdminLLMSet)
 	m.HandleFunc("POST /webhooks/resend", s.resendWebhook)
+	m.HandleFunc("POST /webhooks/abacatepay", s.abacatePayWebhook)
 	// Claim and opt-in links open in any browser — they carry their own
 	// proof (token/MAC) and must not mint a visitor workspace first.
 	// The trailing-slash twins keep a stray slash on an emailed link
@@ -103,6 +109,8 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
 	m.HandleFunc("POST /api/v1/workspace/claim", s.apiClaimStart)
 	m.HandleFunc("POST /api/v1/p/{slug}/subscribe", s.apiSubscribe)
+	m.HandleFunc("POST /api/v1/p/{slug}/checkout", s.apiPayCheckout)
+	m.HandleFunc("GET /api/v1/p/{slug}/pay/{ref}", s.apiPayStatus)
 	m.HandleFunc("GET /api/v1/sample", s.apiSample)
 	m.HandleFunc("GET /api/v1/proposal", s.apiProposal)
 	m.HandleFunc("POST /api/v1/publications", s.apiPublicationCreate)
