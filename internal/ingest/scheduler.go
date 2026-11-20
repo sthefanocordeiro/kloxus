@@ -7,6 +7,7 @@ package ingest
 // enforced by the throttler regardless of which source is next.
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -230,14 +231,32 @@ func (s *Scheduler) backfillDetails(ctx context.Context, cs *store.CatalogSource
 	if err != nil || len(slugs) == 0 {
 		return
 	}
-	var filled int
+	var filled, gone int
 	for _, slug := range slugs {
 		if ctx.Err() != nil {
 			return
 		}
 		it, err := s.Daily.Detail(ctx, slug)
 		if err != nil {
-			return // capped, limited, or transport — next poll resumes
+			var he *ErrHTTP
+			if errors.As(err, &he) && he.Permanent() {
+				// The detail endpoint refuses this slug for good —
+				// a removed/renamed story 404s every time. Mark it
+				// so it leaves the pending queue and keep filling the
+				// rest: one dead slug at the head must never starve
+				// every item behind it.
+				s.logf("daily-journal detail %s: %v — marked gone", slug, err)
+				_ = s.pool.DJMarkDetailFailed(ctx, cs.ID, slug)
+				gone++
+				continue
+			}
+			return // capped, limited, transport or 5xx — next poll resumes
+		}
+		if it.Slug != slug {
+			// A record that isn't this slug's (error payload decoded
+			// as 200) must not be stored — skip it, retried next pass.
+			s.logf("daily-journal detail %s: endpoint returned %q", slug, it.Slug)
+			continue
 		}
 		raw := s.Daily.ToCatalogItem(*it)
 		if _, _, err := s.pool.SaveDJItems(ctx, cs.ID, []store.CatalogItem{raw}); err != nil {
@@ -246,8 +265,12 @@ func (s *Scheduler) backfillDetails(ctx context.Context, cs *store.CatalogSource
 		}
 		filled++
 	}
-	if filled > 0 {
-		_ = s.pool.LogFetch(ctx, cs.ID, "ok", 200, filled, 0, "detail backfill")
+	if filled > 0 || gone > 0 {
+		detail := "detail backfill"
+		if gone > 0 {
+			detail = fmt.Sprintf("detail backfill, %d gone", gone)
+		}
+		_ = s.pool.LogFetch(ctx, cs.ID, "ok", 200, filled, 0, detail)
 	}
 }
 

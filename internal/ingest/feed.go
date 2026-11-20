@@ -45,6 +45,7 @@ type Store interface {
 	SaveCatalogItems(ctx context.Context, catalogID int64, raw []store.CatalogItem) (int, error)
 	SaveDJItems(ctx context.Context, catalogID int64, raw []store.CatalogItem) (added, changed int, err error)
 	DJPendingDetails(ctx context.Context, catalogID int64, limit int) ([]string, error)
+	DJMarkDetailFailed(ctx context.Context, catalogID int64, slug string) error
 	LogFetch(ctx context.Context, catalogID int64, status string, httpStatus, items, newItems int, detail string) error
 	PurgeOldBodies(ctx context.Context, olderThan time.Time) (int64, error)
 }

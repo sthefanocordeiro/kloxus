@@ -224,16 +224,21 @@ func (p *Pool) SaveCatalogItems(ctx context.Context, catalogID int64, raw []Cata
 // MergeDJDetail preserves a stored detail fetch when a newer list
 // payload arrives without one: the aggregate body and its detail-only
 // meta keys survive until the story's updated_at moves — which marks
-// the revision stale and re-queues a detail fetch. Exported so the
-// ingest test fake mirrors the store's merge semantics.
+// the revision stale and re-queues a detail fetch. A permanently
+// failed fetch (detail_fetched='gone') survives the same way so a dead
+// slug is not re-requested on every poll; a revision re-queues it.
+// Exported so the ingest test fake mirrors the store's merge
+// semantics.
 func MergeDJDetail(storedMeta map[string]any, storedText string, in *CatalogItem) {
-	df, _ := storedMeta["detail_fetched"].(bool)
-	if !df {
-		return
-	}
 	idf, _ := in.Meta["detail_fetched"].(bool)
 	if idf {
 		return // incoming IS a detail payload — it wins
+	}
+	stored := storedMeta["detail_fetched"]
+	hasDetail, _ := stored.(bool)
+	gone, _ := stored.(string)
+	if !hasDetail && gone != "gone" {
+		return // nothing stored to preserve
 	}
 	// A strictly-newer updated_at on the list side means the story was
 	// revised after our detail fetch — drop it and re-queue. The stored
@@ -247,6 +252,10 @@ func MergeDJDetail(storedMeta map[string]any, storedText string, in *CatalogItem
 		if e1 == nil && e0 == nil && t1.After(t0) {
 			return // revised — stored detail is stale
 		}
+	}
+	if gone == "gone" {
+		in.Meta["detail_fetched"] = "gone"
+		return
 	}
 	in.ContentText = storedText
 	// Detail-sourced fields are preserved as a set — updated_at and
@@ -372,15 +381,16 @@ func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogIt
 }
 
 // DJPendingDetails lists the catalog source's stored items that still
-// lack the detail-fetched body (meta.detail_fetched not set), newest
-// first — the Daily Journal detail backfill works this queue down
-// inside the daily request budget.
+// lack the detail-fetched body (meta.detail_fetched neither 'true' nor
+// 'gone' — the permanent-failure mark), newest first — the Daily
+// Journal detail backfill works this queue down inside the daily
+// request budget.
 func (p *Pool) DJPendingDetails(ctx context.Context, catalogID int64, limit int) ([]string, error) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT i.meta_json::jsonb ->> 'slug'
 		FROM items i
 		WHERE i.catalog_id = $1
-		  AND COALESCE(i.meta_json::jsonb ->> 'detail_fetched', '') <> 'true'
+		  AND COALESCE(i.meta_json::jsonb ->> 'detail_fetched', '') NOT IN ('true', 'gone')
 		ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
 		         i.id DESC
 		LIMIT $2`, catalogID, limit)
@@ -397,6 +407,19 @@ func (p *Pool) DJPendingDetails(ctx context.Context, catalogID int64, limit int)
 		out = append(out, slug)
 	}
 	return out, rows.Err()
+}
+
+// DJMarkDetailFailed takes a slug out of the pending-details queue
+// after a permanent (4xx) fetch failure — meta.detail_fetched='gone'
+// no longer matches the pending predicate. MergeDJDetail carries the
+// mark across list refreshes until the story is revised.
+func (p *Pool) DJMarkDetailFailed(ctx context.Context, catalogID int64, slug string) error {
+	_, err := p.db.ExecContext(ctx, `
+		UPDATE items
+		SET meta_json = (meta_json::jsonb || '{"detail_fetched":"gone"}'::jsonb)::text
+		WHERE catalog_id = $1 AND meta_json::jsonb ->> 'slug' = $2`,
+		catalogID, slug)
+	return err
 }
 
 // IsBlockedDomain reports whether the catalog marks a domain as

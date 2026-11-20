@@ -271,6 +271,75 @@ func TestDJSchedulerPollAndIdempotent(t *testing.T) {
 	}
 }
 
+// TestDJBackfillSkipsGoneDetails locks in the F1 fix: the newest
+// pending slug 404s on the detail endpoint. The backfill must mark it
+// gone and keep filling the rest of the queue — one dead slug can no
+// longer starve every item behind it on every poll.
+func TestDJBackfillSkipsGoneDetails(t *testing.T) {
+	var pixHits, anatelHits int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/public/news" {
+			fmt.Fprint(w, djListJSON)
+			return
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/pix-recorde"):
+			atomic.AddInt64(&pixHits, 1)
+			w.WriteHeader(404) // story removed upstream — permanently gone
+		case strings.HasSuffix(r.URL.Path, "/anatel-5g"):
+			atomic.AddInt64(&anatelHits, 1)
+			fmt.Fprint(w, `{"id":"dj-2","slug":"anatel-5g",
+			 "url":"https://dailyjournal.news/n/anatel-5g",
+			 "title":"Anatel publica regulamentação do 5G",
+			 "description":"Nova regra em vigor.",
+			 "published_at":"2026-11-20T09:00:00Z","updated_at":"2026-11-20T09:30:00Z",
+			 "categories":["technology","politics"],"topics":[],
+			 "source_count":2,"outlet_count":2,
+			 "body":"A Anatel publicou a regulamentação do 5G com novas regras para operadoras.",
+			 "bullets":["Novas regras"],"sources":[]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	fs := newFakeStore()
+	fs.cat = []store.CatalogSource{*djCatalogSource(srv.URL)}
+	s := NewScheduler(fs, "KloxusBot/1.0 (+test)", nil)
+	s.Daily = NewDailyJournal(Counter(fs, 9), srv.Client(), "ua", srv.URL)
+	s.PollOnce(context.Background())
+
+	// pix-recorde heads the pending queue and 404s; anatel-5g behind it
+	// must still be fetched and filled in the same pass.
+	var filled, gone int
+	for _, it := range fs.items[9] {
+		switch it.Meta["detail_fetched"] {
+		case true:
+			filled++
+		case "gone":
+			gone++
+		}
+	}
+	if filled != 1 || gone != 1 {
+		t.Fatalf("filled=%d gone=%d want 1,1", filled, gone)
+	}
+	if pixHits != 1 || anatelHits != 1 {
+		t.Fatalf("detail hits pix=%d anatel=%d want 1,1", pixHits, anatelHits)
+	}
+
+	// Next poll: the gone mark survives the list refresh (the story
+	// was not revised), so neither slug is requested again.
+	fs.entry(9).LastFetchAt = ""
+	s.PollOnce(context.Background())
+	if pixHits != 1 || anatelHits != 1 {
+		t.Fatalf("re-poll re-fetched details: pix=%d anatel=%d", pixHits, anatelHits)
+	}
+	if len(fs.items[9]) != 2 {
+		t.Fatalf("re-poll duplicated items: %d", len(fs.items[9]))
+	}
+}
+
 // TestDJSchedulerUnknownAPISlug: an api source with a slug we don't
 // own is skipped — no requests, no crash.
 func TestDJSchedulerUnknownAPISlug(t *testing.T) {

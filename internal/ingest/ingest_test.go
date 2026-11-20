@@ -146,7 +146,7 @@ func (f *fakeStore) DJPendingDetails(_ context.Context, id int64, limit int) ([]
 			break
 		}
 		v, _ := it.Meta["detail_fetched"]
-		if v == true || v == "true" {
+		if v == true || v == "true" || v == "gone" {
 			continue
 		}
 		if slug, _ := it.Meta["slug"].(string); slug != "" {
@@ -154,6 +154,17 @@ func (f *fakeStore) DJPendingDetails(_ context.Context, id int64, limit int) ([]
 		}
 	}
 	return out, nil
+}
+
+// DJMarkDetailFailed mirrors the store's meta merge: the slug's row
+// gets detail_fetched='gone' and leaves the pending queue.
+func (f *fakeStore) DJMarkDetailFailed(_ context.Context, id int64, slug string) error {
+	for i, it := range f.items[id] {
+		if s, _ := it.Meta["slug"].(string); s == slug {
+			f.items[id][i].Meta["detail_fetched"] = "gone"
+		}
+	}
+	return nil
 }
 
 func (f *fakeStore) LogFetch(_ context.Context, id int64, status string, httpStatus, items, newItems int, detail string) error {

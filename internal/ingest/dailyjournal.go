@@ -65,6 +65,17 @@ type ErrRateLimited struct{ RetryAfter time.Duration }
 
 func (e *ErrRateLimited) Error() string { return "HTTP 429 (rate limited)" }
 
+// ErrHTTP is a non-OK response other than 429 — the status tells the
+// caller whether the same request could ever succeed.
+type ErrHTTP struct{ Status int }
+
+func (e *ErrHTTP) Error() string { return fmt.Sprintf("HTTP %d", e.Status) }
+
+// Permanent reports whether retrying the identical request is futile:
+// 4xx means the story is gone or forbidden for good. 5xx is transient
+// — the next poll may find the endpoint healthy again.
+func (e *ErrHTTP) Permanent() bool { return e.Status >= 400 && e.Status < 500 }
+
 // ErrCapped reports that the daily request budget is spent; the
 // request was never made.
 var ErrCapped = fmt.Errorf("daily request cap reached (%d/day)", DailyAPIDailyCap)
@@ -168,11 +179,11 @@ func (d *DailyJournal) request(ctx context.Context, rawURL string, dst any) erro
 					continue
 				}
 			}
-			return fmt.Errorf("HTTP %d", res.StatusCode)
+			return &ErrHTTP{Status: res.StatusCode}
 		}
 		if res.StatusCode != http.StatusOK {
 			res.Body.Close()
-			return fmt.Errorf("HTTP %d", res.StatusCode)
+			return &ErrHTTP{Status: res.StatusCode}
 		}
 		err = json.NewDecoder(res.Body).Decode(dst)
 		res.Body.Close()

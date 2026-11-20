@@ -21,14 +21,24 @@ type ItemEmbedding struct {
 }
 
 // probeVector caches the pgvector probe per Pool — the extension is
-// either there at boot or it is not, so one lookup is enough.
+// either there at boot or it is not. Only a completed lookup caches:
+// a query that fails (cancelled context on the first call, a transient
+// connection drop) retries on the next call rather than permanently
+// disabling pgvector — a false negative would make SaveEmbeddings
+// insert the '[f,f,...]' text literal into a real vector column.
 func (p *Pool) probeVector(ctx context.Context) bool {
-	p.vectorOnce.Do(func() {
-		var n int
-		err := p.db.QueryRowContext(ctx,
-			`SELECT count(*) FROM pg_extension WHERE extname = 'vector'`).Scan(&n)
-		p.vectorOK = err == nil && n > 0
-	})
+	p.vectorMu.Lock()
+	defer p.vectorMu.Unlock()
+	if p.vectorDone {
+		return p.vectorOK
+	}
+	var n int
+	if err := p.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM pg_extension WHERE extname = 'vector'`).Scan(&n); err != nil {
+		return false
+	}
+	p.vectorOK = n > 0
+	p.vectorDone = true
 	return p.vectorOK
 }
 
