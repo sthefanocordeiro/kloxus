@@ -24,6 +24,9 @@ export interface NewsletterSection {
   items: number;
   commentary: string; // required | optional | none
   access: "all" | "subscribers";
+  // topic declares the pauta the section wants — keywords that steer
+  // which suggestions land here (KLOX-94); may be empty
+  topic?: string;
 }
 
 export interface Publication {
@@ -35,6 +38,9 @@ export interface Publication {
   topic: string;
   audience: string;
   editorial_line: string;
+  // reject_terms are the editorial line's no-go themes — the aderência
+  // ranking demotes matching stories and never auto-slots them (KLOX-94)
+  reject_terms?: string;
   tone: string;
   frequency: string;
   ai_disclosure: string;
@@ -166,6 +172,9 @@ export interface Candidate {
   summary?: string;
   /** KLOX-67: lineup card whose pauta body is still AI-written. */
   ai_draft?: boolean;
+  /** KLOX-94: bench story the newsletter's reject terms exclude — it
+      stays visible at the bench tail, never auto-slotted. */
+  rejected_editorial?: boolean;
 }
 
 export interface BoardSection {
@@ -368,6 +377,7 @@ export interface Proposal {
   topic: string;
   audience: string;
   editorial_line: string;
+  reject_terms?: string;
   tone: string;
   language: string;
   frequency: string;
@@ -638,8 +648,6 @@ export const api = {
   sourcePreview: (pubID: number | string, type: string, url: string) =>
     request<{ items: PreviewItem[]; note?: string }>(
       "GET", `/api/v1/publications/${pubID}/sources/preview?type=${type}&url=${encodeURIComponent(url)}`),
-  sourceAdd: (pubID: number | string, type: string, url: string, name?: string) =>
-    request<{ source: SourceRow }>("POST", `/api/v1/publications/${pubID}/sources`, { type, url, name }).then((r) => r.source),
   sourceConfirm: (pubID: number | string, include?: string[]) =>
     request<{ sources: SourceRow[] }>("POST", `/api/v1/publications/${pubID}/sources/confirm`, { include }).then((r) => r.sources),
   sourceDelete: (pubID: number | string, sid: number) =>

@@ -23,6 +23,7 @@ export function newSection(partial?: Partial<NewsletterSection>): NewsletterSect
     items: 3,
     commentary: "optional",
     access: "all",
+    topic: "",
     ...partial,
   };
 }
@@ -245,6 +246,19 @@ export function SectionBuilder({
                   <option value="subscribers">{t.builder.accesses.subscribers}</option>
                 </select>
               </label>
+
+              {/* the aderência hook (KLOX-94): the pauta this section
+                  wants, as keywords — suggestions rank toward it */}
+              <label className="block sm:col-span-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">{t.builder.topicLabel}</span>
+                <input
+                  value={s.topic ?? ""}
+                  onChange={(e) => update(i, { topic: e.target.value })}
+                  placeholder={t.builder.topicPlaceholder}
+                  className="mt-1 w-full rounded border border-line bg-paper px-2 py-2 text-sm outline-none focus:border-teal"
+                />
+                <p className="mt-1 text-sm text-muted">{t.builder.topicHint}</p>
+              </label>
             </div>
           </li>
         ))}
@@ -279,6 +293,7 @@ export function SectionBuilder({
                 {s.title || t.builder.namePlaceholder}
                 {s.access === "subscribers" && <span className="text-teal">· {t.builder.accesses.subscribers}</span>}
               </div>
+              {s.topic?.trim() && <p className="mt-0.5 truncate text-[11px] italic text-muted">“{s.topic.trim()}”</p>}
               {s.format === "links" ? (
                 <ul className="mt-1 space-y-1">
                   {Array.from({ length: s.items }).map((_, k) => (
