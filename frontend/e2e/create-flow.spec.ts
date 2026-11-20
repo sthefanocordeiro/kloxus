@@ -49,7 +49,9 @@ test("create flow: sample fields stay realistic and Voltar works", async ({ page
 
   // the sample's fields read realistic — no fictional place names
   await expect(page.getByLabel("Linha editorial")).not.toHaveValue(/Valdória/i);
-  await expect(page.getByLabel("Tema")).not.toHaveValue(/valdoriana/i);
+  // exact: KLOX-100 added the "Nunca pautar Temas separados" field — a
+  // substring match would resolve to two labels
+  await expect(page.getByLabel("Tema", { exact: true })).not.toHaveValue(/valdoriana/i);
 
   // Voltar leaves /new for the publications list — no dead controls
   await page.getByRole("link", { name: "Voltar para Publicações" }).click();
