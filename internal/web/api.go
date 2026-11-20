@@ -582,18 +582,31 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	// sender), "resend" (the real provider), "synthetic" (the loopback
 	// fake), "custom" (any other injected sender).
 	transport := "outbox"
+	// mail_webhook reports whether the app can verify Resend delivery
+	// events (RESEND_WEBHOOK_SECRET set); mail_stale_sent counts
+	// provider-accepted sends whose delivery event never arrived —
+	// together they are the posture a dead endpoint cannot fake
+	// (KLOX-98). Outbox mode has no webhook, so both stay inert.
+	mailWebhook := "n/a"
+	staleSent := 0
 	if s.liveMail() {
 		mail = "live"
 		transport = "custom"
 		if t, ok := s.d.Mailer.(interface{ Transport() string }); ok {
 			transport = t.Transport()
 		}
+		mailWebhook = "unconfigured"
+		if s.d.Cfg.ResendWebhookSecret != "" {
+			mailWebhook = "configured"
+		}
+		staleSent = s.staleSent(r.Context(), db(r))
 	}
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
 		"llm_mode": s.d.Cfg.LLMMode,
 		"claimed":  owner != "", "owner_email": owner, "mail": mail,
-		"mail_transport": transport,
+		"mail_transport": transport, "mail_webhook": mailWebhook,
+		"mail_stale_sent": staleSent,
 	})
 }
 

@@ -1155,3 +1155,73 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 		t.Fatalf("owner = %q %v", email, err)
 	}
 }
+
+// TestMailWebhookPosture (KLOX-98): /api/v1/workspace reports the
+// webhook posture — secret loaded vs not — and counts sends stuck at
+// 'sent' past the webhook window, the dead-endpoint signature; the
+// unsigned probe answers 401 vs 503 exactly as smoke.sh asserts.
+func TestMailWebhookPosture(t *testing.T) {
+	ctx := context.Background()
+
+	fake := &fakeSender{}
+	deps, db, _, _ := liveDeps(t, fake, nil)
+	srv := web.New(deps)
+	ws := apiJSON(t, apiCall(t, srv, "GET", "/api/v1/workspace", nil))
+	if ws["mail"] != "live" || ws["mail_webhook"] != "configured" || ws["mail_stale_sent"] != float64(0) {
+		t.Fatalf("fresh posture = %v", ws)
+	}
+	// an unsigned event on a configured route is rejected, not errored —
+	// proof the secret is loaded and the verifier is live
+	if rr := apiCall(t, srv, "POST", "/webhooks/resend", map[string]string{}); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unsigned probe = %d, want 401", rr.Code)
+	}
+
+	// a send the provider accepted sits at 'sent' until the webhook
+	// marks it — a fresh row is not stale
+	if rr := apiCall(t, srv, "POST", "/api/v1/workspace/claim", map[string]string{"email": "posture@x.dev"}); rr.Code != 200 {
+		t.Fatalf("claim = %d %s", rr.Code, shortBody(rr))
+	}
+	ws = apiJSON(t, apiCall(t, srv, "GET", "/api/v1/workspace", nil))
+	if ws["mail_stale_sent"] != float64(0) {
+		t.Fatalf("fresh send counted as stale: %v", ws)
+	}
+
+	// backdating past the webhook window surfaces the dead-endpoint
+	// signature; a delivered row clears it
+	if _, err := db.ExecContext(ctx,
+		`UPDATE outbox_emails SET created_at = $1 WHERE provider = 'resend'`,
+		store.TSUTC(time.Now().Add(-48*time.Hour))); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	ws = apiJSON(t, apiCall(t, srv, "GET", "/api/v1/workspace", nil))
+	if ws["mail_stale_sent"] != float64(1) {
+		t.Fatalf("mail_stale_sent = %v, want 1", ws)
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE outbox_emails SET status = 'delivered' WHERE provider = 'resend'`); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	ws = apiJSON(t, apiCall(t, srv, "GET", "/api/v1/workspace", nil))
+	if ws["mail_stale_sent"] != float64(0) {
+		t.Fatalf("delivered row still stale: %v", ws)
+	}
+
+	// secret missing → "unconfigured", and the same unsigned probe
+	// answers 503 — the dead-config signature smoke asserts on
+	deps2, _, _, _ := liveDeps(t, fake, func(c *config.Config) { c.ResendWebhookSecret = "" })
+	srv2 := web.New(deps2)
+	ws = apiJSON(t, apiCall(t, srv2, "GET", "/api/v1/workspace", nil))
+	if ws["mail_webhook"] != "unconfigured" {
+		t.Fatalf("secret-less posture = %v, want unconfigured", ws["mail_webhook"])
+	}
+	if rr := apiCall(t, srv2, "POST", "/webhooks/resend", map[string]string{}); rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("probe without secret = %d, want 503", rr.Code)
+	}
+
+	// outbox mode has no webhook at all — both fields stay inert
+	deps3, _, _, _ := liveDeps(t, nil, nil)
+	ws = apiJSON(t, apiCall(t, web.New(deps3), "GET", "/api/v1/workspace", nil))
+	if ws["mail"] != "outbox" || ws["mail_webhook"] != "n/a" || ws["mail_stale_sent"] != float64(0) {
+		t.Fatalf("outbox posture = %v", ws)
+	}
+}
