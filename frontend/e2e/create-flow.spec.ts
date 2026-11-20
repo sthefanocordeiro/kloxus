@@ -47,9 +47,11 @@ test("create flow: live paste option, realistic example, working Voltar", async 
 test("create flow: sample fields stay realistic and Voltar works", async ({ page }) => {
   await onboard(page);
 
-  // the sample's fields read realistic — no fictional place names
+  // the sample's fields read realistic — no fictional place names.
+  // exact: the KLOX-94 reject-terms field ("Nunca pautar — Temas
+  // separados") also matches a plain /Tema/ lookup
   await expect(page.getByLabel("Linha editorial")).not.toHaveValue(/Valdória/i);
-  await expect(page.getByLabel("Tema")).not.toHaveValue(/valdoriana/i);
+  await expect(page.getByLabel("Tema", { exact: true })).not.toHaveValue(/valdoriana/i);
 
   // Voltar leaves /new for the publications list — no dead controls
   await page.getByRole("link", { name: "Voltar para Publicações" }).click();
