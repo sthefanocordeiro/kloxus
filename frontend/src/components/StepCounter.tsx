@@ -11,11 +11,16 @@ export function StepCounter({
   steps,
   current,
   onStep,
+  navAhead = false,
   className,
 }: {
   steps: readonly string[];
   current: number; // 1-based index of the active step
   onStep?: (i: number) => void; // revisit a completed step (0-based)
+  // navAhead lets flows whose later steps are already reachable (the
+  // edition's Revisar e enviar) navigate forward too — without it only
+  // completed steps are buttons (KLOX-100).
+  navAhead?: boolean;
   className?: string;
 }) {
   const { t } = useT();
@@ -28,7 +33,7 @@ export function StepCounter({
           {steps.map((label, i) => {
             const done = i + 1 < current;
             const active = i + 1 === current;
-            const revisitable = done && !!onStep;
+            const navigable = !active && !!onStep && (done || navAhead);
             return (
               <li key={label} className="flex shrink-0 items-center gap-1.5">
                 {i > 0 && <span className="text-muted/40" aria-hidden>·</span>}
@@ -41,11 +46,14 @@ export function StepCounter({
                 >
                   {done ? <Check size={11} /> : i + 1}
                 </span>
-                {revisitable ? (
+                {navigable ? (
                   <button
                     type="button"
                     onClick={() => onStep(i)}
-                    className="hidden font-medium text-teal hover:underline sm:inline"
+                    className={cn(
+                      "hidden font-medium hover:underline sm:inline",
+                      done ? "text-teal" : "text-muted hover:text-ink",
+                    )}
                   >
                     {label}
                   </button>

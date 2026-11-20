@@ -723,9 +723,12 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                   </span>
                   <span className="text-[10px] text-muted">[{si + 1}]</span>
                 </div>
-                {!full && items.length > 0 && items.length < s.capacity && (
+                {!full && (
+                  // Honest shortfall (KLOX-100): open seats and the real
+                  // suggestion pool — never the seated count dressed up
+                  // as "suggestions for today".
                   <p className="mb-1.5 px-1 text-[11px] italic text-muted">
-                    {t.board.shortfall(items.length, sectionTitle(lang, s.title))}
+                    {t.board.shortfall(s.capacity - items.length, sectionTitle(lang, s.title), candsQ.data?.bench_total ?? benchAll.length)}
                   </p>
                 )}
                 <div className="space-y-2">
