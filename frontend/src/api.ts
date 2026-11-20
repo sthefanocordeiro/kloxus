@@ -350,6 +350,17 @@ export interface Sample {
   how_it_works: string[];
 }
 
+// What the propose scrape reports alongside the proposal (KLOX-99) —
+// the honest "what we extracted" summary the creator reviews.
+export interface ScrapeInfo {
+  url: string;
+  title: string;
+  provider: string;
+  simulated: boolean;
+  words: number;
+  warnings: string[];
+}
+
 // The proposal is the five editable blocks plus carried settings and the
 // sources offered next on the sources screen.
 export interface Proposal {
@@ -597,7 +608,7 @@ export const api = {
   sample: () => request<Sample>("GET", "/api/v1/sample"),
   proposal: () => request<{ proposal: Proposal }>("GET", "/api/v1/proposal").then((r) => r.proposal),
   propose: (material: string) =>
-    request<{ proposal: Proposal }>("POST", "/api/v1/publications/propose", { material }).then((r) => r.proposal),
+    request<{ proposal: Proposal; scrape: ScrapeInfo }>("POST", "/api/v1/publications/propose", { material }),
   createPublication: (p: Omit<Proposal, "sources">) =>
     request<{ publication: Publication }>("POST", "/api/v1/publications", p).then((r) => r.publication),
   updatePublication: (id: string | number, p: Partial<Omit<Proposal, "sources">>) =>

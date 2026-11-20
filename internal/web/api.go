@@ -963,25 +963,6 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// apiPropose turns pasted material into a proposal. In demo mode only the
-// sample newsletter is offered — pasted links/issues are refused with
-// live_only, matching the "available in live mode" UX.
-func (s *Server) apiPropose(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Material string `json:"material"`
-	}
-	if _, err := apiDecode(r, &in); err != nil {
-		apiErr(w, 400, "bad_json", "request body is not valid JSON")
-		return
-	}
-	if s.d.Cfg.Mode == "demo" {
-		apiErr(w, 422, "live_only",
-			"proposals from pasted material are available in live mode — the hosted demo offers the sample newsletter")
-		return
-	}
-	apiErr(w, 501, "not_implemented", "proposal extraction is not implemented")
-}
-
 // apiPublicationCreate stores a creator-made publication from the
 // (possibly edited) proposal blocks. Sources are added separately on the
 // sources screen.
