@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/embedding"
@@ -22,11 +22,16 @@ func TestSemanticSweepNilSafe(t *testing.T) {
 	}
 }
 
+// seedSeq makes each seeded external_id unique per call — a wall-clock
+// nonce can repeat across back-to-back calls on fast hosts (KLOX-93 QA
+// F2: UNIQUE (source_id, external_id) collisions under -count).
+var seedSeq atomic.Int64
+
 // seedItem inserts one workspace-scoped item row and returns its id.
 func seedItem(t *testing.T, db *store.DB, srcID int64, title, body, meta string) int64 {
 	t.Helper()
 	var id int64
-	ext := fmt.Sprintf("sem-%d", time.Now().UnixNano())
+	ext := fmt.Sprintf("sem-%d", seedSeq.Add(1))
 	if err := db.QueryRowContext(context.Background(),
 		`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text, kind, meta_json)
 		 VALUES ($1,$2,$3,$4,$5,$6,'article',$7) RETURNING id`,
