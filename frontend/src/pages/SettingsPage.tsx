@@ -70,6 +70,7 @@ export function SettingsPage() {
           <Field
             label={t.settingsPage.price}
             value={form.paywall.price}
+            placeholder={t.settingsPage.pricePlaceholder}
             onChange={(v) => {
               setForm({ ...form, paywall: { ...form.paywall, price: v } });
               setSaved(false);
@@ -130,8 +131,8 @@ export function SettingsPage() {
   );
 }
 
-function Field({ label, value, onChange, area }: {
-  label: string; value: string; onChange: (v: string) => void; area?: boolean;
+function Field({ label, value, onChange, area, placeholder }: {
+  label: string; value: string; onChange: (v: string) => void; area?: boolean; placeholder?: string;
 }) {
   return (
     <label className="mt-3 block first:mt-0">
@@ -146,6 +147,7 @@ function Field({ label, value, onChange, area }: {
       ) : (
         <input
           value={value}
+          placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
           className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
         />

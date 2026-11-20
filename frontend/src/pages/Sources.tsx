@@ -17,28 +17,15 @@ export function SourcesPage() {
   const [previews, setPreviews] = useState<Record<string, PreviewItem[] | "loading">>({});
   const [previewNote, setPreviewNote] = useState<Record<string, string>>({});
   const [sel, setSel] = useState<Record<string, boolean>>({});
-  const [ownURL, setOwnURL] = useState("");
-  const [ownName, setOwnName] = useState("");
-  const [ownType, setOwnType] = useState<"rss" | "page">("rss");
-  const [ownPreview, setOwnPreview] = useState<{ items: PreviewItem[]; note?: string } | null>(null);
 
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id!) });
   const sources = useQuery({ queryKey: ["sources", id], queryFn: () => api.sources(id!) });
   const catalog = useQuery({ queryKey: ["catalog", id], queryFn: () => api.sourceCatalog(id!) });
-  const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
-  // real mode is catalog-only: the server refuses pasted URLs, so the
-  // "add your own" form would only fail — explain instead (KLOX-49)
-  const catalogOnly = ws.data?.mode === "real";
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["sources", id] });
     qc.invalidateQueries({ queryKey: ["catalog", id] });
   };
 
-  const add = useMutation({
-    mutationFn: ({ type, url, name }: { type: string; url: string; name?: string }) =>
-      api.sourceAdd(id!, type, url, name),
-    onSuccess: () => { refresh(); setOwnURL(""); setOwnName(""); setOwnPreview(null); },
-  });
   const remove = useMutation({
     mutationFn: (sid: number) => api.sourceDelete(id!, sid),
     onSuccess: refresh,
@@ -159,63 +146,6 @@ export function SourcesPage() {
             ))}
           </div>
         </>
-      )}
-
-      {catalogOnly ? (
-        <Card className="mt-6 p-4">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
-            {/* the option must read "still in development" before
-                anything else — submissions do not work today (KLOX-81) */}
-            <Badge tone="warn">{t.sourcesPage.ownDev}</Badge>
-          </div>
-          <p className="mt-2 text-sm text-muted">{t.sourcesPage.ownDevFlow}</p>
-          <p className="mt-2 text-sm text-muted">{t.sourcesPage.ownCatalogOnly}</p>
-        </Card>
-      ) : (
-      <Card className="mt-6 p-4">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <select
-            value={ownType}
-            onChange={(e) => setOwnType(e.target.value as "rss" | "page")}
-            className="rounded border border-line bg-paper px-2 py-2 text-sm"
-          >
-            <option value="rss">{t.sourcesPage.ownType.rss}</option>
-            <option value="page">{t.sourcesPage.ownType.page}</option>
-          </select>
-          <input
-            value={ownName}
-            onChange={(e) => setOwnName(e.target.value)}
-            placeholder={t.sourcesPage.ownName}
-            aria-label={t.sourcesPage.ownName}
-            className="w-36 rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
-          />
-          <input
-            value={ownURL}
-            onChange={(e) => { setOwnURL(e.target.value); setOwnPreview(null); }}
-            placeholder={t.sourcesPage.ownPlaceholder}
-            className="min-w-0 flex-1 rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
-          />
-          <Button
-            variant="outline" size="sm" disabled={!ownURL.trim()}
-            onClick={async () => setOwnPreview(await api.sourcePreview(id!, ownType, ownURL).catch(() => ({ items: [] })))}
-          >
-            {t.sourcesPage.preview}
-          </Button>
-          <Button
-            variant="outline" size="sm" disabled={!ownURL.trim() || add.isPending}
-            onClick={() => add.mutate({ type: ownType, url: ownURL.trim(), name: ownName.trim() || undefined })}
-          >
-            {t.sourcesPage.ownAdd}
-          </Button>
-        </div>
-        {ownPreview?.note && <p className="mt-2 text-xs text-muted">{t.sourcesPage.simulated}</p>}
-        {ownPreview && ownPreview.items.length === 0 && !ownPreview.note && (
-          <p className="mt-2 text-xs text-muted">{t.sourcesPage.simulated}</p>
-        )}
-        {add.error && <p className="mt-2 text-xs text-danger">{errText(t, add.error)}</p>}
-      </Card>
       )}
 
       {/* one button pattern across the onboarding steps (KLOX-79):

@@ -355,9 +355,17 @@ async function approveIssue(page: Page) {
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible({ timeout: 30000 });
 }
 
+// Etapa 3 keeps a single primary Send — test send, schedule, export
+// and preview live in the Actions menu (KLOX-101). Each item closes
+// the menu on activation, so open it per interaction.
+async function openActions(page: Page) {
+  await page.getByRole("button", { name: "Actions" }).click();
+}
+
 async function scheduleAndHold(page: Page) {
   // the approved cluster's Schedule send opens the confirm dialog with
   // the datetime inside it — the input defaults to tomorrow (KLOX-80)
+  await openActions(page);
   await page.getByRole("button", { name: "Schedule send" }).click();
   const schedDialog = page.getByRole("dialog");
   await expect(schedDialog.getByLabel("Send at")).toBeVisible();
@@ -388,13 +396,13 @@ async function sendTestKeepsEditable(page: Page) {
   const ws = await workspaceInfo(page);
   neverRealMail(ws);
   // the Revisar step carries the header action cluster (KLOX-80): the
-  // export dropdown and the direct send buttons live there now
+  // primary send button and the Actions menu live there (KLOX-101)
   const stepUrl = new URL(page.url());
   stepUrl.searchParams.set("step", "revisar");
   await page.goto(stepUrl.pathname + stepUrl.search);
-  // Export opens the format dropdown — HTML and Markdown are downloads,
-  // PDF prints through the browser's Save-as-PDF
-  await page.getByRole("button", { name: "Export", exact: true }).click();
+  // the Actions menu holds the export formats — HTML and Markdown are
+  // downloads, PDF prints through the browser's Save-as-PDF (KLOX-101)
+  await openActions(page);
   await expect(page.getByRole("link", { name: "HTML", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Markdown", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "PDF", exact: true })).toBeVisible();
@@ -403,16 +411,21 @@ async function sendTestKeepsEditable(page: Page) {
     page.waitForResponse(
       (r) => r.url().endsWith("/send") && r.request().method() === "POST",
     ),
-    page.getByRole("button", { name: "Send a test" }).click(),
+    (async () => {
+      await openActions(page);
+      await page.getByRole("button", { name: "Send a test" }).click();
+    })(),
   ]);
   const body = await resp.json();
   expect(body.audience).toBe("test");
   expect(body.issue.status).toBe("approved");
   expect(body.issue.test_sent_at).toBeTruthy();
-  // a test send published the reader page — the cluster's Preview jump
+  // a test send published the reader page — the menu's Preview jump
   // is a real link now, and the after-sending surface carries the same
   // destination plus the test marker (no `sent` state)
+  await openActions(page);
   await expect(page.getByRole("link", { name: "Preview", exact: true })).toBeVisible({ timeout: 15000 });
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("link", { name: /reader page/ })).toBeVisible();
   await expect(page.getByText(/Test send recorded/)).toBeVisible();
   // still editable and still sendable — the lock never engaged. The
@@ -467,7 +480,10 @@ async function sendToReaders(page: Page) {
     const before = (await fakeRequests(page)).count;
     const [testResp] = await Promise.all([
       sendPost(),
-      page.getByRole("button", { name: "Send a test" }).click(),
+      (async () => {
+        await openActions(page);
+        await page.getByRole("button", { name: "Send a test" }).click();
+      })(),
     ]);
     const testBody = await testResp.json();
     expect(testBody.delivery).toBe("resend");

@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Outlet, useParams, useSearchParams } from "react-router-dom";
+import { Outlet, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useT, type Lang } from "../i18n";
 import { Markdown } from "../markdown";
@@ -8,16 +8,19 @@ import { Badge, Button, Card } from "../ui";
 import { errText } from "../lib/errors";
 import { useEffect, useState } from "react";
 
-// ReaderShell is the chrome for reader-facing pages: the publication
-// name and a language switch — never editor navigation.
+// ReaderShell is the chrome for reader-facing pages: the newsletter's
+// own brand and a language switch — never editor navigation. The child
+// page reports its publication through the outlet context so the header
+// shows the newsletter's name, not the platform's (KLOX-101).
 export function ReaderShell() {
-  const { t, lang, setLang } = useT();
+  const { lang, setLang } = useT();
+  const { t } = useT();
+  const [brand, setBrand] = useState<string | null>(null);
   return (
     <div className="min-h-dvh bg-paper">
       <header className="border-b border-line bg-paper-raised">
         <div className="mx-auto flex h-12 max-w-2xl items-center gap-4 px-4">
-          <span className="font-doc text-lg font-semibold tracking-tight">{t.appName}</span>
-          <span className="text-xs text-muted">{t.reader.subscriberView}</span>
+          <span className="font-doc text-lg font-semibold tracking-tight">{brand ?? t.appName}</span>
           <div className="ml-auto flex items-center gap-1 text-xs">
             {(["en", "pt"] as Lang[]).map((l) => (
               <button
@@ -36,7 +39,7 @@ export function ReaderShell() {
         </div>
       </header>
       <main>
-        <Outlet />
+        <Outlet context={setBrand} />
       </main>
     </div>
   );
@@ -48,6 +51,7 @@ export function PublicIssue() {
   const { slug = "", num = "" } = useParams();
   const [params] = useSearchParams();
   const { t, lang } = useT();
+  const setBrand = useOutletContext<(name: string | null) => void>();
   const query = params.toString() ? `?${params.toString()}` : "";
   const q = useQuery({
     queryKey: ["publicIssue", slug, num, query],
@@ -72,6 +76,13 @@ export function PublicIssue() {
       return () => { document.title = prev; };
     }
   }, [d]);
+
+  // the shell header carries the newsletter's brand once it loads —
+  // reset on the way out so a non-branded page doesn't inherit it
+  useEffect(() => {
+    setBrand(d?.publication.name ?? null);
+    return () => setBrand(null);
+  }, [d?.publication.name, setBrand]);
 
   if (q.isLoading) return <div className="mx-auto max-w-2xl px-4 py-16 text-sm text-muted">…</div>;
   if (q.isError || !d)

@@ -20,8 +20,8 @@ function localInput(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-import { Badge, Button, buttonVariants } from "../ui";
-import { KDialog, KPopover } from "../ui-overlays";
+import { Badge, Button } from "../ui";
+import { KDialog, KPopover, KPopoverClose } from "../ui-overlays";
 import { ClaimEmail } from "../components/ClaimEmail";
 import { StepCounter } from "../components/StepCounter";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
@@ -1087,7 +1087,10 @@ function ReviewActions({ issue, onDone, onToast, onEdit }: {
   const publicURL = publicQ.data?.public_url;
   const exportURL = (fmt: string) => `/api/v1/issues/${issue.id}/export?fmt=${fmt}`;
   const menuItem =
-    "block w-full rounded-[var(--radius-btn)] px-2 py-1.5 text-left text-sm text-ink hover:bg-surface";
+    "flex w-full items-center gap-2 rounded-[var(--radius-btn)] px-2 py-1.5 text-left text-sm text-ink hover:bg-surface disabled:opacity-50";
+  // One primary action per audit P1-7 (KLOX-101): Enviar green and
+  // right-aligned; test send, schedule, export and the reader preview
+  // live in the actions menu so the cluster never wraps into rows.
   return (
     <span className="flex flex-wrap items-center justify-end gap-1.5">
       {onEdit && (
@@ -1095,50 +1098,67 @@ function ReviewActions({ issue, onDone, onToast, onEdit }: {
           <Pencil size={12} /> {t.review.edit}
         </Button>
       )}
-      <Button
-        size="sm" variant="outline" disabled={sendMut.isPending}
-        onClick={() => sendMut.mutate({ aud: "test", when: "now" })}
-      >
-        <Send size={12} /> {t.send.test}
-      </Button>
-      <Button size="sm" variant="danger" disabled={sendMut.isPending} onClick={() => setDlg("now")}>
-        {t.send.action}
-      </Button>
-      <Button size="sm" variant="outline" disabled={sendMut.isPending} onClick={() => setDlg("schedule")}>
-        <CalendarClock size={12} /> {t.review.scheduleSend}
-      </Button>
       <KPopover
         trigger={
           <Button size="sm" variant="outline">
-            <Download size={12} /> {t.review.export} <ChevronDown size={11} />
+            {t.review.actions} <ChevronDown size={11} />
           </Button>
         }
       >
-        <a className={menuItem} href={exportURL("html")} download>HTML</a>
-        <a className={menuItem} href={exportURL("markdown")} download>Markdown</a>
-        <button
-          type="button"
-          className={menuItem}
-          onClick={() => void exportIssuePDF(issue.id).catch(() => onToast(t.review.exportFailed))}
-        >
-          PDF
-        </button>
+        <KPopoverClose asChild>
+          <button
+            type="button" className={menuItem} disabled={sendMut.isPending}
+            onClick={() => sendMut.mutate({ aud: "test", when: "now" })}
+          >
+            <Send size={13} /> {t.send.test}
+          </button>
+        </KPopoverClose>
+        <KPopoverClose asChild>
+          <button
+            type="button" className={menuItem} disabled={sendMut.isPending}
+            onClick={() => setDlg("schedule")}
+          >
+            <CalendarClock size={13} /> {t.review.scheduleSend}
+          </button>
+        </KPopoverClose>
+        {publicURL ? (
+          <KPopoverClose asChild>
+            <a href={publicURL} target="_blank" rel="noreferrer" className={menuItem}>
+              <ExternalLink size={13} /> {t.preview.title}
+            </a>
+          </KPopoverClose>
+        ) : (
+          <button type="button" className={menuItem} disabled title={t.review.previewHint}>
+            <Eye size={13} /> {t.preview.title}
+          </button>
+        )}
+        <p className="mb-0.5 mt-2 border-t border-line px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+          {t.review.export}
+        </p>
+        <KPopoverClose asChild>
+          <a className={menuItem} href={exportURL("html")} download>
+            <Download size={13} /> HTML
+          </a>
+        </KPopoverClose>
+        <KPopoverClose asChild>
+          <a className={menuItem} href={exportURL("markdown")} download>
+            <Download size={13} /> Markdown
+          </a>
+        </KPopoverClose>
+        <KPopoverClose asChild>
+          <button
+            type="button"
+            className={menuItem}
+            onClick={() => void exportIssuePDF(issue.id).catch(() => onToast(t.review.exportFailed))}
+          >
+            <Download size={13} /> PDF
+          </button>
+        </KPopoverClose>
         <p className="mt-1 px-2 text-[11px] text-muted">{t.review.pdfHint}</p>
       </KPopover>
-      {publicURL ? (
-        <a
-          href={publicURL}
-          target="_blank"
-          rel="noreferrer"
-          className={buttonVariants({ variant: "outline", size: "sm" })}
-        >
-          <ExternalLink size={12} /> {t.preview.title}
-        </a>
-      ) : (
-        <Button size="sm" variant="outline" disabled title={t.review.previewHint}>
-          <Eye size={12} /> {t.preview.title}
-        </Button>
-      )}
+      <Button size="sm" disabled={sendMut.isPending} onClick={() => setDlg("now")}>
+        {t.send.action}
+      </Button>
       {sendMut.error && <span className="text-xs text-danger">{errText(t, sendMut.error)}</span>}
 
       <KDialog
@@ -1586,7 +1606,7 @@ function AfterSend({ issue, onToast }: { issue: IssueSummary; onToast: (text: st
               </button>
             </span>
           )}
-          <Button size="sm" className="ml-auto" disabled={next.isPending} onClick={() => next.mutate()}>
+          <Button size="sm" variant="outline" className="ml-auto" disabled={next.isPending} onClick={() => next.mutate()}>
             {t.after.next}
           </Button>
         </div>

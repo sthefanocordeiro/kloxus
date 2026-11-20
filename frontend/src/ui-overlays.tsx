@@ -45,6 +45,11 @@ export function KDialog({
 
 export const KTabs = Tabs;
 
+// KPopoverClose wraps a menu item so activating it also dismisses the
+// popover — Radix popovers otherwise stay open behind the dialog or
+// mutation the item triggers.
+export const KPopoverClose = Popover.Close;
+
 export function KPopover({ trigger, children, align = "end" }: { trigger: ReactNode; children: ReactNode; align?: "start" | "center" | "end" }) {
   return (
     <Popover.Root>
