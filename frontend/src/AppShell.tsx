@@ -102,7 +102,7 @@ export function AppShell() {
   const editionTo = latest ? `/issues/${latest.id}` : pubBase;
 
   const items = [
-    { to: editionTo, label: t.nav.edition, icon: Newspaper, section: "edition" },
+    { to: editionTo, label: t.nav.edition, icon: Newspaper, section: "edition", end: true },
     { to: pubBase, label: t.nav.editions, icon: Layers, section: "editions", end: true },
     { to: `${pubBase}/readers`, label: t.nav.readers, icon: Users, section: "readers" },
     { to: `${pubBase}/sources`, label: t.sources, icon: Rss, section: "sources" },
@@ -147,10 +147,14 @@ export function AppShell() {
               key={it.section}
               to={it.to}
               end={it.end}
-              className={({ isActive }) =>
+              // Highlight follows the route's section, never the link's
+              // path match: with no edition yet the edition item points
+              // at pubBase, where a prefix match would glow on every
+              // publication sub-page (KLOX-90).
+              className={() =>
                 cn(
                   "flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium transition-colors duration-150",
-                  isActive || chrome.section === it.section
+                  chrome.section === it.section
                     ? "bg-teal-soft text-teal"
                     : "text-muted hover:bg-line/50 hover:text-ink",
                 )

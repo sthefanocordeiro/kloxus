@@ -254,7 +254,7 @@ the in-flight run.
 ### `GET /api/v1/runs/{run_id}`
 ```json
 {"run": {"id": "a1b2c3d4", "kind": "prepare", "status": "done",
-         "step": "citecheck", "issue_id": 1, "no_new_items": false,
+         "step": "citecheck", "issue_id": 1, "publication_id": 1, "no_new_items": false,
          "events": [
            {"seq": 1, "step": "collect", "counts": {"items_read": 35, "new_items": 12}},
            {"seq": 2, "step": "dedupe", "counts": {"stories": 9, "duplicates_merged": 3}},

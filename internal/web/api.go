@@ -1289,6 +1289,7 @@ type apiRun struct {
 	Status        string         `json:"status"` // running | done | failed | blocked
 	Step          string         `json:"step"`
 	IssueID       int64          `json:"issue_id,omitempty"`
+	PublicationID int64          `json:"publication_id,omitempty"`
 	NoNewItems    bool           `json:"no_new_items"`
 	Error         string         `json:"error,omitempty"`
 	Blocked       bool           `json:"blocked,omitempty"`
@@ -1308,7 +1309,8 @@ func runView(st *runProgress) apiRun {
 	defer st.mu.Unlock()
 	v := apiRun{
 		ID: st.st.RunID, Kind: st.st.Kind, Step: st.st.Step,
-		IssueID: st.st.IssueID, NoNewItems: st.st.NoNewItems, Error: st.st.Err,
+		IssueID: st.st.IssueID, PublicationID: st.st.PubID,
+		NoNewItems: st.st.NoNewItems, Error: st.st.Err,
 		Blocked: st.st.Blocked, BlockedReason: st.st.BlockedReason, Sample: st.st.Sample,
 		Status: "running",
 	}
@@ -2356,7 +2358,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	wsp := reqWS(r)
-	st := &runProgress{st: runState{RunID: newReqID(), Kind: "draft", Step: "starting", IssueID: iss.ID}}
+	st := &runProgress{st: runState{RunID: newReqID(), Kind: "draft", Step: "starting", IssueID: iss.ID, PubID: iss.PublicationID}}
 	key := "draft-" + fmt.Sprint(iss.ID)
 	if prev, running := wsp.Runs.LoadOrStore(key, st); running {
 		pst := prev.(*runProgress)

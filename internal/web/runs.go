@@ -39,6 +39,7 @@ type runState struct {
 	Step       string `json:"step"`
 	Done       bool   `json:"done"`
 	IssueID    int64  `json:"issue_id"`
+	PubID      int64  `json:"publication_id"`
 	NoNewItems bool   `json:"no_new_items"`
 	Err        string `json:"error"`
 	// Blocked marks a run refused or aborted by a spend guard; the
@@ -109,7 +110,7 @@ type runProgress struct {
 // startRun launches a Phase A run for the publication, reusing an
 // in-flight run when one exists.
 func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *runProgress {
-	st := &runProgress{st: runState{RunID: newReqID(), Kind: "prepare", Step: "starting"}}
+	st := &runProgress{st: runState{RunID: newReqID(), Kind: "prepare", Step: "starting", PubID: pub.ID}}
 	if prev, running := wsp.Runs.LoadOrStore(pub.ID, st); running {
 		// One pipeline run at a time per workspace: an in-flight run wins;
 		// a finished run is replaced by this new one.
