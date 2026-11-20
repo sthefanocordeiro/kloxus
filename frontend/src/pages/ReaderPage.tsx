@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Outlet, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useT, type Lang } from "../i18n";
+import { useReader } from "./readerStrings";
 import { Markdown } from "../markdown";
 import { fmtDate } from "../lib/fmt";
 import { Badge, Button, Card } from "../ui";
@@ -142,6 +143,7 @@ function PayGate({
   paywall?: { enabled: boolean; price: string; test_mode?: boolean; simulated?: boolean };
 }) {
   const { t } = useT();
+  const r = useReader();
   const [params] = useSearchParams();
   const [email, setEmail] = useState("");
   const payRef = params.get("pay") ?? "";
@@ -168,22 +170,22 @@ function PayGate({
     if (s.status === "paid") {
       return (
         <div className="mt-3 text-sm">
-          <p className="text-muted">{t.reader.payDone}</p>
+          <p className="text-muted">{r.payDone}</p>
           {s.magic_link && (
             <a href={s.magic_link} className="mt-1 inline-block font-semibold text-teal underline">
-              {t.reader.payOpen} →
+              {r.payOpen} →
             </a>
           )}
         </div>
       );
     }
-    return <p className="mt-3 text-sm text-muted">{t.reader.payExpired}</p>;
+    return <p className="mt-3 text-sm text-muted">{r.payExpired}</p>;
   }
   if (payRef) {
-    return <p className="mt-3 text-sm text-muted">{t.reader.payPending}</p>;
+    return <p className="mt-3 text-sm text-muted">{r.payPending}</p>;
   }
   if (done?.already_subscribed) {
-    return <p className="mt-3 text-sm text-muted">{t.reader.alreadyPaid}</p>;
+    return <p className="mt-3 text-sm text-muted">{r.alreadyPaid}</p>;
   }
   return (
     <form
@@ -198,17 +200,17 @@ function PayGate({
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        placeholder={t.reader.emailPlaceholder}
-        aria-label={t.reader.payEmail}
+        placeholder={r.emailPlaceholder}
+        aria-label={r.payEmail}
         className="w-64 rounded border border-line bg-paper px-2 py-1.5 text-sm text-ink"
       />
       <Button size="sm" disabled={co.isPending}>
-        {co.isPending ? t.reader.payStarting : t.reader.payAction}
+        {co.isPending ? r.payStarting : r.payAction}
       </Button>
       {paywall?.test_mode && !paywall.simulated && (
-        <span className="text-xs text-muted">{t.reader.testMode}</span>
+        <span className="text-xs text-muted">{r.testMode}</span>
       )}
-      {paywall?.simulated && <span className="text-xs text-muted">{t.reader.simMode}</span>}
+      {paywall?.simulated && <span className="text-xs text-muted">{r.simMode}</span>}
       {co.error && <p className="w-full text-xs text-danger">{errText(t, co.error)}</p>}
     </form>
   );
