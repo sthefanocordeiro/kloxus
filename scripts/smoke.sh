@@ -391,7 +391,8 @@ fi
 
 # --- 12. reader page --------------------------------------------------------
 [ "$(req GET "/api/v1/issues/$IID/after")" = "200" ] || die "after failed"
-PURL="$(jget public_url | sed 's/?tok=.*//')"
+PURL_RAW="$(jget public_url)"
+PURL="$(printf '%s' "$PURL_RAW" | sed 's/?tok=.*//')"
 [ -n "$PURL" ] || die "no public_url"
 case "$PURL" in "$BASE"*) ;; *) die "public_url $PURL is not under $BASE" ;; esac
 [ "$(req GET "${PURL#$BASE}")" = "200" ] || die "reader page GET failed"
@@ -400,5 +401,19 @@ APIP="$(echo "${PURL#$BASE}" | sed 's#^/p/#/api/v1/p/#')"
 [ "$(req GET "$APIP")" = "200" ] || die "reader API $APIP failed"
 [ -n "$(jget body_md)" ] || die "reader body is empty"
 say "reader page $PURL ok"
+
+# --- 13. newsletter landing (KLOX-102): brand + editions archive ------------
+SLUG="$(echo "${PURL#$BASE}" | sed -n 's#^/p/\([^/]*\)/.*#\1#p')"
+[ -n "$SLUG" ] || die "no slug in public_url"
+# the sealed token rides along when the deployment is hosted — the
+# landing resolves the publication's workspace through it
+TOKQ=""
+case "$PURL_RAW" in *"?"*) TOKQ="?${PURL_RAW#*\?}" ;; esac
+[ "$(req GET "/api/v1/p/$SLUG$TOKQ")" = "200" ] || die "newsletter landing API failed"
+[ -n "$(jget publication.name)" ] || die "newsletter landing has no brand"
+[ -n "$(jget editions)" ] || die "newsletter landing has no editions archive"
+[ "$(req GET "/p/$SLUG$TOKQ")" = "200" ] || die "newsletter landing page GET failed"
+grep -q 'id="root"' "$RESP" || die "newsletter landing is not the SPA"
+say "newsletter landing /p/$SLUG ok"
 
 say "ALL CHECKS PASSED"

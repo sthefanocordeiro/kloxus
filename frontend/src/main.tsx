@@ -71,6 +71,12 @@ const router = createBrowserRouter([
     errorElement: <ErrorPage />,
     children: [
       {
+        // the newsletter's own landing page: brand, subscribe, archive
+        // (KLOX-102) — distinct from the per-issue page below
+        path: "/p/:slug",
+        lazy: () => import("./pages/ReaderPage").then((m) => ({ Component: m.PublicNewsletterPage })),
+      },
+      {
         path: "/p/:slug/:num",
         lazy: () => import("./pages/ReaderPage").then((m) => ({ Component: m.PublicIssue })),
       },

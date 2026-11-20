@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Outlet, useParams, useSearchParams } from "react-router-dom";
+import { Link, Outlet, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useT, type Lang } from "../i18n";
 import { useReader } from "./readerStrings";
@@ -122,6 +122,92 @@ export function PublicIssue() {
       )}
 
       <SubscribeCard slug={d.publication.slug} tokQuery={tokQuery} />
+    </div>
+  );
+}
+
+// The public newsletter landing page (/p/<slug>, KLOX-102): the
+// newsletter's own brand — never the editor chrome — the subscribe
+// entry point and the editions archive. Reading an edition stays on
+// /p/<slug>/<num>, where the existing paywall gating applies.
+export function PublicNewsletterPage() {
+  const { slug = "" } = useParams();
+  const [params] = useSearchParams();
+  const { t, lang } = useT();
+  const r = useReader();
+  // KLOX-101 lets reader pages report their publication to the shell
+  // header through the outlet context — absent until that lands, so
+  // the page stays brand-correct in the body either way.
+  const setBrand = useOutletContext<(name: string | null) => void>() ?? null;
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const q = useQuery({
+    queryKey: ["publicNewsletter", slug, query],
+    queryFn: () => api.publicNewsletter(slug, query),
+    retry: false,
+  });
+  const d = q.data;
+
+  useEffect(() => {
+    setBrand?.(d?.publication.name ?? null);
+    return () => setBrand?.(null);
+  }, [setBrand, d?.publication.name]);
+
+  // the browser tab is the newsletter's name
+  useEffect(() => {
+    if (d) {
+      const prev = document.title;
+      document.title = d.publication.name;
+      return () => { document.title = prev; };
+    }
+  }, [d]);
+
+  if (q.isLoading) return <div className="mx-auto max-w-2xl px-4 py-16 text-sm text-muted">…</div>;
+  if (q.isError || !d)
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center">
+        <h1 className="font-doc text-xl font-semibold">{t.appName}</h1>
+        <p className="mt-2 text-sm text-muted">{t.errors.not_found}</p>
+      </div>
+    );
+
+  const editionHref = (n: number) => `/p/${d.publication.slug}/${n}${query}`;
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-10">
+      <h1 className="font-doc text-3xl font-semibold leading-tight">{d.publication.name}</h1>
+      {d.paywall?.enabled && d.paywall.price && (
+        <p className="mt-1 text-sm text-muted">{r.newsletterPaid(d.paywall.price)}</p>
+      )}
+
+      <SubscribeCard slug={d.publication.slug} tokQuery={query} />
+
+      <section className="mt-10">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
+          {r.editionsArchive}
+        </h2>
+        {d.editions.length === 0 ? (
+          <p className="mt-3 text-sm text-muted">{r.noEditions}</p>
+        ) : (
+          <ul className="mt-3">
+            {d.editions.map((e, i) => (
+              <li key={e.number} className={i > 0 ? "border-t border-line" : undefined}>
+                <Link
+                  to={editionHref(e.number)}
+                  className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 py-3 hover:bg-surface"
+                >
+                  <span className="font-doc text-[15px] font-medium">
+                    {e.subject}
+                    {i === 0 && <Badge tone="teal" className="ml-2">{r.latestBadge}</Badge>}
+                  </span>
+                  <span className="text-xs text-muted whitespace-nowrap">
+                    #{e.number} · {fmtDate(e.created_at, lang)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
