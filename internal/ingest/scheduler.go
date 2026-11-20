@@ -7,10 +7,14 @@ package ingest
 // enforced by the throttler regardless of which source is next.
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
 // DefaultUserAgent identifies us to publishers (D27): name + contact.
@@ -24,9 +28,14 @@ type Scheduler struct {
 	log       *log.Logger
 	now       func() time.Time
 	lastPurge time.Time
+	// Daily polls Daily Journal's public API — the primary source
+	// (KLOX-93). Nil disables API sources; tests inject an httptest
+	// client.
+	Daily *DailyJournal
 	// AfterPoll, when set, runs once after each PollOnce — the shared
-	// AI enrichment sweep (KLOX-67) hooks in here so new items get
-	// classified without blocking feed polls.
+	// AI enrichment sweep (KLOX-67) and the deterministic semantic
+	// sweep (KLOX-93) hook in here so new items get classified without
+	// blocking feed polls.
 	AfterPoll func(ctx context.Context)
 }
 
@@ -101,20 +110,167 @@ func (s *Scheduler) PollOnce(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if cs.Kind != "rss" {
-			continue // no API-backed sources remain after Daily Journal left (D41)
-		}
 		if !cs.Due(s.now()) {
 			continue
 		}
-		o := s.feed.Fetch(ctx, cs)
-		if o.Status == "error" {
-			s.logf("%s: %s", cs.Slug, o.Detail)
+		switch cs.Kind {
+		case "rss":
+			o := s.feed.Fetch(ctx, cs)
+			if o.Status == "error" {
+				s.logf("%s: %s", cs.Slug, o.Detail)
+			}
+		case "api":
+			s.pollAPI(ctx, cs)
 		}
 	}
 	s.purgeBodies(ctx)
 	if s.AfterPoll != nil {
 		s.AfterPoll(ctx)
+	}
+}
+
+// SetupDailyJournal wires the production Daily Journal client for the
+// seeded catalog row — request counter bound to the row's api_day/
+// api_count columns, base URL from the row. A missing or non-API row
+// leaves Daily nil and the pollAPI branch stays inert.
+func (s *Scheduler) SetupDailyJournal(ctx context.Context, ua string) {
+	cat, err := s.pool.Catalog(ctx)
+	if err != nil {
+		s.logf("daily-journal setup: %v", err)
+		return
+	}
+	for i := range cat {
+		if cat[i].Kind == "api" && cat[i].Slug == "daily-journal" {
+			s.Daily = NewDailyJournal(
+				Counter(s.pool, cat[i].ID), nil, ua, cat[i].URL)
+			return
+		}
+	}
+}
+
+// pollAPI dispatches API-backed catalog sources. Daily Journal is the
+// only one today (slug 'daily-journal', re-added by KLOX-93); unknown
+// API slugs are skipped rather than guessed.
+func (s *Scheduler) pollAPI(ctx context.Context, cs *store.CatalogSource) {
+	if cs.Slug != "daily-journal" || s.Daily == nil {
+		return
+	}
+	if !cs.Enabled || cs.Suspended {
+		return
+	}
+	if cs.Policy != "launch" && cs.Policy != "signal" {
+		return // same gate as feeds: hold/blocked are never fetched
+	}
+	out := s.pollDailyJournal(ctx, cs)
+	if out.Status == "error" {
+		s.logf("%s: %s", cs.Slug, out.Detail)
+	}
+	// Detail backfill rides inside the same budget check: whatever
+	// requests the day still has left — minus the reserve held back for
+	// tomorrow's list pages — goes to filling missing aggregate bodies,
+	// oldest-pending-first (the query orders newest first, so the limit
+	// slices the fresh edge).
+	if ctx.Err() != nil {
+		return
+	}
+	s.backfillDetails(ctx, cs)
+}
+
+// DailyListPages bounds each poll's list sweep — 7×50 covers a full
+// DJ day (~300 items) with headroom for bursts.
+const DailyListPages = 7
+
+// pollDailyJournal runs one list sweep: newest-first pages per DJ's
+// own poll guidance, then the upsert decides what is actually new.
+// Idempotent: re-scanning unchanged stories saves nothing.
+func (s *Scheduler) pollDailyJournal(ctx context.Context, cs *store.CatalogSource) FetchOutcome {
+	items, err := s.Daily.Poll(ctx, DailyListPages)
+	if err != nil {
+		detail := err.Error()
+		if rl, ok := err.(*ErrRateLimited); ok {
+			detail = "HTTP 429 (retry-after " + rl.RetryAfter.String() + ")"
+		}
+		_ = s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error")
+		_ = s.pool.LogFetch(ctx, cs.ID, "error", 0, len(items), 0, detail)
+		return FetchOutcome{Status: "error", Detail: detail}
+	}
+	raw := make([]store.CatalogItem, 0, len(items))
+	for _, it := range items {
+		raw = append(raw, s.Daily.ToCatalogItem(it))
+	}
+	added, changed, err := s.pool.SaveDJItems(ctx, cs.ID, raw)
+	if err != nil {
+		_ = s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error")
+		_ = s.pool.LogFetch(ctx, cs.ID, "error", 0, len(raw), 0, err.Error())
+		return FetchOutcome{Status: "error", Detail: err.Error()}
+	}
+	_ = s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "ok")
+	detail := ""
+	if changed > 0 {
+		detail = fmt.Sprintf("%d updated", changed)
+	}
+	_ = s.pool.LogFetch(ctx, cs.ID, "ok", 200, len(raw), added, detail)
+	return FetchOutcome{Status: "ok", Items: len(raw), NewItems: added}
+}
+
+// backfillDetails spends the day's leftover requests fetching
+// aggregate bodies for stored DJ items that only have the list blurb.
+// The shared counter is the source of truth — the sweep stops before
+// the reserve, and ErrCapped/429 end it silently (next poll resumes).
+func (s *Scheduler) backfillDetails(ctx context.Context, cs *store.CatalogSource) {
+	day := s.now().UTC().Format("2006-01-02")
+	used, err := s.pool.CatalogAPICount(ctx, cs.ID, day)
+	if err != nil {
+		return
+	}
+	remaining := DailyAPIDailyCap - DailyDetailReserve - used
+	if remaining <= 0 {
+		return
+	}
+	slugs, err := s.pool.DJPendingDetails(ctx, cs.ID, remaining)
+	if err != nil || len(slugs) == 0 {
+		return
+	}
+	var filled, gone int
+	for _, slug := range slugs {
+		if ctx.Err() != nil {
+			return
+		}
+		it, err := s.Daily.Detail(ctx, slug)
+		if err != nil {
+			var he *ErrHTTP
+			if errors.As(err, &he) && he.Permanent() {
+				// The detail endpoint refuses this slug for good —
+				// a removed/renamed story 404s every time. Mark it
+				// so it leaves the pending queue and keep filling the
+				// rest: one dead slug at the head must never starve
+				// every item behind it.
+				s.logf("daily-journal detail %s: %v — marked gone", slug, err)
+				_ = s.pool.DJMarkDetailFailed(ctx, cs.ID, slug)
+				gone++
+				continue
+			}
+			return // capped, limited, transport or 5xx — next poll resumes
+		}
+		if it.Slug != slug {
+			// A record that isn't this slug's (error payload decoded
+			// as 200) must not be stored — skip it, retried next pass.
+			s.logf("daily-journal detail %s: endpoint returned %q", slug, it.Slug)
+			continue
+		}
+		raw := s.Daily.ToCatalogItem(*it)
+		if _, _, err := s.pool.SaveDJItems(ctx, cs.ID, []store.CatalogItem{raw}); err != nil {
+			s.logf("daily-journal detail %s: %v", slug, err)
+			return
+		}
+		filled++
+	}
+	if filled > 0 || gone > 0 {
+		detail := "detail backfill"
+		if gone > 0 {
+			detail = fmt.Sprintf("detail backfill, %d gone", gone)
+		}
+		_ = s.pool.LogFetch(ctx, cs.ID, "ok", 200, filled, 0, detail)
 	}
 }
 
