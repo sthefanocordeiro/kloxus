@@ -692,7 +692,7 @@ export function IssuePage() {
             {/* all three panes stay mounted — visibility toggles per
                 breakpoint so the editor is never double-mounted */}
             <DocActionsCtx.Provider value={actions}>
-              <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+              <div className="flex min-h-0 flex-1 flex-col pb-16 md:flex-row md:pb-0">
                 <aside
                   className={cn(
                     "min-h-0 shrink-0 overflow-y-auto border-line md:w-64 md:flex-none md:border-r",
@@ -751,8 +751,14 @@ export function IssuePage() {
               </div>
             </DocActionsCtx.Provider>
 
-            {/* phone tab bar — bottom, per spec */}
-            <nav className="flex border-t border-line text-xs md:hidden">
+            {/* phone tab bar — fixed just above the global bottom nav
+                (3.5rem bar + home-indicator inset) so it never scrolls
+                out of reach mid-document; pb-16 on the panes above
+                keeps the last content line clear of it (KLOX-89) */}
+            <nav
+              aria-label={t.nav.issueTabs}
+              className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-40 flex border-t border-line bg-paper-raised text-xs md:hidden"
+            >
               {(
                 [
                   ["list", <BookOpen key="i" size={15} />, t.pautas],
@@ -765,7 +771,7 @@ export function IssuePage() {
                   onClick={() => setMobileTab(k)}
                   aria-pressed={mobileTab === k}
                   className={cn(
-                    "flex flex-1 flex-col items-center gap-0.5 py-2",
+                    "flex min-h-11 flex-1 flex-col items-center gap-0.5 py-2",
                     mobileTab === k ? "text-teal" : "text-muted",
                   )}
                 >
@@ -778,7 +784,7 @@ export function IssuePage() {
                   setRightTab(rightTab === "evidence" ? "preview" : "evidence");
                   setMobileTab("side");
                 }}
-                className="flex flex-1 flex-col items-center gap-0.5 py-2 text-muted"
+                className="flex min-h-11 flex-1 flex-col items-center gap-0.5 py-2 text-muted"
               >
                 <Wrench size={15} />
                 {rightTab === "evidence" ? t.preview.title : t.evidence.title}

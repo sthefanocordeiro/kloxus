@@ -512,6 +512,7 @@ export const dict = {
       preparing: "New issue",
       creating: "Create your newsletter",
       language: "Language",
+      issueTabs: "Issue panes",
     },
     steps: {
       of: (n: number, m: number) => `Step ${n} of ${m}`,
@@ -1079,6 +1080,7 @@ export const dict = {
       preparing: "Nova edição",
       creating: "Crie sua newsletter",
       language: "Idioma",
+      issueTabs: "Painéis da edição",
     },
     steps: {
       of: (n: number, m: number) => `Passo ${n} de ${m}`,
