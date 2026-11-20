@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, type PreviewItem } from "../api";
 import { useT } from "../i18n";
@@ -9,6 +9,8 @@ import { StepCounter } from "../components/StepCounter";
 
 // /publications/:id/sources — the onboarding sources screen: suggested fixture
 // sources with real previews, add/remove, and confirm → auto first run.
+// Its headline job is the aderência controls (KLOX-94): the theme, reject
+// terms and per-section pautas the suggestion engine ranks by.
 export function SourcesPage() {
   const { id } = useParams();
   const { t } = useT();
@@ -17,6 +19,8 @@ export function SourcesPage() {
   const [previews, setPreviews] = useState<Record<string, PreviewItem[] | "loading">>({});
   const [previewNote, setPreviewNote] = useState<Record<string, string>>({});
   const [sel, setSel] = useState<Record<string, boolean>>({});
+  const [adForm, setAdForm] = useState<{ topic: string; rejects: string; sections: Record<string, string> } | null>(null);
+  const [adSaved, setAdSaved] = useState(false);
 
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id!) });
   const sources = useQuery({ queryKey: ["sources", id], queryFn: () => api.sources(id!) });
@@ -24,6 +28,39 @@ export function SourcesPage() {
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["sources", id] });
     qc.invalidateQueries({ queryKey: ["catalog", id] });
+  };
+
+  useEffect(() => {
+    if (pub.data && !adForm) {
+      const p = pub.data.publication;
+      setAdForm({
+        topic: p.topic,
+        rejects: p.reject_terms ?? "",
+        sections: Object.fromEntries(p.sections.map((s) => [s.id, s.topic ?? ""])),
+      });
+    }
+  }, [pub.data, adForm]);
+
+  // the aderência save sends the full section list back with the new
+  // topics — the PUT validates and replaces it wholesale (KLOX-94)
+  const saveAd = useMutation({
+    mutationFn: () =>
+      api.updatePublication(id!, {
+        topic: adForm!.topic,
+        reject_terms: adForm!.rejects,
+        sections: pub.data!.publication.sections.map((s) => ({
+          ...s,
+          topic: adForm!.sections[s.id] ?? "",
+        })),
+      }),
+    onSuccess: () => {
+      setAdSaved(true);
+      qc.invalidateQueries({ queryKey: ["publication", id] });
+    },
+  });
+  const editAd = (patch: Partial<NonNullable<typeof adForm>>) => {
+    setAdForm((f) => (f ? { ...f, ...patch } : f));
+    setAdSaved(false);
   };
 
   const remove = useMutation({
@@ -68,6 +105,58 @@ export function SourcesPage() {
         {pub.data && <span className="ml-2 text-base font-normal text-muted">— {pub.data.publication.name}</span>}
       </h1>
       <p className="mt-1 text-sm text-muted">{t.sourcesPage.subtitle}</p>
+
+      {/* aderência controls (KLOX-94): this page's job — the topics the
+          suggestion engine ranks by, in the creator's own words. Custom-
+          source submission is off the table by owner decision: the page
+          manages the catalog feeds plus these controls, nothing else. */}
+      {pub.data && adForm && (
+        <Card className="mt-4 p-4">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.aderenciaTitle}</h2>
+          <p className="mt-1 text-xs text-muted">{t.sourcesPage.aderenciaHint}</p>
+          <div className="mt-3 space-y-3">
+            <label className="block">
+              <span className="text-xs font-medium text-muted">{t.sourcesPage.newsletterTheme}</span>
+              <input
+                value={adForm.topic}
+                onChange={(e) => editAd({ topic: e.target.value })}
+                placeholder={t.sourcesPage.themePlaceholder}
+                className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-muted">{t.sourcesPage.rejectsLabel}</span>
+              <input
+                value={adForm.rejects}
+                onChange={(e) => editAd({ rejects: e.target.value })}
+                placeholder={t.create.rejectTerms}
+                className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+              />
+              <span className="mt-1 block text-xs text-muted">{t.create.rejectTermsHint}</span>
+            </label>
+            {pub.data.publication.sections.map((s) => (
+              <label key={s.id} className="block">
+                <span className="text-xs font-medium text-muted">
+                  {s.title || "—"} · {t.sourcesPage.sectionTopicLabel}
+                </span>
+                <input
+                  value={adForm.sections[s.id] ?? ""}
+                  onChange={(e) => editAd({ sections: { ...adForm.sections, [s.id]: e.target.value } })}
+                  placeholder={t.sourcesPage.sectionTopicEmpty}
+                  className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <Button size="sm" disabled={saveAd.isPending} onClick={() => saveAd.mutate()}>
+              {t.sourcesPage.save}
+            </Button>
+            {adSaved && <span className="text-xs text-teal">{t.sourcesPage.saved}</span>}
+          </div>
+          {saveAd.error && <p className="mt-2 text-xs text-danger">{errText(t, saveAd.error)}</p>}
+        </Card>
+      )}
 
       {loading && <p className="mt-6 text-sm text-muted">{t.sourcesPage.loading}</p>}
 
