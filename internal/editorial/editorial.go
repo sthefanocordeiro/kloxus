@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -188,9 +189,13 @@ func rejectionContext(lang string, kinds, topics, outlets []string) string {
 // merges near-duplicates (same objection, different wording → one
 // rule). ctxs rides alongside: the rejected story's type/topic/outlet
 // is appended to the rule so the guide records WHAT was rejected, not
-// just the objection label (KLOX-100).
+// just the objection label (KLOX-100). The context stays out of the
+// similarity check — rejections of same-kind/same-outlet stories share
+// context wording that would collapse distinct objections into one
+// rule.
 func buildGuide(reasons, ctxs []string) string {
 	var rules []string
+	var ruleCtxs [][]string
 	var toks []map[string]bool
 	var bigramList []map[string]bool
 	for i, reason := range reasons {
@@ -198,8 +203,9 @@ func buildGuide(reasons, ctxs []string) string {
 		if rule == "" {
 			continue
 		}
-		if i < len(ctxs) && ctxs[i] != "" {
-			rule += " — " + ctxs[i]
+		ctx := ""
+		if i < len(ctxs) {
+			ctx = ctxs[i]
 		}
 		t := tokens(rule)
 		bg := bigrams(rule)
@@ -216,19 +222,32 @@ func buildGuide(reasons, ctxs []string) string {
 			}
 		}
 		if dup >= 0 {
-			// keep the shorter (more general) phrasing
+			// keep the shorter (more general) phrasing; every merged
+			// rejection still contributes the story it rejected
 			if len(rule) < len(rules[dup]) {
 				rules[dup], toks[dup], bigramList[dup] = rule, t, bg
+			}
+			if ctx != "" && !slices.Contains(ruleCtxs[dup], ctx) {
+				ruleCtxs[dup] = append(ruleCtxs[dup], ctx)
 			}
 			continue
 		}
 		rules = append(rules, rule)
+		var cs []string
+		if ctx != "" {
+			cs = []string{ctx}
+		}
+		ruleCtxs = append(ruleCtxs, cs)
 		toks = append(toks, t)
 		bigramList = append(bigramList, bg)
 	}
 	var b strings.Builder
-	for _, r := range rules {
-		fmt.Fprintf(&b, "- %s\n", r)
+	for i, r := range rules {
+		fmt.Fprintf(&b, "- %s", r)
+		if len(ruleCtxs[i]) > 0 {
+			fmt.Fprintf(&b, " — %s", strings.Join(ruleCtxs[i], " | "))
+		}
+		b.WriteByte('\n')
 	}
 	return strings.TrimSpace(b.String())
 }
