@@ -216,6 +216,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
 			"img-src 'self' data: https:; connect-src 'self'; "+
+			"font-src 'self' data:; "+
 			"frame-src 'self' about: https://youtube.com https://www.youtube.com "+
 			"https://youtube-nocookie.com https://www.youtube-nocookie.com "+
 			"https://player.vimeo.com https://open.spotify.com https://w.soundcloud.com "+

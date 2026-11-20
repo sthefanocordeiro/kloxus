@@ -144,6 +144,27 @@ func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, err
 		  AND (i.catalog_id IS NULL
 		       OR (i.rn <= 60 AND (i.eff IS NULL
 		           OR i.eff >= now() - interval '7 days')))
+		  -- A story used in an earlier edition must not resurface as a
+		  -- suggestion in the next one (KLOX-100). Two durable trails
+		  -- mark "used": the current generation's story_items →
+		  -- issue_items link (this query runs before ClearStories
+		  -- rebuilds the table), and any dossier source citation —
+		  -- dossiers persist across story rebuilds.
+		  AND NOT EXISTS (
+		    SELECT 1 FROM story_items si
+		    JOIN issue_items ii ON ii.story_id = si.story_id
+		    JOIN issues iss ON iss.id = ii.issue_id
+		    WHERE si.workspace_id = $1 AND iss.publication_id = $2
+		      AND si.item_id = i.id)
+		  AND NOT EXISTS (
+		    SELECT 1 FROM dossiers d
+		    JOIN issue_items ii ON ii.id = d.issue_item_id
+		    JOIN issues iss ON iss.id = ii.issue_id
+		    CROSS JOIN LATERAL jsonb_array_elements(
+		      COALESCE(NULLIF(d.json,'')::jsonb -> 'sources', '[]'::jsonb)) el
+		    WHERE d.workspace_id = $1 AND iss.publication_id = $2
+		      AND CASE WHEN el->>'item_id' ~ '^\d+$'
+		               THEN (el->>'item_id')::bigint END = i.id)
 		ORDER BY i.id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
@@ -998,6 +1019,34 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// UnusedCandidateCount reports how many triaged stories remain
+// available for a new edition — not placed in any issue of the
+// publication and carrying at least one editorially usable member.
+// "Preparar próxima edição" can still draft from this pool (KLOX-100):
+// zero newly fetched items means "nothing new" only when the pool is
+// empty too.
+func (db *DB) UnusedCandidateCount(ctx context.Context, pubID int64) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM stories s
+		WHERE s.workspace_id = $1 AND s.publication_id = $2
+		  AND s.triage_score IS NOT NULL
+		  AND s.id NOT IN (
+		    SELECT ii.story_id FROM issue_items ii
+		    JOIN issues i ON i.id = ii.issue_id
+		    WHERE ii.workspace_id = $1 AND i.publication_id = $2)
+		  AND EXISTS (
+		    SELECT 1 FROM story_items si JOIN items it2 ON it2.id = si.item_id
+		    WHERE si.story_id = s.id
+		      AND NOT EXISTS (
+		        SELECT 1 FROM item_enrichment e
+		        WHERE e.item_id = it2.id
+		          AND (e.promotional OR e.ai_kind IN
+		               ('lista','publieditorial','entretenimento','esporte','efemeride'))))`,
+		db.ws, pubID).Scan(&n)
+	return n, err
 }
 
 // SaveDossier upserts the dossier JSON for an issue item.
