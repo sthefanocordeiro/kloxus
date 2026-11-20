@@ -69,6 +69,7 @@ function renderAt(path: string) {
         <MemoryRouter initialEntries={[path]}>
           <Routes>
             <Route element={<AppShell />}>
+              <Route path="/publications" element={<div>pubs screen</div>} />
               <Route path="/publications/:id" element={<div>pub screen</div>} />
               <Route path="/publications/:id/:tail" element={<div>pub screen</div>} />
               <Route path="/issues/:id" element={<div>issue screen</div>} />
@@ -148,5 +149,50 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
     });
     expect(api.publication).toHaveBeenCalledWith("42");
     expectNoDeadLinks();
+  });
+});
+
+// KLOX-90 regression: with no edition yet the "Current issue" link
+// points at pubBase, and NavLink's prefix match lit it on every
+// publication sub-page (plus /publications, where it collided with
+// "Issues"). Highlight now follows chrome.section only.
+describe("AppShell nav highlight without an edition (KLOX-90)", () => {
+  beforeEach(() => {
+    vi.mocked(api.workspace).mockResolvedValue({
+      id: "w1",
+      label: "w",
+      mode: "demo",
+      hosted: false,
+      llm_mode: "off",
+    });
+    vi.mocked(api.publications).mockResolvedValue([pub]);
+    vi.mocked(api.publication).mockResolvedValue({ publication: pub }); // no latest_issue
+  });
+
+  const expectInactive = (name: string) => {
+    for (const a of screen.getAllByRole("link", { name })) {
+      expect(a.className).not.toContain("bg-teal-soft");
+      expect(a.className).not.toContain("text-teal");
+    }
+  };
+
+  it("does not glow 'Current issue' on a publication sub-page", async () => {
+    renderAt("/publications/42/sources");
+    await screen.findByText("pub screen");
+    await waitFor(() => expect(api.publication).toHaveBeenCalled());
+
+    expectInactive("Current issue");
+    expectInactive("Issues");
+    const sources = screen.getAllByRole("link", { name: "Sources" })[0];
+    expect(sources.className).toContain("bg-teal-soft");
+  });
+
+  it("glows only 'Issues' on /publications", async () => {
+    renderAt("/publications");
+    await screen.findByText("pubs screen");
+
+    expectInactive("Current issue");
+    const issues = screen.getAllByRole("link", { name: "Issues" })[0];
+    expect(issues.className).toContain("bg-teal-soft");
   });
 });

@@ -4,6 +4,7 @@ package ingest
 // httptest servers, nothing leaves the test process.
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -20,10 +21,13 @@ func fakeNow() string { return time.Now().UTC().Format("2006-01-02 15:04:05") }
 // fakeStore implements the ingest Store in memory so the fetcher and
 // scheduler tests need no Postgres.
 type fakeStore struct {
-	cat    []store.CatalogSource
-	items  map[int64][]store.CatalogItem
-	logs   []fakeLog
-	purged int64
+	cat      []store.CatalogSource
+	items    map[int64][]store.CatalogItem
+	logs     []fakeLog
+	purged   int64
+	apiDay   map[int64]string
+	apiCount map[int64]int
+	apiTotal map[int64]int // every counted request, across days
 }
 
 type fakeLog struct {
@@ -35,7 +39,12 @@ type fakeLog struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{items: map[int64][]store.CatalogItem{}}
+	return &fakeStore{
+		items:    map[int64][]store.CatalogItem{},
+		apiDay:   map[int64]string{},
+		apiCount: map[int64]int{},
+		apiTotal: map[int64]int{},
+	}
 }
 
 func (f *fakeStore) Catalog(context.Context) ([]store.CatalogSource, error) { return f.cat, nil }
@@ -79,6 +88,83 @@ func (f *fakeStore) SaveCatalogItems(_ context.Context, id int64, raw []store.Ca
 		}
 	}
 	return added, nil
+}
+
+func (f *fakeStore) CatalogAPICount(_ context.Context, id int64, day string) (int, error) {
+	if f.apiDay[id] != day {
+		return 0, nil
+	}
+	return f.apiCount[id], nil
+}
+
+func (f *fakeStore) CatalogAPIIncr(_ context.Context, id int64, day string) error {
+	if f.apiDay[id] != day {
+		f.apiDay[id] = day
+		f.apiCount[id] = 0
+	}
+	f.apiCount[id]++
+	f.apiTotal[id]++
+	return nil
+}
+
+// SaveDJItems mirrors the Postgres upsert: insert new external_ids,
+// update when any stored field differs, leave identical rows alone.
+func (f *fakeStore) SaveDJItems(_ context.Context, id int64, raw []store.CatalogItem) (int, int, error) {
+	idx := map[string]int{}
+	for i, it := range f.items[id] {
+		idx[it.ExternalID] = i
+	}
+	var added, changed int
+	for _, it := range raw {
+		i, ok := idx[it.ExternalID]
+		if !ok {
+			idx[it.ExternalID] = len(f.items[id])
+			f.items[id] = append(f.items[id], it)
+			added++
+			continue
+		}
+		old := f.items[id][i]
+		store.MergeDJDetail(old.Meta, old.ContentText, &it)
+		om, _ := json.Marshal(old.Meta)
+		nm, _ := json.Marshal(it.Meta)
+		if old.Title != it.Title || old.PublishedAt != it.PublishedAt ||
+			old.ContentText != it.ContentText || string(om) != string(nm) {
+			f.items[id][i] = it
+			changed++
+		}
+	}
+	return added, changed, nil
+}
+
+// DJPendingDetails returns slugs whose meta lacks detail_fetched, in
+// stored order — the fake keeps the store contract's shape, not its
+// ordering (tests control the slice anyway).
+func (f *fakeStore) DJPendingDetails(_ context.Context, id int64, limit int) ([]string, error) {
+	var out []string
+	for _, it := range f.items[id] {
+		if len(out) >= limit {
+			break
+		}
+		v, _ := it.Meta["detail_fetched"]
+		if v == true || v == "true" || v == "gone" {
+			continue
+		}
+		if slug, _ := it.Meta["slug"].(string); slug != "" {
+			out = append(out, slug)
+		}
+	}
+	return out, nil
+}
+
+// DJMarkDetailFailed mirrors the store's meta merge: the slug's row
+// gets detail_fetched='gone' and leaves the pending queue.
+func (f *fakeStore) DJMarkDetailFailed(_ context.Context, id int64, slug string) error {
+	for i, it := range f.items[id] {
+		if s, _ := it.Meta["slug"].(string); s == slug {
+			f.items[id][i].Meta["detail_fetched"] = "gone"
+		}
+	}
+	return nil
 }
 
 func (f *fakeStore) LogFetch(_ context.Context, id int64, status string, httpStatus, items, newItems int, detail string) error {

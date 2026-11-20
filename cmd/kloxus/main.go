@@ -22,6 +22,7 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/coverage"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/ingest"
@@ -57,6 +58,8 @@ func main() {
 		err = cmdCosts(os.Args[2:])
 	case "ingest":
 		err = cmdIngest(os.Args[2:])
+	case "coverage":
+		err = cmdCoverage(os.Args[2:])
 	case "record":
 		err = cmdRecord(os.Args[2:])
 	case "llm-check":
@@ -88,6 +91,8 @@ usage:
   kloxus costs --publication <ref> [--last n]
   kloxus ingest [--daemon]                  poll the source catalog once (or on its schedule)
   kloxus ingest status                      show the global fetch log
+  kloxus coverage [--pages n] [--base url] [--out file]
+                                              Daily Journal niche-coverage report (KLOX-93)
   kloxus record --publication <ref> [--dir d]    regenerate LLM fixtures (real mode)
   kloxus record --live --def <yaml> [--dump-feeds d] [--sample-out d] [--dir d]
                                               record one real issue (feeds + LLM + sample export)
@@ -306,14 +311,29 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	go pool.KeepAlive(context.Background(), time.Minute)
 	if cfg.IngestEnabled {
 		// The global feed scheduler — feeds fetch once for every
-		// workspace (D29).
+		// workspace (D29). Daily Journal is the primary source now
+		// (KLOX-93); RSS stays as coverage fallback.
 		sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
+		if cfg.DailyJournalEnabled {
+			sched.SetupDailyJournal(context.Background(), ingest.DefaultUserAgent)
+		}
+		// Post-poll sweeps run in order: the free deterministic pass
+		// embeds + classifies everything first (KLOX-93), then the AI
+		// sweep upgrades 'local-%' rows when a model is enabled
+		// (KLOX-67 §7.2). Under the paid-AI freeze the local rows are
+		// the classification suggestions see.
+		sem := &pipeline.SemanticSweep{Pool: pool}
+		var enr *pipeline.Enricher
 		if cfg.Mode != "demo" && !cfg.LLMOff() {
-			// The shared AI enrichment sweep (KLOX-67 §7.2): classify
-			// the new items once for every newsletter — kind, promo
-			// flag, topic tags, one-line PT summary — after each poll.
-			enr := &pipeline.Enricher{Pool: pool, LLM: provider, Model: cfg.ModelTriage}
-			sched.AfterPoll = func(ctx context.Context) {
+			enr = &pipeline.Enricher{Pool: pool, LLM: provider, Model: cfg.ModelTriage}
+		}
+		sched.AfterPoll = func(ctx context.Context) {
+			if n, err := sem.Sweep(ctx, 200); err != nil {
+				log.Printf("semantic sweep: %v", err)
+			} else if n > 0 {
+				log.Printf("semantic sweep: %d items embedded+classified", n)
+			}
+			if enr != nil {
 				if n, err := enr.Sweep(ctx, 200); err != nil {
 					log.Printf("enrich sweep: %v", err)
 				} else if n > 0 {
@@ -722,13 +742,16 @@ func cmdIngest(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	_, pool, _, err := openDemoDB()
+	cfg, pool, _, err := openDemoDB()
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 	ctx := context.Background()
 	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
+	if cfg.DailyJournalEnabled {
+		sched.SetupDailyJournal(ctx, ingest.DefaultUserAgent)
+	}
 	if *daemon {
 		fmt.Println("ingest scheduler running (Ctrl+C to stop)")
 		sched.Run(ctx)
@@ -738,6 +761,39 @@ func cmdIngest(args []string) error {
 	fmt.Println("poll complete — `kloxus ingest status` shows the fetch log")
 	return nil
 }
+
+// cmdCoverage measures Daily Journal's niche coverage (KLOX-93): poll
+// the public list endpoint, score every item against the fixed niches
+// with the deterministic embedder + classifier, and print a markdown
+// report. No database needed — the API is the measurement; zero paid
+// calls by construction. --base exists for httptest runs only.
+func cmdCoverage(args []string) error {
+	fs := flag.NewFlagSet("coverage", flag.ContinueOnError)
+	pages := fs.Int("pages", ingest.DailyListPages, "list pages to sample (50 items each)")
+	base := fs.String("base", "https://dailyjournal.news", "Daily Journal API base")
+	out := fs.String("out", "", "also write the markdown report to this file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	dj := ingest.NewDailyJournal(&coverageCounter{}, nil, ingest.DefaultUserAgent, *base)
+	rep, err := coverage.Run(context.Background(), dj, *pages)
+	if err != nil {
+		return err
+	}
+	md := rep.Markdown()
+	fmt.Print(md)
+	if *out != "" {
+		return os.WriteFile(*out, []byte(md), 0o644)
+	}
+	return nil
+}
+
+// coverageCounter is an in-process request counter — coverage runs are
+// single-shot and bounded by pages, far under the daily cap.
+type coverageCounter struct{ n int }
+
+func (c *coverageCounter) APICount(context.Context, string) (int, error) { return c.n, nil }
+func (c *coverageCounter) APIIncr(context.Context, string) error         { c.n++; return nil }
 
 func cmdIngestStatus() error {
 	_, pool, _, err := openDemoDB()

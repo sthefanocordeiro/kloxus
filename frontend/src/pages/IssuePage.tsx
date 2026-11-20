@@ -11,7 +11,7 @@ import { BlockAdd, BlockDivider, BlockEmbed, BlockHeading, BlockImage, BlockLink
 import { useT } from "../i18n";
 import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
-import { errText } from "../lib/errors";
+import { errText, runErrText } from "../lib/errors";
 import { fmtDate } from "../lib/fmt";
 
 // datetime-local inputs work in local time without a zone; the API gets
@@ -657,7 +657,7 @@ export function IssuePage() {
                   qc.invalidateQueries({ queryKey: ["issue", issueID] });
                   if (run.no_new_items) showToast(t.run.noNewItems);
                   if (run.blocked || run.sample) setRunBlocked(run.error ?? null);
-                  else if (run.error) showToast(run.error);
+                  else if (run.error) showToast(runErrText(t, run.error));
                 }}
               />
             </div>

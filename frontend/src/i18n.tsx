@@ -10,6 +10,7 @@ export const dict = {
     appName: "Kloxus",
     publications: "Publications",
     issues: "Issues",
+    emptyIssues: "No issues yet — prepare the first one.",
     sources: "Sources",
     issue: "Issue",
     close: "Close",
@@ -31,6 +32,9 @@ export const dict = {
       blocked: "Preparing is paused right now — try again in a while.",
       blockedTitle: "Preparing paused",
       noNewItems: "Nothing new in your sources since the last issue",
+      noItems: "No items collected — check the newsletter's sources",
+      openSources: "Open sources",
+      sourcesFirst: "Confirm at least one source before preparing",
       step: {
         starting: "starting",
         collect: "Read the sources",
@@ -250,6 +254,8 @@ export const dict = {
       citation_required: "This sentence needs a source — or mark it as your take",
       invalid_citation: "That source number does not exist for this story",
       unsupported_claim: "The cited source doesn't confirm this — the flag stays",
+      interpretation_restricted:
+        "A claim with a number, a date or a quotation cannot be marked as interpretation — fix it or remove it",
       reason_required: "Give the rejection a reason — it feeds the editorial guide",
       no_alternative: "There is no alternative candidate for this story",
       not_rejected: "Undo applies only to a rejected story",
@@ -577,6 +583,7 @@ export const dict = {
     appName: "Kloxus",
     publications: "Publicações",
     issues: "Edições",
+    emptyIssues: "Nenhuma edição ainda — prepare a primeira.",
     sources: "Fontes",
     issue: "Edição",
     close: "Fechar",
@@ -598,6 +605,9 @@ export const dict = {
       blocked: "O preparo está pausado agora — tente de novo daqui a pouco.",
       blockedTitle: "Preparo pausado",
       noNewItems: "Nada novo nas fontes desde a última edição",
+      noItems: "Nada foi coletado — confira as fontes da newsletter",
+      openSources: "Abrir fontes",
+      sourcesFirst: "Confirme suas fontes primeiro para preparar a edição",
       step: {
         starting: "começando",
         collect: "Leu as fontes",
@@ -817,6 +827,8 @@ export const dict = {
       citation_required: "Esta frase precisa de fonte — ou marque como sua interpretação",
       invalid_citation: "Esse número de fonte não existe nesta pauta",
       unsupported_claim: "A fonte citada não confirma esta afirmação — a pendência permanece",
+      interpretation_restricted:
+        "Afirmação com número, data ou citação não pode ser interpretação — corrija ou remova",
       reason_required: "Dê um motivo à rejeição — ele alimenta o guia editorial",
       no_alternative: "Não há sugestão alternativa para esta pauta",
       not_rejected: "Desfazer vale apenas para pauta rejeitada",
