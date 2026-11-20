@@ -11,7 +11,7 @@ import { BlockAdd, BlockDivider, BlockEmbed, BlockHeading, BlockImage, BlockLink
 import { useT } from "../i18n";
 import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
-import { errText } from "../lib/errors";
+import { errText, runErrText } from "../lib/errors";
 import { fmtDate } from "../lib/fmt";
 
 // datetime-local inputs work in local time without a zone; the API gets
@@ -100,6 +100,10 @@ export function IssuePage() {
     qc.invalidateQueries({ queryKey: ["document", issueID] });
     qc.invalidateQueries({ queryKey: ["readiness", issueID] });
     qc.invalidateQueries({ queryKey: ["issue", issueID] });
+    // the pauta list badges read item statuses — a swap creates a NEW
+    // issue_item the stale list lacks, which read as "a decidir"
+    // against the fresh document (KLOX-100 flicker)
+    qc.invalidateQueries({ queryKey: ["items", issueID] });
     // a send can change the confirmed-reader count the dialog shows
     // (a test send confirms the claimed owner as a reader)
     qc.invalidateQueries({ queryKey: ["reader"] });
@@ -579,15 +583,17 @@ export function IssuePage() {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* top bar */}
       <header className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2.5">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">
-            #{issue.number} · {issue.subject}
-          </p>
-        </div>
+        {/* the edition title lives in the shell chrome (Edição N over
+            the newsletter crumb) — repeating it here stacked the same
+            line twice (KLOX-100) */}
         <StepCounter
           steps={t.board.steps}
           current={stepNum}
           onStep={(i) => setStep(["pautas", "escrever", "revisar"][i])}
+          // while the board owns the edition a later step has nothing
+          // to show; once it exists every step is one click away
+          // (KLOX-100)
+          navAhead={!boardPhase}
           className="w-full shrink-0 sm:w-96"
         />
         {/* chrome convention: header/action clusters sit right-aligned —
@@ -657,7 +663,7 @@ export function IssuePage() {
                   qc.invalidateQueries({ queryKey: ["issue", issueID] });
                   if (run.no_new_items) showToast(t.run.noNewItems);
                   if (run.blocked || run.sample) setRunBlocked(run.error ?? null);
-                  else if (run.error) showToast(run.error);
+                  else if (run.error) showToast(runErrText(t, run.error));
                 }}
               />
             </div>

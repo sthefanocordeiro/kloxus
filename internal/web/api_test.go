@@ -1044,10 +1044,26 @@ func TestAPIOnboarding(t *testing.T) {
 		t.Fatal("proposal has no sections")
 	}
 
-	// pasted material is live-only in demo mode
-	if code := apiErrCode(t, apiCall(t, srv, "POST", "/api/v1/publications/propose",
-		map[string]any{"material": "https://example.com/issue"})); code != "live_only" {
-		t.Fatalf("propose = %q, want live_only", code)
+	// a pasted URL goes through the demo's simulated scraper and comes
+	// back as a labeled, reviewable proposal (KLOX-99)
+	rr = apiCall(t, srv, "POST", "/api/v1/publications/propose",
+		map[string]any{"material": "https://example.com/issue"})
+	if rr.Code != 200 {
+		t.Fatalf("propose = %d: %s", rr.Code, shortBody(rr))
+	}
+	pbody := apiJSON(t, rr)
+	linkProp, _ := pbody["proposal"].(map[string]any)
+	if linkProp["name"] != "Example" {
+		t.Fatalf("propose proposal = %v", pbody["proposal"])
+	}
+	if secs, _ := linkProp["sections"].([]any); len(secs) == 0 {
+		t.Fatal("propose proposal has no sections")
+	}
+	if srcs, _ := linkProp["sources"].([]any); len(srcs) != 0 {
+		t.Fatalf("pasted URL must not become an offered source: %v", srcs)
+	}
+	if sc, _ := pbody["scrape"].(map[string]any); sc["simulated"] != true {
+		t.Fatalf("scrape = %v, want the labeled simulated provider", pbody["scrape"])
 	}
 
 	// create — the blocks become a custom publication
@@ -1218,6 +1234,37 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 	gSecs, _ := got["sections"].([]any)
 	if len(gSecs) != len(bSecs) {
 		t.Fatalf("rename PUT changed the section list: %d -> %d", len(bSecs), len(gSecs))
+	}
+
+	// --- KLOX-94: topic and reject_terms ride pointer semantics — an
+	// explicit "" clears while an absent key keeps the stored value ---
+	rr = apiCall(t, srv, "PUT", base, map[string]any{
+		"topic": "fintech e regulação", "reject_terms": "celular, games",
+	})
+	if rr.Code != 200 {
+		t.Fatalf("aderência PUT = %d: %s", rr.Code, shortBody(rr))
+	}
+	got = apiJSON(t, rr)["publication"].(map[string]any)
+	if got["topic"] != "fintech e regulação" || got["reject_terms"] != "celular, games" {
+		t.Fatalf("aderência fields did not land: %v / %v", got["topic"], got["reject_terms"])
+	}
+	// a body without the keys preserves both
+	rr = apiCall(t, srv, "PUT", base, map[string]any{"name": "Futuro Renomeado"})
+	if rr.Code != 200 {
+		t.Fatalf("preserve PUT = %d: %s", rr.Code, shortBody(rr))
+	}
+	got = apiJSON(t, rr)["publication"].(map[string]any)
+	if got["topic"] != "fintech e regulação" || got["reject_terms"] != "celular, games" {
+		t.Fatalf("absent keys did not preserve aderência fields: %v / %v", got["topic"], got["reject_terms"])
+	}
+	// explicit "" clears both
+	rr = apiCall(t, srv, "PUT", base, map[string]any{"topic": "", "reject_terms": ""})
+	if rr.Code != 200 {
+		t.Fatalf("clear PUT = %d: %s", rr.Code, shortBody(rr))
+	}
+	got = apiJSON(t, rr)["publication"].(map[string]any)
+	if got["topic"] != "" || got["reject_terms"] != "" {
+		t.Fatalf("explicit empty did not clear: %v / %v", got["topic"], got["reject_terms"])
 	}
 
 	// --- custom publication: canonicalPub swaps a custom pub's

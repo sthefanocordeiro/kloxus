@@ -6,7 +6,7 @@ import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dos
 import { sectionTitle, useT } from "../i18n";
 
 import { cn } from "../lib/cn";
-import { errText } from "../lib/errors";
+import { errText, isNoItemsFailure, runErrText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
 import { KDialog, KPopover } from "../ui-overlays";
 
@@ -122,7 +122,7 @@ type Board = { bench: Candidate[]; sections: Record<string, Candidate[]> };
 // the board's i18n strings (readonly — they come from the translation table)
 interface BoardStrings {
   add: string; remove: string; moveTo: string; full: string;
-  openDossier: string; aiBadge: string; removeWhy: string;
+  openDossier: string; aiBadge: string; rejectBadge: string; removeWhy: string;
   reasonChips: readonly string[]; reasonOther: string; justRemove: string;
   [k: string]: unknown;
 }
@@ -163,7 +163,6 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const BENCH_PAGE = 50;
   const [extraBench, setExtraBench] = useState<Candidate[]>([]);
   const [pagesLoaded, setPagesLoaded] = useState(1);
-  const [serverHasMore, setServerHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [benchPage, setBenchPage] = useState(0);
   const [toast, setToast] = useState<{
@@ -182,15 +181,32 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const [draftBlocked, setDraftBlocked] = useState<string | null>(null);
   const [boardTab, setBoardTab] = useState<"bench" | "issue">("bench");
 
+  // A lineup put or a decision refetches candidates — the page-1
+  // payload must not unload the pages the user already pulled
+  // (KLOX-100): keep extraBench, dropping only stories that are now
+  // seated in a section. Pagination resets only on issue change.
   useEffect(() => {
-    if (candsQ.data) {
-      setBoard(boardFrom(candsQ.data));
-      setExtraBench([]);
-      setPagesLoaded(1);
-      setServerHasMore(candsQ.data.has_more ?? false);
-      setBenchPage(0);
-    }
+    if (!candsQ.data) return;
+    setBoard(boardFrom(candsQ.data));
+    setExtraBench((prev) =>
+      prev.filter((c) => {
+        const cur = candsQ.data.candidates.find((x) => x.story_id === c.story_id);
+        return !cur || !cur.in_issue;
+      }),
+    );
   }, [candsQ.data]);
+
+  useEffect(() => {
+    setBoard(null);
+    setExtraBench([]);
+    setPagesLoaded(1);
+    setBenchPage(0);
+  }, [issue.id]);
+
+  // has_more answers "is there a page after THIS page" — derive the
+  // next fetch's existence from the authoritative bench total and the
+  // pages already merged, so a page-1 refetch can't hide loaded pages.
+  const serverHasMore = pagesLoaded * BENCH_PAGE < (candsQ.data?.bench_total ?? 0);
 
   const showToast = useCallback(
     (
@@ -439,7 +455,6 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     try {
       const resp = await api.candidates(issue.id, pagesLoaded);
       setPagesLoaded((n) => n + 1);
-      setServerHasMore(resp.has_more ?? false);
       const seen = new Set<number>();
       for (const c of board.bench) seen.add(c.story_id);
       for (const c of extraBench) seen.add(c.story_id);
@@ -708,9 +723,12 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                   </span>
                   <span className="text-[10px] text-muted">[{si + 1}]</span>
                 </div>
-                {!full && items.length > 0 && items.length < s.capacity && (
+                {!full && (
+                  // Honest shortfall (KLOX-100): open seats and the real
+                  // suggestion pool — never the seated count dressed up
+                  // as "suggestions for today".
                   <p className="mb-1.5 px-1 text-[11px] italic text-muted">
-                    {t.board.shortfall(items.length, sectionTitle(lang, s.title))}
+                    {t.board.shortfall(s.capacity - items.length, sectionTitle(lang, s.title), candsQ.data?.bench_total ?? benchAll.length)}
                   </p>
                 )}
                 <div className="space-y-2">
@@ -917,15 +935,26 @@ export function RunLanding() {
       ) : done?.no_new_items || done?.error ? (
         <div className="flex flex-1 items-center justify-center p-8">
           <Card className="max-w-md p-6 text-center">
-            <p className="text-sm">{done.error ? done.error : t.run.noNewItems}</p>
+            <p className="text-sm">{done.error ? runErrText(t, done.error) : t.run.noNewItems}</p>
             {ws.data?.mode === "demo" && (
               <Button className="mt-4" variant="outline" size="sm" disabled={reset.isPending} onClick={() => reset.mutate()}>
                 {reset.isPending ? "…" : t.demo.reset}
               </Button>
             )}
-            <Link to="/publications" className="mt-4 block text-sm text-teal underline">
-              {t.publications}
-            </Link>
+            {/* the empty-harvest failure points at sources — that's the
+                page the copy tells the creator to check (KLOX-90) */}
+            {isNoItemsFailure(done.error) && done.publication_id ? (
+              <Link
+                to={`/publications/${done.publication_id}/sources`}
+                className="mt-4 block text-sm text-teal underline"
+              >
+                {t.run.openSources}
+              </Link>
+            ) : (
+              <Link to="/publications" className="mt-4 block text-sm text-teal underline">
+                {t.publications}
+              </Link>
+            )}
           </Card>
         </div>
       ) : (
@@ -1022,6 +1051,11 @@ function StoryCard({
             // KLOX-67: the pauta body arrived AI-written and is still
             // unedited — the composer renders the full marker.
             <Badge tone="teal" className="mt-1">{board.aiBadge}</Badge>
+          )}
+          {c.rejected_editorial && (
+            // KLOX-94: the story hits the newsletter's reject terms —
+            // it sits at the bench tail, marked, never auto-slotted.
+            <Badge tone="warn" className="mt-1">{board.rejectBadge}</Badge>
           )}
         </button>
         <div className="flex shrink-0 flex-col items-end gap-1">

@@ -24,6 +24,9 @@ export interface NewsletterSection {
   items: number;
   commentary: string; // required | optional | none
   access: "all" | "subscribers";
+  // topic declares the pauta the section wants — keywords that steer
+  // which suggestions land here (KLOX-94); may be empty
+  topic?: string;
 }
 
 export interface Publication {
@@ -35,6 +38,9 @@ export interface Publication {
   topic: string;
   audience: string;
   editorial_line: string;
+  // reject_terms are the editorial line's no-go themes — the aderência
+  // ranking demotes matching stories and never auto-slots them (KLOX-94)
+  reject_terms?: string;
   tone: string;
   frequency: string;
   ai_disclosure: string;
@@ -89,7 +95,7 @@ export interface PublicIssue {
   subscribed: boolean;
   reader: { name: string };
   paid_sections: string[];
-  paywall?: { enabled: boolean; price: string };
+  paywall?: { enabled: boolean; price: string; test_mode?: boolean; simulated?: boolean };
 }
 
 export interface AfterSend {
@@ -166,6 +172,9 @@ export interface Candidate {
   summary?: string;
   /** KLOX-67: lineup card whose pauta body is still AI-written. */
   ai_draft?: boolean;
+  /** KLOX-94: bench story the newsletter's reject terms exclude — it
+      stays visible at the bench tail, never auto-slotted. */
+  rejected_editorial?: boolean;
 }
 
 export interface BoardSection {
@@ -223,6 +232,7 @@ export interface Run {
   status: "running" | "done" | "failed" | "blocked";
   step: string;
   issue_id?: number;
+  publication_id?: number;
   no_new_items: boolean;
   error?: string;
   blocked?: boolean;
@@ -350,6 +360,17 @@ export interface Sample {
   how_it_works: string[];
 }
 
+// What the propose scrape reports alongside the proposal (KLOX-99) —
+// the honest "what we extracted" summary the creator reviews.
+export interface ScrapeInfo {
+  url: string;
+  title: string;
+  provider: string;
+  simulated: boolean;
+  words: number;
+  warnings: string[];
+}
+
 // The proposal is the five editable blocks plus carried settings and the
 // sources offered next on the sources screen.
 export interface Proposal {
@@ -357,6 +378,7 @@ export interface Proposal {
   topic: string;
   audience: string;
   editorial_line: string;
+  reject_terms?: string;
   tone: string;
   language: string;
   frequency: string;
@@ -573,6 +595,22 @@ export const api = {
     request<{ sent: boolean; already_confirmed?: boolean; delivery?: string; confirm_url?: string; refused?: string }>(
       "POST", `/api/v1/p/${slug}/subscribe${query}`, { email },
     ),
+  // Paid-section checkout (KLOX-13): opens an AbacatePay PIX billing —
+  // the reader is redirected to checkout_url. provider "fake" is the
+  // documented fallback the UI labels as simulated; test_mode is the
+  // provider's own sandbox flag ("no real charge").
+  payCheckout: (slug: string, email: string, issue: string, query: string) =>
+    request<{
+      ref: string; status: string; provider: string; checkout_url?: string;
+      test_mode: boolean; simulated: boolean; already_subscribed?: boolean;
+    }>("POST", `/api/v1/p/${slug}/checkout${query}`, { email, issue }),
+  // The return page polls this until the webhook-confirmed grant lands
+  // — also the fallback path when the webhook never arrives.
+  payStatus: (slug: string, ref: string, query: string) =>
+    request<{
+      ref: string; status: string; provider: string; test_mode: boolean;
+      simulated: boolean; checkout_url?: string; paid_until?: string; magic_link?: string;
+    }>("GET", `/api/v1/p/${slug}/pay/${ref}${query}`),
   hold: (issueID: number) =>
     request<{ issue: IssueSummary }>("POST", `/api/v1/issues/${issueID}/hold`, {}),
   after: (issueID: number) => request<AfterSend>("GET", `/api/v1/issues/${issueID}/after`),
@@ -597,7 +635,7 @@ export const api = {
   sample: () => request<Sample>("GET", "/api/v1/sample"),
   proposal: () => request<{ proposal: Proposal }>("GET", "/api/v1/proposal").then((r) => r.proposal),
   propose: (material: string) =>
-    request<{ proposal: Proposal }>("POST", "/api/v1/publications/propose", { material }).then((r) => r.proposal),
+    request<{ proposal: Proposal; scrape: ScrapeInfo }>("POST", "/api/v1/publications/propose", { material }),
   createPublication: (p: Omit<Proposal, "sources">) =>
     request<{ publication: Publication }>("POST", "/api/v1/publications", p).then((r) => r.publication),
   updatePublication: (id: string | number, p: Partial<Omit<Proposal, "sources">>) =>
@@ -611,8 +649,6 @@ export const api = {
   sourcePreview: (pubID: number | string, type: string, url: string) =>
     request<{ items: PreviewItem[]; note?: string }>(
       "GET", `/api/v1/publications/${pubID}/sources/preview?type=${type}&url=${encodeURIComponent(url)}`),
-  sourceAdd: (pubID: number | string, type: string, url: string, name?: string) =>
-    request<{ source: SourceRow }>("POST", `/api/v1/publications/${pubID}/sources`, { type, url, name }).then((r) => r.source),
   sourceConfirm: (pubID: number | string, include?: string[]) =>
     request<{ sources: SourceRow[] }>("POST", `/api/v1/publications/${pubID}/sources/confirm`, { include }).then((r) => r.sources),
   sourceDelete: (pubID: number | string, sid: number) =>
