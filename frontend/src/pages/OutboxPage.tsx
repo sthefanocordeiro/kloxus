@@ -56,13 +56,18 @@ function EmailPreview({ id }: { id: number }) {
   const q = useQuery({ queryKey: ["outboxEmail", id], queryFn: () => api.outboxEmail(id) });
   const e: OutboxEmail | undefined = q.data;
   if (!e) return <div className="border-t border-line px-4 py-3 text-xs text-muted">…</div>;
+  // A fetched same-origin frame, not a srcdoc one — srcdoc previews
+  // painted blank intermittently at narrow widths (KLOX-100). The
+  // server wraps the body in a strict CSP sandbox; the attribute here
+  // is a second layer. Markdown-only mails render inside the same
+  // frame, so every email previews identically at any viewport.
   return (
     <div className="border-t border-line">
-      {e.body_html ? (
+      {e.body_html || e.body_md ? (
         <iframe
           title={e.subject}
           sandbox=""
-          srcDoc={e.body_html}
+          src={`/outbox/${id}/html`}
           className={cn("h-[420px] w-full bg-white")}
         />
       ) : (

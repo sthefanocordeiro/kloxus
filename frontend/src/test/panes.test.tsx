@@ -5,7 +5,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import type { DocItem, IssueDocument } from "../api";
+import type { DocItem, IssueDocument, IssueItem } from "../api";
 import { EvidencePane, PautasPane } from "../components/Panes";
 import { DocActionsCtx, type DocActions } from "../editor/nodes";
 
@@ -98,5 +98,36 @@ describe("link-only pautas (KLOX-65/D2)", () => {
     expect(screen.getByText("1 source")).toBeVisible();
     expect(screen.getByText("0 sentences · 2 sources")).toBeVisible();
     expect(screen.queryByText(/0 sentences · 1 source/)).toBeNull();
+  });
+});
+
+// KLOX-100: the badge reads only the items list — an unloaded or stale
+// list must show no badge, never a fallback "to decide" that flips
+// once the real status lands.
+describe("PautasPane status badges (KLOX-100)", () => {
+  const ii = (over: Partial<IssueItem> = {}): IssueItem => ({
+    id: 70, issue_id: 1, story_id: 7, section: "Quick links",
+    score: 1, reason: "", status: "approved", origin: "", title: "A cool link",
+    outlets: [], ...over,
+  });
+
+  it("shows the item's real status when the list is loaded", () => {
+    wrap(<PautasPane doc={doc()} items={[ii(), ii({ id: 80, status: "pending" })]} selectedRef={null} onSelect={() => {}} />);
+    expect(screen.getByText("approved")).toBeVisible();
+    expect(screen.getByText("to decide")).toBeVisible();
+  });
+
+  it("renders no badge while the items list is not in", () => {
+    wrap(<PautasPane doc={doc()} selectedRef={null} onSelect={() => {}} />);
+    expect(screen.queryByText("approved")).toBeNull();
+    expect(screen.queryByText("to decide")).toBeNull();
+  });
+
+  it("renders no badge for an item missing from a stale list", () => {
+    // a swap creates a new issue_item the cached list lacks — the old
+    // fallback painted that as "to decide" until the refetch landed
+    wrap(<PautasPane doc={doc()} items={[ii({ id: 999 })]} selectedRef={null} onSelect={() => {}} />);
+    expect(screen.queryByText("approved")).toBeNull();
+    expect(screen.queryByText("to decide")).toBeNull();
   });
 });

@@ -4277,7 +4277,9 @@ func (s *Server) editSupportedFor(r *http.Request, item *docItem, dc *docContext
 func (s *Server) citedCorpus(d *pipeline.Dossier, dc *docContext, src pipeline.DossierSource) string {
 	if dc != nil {
 		if it, ok := dc.items[src.ItemID]; ok && it.ContentText != "" {
-			return it.ContentText
+			// the headline/standfirst counts as support (KLOX-100): a
+			// sentence echoing the article's own title is grounded.
+			return it.Title + "\n" + it.ContentText
 		}
 	}
 	var b strings.Builder
@@ -4321,8 +4323,13 @@ func (s *Server) composeFlagNotes(item *docItem, dc *docContext, line string) []
 		if corpus == "" {
 			corpus = d.Summary
 		}
-		if !pipeline.SupportedBySource(line, corpus) {
+		switch {
+		case !pipeline.SupportedBySource(line, corpus):
 			notes = append(notes, fmt.Sprintf("not supported by [%d]", n))
+		case pipeline.UnsupportedDate(line, corpus):
+			notes = append(notes, fmt.Sprintf("date not supported by [%d]", n))
+		case pipeline.NegationUnsupported(line, corpus):
+			notes = append(notes, fmt.Sprintf("negation not supported by [%d]", n))
 		}
 	}
 	if d != nil {
@@ -4376,7 +4383,9 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docCo
 		}
 		if dc != nil {
 			if it, ok := dc.items[src.ItemID]; ok && it.ContentText != "" {
-				corpus = append(corpus, it.ContentText)
+				// headline/standfirst count as support (KLOX-100) —
+				// same corpus as citedCorpus.
+				corpus = append(corpus, it.Title+"\n"+it.ContentText)
 				continue
 			}
 		}
@@ -4389,7 +4398,10 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docCo
 	if len(corpus) == 0 {
 		corpus = append(corpus, d.Summary)
 	}
-	if !pipeline.SupportedBySource(text, strings.Join(corpus, " ")) {
+	joined := strings.Join(corpus, " ")
+	if !pipeline.SupportedBySource(text, joined) ||
+		pipeline.UnsupportedDate(text, joined) ||
+		pipeline.NegationUnsupported(text, joined) {
 		return false
 	}
 	// model check on top of the floor (real mode); demo misses mean ok.

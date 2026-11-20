@@ -70,7 +70,8 @@ export const dict = {
       draftAction: (n: number) => `Draft the issue (${n} ${n === 1 ? "story" : "stories"})`,
       steps: ["Stories", "Write", "Review & send"],
       emptySlot: (n: number) => `Drop a story here · ${n} free`,
-      shortfall: (n: number, name: string) => `Only ${n} ${n === 1 ? "suggestion" : "suggestions"} for ${name} today`,
+      shortfall: (open: number, name: string, bench: number) =>
+        `${open} ${open === 1 ? "seat" : "seats"} open in ${name} · ${bench} ${bench === 1 ? "suggestion" : "suggestions"} available`,
       sectionsChanged: "Your section edits apply to the next edition — this one keeps its own.",
       undone: "Undone",
       viewGuide: "View guide",
@@ -643,7 +644,8 @@ export const dict = {
       draftAction: (n: number) => `Redigir a edição (${n === 1 ? "1 pauta" : `${n} pautas`})`,
       steps: ["Pautas", "Escrever", "Revisar e enviar"],
       emptySlot: (n: number) => `Solte uma pauta aqui · ${n} vaga${n > 1 ? "s" : ""}`,
-      shortfall: (n: number, name: string) => `Só ${n} ${n === 1 ? "sugestão" : "sugestões"} para ${name} hoje`,
+      shortfall: (open: number, name: string, bench: number) =>
+        `${open} ${open === 1 ? "vaga" : "vagas"} em aberto em ${name} · ${bench} ${bench === 1 ? "sugestão disponível" : "sugestões disponíveis"}`,
       sectionsChanged: "Suas mudanças de seções valem para a próxima edição — esta mantém as dela.",
       undone: "Desfeito",
       viewGuide: "Ver o guia",
@@ -1198,6 +1200,8 @@ const FLAG_NOTES_PT: [RegExp, string][] = [
   [/^too close to the source$/, "muito próxima da fonte"],
   [/^cites source \[(\d+)\] that does not exist$/, "cita a fonte [$1], que não existe"],
   [/^not supported by \[(\d+)\]$/, "a fonte [$1] não confirma"],
+  [/^date not supported by \[(\d+)\]$/, "a data não confere com a fonte [$1]"],
+  [/^negation not supported by \[(\d+)\]$/, "a fonte [$1] não registra essa negação"],
 ];
 
 export function flagNote(lang: Lang, note: string): string {

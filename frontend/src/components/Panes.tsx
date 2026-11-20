@@ -27,7 +27,11 @@ export function PautasPane({
 }) {
   const { t, lang } = useT();
   const b = useComposer();
-  const statusOf = (iid: number) => items?.find((i) => i.id === iid)?.status ?? "pending";
+  // no badge until the statuses are in — a fallback "a decidir" on an
+  // approved pauta is the flicker the audit flagged (KLOX-100); a
+  // missing item (stale list, fresh swap) reads as no badge, never the
+  // wrong one
+  const statusOf = (iid: number) => items?.find((i) => i.id === iid)?.status;
   const statusLabel = (s: string) => (t.itemStatus as Record<string, string>)[s] ?? s;
   return (
     <div className="space-y-4 p-3">
@@ -37,11 +41,13 @@ export function PautasPane({
             {sec.title ? sectionTitle(lang, sec.title) : t.pautas}
           </p>
           <div className="space-y-1">
-            {(sec.items ?? []).map((it) => (
+            {(sec.items ?? []).map((it) => {
+              const st = statusOf(it.issue_item_id);
+              return (
               <button
                 key={it.ref}
                 onClick={() => onSelect(it.ref, it.issue_item_id)}
-                aria-label={`${it.headline} — ${statusLabel(statusOf(it.issue_item_id))}`}
+                aria-label={`${it.headline} — ${statusLabel(st ?? "pending")}`}
                 className={cn(
                   "w-full rounded-[var(--radius-card)] border px-3 py-2 text-left text-sm transition-colors",
                   selectedRef === it.ref ? "border-teal bg-teal-soft/50" : "border-line bg-paper-raised hover:border-ink/40",
@@ -49,9 +55,11 @@ export function PautasPane({
               >
                 <span className="font-doc leading-5 block">{it.headline}</span>
                 <span className="mt-1 flex items-center gap-2">
-                  <Badge tone={statusOf(it.issue_item_id) === "approved" ? "teal" : "muted"}>
-                    {statusLabel(statusOf(it.issue_item_id))}
-                  </Badge>
+                  {st && (
+                    <Badge tone={st === "approved" ? "teal" : "muted"}>
+                      {statusLabel(st)}
+                    </Badge>
+                  )}
                   {it.link_only && <Badge tone="muted">{b.linkOnly}</Badge>}
                   <span className="text-[10px] text-muted">
                     {sec.format === "links"
@@ -62,7 +70,8 @@ export function PautasPane({
                   </span>
                 </span>
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
       ))}
