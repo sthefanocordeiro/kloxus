@@ -293,6 +293,75 @@ func TestPayFakeFallback(t *testing.T) {
 	}
 }
 
+// TestPayCheckoutHostedURLs: a hosted reader link carries the sealed
+// workspace token in the URL (?tok=...). The checkout must echo it back
+// as a well-formed query — ? starts the query string, & separates
+// parameters — in both the real-provider payload (returnUrl/
+// completionUrl) and the fake fallback's redirect (checkout_url).
+// Regression for the QA FAIL on 62fe782: tokSuffix returns "&tok=…"
+// and was appended straight onto the path, so the hosted return URL
+// read "/p/…&tok=…?pay=…" — the query never started, breaking the
+// hosted journey on Fly for both checkout shapes.
+func TestPayCheckoutHostedURLs(t *testing.T) {
+	tok := "sealed-ws-token"
+
+	// real-provider shape: the payload the AbacatePay checkout receives
+	fake := newFakeAbacate(t, "PAID")
+	srv, db, pub, _ := demoServerOpt(t, func(d *web.Deps) {
+		d.Pay = payments.AbacatePay{APIKey: "abc_dev_test", BaseURL: fake.srv.URL}
+	})
+	rr := apiCall(t, srv, "POST", "/api/v1/p/"+pub.Slug+"/checkout?tok="+tok,
+		map[string]string{"email": "hosted@example.com"})
+	if rr.Code != 200 {
+		t.Fatalf("checkout = %d: %s", rr.Code, shortBody(rr))
+	}
+	res := apiJSON(t, rr)
+	ref, _ := res["ref"].(string)
+	ret, _ := fake.last["returnUrl"].(string)
+	done, _ := fake.last["completionUrl"].(string)
+	wantRet := "http://example.com/p/" + pub.Slug + "/latest?tok=" + tok
+	if ret != wantRet {
+		t.Fatalf("returnUrl = %q, want %q", ret, wantRet)
+	}
+	if want := wantRet + "&pay=" + ref; done != want {
+		t.Fatalf("completionUrl = %q, want %q", done, want)
+	}
+	// the return page's status poll confirms and grants
+	st := apiGet(t, srv, "/api/v1/p/"+pub.Slug+"/pay/"+ref+"?tok="+tok)
+	if st["status"] != "paid" || st["magic_link"] == "" {
+		t.Fatalf("hosted status poll = %v", st)
+	}
+	rid, _ := db.ReaderByEmail(t.Context(), pub.ID, "hosted@example.com")
+	if active, _ := db.HasActiveSubscription(t.Context(), rid.ID); !active {
+		t.Fatal("hosted checkout did not activate the subscription")
+	}
+
+	// fake-fallback shape: no key — the fake redirects the reader
+	// straight to the completion URL, which must be well-formed
+	srv2, db2, pub2, _ := demoServer(t)
+	rr = apiCall(t, srv2, "POST", "/api/v1/p/"+pub2.Slug+"/checkout?tok="+tok,
+		map[string]string{"email": "hosted-fake@example.com"})
+	if rr.Code != 200 {
+		t.Fatalf("fake checkout = %d: %s", rr.Code, shortBody(rr))
+	}
+	res = apiJSON(t, rr)
+	if res["provider"] != "fake" || res["simulated"] != true {
+		t.Fatalf("expected fake/simulated checkout, got %v", res)
+	}
+	u, _ := res["checkout_url"].(string)
+	if !strings.Contains(u, "?tok="+tok+"&pay=") || strings.Contains(u, "&tok=") {
+		t.Fatalf("fake fallback redirect is malformed: %q", u)
+	}
+	st = apiGet(t, srv2, "/api/v1/p/"+pub2.Slug+"/pay/"+res["ref"].(string)+"?tok="+tok)
+	if st["status"] != "paid" || st["magic_link"] == "" {
+		t.Fatalf("fake hosted status poll = %v", st)
+	}
+	rid2, _ := db2.ReaderByEmail(t.Context(), pub2.ID, "hosted-fake@example.com")
+	if active, _ := db2.HasActiveSubscription(t.Context(), rid2.ID); !active {
+		t.Fatal("fake hosted checkout did not activate the subscription")
+	}
+}
+
 // TestPayAlreadySubscribed: an active subscriber is never charged again.
 func TestPayAlreadySubscribed(t *testing.T) {
 	srv, db, pub, _ := demoServer(t)

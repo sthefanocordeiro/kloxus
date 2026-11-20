@@ -137,7 +137,12 @@ func (s *Server) apiPayCheckout(w http.ResponseWriter, r *http.Request) {
 		page = fmt.Sprintf("/p/%s/%d", pub.Slug, n)
 	}
 	base := s.publicBase(r)
-	returnTo := base + page + tokSuffix(r)
+	returnTo := base + page
+	if q := tokSuffix(r); q != "" {
+		// tokSuffix returns "&tok=…"; the query string must start with
+		// "?", never "&" (same pattern as claim.go's confirm redirect).
+		returnTo += "?" + strings.TrimPrefix(q, "&")
+	}
 	sep := "?"
 	if strings.Contains(returnTo, "?") {
 		sep = "&"
