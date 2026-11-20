@@ -44,7 +44,7 @@ export function PublicationPage() {
       )}
 
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">{t.issues}</h2>
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {issues.data?.map((iss) => (
           <Link key={iss.id} to={`/issues/${iss.id}`}>
             <Card className="flex items-center justify-between hover:border-ink/40 transition-colors">

@@ -334,3 +334,33 @@ func TestSchedulerFetchesEachSourceOnce(t *testing.T) {
 		t.Fatalf("not-due sources re-polled: feed=%d", feedHits)
 	}
 }
+
+// TestLatin1FeedDecodes: a feed whose only encoding hint is the HTTP
+// Content-Type charset (the XML prolog is silent) must land in stored
+// items as UTF-8 — pre-fix it arrived as the mojibake the owner saw on
+// ingested titles (KLOX-79).
+func TestLatin1FeedDecodes(t *testing.T) {
+	latin1 := []byte("<?xml version=\"1.0\"?><rss version=\"2.0\"><channel>" +
+		"<title>Feed</title><item><title>Servi\xe7o p\xfablico digital</title>" +
+		"<link>http://example.com/l1</link><guid>l1</guid></item></channel></rss>")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			w.WriteHeader(404)
+			return
+		}
+		w.Header().Set("Content-Type", "text/xml; charset=iso-8859-1")
+		w.Write(latin1)
+	}))
+	defer srv.Close()
+
+	fs := newFakeStore()
+	cs := rssSource(srv.URL+"/feed", "launch")
+	fs.cat = []store.CatalogSource{*cs}
+	f := NewFeedFetcher(fs, srv.Client(), "KloxusBot/1.0 (+test)", "KloxusBot", nil)
+	if o := f.Fetch(context.Background(), cs); o.Status != "ok" {
+		t.Fatalf("fetch: %+v", o)
+	}
+	if got := fs.items[1][0].Title; got != "Serviço público digital" {
+		t.Fatalf("title=%q — latin-1 feed not decoded", got)
+	}
+}

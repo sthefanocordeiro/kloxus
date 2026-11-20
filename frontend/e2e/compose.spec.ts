@@ -52,13 +52,16 @@ async function onboard(page: Page) {
   await page.getByRole("button", { name: /Create your newsletter/ }).first().click();
   await page.waitForURL(/\/new/);
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
-  await page.getByRole("button", { name: "Next: sections", exact: true }).click();
-  await page.getByRole("button", { name: "Continue to sources", exact: true }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  // both steps now share the one "Next" label — wait for the section
+  // step to render so the second click can't land on page 1's button
+  await expect(page.getByText(/Your edition will have \d+ stor/)).toBeVisible();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.waitForURL(/\/publications\/\d+\/sources/);
   await expect(page.getByText("Suggested sources")).toBeVisible();
   await page.getByRole("button", { name: "Latest items", exact: true }).first().click();
   await expect(page.locator("ul li a").first()).toBeVisible({ timeout: 15000 });
-  await page.getByRole("button", { name: /Confirm \d+ sources & collect/ }).click();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.waitForURL(/\/issues\/\d+/, { timeout: 180000 });
 }
 

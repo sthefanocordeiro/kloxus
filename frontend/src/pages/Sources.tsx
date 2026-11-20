@@ -87,7 +87,7 @@ export function SourcesPage() {
       {!loading && (sources.data?.length ?? 0) > 0 && (
         <>
           <h2 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.added}</h2>
-          <div className="mt-2 grid gap-2">
+          <div className="mt-2 grid grid-cols-1 gap-2">
             {sources.data!.map((s) => (
               <Card key={s.id} className="flex items-center gap-3 p-3">
                 <div className="min-w-0 flex-1">
@@ -116,7 +116,7 @@ export function SourcesPage() {
       {!loading && offered.length > 0 && (
         <>
           <h2 className="mt-6 text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.offered}</h2>
-          <div className="mt-2 grid gap-2">
+          <div className="mt-2 grid grid-cols-1 gap-2">
             {offered.map((o) => (
               <Card key={o.url} className="p-3">
                 <div className="flex items-center gap-3">
@@ -143,7 +143,7 @@ export function SourcesPage() {
                 </div>
                 {previews[o.url] === "loading" && <p className="mt-2 text-xs text-muted">…</p>}
                 {Array.isArray(previews[o.url]) && (
-                  <ul className="mt-2 grid gap-1 border-t border-line pt-2 text-sm">
+                  <ul className="mt-2 grid grid-cols-1 gap-1 border-t border-line pt-2 text-sm">
                     {(previews[o.url] as PreviewItem[]).map((it, i) => (
                       <li key={i} className="truncate">
                         <a href={it.url} target="_blank" rel="noreferrer" className="hover:text-teal">
@@ -218,15 +218,43 @@ export function SourcesPage() {
       </Card>
       )}
 
-      <div className="mt-6 flex items-center justify-end gap-3">
-        <Button
-          disabled={count === 0 || confirm.isPending}
-          onClick={() => confirm.mutate()}
-          size="lg"
-        >
-          {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(count)}
-        </Button>
-        {count === 0 && !loading && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
+      {/* one button pattern across the onboarding steps (KLOX-79):
+          Fontes gets the same pair as Seções — Voltar left, Avançar
+          right; the forward action keeps the same right-aligned spot.
+          Voltar returns to the publication's sections step. Once a
+          first issue exists this is the sources screen again and keeps
+          its original confirm. */}
+      <div className="mt-6 flex items-center gap-3">
+        {!pub.data?.latest_issue ? (
+          <>
+            <span className="text-xs text-muted">
+              {count === 0 && !loading ? t.sourcesPage.empty : count > 0 ? t.sourcesPage.selected(count) : null}
+            </span>
+            <div className="ml-auto flex items-center gap-3">
+              <Button
+                variant="outline"
+                disabled={confirm.isPending}
+                onClick={() => nav(`/publications/${id}/sections`)}
+              >
+                {t.nav.back}
+              </Button>
+              <Button disabled={count === 0 || confirm.isPending} onClick={() => confirm.mutate()}>
+                {confirm.isPending ? t.sourcesPage.confirming : t.create.next}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <div className="ml-auto flex items-center gap-3">
+            <Button
+              disabled={count === 0 || confirm.isPending}
+              onClick={() => confirm.mutate()}
+              size="lg"
+            >
+              {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(count)}
+            </Button>
+            {count === 0 && !loading && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
+          </div>
+        )}
       </div>
       {confirm.error && <p className="mt-2 text-xs text-danger">{errText(t, confirm.error)}</p>}
     </div>

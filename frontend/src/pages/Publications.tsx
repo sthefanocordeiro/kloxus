@@ -48,7 +48,7 @@ export function Publications() {
           </Link>
         </Card>
       )}
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         {pubs.data?.map((p) => (
           <Link key={p.id} to={`/publications/${p.id}`}>
             <Card className="transition-colors hover:border-ink/40">
