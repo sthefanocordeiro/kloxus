@@ -598,14 +598,14 @@ export const api = {
   // the reader is redirected to checkout_url. provider "fake" is the
   // documented fallback the UI labels as simulated; test_mode is the
   // provider's own sandbox flag ("no real charge").
-  payCheckout: (slug: string, email: string, issue: string, query = "") =>
+  payCheckout: (slug: string, email: string, issue: string, query: string) =>
     request<{
       ref: string; status: string; provider: string; checkout_url?: string;
       test_mode: boolean; simulated: boolean; already_subscribed?: boolean;
     }>("POST", `/api/v1/p/${slug}/checkout${query}`, { email, issue }),
   // The return page polls this until the webhook-confirmed grant lands
   // — also the fallback path when the webhook never arrives.
-  payStatus: (slug: string, ref: string, query = "") =>
+  payStatus: (slug: string, ref: string, query: string) =>
     request<{
       ref: string; status: string; provider: string; test_mode: boolean;
       simulated: boolean; checkout_url?: string; paid_until?: string; magic_link?: string;
