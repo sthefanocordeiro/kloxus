@@ -475,13 +475,13 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}{}
 	var detScores []float64
 	var detReasons []string
+	var enrich map[int64]*store.ItemEnrichment
 	if r.Deterministic {
 		// The free ranking reads the shared enrichment when it exists
 		// (KLOX-67 §7.2): topic tags matching the publication's topic or
 		// editorial line and the story's kind weight adjust the
 		// recency + diversity score. No paid call happens here — the
 		// enrichment fills asynchronously after ingest.
-		var enrich map[int64]*store.ItemEnrichment
 		var eids []int64
 		for i := range stories {
 			for j := range stories[i].Items {
@@ -517,6 +517,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			"Audience":      pub.Audience,
 			"Language":      pub.Language,
 			"EditorialLine": pub.EditorialLine,
+			"RejectTerms":   pub.RejectTerms,
 			"Guide":         r.guide(ctx, pub.ID),
 			"Stories":       ts,
 		}, &triage)
@@ -554,7 +555,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	var picks []lineupPick
 	if r.Deterministic {
-		picks = pickLineup(stories, detScores, detReasons, pub.Sections)
+		picks = pickLineup(stories, detScores, detReasons, pub, enrich)
 		r.record(ctx, pub.ID, issueID, "storylist", "deterministic", start, llm.Response{})
 	} else {
 		var picked struct {
@@ -571,6 +572,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			"Audience":      pub.Audience,
 			"Sections":      pub.Sections,
 			"EditorialLine": pub.EditorialLine,
+			"RejectTerms":   pub.RejectTerms,
 			"Guide":         r.guide(ctx, pub.ID),
 			"Stories":       ss,
 		}, &picked)

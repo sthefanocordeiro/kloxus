@@ -174,6 +174,7 @@ export function CreateNewsletter() {
               <Field label={t.create.topic} value={form.topic} onChange={(v) => set("topic", v)} />
               <Field label={t.create.audience} value={form.audience} onChange={(v) => set("audience", v)} />
               <Field label={t.create.editorialLine} value={form.editorial_line} onChange={(v) => set("editorial_line", v)} area />
+              <Field label={t.create.rejectTerms} value={form.reject_terms ?? ""} onChange={(v) => set("reject_terms", v)} hint={t.create.rejectTermsHint} />
               <Field label={t.create.tone} value={form.tone} onChange={(v) => set("tone", v)} />
 
               {/* one button pattern across the onboarding steps (KLOX-79):
@@ -212,8 +213,8 @@ export function CreateNewsletter() {
   );
 }
 
-function Field({ label, value, onChange, area }: {
-  label: string; value: string; onChange: (v: string) => void; area?: boolean;
+function Field({ label, value, onChange, area, hint }: {
+  label: string; value: string; onChange: (v: string) => void; area?: boolean; hint?: string;
 }) {
   return (
     <label className="mt-3 block">
@@ -232,6 +233,7 @@ function Field({ label, value, onChange, area }: {
           className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
         />
       )}
+      {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
     </label>
   );
 }
