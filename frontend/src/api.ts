@@ -223,6 +223,7 @@ export interface Run {
   status: "running" | "done" | "failed" | "blocked";
   step: string;
   issue_id?: number;
+  publication_id?: number;
   no_new_items: boolean;
   error?: string;
   blocked?: boolean;

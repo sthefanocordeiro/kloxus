@@ -6,7 +6,7 @@ import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dos
 import { sectionTitle, useT } from "../i18n";
 
 import { cn } from "../lib/cn";
-import { errText } from "../lib/errors";
+import { errText, isNoItemsFailure, runErrText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
 import { KDialog, KPopover } from "../ui-overlays";
 
@@ -917,15 +917,26 @@ export function RunLanding() {
       ) : done?.no_new_items || done?.error ? (
         <div className="flex flex-1 items-center justify-center p-8">
           <Card className="max-w-md p-6 text-center">
-            <p className="text-sm">{done.error ? done.error : t.run.noNewItems}</p>
+            <p className="text-sm">{done.error ? runErrText(t, done.error) : t.run.noNewItems}</p>
             {ws.data?.mode === "demo" && (
               <Button className="mt-4" variant="outline" size="sm" disabled={reset.isPending} onClick={() => reset.mutate()}>
                 {reset.isPending ? "…" : t.demo.reset}
               </Button>
             )}
-            <Link to="/publications" className="mt-4 block text-sm text-teal underline">
-              {t.publications}
-            </Link>
+            {/* the empty-harvest failure points at sources — that's the
+                page the copy tells the creator to check (KLOX-90) */}
+            {isNoItemsFailure(done.error) && done.publication_id ? (
+              <Link
+                to={`/publications/${done.publication_id}/sources`}
+                className="mt-4 block text-sm text-teal underline"
+              >
+                {t.run.openSources}
+              </Link>
+            ) : (
+              <Link to="/publications" className="mt-4 block text-sm text-teal underline">
+                {t.publications}
+              </Link>
+            )}
           </Card>
         </div>
       ) : (
