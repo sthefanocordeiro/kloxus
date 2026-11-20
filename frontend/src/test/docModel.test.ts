@@ -99,7 +99,12 @@ describe("docToTiptap", () => {
   it("emits one sentence node per stored sentence, commentary last", () => {
     const tiptap = docToTiptap(doc()) as { content: { type: string }[] };
     const types = tiptap.content.map((n) => n.type);
-    expect(types).toEqual(["sectionHeading", "itemHeading", "sentence", "sentence", "commentary"]);
+    // a blockAdd gap sits before every block and after the last — the
+    // insert-anywhere affordance (KLOX-66); commentary still ends the
+    // section
+    expect(types).toEqual([
+      "sectionHeading", "blockAdd", "itemHeading", "sentence", "sentence", "blockAdd", "commentary",
+    ]);
   });
 
   it("keeps headings out of editable content — titles live in attrs", () => {
@@ -121,6 +126,45 @@ describe("docToTiptap", () => {
     const s = tiptap.content.find((n) => n.type === "sentence");
     expect(s?.attrs?.sid).toBe("1.a");
     expect(s?.attrs?.citations).toEqual([1]);
+  });
+
+  it("stamps section/index/count on every composer block", () => {
+    const d = doc();
+    d.sections[0].blocks = [
+      { kind: "item", ref: 1 },
+      { kind: "heading", text: "Note" },
+      { kind: "text", text: "hello" },
+    ];
+    const tiptap = docToTiptap(d) as {
+      content: { type: string; attrs?: Record<string, unknown> }[];
+    };
+    // the hover toolbar needs the section's block count to disable
+    // move-up on the first block and move-down on the last (KLOX-72)
+    expect(
+      tiptap.content.find((n) => n.type === "blockHeading")?.attrs,
+    ).toMatchObject({ section: "Lead", index: 1, count: 3 });
+    expect(
+      tiptap.content.find((n) => n.type === "blockText")?.attrs,
+    ).toMatchObject({ section: "Lead", index: 2, count: 3 });
+  });
+
+  it("marks links-section items link-only — the empty slot asks for no text", () => {
+    const d = doc();
+    d.sections.push({
+      title: "Quick links",
+      format: "links",
+      commentary: { mode: "none", text: "" },
+      items: [{ ref: 9, issue_item_id: 90, headline: "Just a link", sentences: [], sources: [] }],
+    });
+    const tiptap = docToTiptap(d) as {
+      content: { type: string; attrs?: Record<string, unknown> }[];
+    };
+    const heads = tiptap.content.filter((n) => n.type === "itemHeading");
+    const link = heads.find((n) => n.attrs?.ref === 9);
+    const story = heads.find((n) => n.attrs?.ref === 1);
+    expect(link?.attrs?.linkOnly).toBe(true);
+    expect(link?.attrs?.empty).toBe(true);
+    expect(story?.attrs?.linkOnly).toBe(false);
   });
 });
 

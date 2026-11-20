@@ -2,20 +2,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { GripVertical, Minus, Plus, Search } from "lucide-react";
-import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dossier, type IssueSummary, type LineupEntry, type RunEvent } from "../api";
-import { useT } from "../i18n";
+import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dossier, type IssueSummary, type LineupEntry, type Run, type RunEvent } from "../api";
+import { sectionTitle, useT } from "../i18n";
+
 import { cn } from "../lib/cn";
-import { errText } from "../lib/errors";
-import { Badge, Button, Card, KDialog, KPopover } from "../ui";
+import { errText, isNoItemsFailure, runErrText } from "../lib/errors";
+import { Badge, Button, Card } from "../ui";
+import { KDialog, KPopover } from "../ui-overlays";
 
 // --- SSE step rail: real counts per finished step, never percentages ---
 
-export function StepRail({ runID, steps, onDone }: { runID: string; steps: string[]; onDone: (run: { status: string; no_new_items?: boolean; error?: string }, events: RunEvent[]) => void }) {
+export function StepRail({ runID, steps, onDone }: { runID: string; steps: string[]; onDone: (run: Run, events: RunEvent[]) => void }) {
   const { t } = useT();
   const [events, setEvents] = useState<RunEvent[]>([]);
   const eventsRef = useRef<RunEvent[]>([]);
   const doneRef = useRef(false);
+  // onDone is an inline prop (new identity every render) — keep it in a
+  // ref so the SSE effect only keys on runID instead of reconnecting on
+  // every parent render.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
   useEffect(() => {
+    let poll: ReturnType<typeof setInterval> | undefined;
     const es = new EventSource(`/api/v1/runs/${runID}/events`);
     es.addEventListener("step", (e) => {
       const ev = JSON.parse((e as MessageEvent).data) as RunEvent;
@@ -27,25 +35,39 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
       if (doneRef.current) return;
       doneRef.current = true;
       const run = JSON.parse((e as MessageEvent).data);
-      onDone(run, eventsRef.current);
+      onDoneRef.current(run, eventsRef.current);
     });
-    es.onerror = () => es.close();
-    return () => es.close();
-  }, [runID, onDone]);
+    // A real run outlives any proxy idle timeout — when the stream dies,
+    // fall back to polling the run snapshot instead of stalling the rail.
+    es.onerror = () => {
+      es.close();
+      poll ??= setInterval(async () => {
+        try {
+          const run = await api.run(runID);
+          if (run.status !== "running") {
+            clearInterval(poll);
+            if (doneRef.current) return;
+            doneRef.current = true;
+            onDoneRef.current(run, eventsRef.current);
+          }
+        } catch {
+          // transient — keep polling
+        }
+      }, 3000);
+    };
+    return () => {
+      es.close();
+      if (poll) clearInterval(poll);
+    };
+  }, [runID]);
 
   const doneSteps = new Set(events.map((e) => e.step));
   const running = steps.find((s) => !doneSteps.has(s)); // first unfinished step ticks
   const stepLabels = t.run.step as Record<string, string>;
-  const countLabels = t.run.counts as Record<string, string | ((n: number) => string)>;
   return (
     <ol className="space-y-1.5">
       {steps.map((s) => {
-        const ev = events.find((e) => e.step === s);
         const done = doneSteps.has(s);
-        const bits = Object.entries(ev?.counts ?? {}).map(([k, v]) => {
-          const lbl = countLabels[k] ?? k;
-          return typeof lbl === "function" ? `${v} ${lbl(v)}` : `${v} ${lbl}`;
-        });
         return (
           <li key={s} className="flex items-center gap-2 text-sm">
             <span
@@ -55,11 +77,24 @@ export function StepRail({ runID, steps, onDone }: { runID: string; steps: strin
               )}
             />
             <span className={cn(done ? "text-ink" : "text-muted")}>{stepLabels[s] ?? s}</span>
-            {bits.length > 0 && <span className="text-xs text-muted">— {bits.join(", ")}</span>}
           </li>
         );
       })}
     </ol>
+  );
+}
+
+// BlockedCard is the guard-refused run view (D32): a clear creator-facing
+// message — never a bare error.
+export function BlockedCard({ message }: { message?: string }) {
+  const { t } = useT();
+  return (
+    <div className="mx-auto w-full max-w-md space-y-4 p-6">
+      <Card className="border-warn/50 p-5">
+        <p className="text-sm font-semibold">{t.run.blockedTitle}</p>
+        <p className="mt-1 text-sm text-muted">{message || t.run.blocked}</p>
+      </Card>
+    </div>
   );
 }
 
@@ -87,7 +122,7 @@ type Board = { bench: Candidate[]; sections: Record<string, Candidate[]> };
 // the board's i18n strings (readonly — they come from the translation table)
 interface BoardStrings {
   add: string; remove: string; moveTo: string; full: string;
-  openDossier: string; demoUnavailable: string; removeWhy: string;
+  openDossier: string; aiBadge: string; rejectBadge: string; removeWhy: string;
   reasonChips: readonly string[]; reasonOther: string; justRemove: string;
   [k: string]: unknown;
 }
@@ -118,10 +153,18 @@ function lineupOf(board: Board): LineupEntry[] {
 // --- the build board ---
 
 export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafted?: () => void }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const qc = useQueryClient();
   const candsQ = useQuery({ queryKey: ["candidates", issue.id], queryFn: () => api.candidates(issue.id) });
   const [board, setBoard] = useState<Board | null>(null);
+  // bench pagination (KLOX-45): the API pages the top-150 bench at 50
+  // a page; later pages merge into `extraBench`, and at most one page
+  // renders at a time.
+  const BENCH_PAGE = 50;
+  const [extraBench, setExtraBench] = useState<Candidate[]>([]);
+  const [pagesLoaded, setPagesLoaded] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [benchPage, setBenchPage] = useState(0);
   const [toast, setToast] = useState<{
     text: string;
     undo?: { kind: "board"; board: Board } | { kind: "reject"; itemID: number };
@@ -131,14 +174,39 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   const [search, setSearch] = useState("");
   const [sectionFilter, setSectionFilter] = useState("");
   const [sheet, setSheet] = useState<Candidate | null>(null);
-  const [swapFor, setSwapFor] = useState<{ story: Candidate; section: string } | null>(null);
+  const [swapFor, setSwapFor] = useState<{ story: Candidate; section: string; out?: Candidate } | null>(null);
+  const [swapReason, setSwapReason] = useState("");
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [draftRun, setDraftRun] = useState<string | null>(null);
+  const [draftBlocked, setDraftBlocked] = useState<string | null>(null);
   const [boardTab, setBoardTab] = useState<"bench" | "issue">("bench");
 
+  // A lineup put or a decision refetches candidates — the page-1
+  // payload must not unload the pages the user already pulled
+  // (KLOX-100): keep extraBench, dropping only stories that are now
+  // seated in a section. Pagination resets only on issue change.
   useEffect(() => {
-    if (candsQ.data) setBoard(boardFrom(candsQ.data));
+    if (!candsQ.data) return;
+    setBoard(boardFrom(candsQ.data));
+    setExtraBench((prev) =>
+      prev.filter((c) => {
+        const cur = candsQ.data.candidates.find((x) => x.story_id === c.story_id);
+        return !cur || !cur.in_issue;
+      }),
+    );
   }, [candsQ.data]);
+
+  useEffect(() => {
+    setBoard(null);
+    setExtraBench([]);
+    setPagesLoaded(1);
+    setBenchPage(0);
+  }, [issue.id]);
+
+  // has_more answers "is there a page after THIS page" — derive the
+  // next fetch's existence from the authoritative bench total and the
+  // pages already merged, so a page-1 refetch can't hide loaded pages.
+  const serverHasMore = pagesLoaded * BENCH_PAGE < (candsQ.data?.bench_total ?? 0);
 
   const showToast = useCallback(
     (
@@ -160,7 +228,11 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     mutationFn: (v: { entries: LineupEntry[]; prev?: Board }) => api.lineup(issue.id, v.entries),
     onSuccess: (r) => {
       qc.setQueryData(["candidates", issue.id], (old: CandidatesResponse | undefined) =>
-        old ? { ...old, candidates: r.candidates } : old,
+        old ? {
+          ...old, candidates: r.candidates,
+          bench_total: r.bench_total ?? old.bench_total,
+          has_more: r.has_more ?? old.has_more,
+        } : old,
       );
     },
     onError: (e, v) => {
@@ -259,25 +331,51 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     applyBoard(toBench(b, cand), t.board.removed(short(cand.title)));
   };
 
-  const swapWith = (storyID: number, section: string, outStoryID: number) => {
+  const swapWith = (storyID: number, section: string, outStoryID: number, reason?: string) => {
     if (!board) return;
     const loc = findCard(outStoryID);
     const { b, cand: out } = removeFrom(board, outStoryID);
     let nb = removeFrom(b, storyID).b;
     const inCand = { ...findCard(storyID)!.cand, section };
     nb = insertTo(nb, inCand, section, loc?.idx);
-    nb = toBench(nb, out);
+    // a reasoned swap rejects the outgoing story — the bench drops it
+    // instead of offering the rejected story back as a suggestion
+    if (!(reason && out.item_id)) nb = toBench(nb, out);
     setSwapFor(null);
+    setSwapReason("");
     applyBoard(nb, t.board.moved(short(inCand.title)));
+    // a reason turns the swap into a rejection the guide learns from —
+    // the swapped-out story keeps its issue item, so the decision
+    // records like any other rejection (KLOX-49)
+    if (reason && out.item_id) {
+      const itemID = out.item_id;
+      decide.mutate(
+        { itemID, reason },
+        {
+          onSuccess: (r) => {
+            const added = r.guide?.added ?? [];
+            const rule = added[0]?.replace(/^-\s*/, "");
+            showToast(
+              rule ? t.board.ruleLearned(rule) : t.board.moved(short(inCand.title)),
+              { kind: "reject", itemID },
+              rule ? { text: t.board.viewGuide, url: `/publications/${issue.publication_id}/guide` } : undefined,
+            );
+            qc.invalidateQueries({ queryKey: ["candidates", issue.id] });
+          },
+        },
+      );
+    }
   };
 
   const rejectWith = (cand: Candidate, reason?: string) => {
     if (reason && cand.item_id && board) {
-      // reason-fed removal: rejection, and the guide learns
+      // reason-fed removal: rejection, and the guide learns — the
+      // rejected story leaves the board, it must not resurface on the
+      // bench as a suggestion
       const loc = findCard(cand.story_id);
       if (loc) {
         const { b } = removeFrom(board, cand.story_id);
-        setBoard(toBench(b, cand));
+        setBoard(b);
       }
       decide.mutate(
         { itemID: cand.item_id, reason },
@@ -339,18 +437,52 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     setDropZone(zone);
   };
 
-  // --- keyboard: J/K navigate, Enter add/remove, 1-3 pick section ---
+  // Merge the loaded pages (page 0 lives in board.bench, later pages in
+  // extraBench), then show at most BENCH_PAGE cards at once — the spec
+  // caps the rendered bench at 50.
+  const benchAll = board ? [...board.bench, ...extraBench].sort((a, b) => a.rank - b.rank) : [];
+  const benchMatch = benchFiltered(benchAll, search, sectionFilter);
+  const benchPageCount = Math.max(1, Math.ceil(benchMatch.length / BENCH_PAGE));
+  const benchPageClamped = Math.min(benchPage, benchPageCount - 1);
+  const benchVisible = benchMatch.slice(benchPageClamped * BENCH_PAGE, benchPageClamped * BENCH_PAGE + BENCH_PAGE);
+
+  // Fetch the next bench page from the server and merge its candidates
+  // into the board — in-issue riders are already seated in sections, so
+  // only unseen story_ids join the bench.
+  const loadMoreBench = async () => {
+    if (loadingMore || !board) return;
+    setLoadingMore(true);
+    try {
+      const resp = await api.candidates(issue.id, pagesLoaded);
+      setPagesLoaded((n) => n + 1);
+      const seen = new Set<number>();
+      for (const c of board.bench) seen.add(c.story_id);
+      for (const c of extraBench) seen.add(c.story_id);
+      for (const items of Object.values(board.sections)) for (const c of items) seen.add(c.story_id);
+      const fresh = resp.candidates.filter((c) => !seen.has(c.story_id) && !c.in_issue);
+      setExtraBench((xs) => [...xs, ...fresh].sort((a, b) => a.rank - b.rank));
+      // jump to the page where the first new card lands
+      const merged = benchFiltered([...benchAll, ...fresh].sort((a, b) => a.rank - b.rank), search, sectionFilter);
+      const firstNew = merged.findIndex((c) => fresh.some((f) => f.story_id === c.story_id));
+      if (firstNew >= 0) setBenchPage(Math.floor(firstNew / BENCH_PAGE));
+    } catch (e) {
+      showToast(errText(t, e));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   const flatCards = useMemo(() => {
     if (!board) return [] as { key: string; cand: Candidate; where: string }[];
     const out: { key: string; cand: Candidate; where: string }[] = [];
-    for (const c of benchFiltered(board.bench, search, sectionFilter)) {
+    for (const c of benchVisible) {
       if (c.available) out.push({ key: `b${c.story_id}`, cand: c, where: "bench" });
     }
     for (const [sec, items] of Object.entries(board.sections)) {
       for (const c of items) out.push({ key: `s${c.story_id}`, cand: c, where: sec });
     }
     return out;
-  }, [board, search, sectionFilter]);
+  }, [board, benchVisible]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -389,11 +521,20 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     onError: (e) => showToast(errText(t, e)),
   });
 
+  // manual compose: same lineup becomes empty item slots — no model run
+  const composeMut = useMutation({
+    mutationFn: () => api.compose(issue.id),
+    onSuccess: () => {
+      qc.invalidateQueries();
+      onDrafted?.();
+    },
+    onError: (e) => showToast(errText(t, e)),
+  });
+
   if (!board || !candsQ.data) return <BoardSkeleton />;
   const sections = candsQ.data.sections;
   const total = sections.reduce((n, s) => n + board.sections[s.title].length, 0);
   const draftReady = sections.every((s) => board.sections[s.title].length > 0);
-  const bench = benchFiltered(board.bench, search, sectionFilter);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -404,12 +545,29 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           <StepRail
             runID={draftRun}
             steps={["dossier", "draft", "citecheck"]}
-            onDone={() => {
+            onDone={(run) => {
               setDraftRun(null);
+              if (run?.error) {
+                if (run.blocked || run.sample) setDraftBlocked(run.error);
+                else showToast(run.error);
+              }
               qc.invalidateQueries();
               onDrafted?.();
             }}
           />
+        </div>
+      )}
+
+      {draftBlocked && (
+        <div className="relative border-b border-line">
+          <button
+            className="absolute right-3 top-3 z-10 text-xs text-muted hover:text-ink"
+            onClick={() => setDraftBlocked(null)}
+            aria-label={t.dismiss}
+          >
+            ✕
+          </button>
+          <BlockedCard message={draftBlocked} />
         </div>
       )}
 
@@ -425,7 +583,6 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             )}
           >
             {tab === "bench" ? t.board.bench : t.board.issue}
-            {tab === "issue" ? ` (${total})` : ` (${board.bench.length})`}
           </button>
         ))}
       </div>
@@ -439,33 +596,34 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           onDrop={onDropBench}
           aria-label={t.board.bench}
         >
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold">{t.board.bench}</h2>
-            <span className="flex-1" />
-            <div className="relative">
-              <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={t.board.search}
-                className="h-7 w-40 rounded-[var(--radius-input)] border border-line bg-paper pl-7 pr-2 text-xs"
-              />
+            <div className="ml-auto flex items-center gap-2">
+              <div className="relative">
+                <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t.board.search}
+                  className="h-7 w-40 rounded-[var(--radius-input)] border border-line bg-paper pl-7 pr-2 text-xs"
+                />
+              </div>
+              <select
+                value={sectionFilter}
+                onChange={(e) => setSectionFilter(e.target.value)}
+                className="h-7 rounded-[var(--radius-input)] border border-line bg-paper px-1 text-xs"
+                aria-label={t.board.allSections}
+              >
+                <option value="">{t.board.allSections}</option>
+                {sections.map((s) => (
+                  <option key={s.title} value={s.title}>{sectionTitle(lang, s.title)}</option>
+                ))}
+              </select>
             </div>
-            <select
-              value={sectionFilter}
-              onChange={(e) => setSectionFilter(e.target.value)}
-              className="h-7 rounded-[var(--radius-input)] border border-line bg-paper px-1 text-xs"
-              aria-label={t.board.allSections}
-            >
-              <option value="">{t.board.allSections}</option>
-              {sections.map((s) => (
-                <option key={s.title} value={s.title}>{s.title}</option>
-              ))}
-            </select>
           </div>
           <div className={cn("space-y-2", dropZone === "bench" && "rounded-lg outline-dashed outline-2 outline-teal")}>
-            {bench.length === 0 && <p className="py-6 text-center text-xs text-muted">{t.board.emptyBench}</p>}
-            {bench.map((c, bi) => (
+            {benchVisible.length === 0 && <p className="py-6 text-center text-xs text-muted">{t.board.emptyBench}</p>}
+            {benchVisible.map((c, bi) => (
               <StoryCard
                 key={c.story_id}
                 c={c}
@@ -487,6 +645,36 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
               />
             ))}
           </div>
+          {(benchPageCount > 1 || serverHasMore || benchPageClamped > 0) && (
+            <div className="mt-3 flex items-center justify-center gap-2 text-xs text-muted">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={benchPageClamped === 0}
+                onClick={() => setBenchPage(benchPageClamped - 1)}
+              >
+                {t.board.benchPrev}
+              </Button>
+              <span>
+                {t.board.benchPageOf
+                  .replace("{page}", String(benchPageClamped + 1))
+                  .replace("{pages}", String(benchPageCount))}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={benchPageClamped >= benchPageCount - 1}
+                onClick={() => setBenchPage(benchPageClamped + 1)}
+              >
+                {t.board.benchNext}
+              </Button>
+              {serverHasMore && (
+                <Button variant="outline" size="sm" disabled={loadingMore} onClick={loadMoreBench}>
+                  {loadingMore ? t.board.benchLoading : t.board.benchLoadMore}
+                </Button>
+              )}
+            </div>
+          )}
         </section>
 
         {/* right: the issue's section slots */}
@@ -494,13 +682,27 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
           className={cn("min-h-0 flex-col overflow-y-auto p-4 md:flex", boardTab === "issue" ? "flex" : "hidden md:flex")}
           aria-label={t.board.issue}
         >
-          <div className="sticky -top-4 z-10 -mx-4 -mt-4 mb-3 flex items-center gap-2 border-b border-line bg-paper px-4 pb-3 pt-4">
+          <div className="sticky -top-4 z-10 -mt-4 mb-3 flex flex-wrap items-center gap-2 border-b border-line bg-paper pb-3 pt-4">
             <h2 className="text-sm font-semibold">{t.board.issue}</h2>
-            <span className="flex-1" />
-            <Button variant="teal" size="sm" disabled={!draftReady || draftMut.isPending || !!draftRun} onClick={() => draftMut.mutate()}>
-              {t.board.draftAction(total)}
-            </Button>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!draftReady || composeMut.isPending || draftMut.isPending || !!draftRun}
+                onClick={() => composeMut.mutate()}
+              >
+                {composeMut.isPending ? t.board.composing : t.board.composeAction}
+              </Button>
+              <Button size="sm" disabled={!draftReady || draftMut.isPending || composeMut.isPending || !!draftRun} onClick={() => draftMut.mutate()}>
+                {t.board.draftAction(total)}
+              </Button>
+            </div>
           </div>
+          {candsQ.data?.sections_changed && (
+            <p className="mb-3 rounded-[var(--radius-card)] border border-line bg-surface px-3 py-2 text-xs text-muted">
+              {t.board.sectionsChanged}
+            </p>
+          )}
           {sections.map((s, si) => {
             const items = board.sections[s.title];
             const full = sectionFull(s.title);
@@ -514,13 +716,21 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 onDrop={onDrop(s.title)}
               >
                 <div className="mb-1.5 flex items-baseline gap-2 px-1">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">{s.title}</h3>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-ink">{sectionTitle(lang, s.title)}</h3>
                   <span className={cn("text-[11px]", full ? "text-warn" : "text-muted")}>
                     {items.length}/{s.capacity}
                     {full ? ` · ${t.board.full}` : ""}
                   </span>
                   <span className="text-[10px] text-muted">[{si + 1}]</span>
                 </div>
+                {!full && (
+                  // Honest shortfall (KLOX-100): open seats and the real
+                  // suggestion pool — never the seated count dressed up
+                  // as "suggestions for today".
+                  <p className="mb-1.5 px-1 text-[11px] italic text-muted">
+                    {t.board.shortfall(s.capacity - items.length, sectionTitle(lang, s.title), candsQ.data?.bench_total ?? benchAll.length)}
+                  </p>
+                )}
                 <div className="space-y-2">
                   {items.map((c, i) => (
                     <div
@@ -570,8 +780,9 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         </section>
       </div>
 
-      {/* swap chooser: adding to a full section picks what goes out */}
-      <KDialog open={!!swapFor} onOpenChange={() => setSwapFor(null)} title={swapFor?.section || t.board.add}>
+      {/* swap chooser: adding to a full section picks what goes out,
+          then asks why — the reason feeds the editorial guide */}
+      <KDialog open={!!swapFor} onOpenChange={() => { setSwapFor(null); setSwapReason(""); }} title={(swapFor?.section && sectionTitle(lang, swapFor.section)) || t.board.add}>
         {swapFor && !swapFor.section && (
           <div className="space-y-1">
             {sections.map((s) => (
@@ -580,7 +791,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 className="block w-full rounded-[var(--radius-btn)] border border-line px-3 py-2 text-left text-sm hover:bg-paper"
                 onClick={() => moveTo(swapFor.story.story_id, s.title)}
               >
-                {s.title}
+                {sectionTitle(lang, s.title)}
                 <span className="ml-2 text-xs text-muted">
                   {board.sections[s.title].length}/{s.capacity}
                   {sectionFull(s.title) ? ` · ${t.board.full}` : ""}
@@ -589,20 +800,59 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             ))}
           </div>
         )}
-        {swapFor && swapFor.section && (
+        {swapFor && swapFor.section && !swapFor.out && (
           <>
-            <p className="mb-3 text-sm text-muted">{t.board.sectionFull(swapFor.section, board.sections[swapFor.section].length)}</p>
+            <p className="mb-3 text-sm text-muted">{t.board.sectionFull(sectionTitle(lang, swapFor.section), board.sections[swapFor.section].length)}</p>
             <div className="space-y-1">
               {board.sections[swapFor.section].map((c) => (
                 <button
                   key={c.story_id}
                   className="block w-full rounded-[var(--radius-btn)] border border-line px-3 py-2 text-left text-sm hover:bg-paper"
-                  onClick={() => swapWith(swapFor.story.story_id, swapFor.section, c.story_id)}
+                  onClick={() => {
+                    if (c.item_id) setSwapFor({ ...swapFor, out: c });
+                    else swapWith(swapFor.story.story_id, swapFor.section, c.story_id);
+                  }}
                 >
                   {c.title}
                 </button>
               ))}
             </div>
+          </>
+        )}
+        {swapFor?.out && (
+          <>
+            <p className="mb-2 text-sm text-muted">{t.board.swapWhy(short(swapFor.out.title))}</p>
+            <div className="flex flex-wrap gap-1">
+              {t.board.reasonChips.map((chip) => (
+                <button
+                  key={chip}
+                  className="rounded-full border border-line px-2.5 py-1 text-xs hover:border-teal hover:text-teal"
+                  onClick={() => swapWith(swapFor.story.story_id, swapFor.section, swapFor.out!.story_id, chip)}
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 flex gap-1">
+              <input
+                value={swapReason}
+                onChange={(e) => setSwapReason(e.target.value)}
+                placeholder={t.board.reasonOther}
+                className="h-7 min-w-0 flex-1 rounded-[var(--radius-input)] border border-line bg-paper px-2 text-xs"
+              />
+              <Button
+                size="sm" className="h-7" disabled={!swapReason.trim()}
+                onClick={() => swapWith(swapFor.story.story_id, swapFor.section, swapFor.out!.story_id, swapReason.trim())}
+              >
+                {t.board.swapAction}
+              </Button>
+            </div>
+            <button
+              className="mt-2 text-xs text-muted underline"
+              onClick={() => swapWith(swapFor.story.story_id, swapFor.section, swapFor.out!.story_id)}
+            >
+              {t.board.justSwap}
+            </button>
           </>
         )}
       </KDialog>
@@ -633,8 +883,11 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
 function benchFiltered(bench: Candidate[], q: string, section: string): Candidate[] {
   const needle = q.trim().toLowerCase();
   return bench.filter((c) => {
+    // D4: unavailable candidates are hidden entirely — no badge, no
+    // disabled card, no "unavailable" copy on edition screens
+    if (!c.available) return false;
     if (section && c.suggested_section !== section && c.section !== section) return false;
-    if (needle && !`${c.title} ${c.outlets.join(" ")} ${c.reason}`.toLowerCase().includes(needle)) return false;
+    if (needle && !`${c.title} ${c.outlets.join(" ")}`.toLowerCase().includes(needle)) return false;
     return true;
   });
 }
@@ -646,7 +899,7 @@ export function RunLanding() {
   const { t } = useT();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const [done, setDone] = useState<{ no_new_items?: boolean; error?: string } | null>(null);
+  const [done, setDone] = useState<Run | null>(null);
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
   const reset = useMutation({
     mutationFn: api.demoReset,
@@ -674,22 +927,34 @@ export function RunLanding() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-center gap-3 border-b border-line px-4 py-2">
-        <Link to="/" className="text-muted hover:text-ink">←</Link>
-        <h1 className="text-lg font-semibold">{t.board.title}</h1>
+        <h1 className="font-display text-lg font-bold">{t.board.title}</h1>
         <Badge tone="warn">{(t.status as Record<string, string>).reviewing ?? "reviewing"}</Badge>
       </header>
-      {done?.no_new_items || done?.error ? (
+      {done?.blocked ? (
+        <BlockedCard message={done.error} />
+      ) : done?.no_new_items || done?.error ? (
         <div className="flex flex-1 items-center justify-center p-8">
           <Card className="max-w-md p-6 text-center">
-            <p className="text-sm">{done.error ? done.error : t.run.noNewItems}</p>
+            <p className="text-sm">{done.error ? runErrText(t, done.error) : t.run.noNewItems}</p>
             {ws.data?.mode === "demo" && (
               <Button className="mt-4" variant="outline" size="sm" disabled={reset.isPending} onClick={() => reset.mutate()}>
                 {reset.isPending ? "…" : t.demo.reset}
               </Button>
             )}
-            <Link to="/" className="mt-4 block text-sm text-teal underline">
-              ← {t.publications}
-            </Link>
+            {/* the empty-harvest failure points at sources — that's the
+                page the copy tells the creator to check (KLOX-90) */}
+            {isNoItemsFailure(done.error) && done.publication_id ? (
+              <Link
+                to={`/publications/${done.publication_id}/sources`}
+                className="mt-4 block text-sm text-teal underline"
+              >
+                {t.run.openSources}
+              </Link>
+            ) : (
+              <Link to="/publications" className="mt-4 block text-sm text-teal underline">
+                {t.publications}
+              </Link>
+            )}
           </Card>
         </div>
       ) : (
@@ -780,13 +1045,17 @@ function StoryCard({
         </span>
         <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
           <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
-          <p className="mt-0.5 text-xs text-muted">
-            {c.outlets.join(", ")}
-            {c.duplicates > 0 ? ` · +${c.duplicates}` : ""} · {c.score.toFixed(1)}/10
-          </p>
-          {c.reason && <p className="mt-0.5 line-clamp-2 text-xs text-muted">{c.reason}</p>}
-          {!c.available && (
-            <Badge tone="warn" className="mt-1">{board.demoUnavailable}</Badge>
+          <p className="mt-0.5 text-xs text-muted">{c.outlets.join(", ")}</p>
+          {c.summary && <p className="mt-0.5 text-xs leading-4 text-ink/70">{c.summary}</p>}
+          {c.ai_draft && (
+            // KLOX-67: the pauta body arrived AI-written and is still
+            // unedited — the composer renders the full marker.
+            <Badge tone="teal" className="mt-1">{board.aiBadge}</Badge>
+          )}
+          {c.rejected_editorial && (
+            // KLOX-94: the story hits the newsletter's reject terms —
+            // it sits at the bench tail, marked, never auto-slotted.
+            <Badge tone="warn" className="mt-1">{board.rejectBadge}</Badge>
           )}
         </button>
         <div className="flex shrink-0 flex-col items-end gap-1">
@@ -824,6 +1093,7 @@ function MoveMenu({
   onMoveTo: (s: string) => void;
   exclude?: string;
 }) {
+  const { lang } = useT();
   return (
     <KPopover
       trigger={
@@ -846,7 +1116,7 @@ function MoveMenu({
               )}
               onClick={() => onMoveTo(s.title)}
             >
-              {s.title}
+              {sectionTitle(lang, s.title)}
               {full && !same && <span className="ml-2 text-xs">· {board.full}</span>}
             </button>
           );
@@ -923,10 +1193,9 @@ function StorySheet({ cand, onClose }: { cand: Candidate | null; onClose: () => 
         <DossierView d={dossierQ.data.dossier} />
       ) : storyQ.data ? (
         <div className="space-y-3">
-          <p className="text-xs text-muted">
-            {storyQ.data.outlets.join(", ")} · {storyQ.data.score.toFixed(1)}/10 — {storyQ.data.reason}
-          </p>
-          {cand && !cand.dossier && <p className="text-xs italic text-muted">{t.board.noDossier}</p>}
+          <p className="text-xs text-muted">{storyQ.data.outlets.join(", ")}</p>
+          {/* D4: a pauta without research renders its story items only —
+              no "research pending" placeholder copy */}
           {storyQ.data.items.map((it) => (
             <div key={it.id} className="rounded-[var(--radius-card)] border border-line p-3">
               <a href={it.url} target="_blank" rel="noreferrer" className="text-sm font-medium text-teal underline">
@@ -950,13 +1219,16 @@ function DossierView({ d }: { d: Dossier }) {
     <div className="space-y-3 text-sm">
       {d.summary && <p className="font-doc leading-6">{d.summary}</p>}
       {d.facts.length > 0 && (
-        <ul className="list-disc space-y-1 pl-5">
-          {d.facts.map((f, i) => (
-            <li key={i}>
-              {f.text} <span className="text-muted">[{f.ref}]</span>
-            </li>
-          ))}
-        </ul>
+        <div>
+          <p className="mb-1 text-xs font-semibold uppercase text-muted">{t.evidence.facts}</p>
+          <ul className="list-disc space-y-1 pl-5">
+            {d.facts.map((f, i) => (
+              <li key={i}>
+                {f.text} <span className="text-muted">[{f.ref}]</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {d.unknowns.length > 0 && (
         <div>
