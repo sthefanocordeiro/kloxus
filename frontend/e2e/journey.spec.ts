@@ -204,6 +204,16 @@ async function boardOps(page: Page, isPhone: boolean) {
     if (isPhone) await page.getByRole("button", { name: /^Issue$/ }).click();
   }
 
+  // the last add leaves the composer open on the last pauta — KLOX-96
+  // keeps it up for a next sentence, and its textarea is part of the
+  // ProseMirror tree, so the seal check below would read the draft back
+  // as document text. Close it: the document itself is what's sealed.
+  const openBox = page.locator('section[aria-label="Write this story"]');
+  if ((await openBox.count()) > 0) {
+    await openBox.getByRole("button", { name: "Cancel" }).click();
+    await expect(openBox).toHaveCount(0);
+  }
+
   // 6) the document is sealed: clicking a section or item heading and
   //    typing must not create free text anywhere — the schema only
   //    carries atoms + commentary
