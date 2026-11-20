@@ -83,7 +83,7 @@ send a test email to the claimed address; the outbox row must flip
 ### Payments (AbacatePay)
 
 - `ABACATEPAY_API_KEY` — the hackathon test-mode key (`abc_dev_…`)
-  flips the paid-section checkout to the real provider (D34/D56).
+  flips the paid-section checkout to the real provider (D34/D58).
   Unset or unreachable, the fake provider completes the checkout and
   the UI labels it "simulated"; the UI shows "test mode — no real
   charge" whenever the configured key is a dev key.
@@ -97,7 +97,7 @@ send a test email to the claimed address; the outbox row must flip
   return page also polls the provider (throttled), so a missing or
   delayed webhook only slows the grant.
 - One PIX checkout buys 30 days of access (`subscriptions.paid_until`,
-  D56) — PIX has no recurring rail on AbacatePay, so each expiry is a
+  D58) — PIX has no recurring rail on AbacatePay, so each expiry is a
   new one-time checkout.
 
 ## Postgres (Supabase)

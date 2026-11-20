@@ -845,7 +845,7 @@ RFC 8058 one-click unsubscribe: issue emails carry
 mail clients unsubscribe with no page load (`200` empty, `403` forged).
 
 ### `POST /api/v1/p/{slug}/checkout`
-Opens the paid-section checkout (KLOX-13, D56):
+Opens the paid-section checkout (KLOX-13, D58):
 `{"email": "reader@example.com", "issue": "3"}` — `issue` is the
 number of the page the reader came from, so the hosted checkout
 returns there. `409 blocked` when the publication does not sell a paid
@@ -892,7 +892,7 @@ public-key HMAC-SHA256 over the raw body must match — forged or
 tampered requests get `401`; an unset `ABACATEPAY_WEBHOOK_SECRET`
 fails the endpoint closed (`503`). A confirmed billing resolves the
 payment across workspaces by provider ref or `externalId` and grants
-`subscriptions.paid_until = now + 30d` (D56): the `pending→paid` CAS
+`subscriptions.paid_until = now + 30d` (D58): the `pending→paid` CAS
 makes replays and raced polls single-fire, and the reader's access
 link goes out on the `reader_access` mail path. Unknown billings or
 events answer `202`/`204` without work.
