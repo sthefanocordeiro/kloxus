@@ -98,11 +98,11 @@ export const dict = {
       // and the filter badges on suggestion cards.
       kinds: {
         noticia: "news", analise: "analysis", tutorial: "tutorial",
-        forum: "forum question", lancamento: "launch", lista: "list",
+        forum: "forum", lancamento: "launch", lista: "list",
         publieditorial: "sponsored", entretenimento: "entertainment",
         esporte: "sports", efemeride: "almanac", outro: "other",
       },
-      hiddenBench: (n: number) => `${n} hidden — off-topic or in another language`,
+      hiddenBench: (n: number) => `${n} hidden — off-topic or another language`,
       showHidden: "show",
       hideHidden: "hide",
       badgeOffTopic: "off-topic",
@@ -669,11 +669,11 @@ export const dict = {
       // ocultas e os selos de filtro nos cartões de sugestão.
       kinds: {
         noticia: "notícia", analise: "análise", tutorial: "passo a passo",
-        forum: "pergunta de fórum", lancamento: "lançamento", lista: "lista",
+        forum: "fórum", lancamento: "lançamento", lista: "lista",
         publieditorial: "publieditorial", entretenimento: "entretenimento",
         esporte: "esporte", efemeride: "efeméride", outro: "outro",
       },
-      hiddenBench: (n: number) => `${n} ${n === 1 ? "oculta" : "ocultas"} — fora do tema ou em outro idioma`,
+      hiddenBench: (n: number) => `${n} ${n === 1 ? "oculta" : "ocultas"} — fora do tema ou outro idioma`,
       showHidden: "mostrar",
       hideHidden: "ocultar",
       badgeOffTopic: "fora do tema",
