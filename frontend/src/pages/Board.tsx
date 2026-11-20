@@ -124,7 +124,30 @@ interface BoardStrings {
   add: string; remove: string; moveTo: string; full: string;
   openDossier: string; aiBadge: string; removeWhy: string;
   reasonChips: readonly string[]; reasonOther: string; justRemove: string;
+  kinds: Record<string, string>; badgeOffTopic: string;
+  hiddenBench: (n: number) => string; showHidden: string; hideHidden: string;
   [k: string]: unknown;
+}
+
+// KLOX-95: relative publish age on the card — same shape as the Go
+// agoLabel ("há 3 h" / "3 h ago"; the date beyond a week).
+function timeAgo(iso: string, pt: boolean): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const d = Math.max(0, Date.now() - t);
+  if (d < 3600_000) {
+    const m = Math.floor(d / 60000) + 1;
+    return pt ? `há ${m} min` : `${m} min ago`;
+  }
+  if (d < 86400_000) {
+    const h = Math.floor(d / 3600_000);
+    return pt ? `há ${h} h` : `${h} h ago`;
+  }
+  if (d < 7 * 86400_000) {
+    const dd = Math.floor(d / 86400_000);
+    return pt ? `há ${dd} d` : `${dd} d ago`;
+  }
+  return iso.slice(0, 10);
 }
 
 function boardFrom(c: CandidatesResponse): Board {
@@ -155,7 +178,14 @@ function lineupOf(board: Board): LineupEntry[] {
 export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafted?: () => void }) {
   const { t, lang } = useT();
   const qc = useQueryClient();
-  const candsQ = useQuery({ queryKey: ["candidates", issue.id], queryFn: () => api.candidates(issue.id) });
+  // KLOX-95: foreign-language and off-topic suggestions are hidden by
+  // default; the toggle serves them back (hidden_bench keeps the
+  // concealed count honest in both states).
+  const [showHidden, setShowHidden] = useState(false);
+  const candsQ = useQuery({
+    queryKey: ["candidates", issue.id, showHidden],
+    queryFn: () => api.candidates(issue.id, 0, showHidden),
+  });
   const [board, setBoard] = useState<Board | null>(null);
   // bench pagination (KLOX-45): the API pages the top-150 bench at 50
   // a page; later pages merge into `extraBench`, and at most one page
@@ -209,13 +239,14 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   useEffect(() => { setToast(null); }, [issue.status]);
 
   const putLineup = useMutation({
-    mutationFn: (v: { entries: LineupEntry[]; prev?: Board }) => api.lineup(issue.id, v.entries),
+    mutationFn: (v: { entries: LineupEntry[]; prev?: Board }) => api.lineup(issue.id, v.entries, showHidden),
     onSuccess: (r) => {
-      qc.setQueryData(["candidates", issue.id], (old: CandidatesResponse | undefined) =>
+      qc.setQueryData(["candidates", issue.id, showHidden], (old: CandidatesResponse | undefined) =>
         old ? {
           ...old, candidates: r.candidates,
           bench_total: r.bench_total ?? old.bench_total,
           has_more: r.has_more ?? old.has_more,
+          hidden_bench: r.hidden_bench ?? old.hidden_bench,
         } : old,
       );
     },
@@ -437,7 +468,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     if (loadingMore || !board) return;
     setLoadingMore(true);
     try {
-      const resp = await api.candidates(issue.id, pagesLoaded);
+      const resp = await api.candidates(issue.id, pagesLoaded, showHidden);
       setPagesLoaded((n) => n + 1);
       setServerHasMore(resp.has_more ?? false);
       const seen = new Set<number>();
@@ -606,6 +637,15 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
               </select>
             </div>
           </div>
+          {(candsQ.data.hidden_bench ?? 0) > 0 && (
+            <button
+              className="mb-2 text-[11px] text-muted underline underline-offset-2 hover:text-ink"
+              onClick={() => setShowHidden((v) => !v)}
+            >
+              {t.board.hiddenBench(candsQ.data.hidden_bench!)} ·{" "}
+              {showHidden ? t.board.hideHidden : t.board.showHidden}
+            </button>
+          )}
           <div className={cn("space-y-2", dropZone === "bench" && "rounded-lg outline-dashed outline-2 outline-teal")}>
             {benchVisible.length === 0 && <p className="py-6 text-center text-xs text-muted">{t.board.emptyBench}</p>}
             {benchVisible.map((c, bi) => (
@@ -986,8 +1026,11 @@ function StoryCard({
   sections: { title: string; capacity: number }[];
   sectionFull: (s: string) => boolean;
 }) {
+  const { lang } = useT();
   const [otherReason, setOtherReason] = useState("");
   const needsReasonOffer = side === "issue" && c.origin === "phaseA" && !!c.item_id;
+  const pt = lang.startsWith("pt");
+  const kindLabel = c.kind ? board.kinds[c.kind] : undefined;
   return (
     <Card
       className={cn(
@@ -1017,6 +1060,27 @@ function StoryCard({
         <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
           <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
           <p className="mt-0.5 text-xs text-muted">{c.outlets.join(", ")}</p>
+          {/* KLOX-95: type label + publish age + filter badges — only
+              what the enrichment actually classified; an unenriched
+              card stays title/outlet. */}
+          {(kindLabel || c.published_at || c.foreign || c.off_topic) && (
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted">
+              {kindLabel && (
+                <span className="rounded-full border border-line px-1.5 py-px">{kindLabel}</span>
+              )}
+              {c.published_at && <span>{timeAgo(c.published_at, pt)}</span>}
+              {c.foreign && c.language && (
+                <span className="rounded-full border border-line px-1.5 py-px text-muted/80">
+                  {c.language.toUpperCase()}
+                </span>
+              )}
+              {c.off_topic && (
+                <span className="rounded-full border border-line px-1.5 py-px text-muted/80">
+                  {board.badgeOffTopic}
+                </span>
+              )}
+            </p>
+          )}
           {c.summary && <p className="mt-0.5 text-xs leading-4 text-ink/70">{c.summary}</p>}
           {c.ai_draft && (
             // KLOX-67: the pauta body arrived AI-written and is still

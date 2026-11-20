@@ -1471,6 +1471,21 @@ type apiCandidate struct {
 	// Summary is the one-line AI summary the story card shows (KLOX-67
 	// §7.2); empty when the item pool has no enrichment yet.
 	Summary string `json:"summary,omitempty"`
+	// Kind/Language/Topics/PublishedAt are the enrichment card fields
+	// (KLOX-95): article type slug, detected language, topic tags and
+	// the newest member's publish time. Empty until enrichment lands —
+	// the card falls back to title/outlet.
+	Kind        string   `json:"kind,omitempty"`
+	Language    string   `json:"language,omitempty"`
+	Topics      []string `json:"topics,omitempty"`
+	PublishedAt string   `json:"published_at,omitempty"`
+	// Foreign and OffTopic mark the suggestions the board hides by
+	// default (KLOX-95): a language different from the publication's,
+	// or classified topics that never match the declared topic or
+	// editorial line. ?all=1 serves them back; hidden_bench keeps the
+	// count honest.
+	Foreign  bool `json:"foreign,omitempty"`
+	OffTopic bool `json:"off_topic,omitempty"`
 	// AIDraft marks a lineup card whose pauta body arrived AI-written
 	// and has not been edited by the author yet.
 	AIDraft bool `json:"ai_draft,omitempty"`
@@ -1505,11 +1520,12 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 	if size <= 0 || size > candidatePageSize {
 		size = candidatePageSize
 	}
+	showAll := showFiltered(r)
 	cands, err := db(r).RankedCandidates(r.Context(), iss.PublicationID, iss.ID)
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
-	views, meta, err := s.candidatePage(r, cands, page, size)
+	views, meta, err := s.candidatePage(r, pub, cands, page, size, showAll)
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
@@ -1524,11 +1540,59 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, resp)
 }
 
+// showFiltered reports whether the request asked for the full bench —
+// ?all=1|true serves the suggestions the default view filters out
+// (foreign-language / off-topic, KLOX-95).
+func showFiltered(r *http.Request) bool {
+	v := r.URL.Query().Get("all")
+	return v == "1" || v == "true"
+}
+
+// langPrefix reduces a language tag to its two-letter head so "pt-BR"
+// and "pt" compare equal.
+func langPrefix(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if i := strings.IndexAny(s, "-_"); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
+
+// cardFlags derives the two default-hidden traits (KLOX-95) from the
+// story's enrichment: a member language different from the
+// publication's, and a classified topic set that never intersects the
+// declared topic or editorial line. A story without enrichment — or
+// without classifiable topics — stays visible: absent data is never a
+// reason to hide a suggestion.
+func cardFlags(pub *store.Publication, card *store.StoryCard) (foreign, offTopic bool) {
+	if pub == nil || card == nil {
+		return false, false
+	}
+	if pl, il := langPrefix(pub.Language), langPrefix(card.Language); pl != "" && il != "" && pl != il {
+		foreign = true
+	}
+	if len(card.Topics) > 0 {
+		tokens := pipeline.FoldedTokens(pub.Topic + " " + pub.EditorialLine)
+		if len(tokens) > 0 {
+			offTopic = true
+			for _, tag := range card.Topics {
+				if pipeline.TopicMatches(tag, tokens, pub) {
+					offTopic = false
+					break
+				}
+			}
+		}
+	}
+	return foreign, offTopic
+}
+
 // candidatePage cuts the ranked pool to the board's window: every
 // in-issue story plus the top candidateCap ranked stories, paged by the
 // bench only — in-issue rows ride along on every page so the lineup
 // column never loses a card. Bench candidates keep their global rank.
-func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, page, size int) ([]apiCandidate, map[string]any, error) {
+// Unless showAll, the bench drops foreign-language and off-topic
+// suggestions; hidden_bench reports how many the toggle conceals.
+func (s *Server) candidatePage(r *http.Request, pub *store.Publication, cands []store.RankedCandidate, page, size int, showAll bool) ([]apiCandidate, map[string]any, error) {
 	pool := cands
 	if len(pool) > candidateCap {
 		pool = pool[:candidateCap]
@@ -1555,6 +1619,34 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 			}
 		}
 	}
+	ids := make([]int64, 0, len(inIssue)+len(bench))
+	for _, c := range inIssue {
+		ids = append(ids, c.Story.ID)
+	}
+	for _, c := range bench {
+		ids = append(ids, c.Story.ID)
+	}
+	cards, err := db(r).StoryCards(r.Context(), ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	hidden := map[int64]bool{}
+	for _, c := range bench {
+		foreign, offTopic := cardFlags(pub, cards[c.Story.ID])
+		if foreign || offTopic {
+			hidden[c.Story.ID] = true
+		}
+	}
+	hiddenN := len(hidden)
+	if !showAll {
+		kept := bench[:0]
+		for _, c := range bench {
+			if !hidden[c.Story.ID] {
+				kept = append(kept, c)
+			}
+		}
+		bench = kept
+	}
 	benchTotal := len(bench)
 	if from := page * size; from < benchTotal {
 		to := from + size
@@ -1569,27 +1661,24 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 	visible = append(visible, inIssue...)
 	visible = append(visible, bench...)
 	sort.Slice(visible, func(a, b int) bool { return visible[a].Rank < visible[b].Rank })
-	views, err := s.candidateViews(r, visible)
+	views, err := s.candidateViews(r, pub, visible, cards)
 	if err != nil {
 		return nil, nil, err
 	}
 	return views, map[string]any{
 		"page": page, "page_size": size,
 		"bench_total": benchTotal, "has_more": (page+1)*size < benchTotal,
+		"hidden_bench": hiddenN,
 	}, nil
 }
 
-func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) ([]apiCandidate, error) {
+func (s *Server) candidateViews(r *http.Request, pub *store.Publication, cands []store.RankedCandidate, cards map[int64]*store.StoryCard) ([]apiCandidate, error) {
 	demo := s.d.Cfg.Mode == "demo"
 	ids := make([]int64, len(cands))
 	for i, c := range cands {
 		ids[i] = c.Story.ID
 	}
 	byStory, err := db(r).StoryOutlets(r.Context(), ids)
-	if err != nil {
-		return nil, err
-	}
-	summaries, err := db(r).StorySummaries(r.Context(), ids)
 	if err != nil {
 		return nil, err
 	}
@@ -1611,7 +1700,15 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 			StoryID: c.Story.ID, Title: c.Story.Title,
 			Outlets: outlets, Sources: len(byStory[c.Story.ID]), Duplicates: c.Duplicates,
 			Score: c.Story.TriageScore, Reason: c.Story.TriageReason, Rank: c.Rank,
-			Dossier: c.Dossier, Available: true, Summary: summaries[c.Story.ID],
+			Dossier: c.Dossier, Available: true,
+		}
+		if card := cards[c.Story.ID]; card != nil {
+			cv.Summary = card.Summary
+			cv.Kind = card.Kind
+			cv.Language = card.Language
+			cv.Topics = card.Topics
+			cv.PublishedAt = card.PublishedAt
+			cv.Foreign, cv.OffTopic = cardFlags(pub, card)
 		}
 		if c.Item != nil {
 			cv.ItemID = c.Item.ID
@@ -1895,7 +1992,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		guide = s.guideAfterRebuild(w, r, pub)
 	}
 	cands, _ = db(r).RankedCandidates(ctx, iss.PublicationID, iss.ID)
-	views, meta, err := s.candidatePage(r, cands, 0, candidatePageSize)
+	views, meta, err := s.candidatePage(r, pub, cands, 0, candidatePageSize, showFiltered(r))
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
@@ -3354,10 +3451,10 @@ func (s *Server) approveCiteCheck(w http.ResponseWriter, r *http.Request, iss *s
 		return false
 	}
 	type sent struct {
-		ID    int    `json:"id"`
-		Item  int    `json:"item"`
-		Refs  string `json:"refs"`
-		Text  string `json:"text"`
+		ID   int    `json:"id"`
+		Item int    `json:"item"`
+		Refs string `json:"refs"`
+		Text string `json:"text"`
 	}
 	var sents []sent
 	var items []map[string]any

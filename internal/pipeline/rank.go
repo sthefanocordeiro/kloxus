@@ -203,7 +203,7 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 	}
 	// The folded keyword set the tags match against — the publication's
 	// declared topic plus its editorial line.
-	tokens := foldedTokens(pub.Topic + " " + pub.EditorialLine)
+	tokens := FoldedTokens(pub.Topic + " " + pub.EditorialLine)
 	pt := ptLang(lang)
 	for i := range stories {
 		bestW := 0.0
@@ -219,7 +219,7 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 				bestW, haveKind = w, true
 			}
 			for _, t := range e.Topics {
-				if topicMatches(t, tokens, pub) {
+				if TopicMatches(t, tokens, pub) {
 					onTopic = true
 					break
 				}
@@ -240,9 +240,9 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 	return scores, reasons
 }
 
-// foldedTokens lowercases, strips accents and splits on word
+// FoldedTokens lowercases, strips accents and splits on word
 // boundaries — the same fold the deals list uses.
-func foldedTokens(s string) map[string]bool {
+func FoldedTokens(s string) map[string]bool {
 	out := map[string]bool{}
 	for _, w := range strings.FieldsFunc(foldAccents.Replace(strings.ToLower(s)), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
@@ -252,11 +252,11 @@ func foldedTokens(s string) map[string]bool {
 	return out
 }
 
-// topicMatches reports whether an enrichment tag hits the publication's
+// TopicMatches reports whether an enrichment tag hits the publication's
 // topic tokens. "IA" is special-cased: the folded token "ia" is a
 // Portuguese verb form, so it only counts as a literal uppercase "IA"
 // in the original text or as "inteligência artificial".
-func topicMatches(tag string, tokens map[string]bool, pub *store.Publication) bool {
+func TopicMatches(tag string, tokens map[string]bool, pub *store.Publication) bool {
 	if tag == "IA" {
 		if tokens["inteligencia"] && tokens["artificial"] {
 			return true

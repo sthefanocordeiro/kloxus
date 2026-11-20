@@ -9,13 +9,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"time"
 )
 
 // ItemEnrichment is the shared per-item AI classification written once
 // and never recomputed.
 type ItemEnrichment struct {
 	ItemID      int64
-	Kind        string   // ai_kind slug; see pipeline.EnrichmentKinds
+	Kind        string // ai_kind slug; see pipeline.EnrichmentKinds
 	Promotional bool
 	Topics      []string // <=5 fixed-list tags
 	SummaryPT   string   // one original PT sentence, <=25 words
@@ -168,6 +169,90 @@ func (db *DB) StorySummaries(ctx context.Context, storyIDs []int64) (map[int64]s
 			return nil, err
 		}
 		out[id] = summary
+	}
+	return out, rows.Err()
+}
+
+// StoryCard is the per-story enrichment a suggestion card shows
+// (KLOX-95): the first enriched member's summary, kind and language,
+// the union of member topic tags, and the newest member's publication
+// time — title, kind and language answer "what kind of story is this",
+// the topics feed the off-topic filter, the time feeds "published
+// when". Fields a member never classified stay empty — the card
+// degrades to title/outlet, never a placeholder.
+type StoryCard struct {
+	Summary     string
+	Kind        string
+	Language    string
+	Topics      []string
+	PublishedAt string // RFC3339; "" when no member parses a date
+}
+
+// StoryCards batch-loads the card enrichment for the given stories in
+// one query: member items in id order, reduced per story. Every story
+// with members gets a card — publish time is item metadata, not AI
+// output — but a story whose members were never classified keeps the
+// AI fields empty; only member-less stories have no entry.
+func (db *DB) StoryCards(ctx context.Context, storyIDs []int64) (map[int64]*StoryCard, error) {
+	out := map[int64]*StoryCard{}
+	if len(storyIDs) == 0 {
+		return out, nil
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT si.story_id,
+		       e.ai_kind, e.summary_pt, e.language, e.topics_json,
+		       COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) AS ts
+		FROM story_items si
+		JOIN items it ON it.id = si.item_id
+		LEFT JOIN item_enrichment e ON e.item_id = si.item_id
+		WHERE si.workspace_id = $1 AND si.story_id = ANY($2)
+		ORDER BY si.story_id, si.item_id`, db.ws, storyIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	newest := map[int64]time.Time{}
+	for rows.Next() {
+		var sid int64
+		var kind, summary, lang, topics sql.NullString
+		var ts sql.NullTime
+		if err := rows.Scan(&sid, &kind, &summary, &lang, &topics, &ts); err != nil {
+			return nil, err
+		}
+		c := out[sid]
+		if c == nil {
+			c = &StoryCard{}
+			out[sid] = c
+		}
+		if c.Kind == "" && kind.Valid {
+			c.Kind = kind.String
+		}
+		if c.Summary == "" && summary.Valid {
+			c.Summary = summary.String
+		}
+		if c.Language == "" && lang.Valid {
+			c.Language = lang.String
+		}
+		if topics.Valid {
+			var tags []string
+			json.Unmarshal([]byte(topics.String), &tags)
+			for _, tag := range tags {
+				dup := false
+				for _, have := range c.Topics {
+					if have == tag {
+						dup = true
+						break
+					}
+				}
+				if !dup {
+					c.Topics = append(c.Topics, tag)
+				}
+			}
+		}
+		if ts.Valid && ts.Time.After(newest[sid]) {
+			newest[sid] = ts.Time
+			c.PublishedAt = ts.Time.UTC().Format(time.RFC3339)
+		}
 	}
 	return out, rows.Err()
 }
