@@ -38,6 +38,23 @@ func (r *mailResult) Sent() bool {
 // today is the UTC day cap window ('YYYY-MM-DD').
 func today() string { return time.Now().UTC().Format("2006-01-02") }
 
+// staleSentAfter bounds how long a provider-accepted send may sit at
+// 'sent' before the missing webhook event is treated as a silent
+// failure: Resend posts delivery within minutes, so a day-old 'sent'
+// row means the endpoint is dead or disabled — the failure mode
+// KLOX-98 guards against.
+const staleSentAfter = 24 * time.Hour
+
+// staleSent counts rows still 'sent' past the webhook window — the
+// in-app tripwire for a dead delivery endpoint.
+func (s *Server) staleSent(ctx context.Context, wdb *store.DB) int {
+	n, err := wdb.StaleSentCount(ctx, store.TSUTC(time.Now().Add(-staleSentAfter)))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // sendMail records and transports one message. Errors only on
 // infrastructure failures (the database) — refusals and provider
 // failures are reported in the result so callers can surface them.
@@ -102,6 +119,10 @@ func (s *Server) sendMail(ctx context.Context, wdb *store.DB, msg *delivery.Mess
 	}
 	if err := wdb.MailSent(ctx, id, pid); err != nil {
 		return nil, err
+	}
+	if n := s.staleSent(ctx, wdb); n > 0 {
+		slog.Warn("resend webhook silent: sends older than 24h still 'sent' — check the endpoint is enabled in the Resend dashboard",
+			"stale_sent", n, "rid", reqIDFromCtx(ctx))
 	}
 	m, err := wdb.GetMail(ctx, id)
 	return &mailResult{Mail: m}, err
