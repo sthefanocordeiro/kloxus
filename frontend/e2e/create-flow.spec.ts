@@ -89,8 +89,8 @@ test("create flow has no horizontal clipping at 390px", async ({ page }) => {
   // step 1 — Sua newsletter
   await fitsViewport();
 
-  // step 2 — Seções: template chips wrap inside the viewport and every
-  // section row's delete affordance stays reachable
+  // step 2 — Seções: template chips wrap inside the viewport (KLOX-85)
+  // and every section row's delete affordance stays reachable
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Suas seções" })).toBeVisible();
   await fitsViewport();
@@ -112,6 +112,31 @@ test("create flow has no horizontal clipping at 390px", async ({ page }) => {
     timeout: 15000,
   });
   await fitsViewport();
+});
+
+// KLOX-87: the shell's Voltar used to be desktop-only
+// (`hidden sm:inline-flex`), so at 390px the header on pub-scoped
+// pages had no way back — the bottom tabs only switch top-level
+// sections, and the Mais-menu pages (Seções among them) sit one level
+// deeper. The button now shows at every width and leads to the
+// crumb's destination, same as on desktop.
+test("mobile 390px: the shell Voltar shows on Seções and leads back", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const id = await createViaAPI(page);
+
+  await page.goto(`/publications/${id}/sections`);
+  const back = page.getByRole("link", { name: /Voltar para/ });
+  await expect(back).toBeVisible({ timeout: 15000 });
+  // the header still fits — the control must not push past the edge
+  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+  await expect(page.getByRole("heading", { name: "Seções" })).toBeVisible();
+
+  await back.click();
+  await page.waitForURL(new RegExp(`/publications/${id}$`));
 });
 
 async function createViaAPI(page: import("@playwright/test").Page) {
