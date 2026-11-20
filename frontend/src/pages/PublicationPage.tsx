@@ -1,9 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiRequestError } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
+import { ShellPrimary } from "../components/ShellPortal";
+import { NotFound } from "./ErrorPage";
 
 export function PublicationPage() {
   const { id = "" } = useParams();
@@ -22,22 +24,18 @@ export function PublicationPage() {
     onSuccess: (r) => nav(`/runs/${r.id}`),
   });
 
+  if (pub.isError) {
+    if (pub.error instanceof ApiRequestError && pub.error.status === 404) return <NotFound />;
+    return <p className="p-6 text-sm text-danger">{errText(t, pub.error)}</p>;
+  }
+
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
-      <Link to="/" className="text-sm text-muted hover:text-ink">
-        ← {t.back}
-      </Link>
-      <div className="mt-3 mb-6 flex items-baseline justify-between gap-4">
-        <div className="flex items-baseline gap-4">
-          <h1 className="font-doc text-2xl font-semibold">{pub.data?.publication.name ?? "…"}</h1>
-          <Link to={`/publications/${id}/outbox`} className="text-xs text-muted underline hover:text-ink">
-            {t.outbox}
-          </Link>
-        </div>
-        <Button onClick={() => start.mutate()} disabled={start.isPending}>
+    <div className="mx-auto w-full max-w-3xl px-4 py-6">
+      <ShellPrimary>
+        <Button size="sm" onClick={() => start.mutate()} disabled={start.isPending}>
           {start.isPending ? t.run.running : t.run.start}
         </Button>
-      </div>
+      </ShellPrimary>
 
       {start.error && (
         <Card className="mb-4 border-danger/40 bg-danger-soft p-3 text-sm text-danger">
@@ -46,7 +44,7 @@ export function PublicationPage() {
       )}
 
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">{t.issues}</h2>
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {issues.data?.map((iss) => (
           <Link key={iss.id} to={`/issues/${iss.id}`}>
             <Card className="flex items-center justify-between hover:border-ink/40 transition-colors">
