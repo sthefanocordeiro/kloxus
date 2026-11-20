@@ -178,7 +178,7 @@ export function AppShell() {
       <div className="flex min-w-0 flex-1 flex-col">
         {/* top bar — breadcrumb + page title left, one primary action right */}
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-paper-raised px-4">
-          {back && <BackButton to={back.to} dest={back.label} className="hidden sm:inline-flex" />}
+          {back && <BackButton to={back.to} dest={back.label} />}
           <div className="min-w-0">
             {chrome.crumbs.length > 0 && (
               <nav aria-label="breadcrumb" className="hidden sm:block">
