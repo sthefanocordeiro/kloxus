@@ -269,6 +269,11 @@ type Section struct {
 	Items      int    `yaml:"items" json:"items"`
 	Commentary string `yaml:"commentary" json:"commentary"` // required | optional | none
 	Access     string `yaml:"access" json:"access"`         // all | subscribers
+	// Topic is the creator's "que tipo de pauta entra aqui?" — free-text
+	// topics/keywords the aderência ranking matches stories against
+	// when filling this section's slots (KLOX-94). Empty sections keep
+	// the global best-first order.
+	Topic string `yaml:"topic" json:"topic"`
 }
 
 // Section formats and access levels the builder offers (KLOX-65).
@@ -374,6 +379,10 @@ type Publication struct {
 	Sources       []SourceDef `yaml:"sources" json:"sources"`
 	Paywall       Paywall     `yaml:"paywall" json:"paywall"`
 	AIDisclosure  string      `yaml:"ai_disclosure" json:"ai_disclosure"` // none | short | detailed
+	// RejectTerms lists the themes the editorial line excludes —
+	// comma-separated terms the aderência ranking demotes and the
+	// auto-lineup never slots (KLOX-94).
+	RejectTerms string `yaml:"reject_terms" json:"reject_terms"`
 }
 
 // ParsePublication decodes and validates a publication YAML document.

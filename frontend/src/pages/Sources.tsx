@@ -82,6 +82,32 @@ export function SourcesPage() {
       </h1>
       <p className="mt-1 text-sm text-muted">{t.sourcesPage.subtitle}</p>
 
+      {/* aderência card (KLOX-94): the topics the suggestion engine
+          ranks by, in the creator's own words — theme, reject terms
+          and each section's declared pauta */}
+      {pub.data && (
+        <Card className="mt-4 p-4">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.aderenciaTitle}</h2>
+          <p className="mt-1 text-xs text-muted">{t.sourcesPage.aderenciaHint}</p>
+          <dl className="mt-3 space-y-2 text-sm">
+            <div className="flex gap-2">
+              <dt className="shrink-0 font-medium text-muted">{t.sourcesPage.newsletterTheme}:</dt>
+              <dd className="min-w-0">{pub.data.publication.topic || "—"}</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="shrink-0 font-medium text-muted">{t.sourcesPage.rejectsLabel}:</dt>
+              <dd className="min-w-0">{pub.data.publication.reject_terms || t.sourcesPage.noRejects}</dd>
+            </div>
+            {pub.data.publication.sections.map((s) => (
+              <div key={s.id} className="flex gap-2">
+                <dt className="shrink-0 font-medium text-muted">{s.title || "—"}:</dt>
+                <dd className="min-w-0">{s.topic?.trim() || t.sourcesPage.sectionTopicEmpty}</dd>
+              </div>
+            ))}
+          </dl>
+        </Card>
+      )}
+
       {loading && <p className="mt-6 text-sm text-muted">{t.sourcesPage.loading}</p>}
 
       {!loading && (sources.data?.length ?? 0) > 0 && (
