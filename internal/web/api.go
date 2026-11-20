@@ -35,6 +35,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/payments"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -142,6 +143,7 @@ func (s *Server) canonicalPub(pub *store.Publication, err error) (*store.Publica
 	cp := *pub
 	cp.Language, cp.Topic, cp.Audience = def.Language, def.Topic, def.Audience
 	cp.EditorialLine, cp.Tone, cp.Sections = def.EditorialLine, def.Tone, def.Sections
+	cp.RejectTerms = def.RejectTerms
 	return &cp, err
 }
 
@@ -306,6 +308,7 @@ type apiPublication struct {
 	Topic         string       `json:"topic"`
 	Audience      string       `json:"audience"`
 	EditorialLine string       `json:"editorial_line"`
+	RejectTerms   string       `json:"reject_terms"`
 	Tone          string       `json:"tone"`
 	Frequency     string       `json:"frequency"`
 	AIDisclosure  string       `json:"ai_disclosure"`
@@ -320,6 +323,7 @@ type apiSection struct {
 	Items      int    `json:"items"`
 	Commentary string `json:"commentary"`
 	Access     string `json:"access"` // all | subscribers
+	Topic      string `json:"topic"`  // "que tipo de pauta entra aqui?" (KLOX-94)
 }
 
 type apiPaywall struct {
@@ -335,6 +339,7 @@ func publicationView(p *store.Publication) apiPublication {
 		// the stored line stays canonical for fixture-stable prompts —
 		// the response localizes the one English sentence (KLOX-56)
 		EditorialLine: localizeEditorialLine(p.EditorialLine, p.Language),
+		RejectTerms:   p.RejectTerms,
 		Tone:          p.Tone, Frequency: p.Frequency, AIDisclosure: p.AIDisclosure,
 		Paywall: apiPaywall{
 			Enabled: p.Paywall.Enabled, PaidSections: orEmpty(p.Paywall.PaidSections),
@@ -345,6 +350,7 @@ func publicationView(p *store.Publication) apiPublication {
 		v.Sections = append(v.Sections, apiSection{
 			ID: sc.ID, Title: sc.Title, Format: sc.Format,
 			Items: sc.Items, Commentary: sc.Commentary, Access: sc.Access,
+			Topic: sc.Topic,
 		})
 	}
 	if v.Sections == nil {
@@ -582,18 +588,31 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	// sender), "resend" (the real provider), "synthetic" (the loopback
 	// fake), "custom" (any other injected sender).
 	transport := "outbox"
+	// mail_webhook reports whether the app can verify Resend delivery
+	// events (RESEND_WEBHOOK_SECRET set); mail_stale_sent counts
+	// provider-accepted sends whose delivery event never arrived —
+	// together they are the posture a dead endpoint cannot fake
+	// (KLOX-98). Outbox mode has no webhook, so both stay inert.
+	mailWebhook := "n/a"
+	staleSent := 0
 	if s.liveMail() {
 		mail = "live"
 		transport = "custom"
 		if t, ok := s.d.Mailer.(interface{ Transport() string }); ok {
 			transport = t.Transport()
 		}
+		mailWebhook = "unconfigured"
+		if s.d.Cfg.ResendWebhookSecret != "" {
+			mailWebhook = "configured"
+		}
+		staleSent = s.staleSent(r.Context(), db(r))
 	}
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
 		"llm_mode": s.d.Cfg.LLMMode,
 		"claimed":  owner != "", "owner_email": owner, "mail": mail,
-		"mail_transport": transport,
+		"mail_transport": transport, "mail_webhook": mailWebhook,
+		"mail_stale_sent": staleSent,
 	})
 }
 
@@ -934,6 +953,7 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 		secs = append(secs, apiSection{
 			ID: sec.ID, Title: sec.Title, Format: sec.Format,
 			Items: sec.Items, Commentary: sec.Commentary, Access: sec.Access,
+			Topic: sec.Topic,
 		})
 	}
 	srcs := []map[string]string{}
@@ -942,31 +962,13 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 	}
 	apiJSON(w, 200, map[string]any{"proposal": map[string]any{
 		"name": def.Name, "topic": def.Topic, "audience": def.Audience,
-		"editorial_line": localizeEditorialLine(def.EditorialLine, def.Language), "tone": def.Tone,
+		"editorial_line": localizeEditorialLine(def.EditorialLine, def.Language),
+		"reject_terms":   def.RejectTerms, "tone": def.Tone,
 		"language": def.Language, "frequency": def.Frequency,
 		"ai_disclosure": def.AIDisclosure,
 		"sections":      secs, "sources": srcs,
 		"paywall": apiPaywall{Enabled: def.Paywall.Enabled, PaidSections: def.Paywall.PaidSections, Price: localizePrice(def.Paywall.Price, def.Language)},
 	}})
-}
-
-// apiPropose turns pasted material into a proposal. In demo mode only the
-// sample newsletter is offered — pasted links/issues are refused with
-// live_only, matching the "available in live mode" UX.
-func (s *Server) apiPropose(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Material string `json:"material"`
-	}
-	if _, err := apiDecode(r, &in); err != nil {
-		apiErr(w, 400, "bad_json", "request body is not valid JSON")
-		return
-	}
-	if s.d.Cfg.Mode == "demo" {
-		apiErr(w, 422, "live_only",
-			"proposals from pasted material are available in live mode — the hosted demo offers the sample newsletter")
-		return
-	}
-	apiErr(w, 501, "not_implemented", "proposal extraction is not implemented")
 }
 
 // apiPublicationCreate stores a creator-made publication from the
@@ -978,6 +980,7 @@ func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
 		Topic         string           `json:"topic"`
 		Audience      string           `json:"audience"`
 		EditorialLine string           `json:"editorial_line"`
+		RejectTerms   string           `json:"reject_terms"`
 		Tone          string           `json:"tone"`
 		Language      string           `json:"language"`
 		Frequency     string           `json:"frequency"`
@@ -999,7 +1002,7 @@ func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
 	in.Paywall.PaidSections = config.PaidSectionTitles(secs)
 	def := &config.Publication{
 		Name: in.Name, Topic: in.Topic, Audience: in.Audience,
-		EditorialLine: in.EditorialLine, Tone: in.Tone,
+		EditorialLine: in.EditorialLine, RejectTerms: in.RejectTerms, Tone: in.Tone,
 		Language: in.Language, Frequency: in.Frequency,
 		AIDisclosure: in.AIDisclosure, Sections: secs, Paywall: in.Paywall,
 	}
@@ -1108,7 +1111,6 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Name          string           `json:"name"`
-		Topic         string           `json:"topic"`
 		Audience      string           `json:"audience"`
 		EditorialLine string           `json:"editorial_line"`
 		Tone          string           `json:"tone"`
@@ -1116,14 +1118,19 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 		AIDisclosure  string           `json:"ai_disclosure"`
 		Sections      []config.Section `json:"sections"`
 		Paywall       *apiPaywall      `json:"paywall"`
+		// Topic and RejectTerms ride pointers so "clear the field" ("")
+		// is a real write while an absent key keeps the stored value —
+		// the keep-if-empty convention can't tell the two apart (KLOX-94).
+		Topic       *string `json:"topic"`
+		RejectTerms *string `json:"reject_terms"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
 		return
 	}
 	def := &config.Publication{
-		Name: in.Name, Topic: in.Topic, Audience: in.Audience,
-		EditorialLine: in.EditorialLine, Tone: in.Tone,
+		Name: in.Name, Topic: pub.Topic, Audience: in.Audience,
+		EditorialLine: in.EditorialLine, RejectTerms: pub.RejectTerms, Tone: in.Tone,
 		Language: pub.Language, Slug: pub.Slug,
 		Frequency:    in.Frequency,
 		AIDisclosure: in.AIDisclosure,
@@ -1136,8 +1143,8 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 	if def.Name == "" {
 		def.Name = pub.Name
 	}
-	if def.Topic == "" {
-		def.Topic = pub.Topic
+	if in.Topic != nil {
+		def.Topic = strings.TrimSpace(*in.Topic)
 	}
 	if def.Audience == "" {
 		def.Audience = pub.Audience
@@ -1153,6 +1160,9 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if def.AIDisclosure == "" {
 		def.AIDisclosure = pub.AIDisclosure
+	}
+	if in.RejectTerms != nil {
+		def.RejectTerms = strings.TrimSpace(*in.RejectTerms)
 	}
 	if strings.TrimSpace(def.Name) == "" {
 		apiErr(w, 400, "validation", "the newsletter needs a name",
@@ -1280,6 +1290,7 @@ type apiRun struct {
 	Status        string         `json:"status"` // running | done | failed | blocked
 	Step          string         `json:"step"`
 	IssueID       int64          `json:"issue_id,omitempty"`
+	PublicationID int64          `json:"publication_id,omitempty"`
 	NoNewItems    bool           `json:"no_new_items"`
 	Error         string         `json:"error,omitempty"`
 	Blocked       bool           `json:"blocked,omitempty"`
@@ -1299,7 +1310,8 @@ func runView(st *runProgress) apiRun {
 	defer st.mu.Unlock()
 	v := apiRun{
 		ID: st.st.RunID, Kind: st.st.Kind, Step: st.st.Step,
-		IssueID: st.st.IssueID, NoNewItems: st.st.NoNewItems, Error: st.st.Err,
+		IssueID: st.st.IssueID, PublicationID: st.st.PubID,
+		NoNewItems: st.st.NoNewItems, Error: st.st.Err,
 		Blocked: st.st.Blocked, BlockedReason: st.st.BlockedReason, Sample: st.st.Sample,
 		Status: "running",
 	}
@@ -1474,6 +1486,10 @@ type apiCandidate struct {
 	// AIDraft marks a lineup card whose pauta body arrived AI-written
 	// and has not been edited by the author yet.
 	AIDraft bool `json:"ai_draft,omitempty"`
+	// RejectedEditorial marks a bench story hitting the newsletter's
+	// reject terms: demoted to the bench tail, never auto-slotted and
+	// never silently dropped — the card shows the policy (KLOX-94).
+	RejectedEditorial bool `json:"rejected_editorial,omitempty"`
 }
 
 // demoCandidateCap is how many ranked stories a demo workspace can
@@ -1509,13 +1525,14 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
-	views, meta, err := s.candidatePage(r, cands, page, size)
+	secs := issueSections(iss, pub)
+	views, meta, err := s.candidatePage(r, cands, page, size, pub, secs)
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
 	resp := map[string]any{
 		"candidates":       views,
-		"sections":         sectionViews(issueSections(iss, pub)),
+		"sections":         sectionViews(secs),
 		"sections_changed": sectionsChanged(iss, pub),
 		"demo":             s.d.Cfg.Mode == "demo",
 		"llm_mode":         s.d.Cfg.LLMMode,
@@ -1528,7 +1545,7 @@ func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 // in-issue story plus the top candidateCap ranked stories, paged by the
 // bench only — in-issue rows ride along on every page so the lineup
 // column never loses a card. Bench candidates keep their global rank.
-func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, page, size int) ([]apiCandidate, map[string]any, error) {
+func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, page, size int, pub *store.Publication, secs []config.Section) ([]apiCandidate, map[string]any, error) {
 	pool := cands
 	if len(pool) > candidateCap {
 		pool = pool[:candidateCap]
@@ -1555,6 +1572,16 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 			}
 		}
 	}
+	// KLOX-94: reject-term hits sink to the bench tail — marked, never
+	// silently dropped (rejectedEditorial flags them in the views). The
+	// partition is stable, so rank order survives inside each half.
+	if pub != nil && strings.TrimSpace(pub.RejectTerms) != "" {
+		sort.SliceStable(bench, func(a, b int) bool {
+			ra := pipeline.TermsMatch(pub.RejectTerms, bench[a].Story.Title)
+			rb := pipeline.TermsMatch(pub.RejectTerms, bench[b].Story.Title)
+			return !ra && rb
+		})
+	}
 	benchTotal := len(bench)
 	if from := page * size; from < benchTotal {
 		to := from + size
@@ -1569,7 +1596,7 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 	visible = append(visible, inIssue...)
 	visible = append(visible, bench...)
 	sort.Slice(visible, func(a, b int) bool { return visible[a].Rank < visible[b].Rank })
-	views, err := s.candidateViews(r, visible)
+	views, err := s.candidateViews(r, visible, pub, secs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1579,7 +1606,7 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 	}, nil
 }
 
-func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) ([]apiCandidate, error) {
+func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate, pub *store.Publication, secs []config.Section) ([]apiCandidate, error) {
 	demo := s.d.Cfg.Mode == "demo"
 	ids := make([]int64, len(cands))
 	for i, c := range cands {
@@ -1624,6 +1651,23 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 			// any prior placement is a valid suggestion: a rejected or
 			// alternative story re-adds where it once sat
 			cv.SuggestedSection = c.Item.Section
+		} else {
+			// A bench story hitting the reject terms carries the
+			// marker and gets no section suggestion — the policy is
+			// visible, never silent (KLOX-94).
+			if pub != nil && strings.TrimSpace(pub.RejectTerms) != "" &&
+				pipeline.TermsMatch(pub.RejectTerms, c.Story.Title) {
+				cv.RejectedEditorial = true
+				if strings.HasPrefix(strings.ToLower(pub.Language), "pt") {
+					cv.Reason += " · rejeitada pela linha editorial"
+				} else {
+					cv.Reason += " · rejected by the editorial line"
+				}
+			} else if sug := pipeline.SuggestSection(c.Story.Title, secs); sug != "" {
+				// a bench story with no prior placement suggests the
+				// section whose declared topic it best fits (KLOX-94)
+				cv.SuggestedSection = sug
+			}
 		}
 		if demo && cv.Origin != "phaseA" && c.Rank > demoCandidateCap {
 			cv.Available = false
@@ -1772,6 +1816,7 @@ func sectionViews(secs []config.Section) []map[string]any {
 		out = append(out, map[string]any{
 			"id": sec.ID, "title": sec.Title, "capacity": sec.Items,
 			"commentary": sec.Commentary, "format": sec.Format, "access": sec.Access,
+			"topic": sec.Topic,
 		})
 	}
 	return out
@@ -1895,7 +1940,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		guide = s.guideAfterRebuild(w, r, pub)
 	}
 	cands, _ = db(r).RankedCandidates(ctx, iss.PublicationID, iss.ID)
-	views, meta, err := s.candidatePage(r, cands, 0, candidatePageSize)
+	views, meta, err := s.candidatePage(r, cands, 0, candidatePageSize, pub, issueSections(iss, pub))
 	if apiDBErr(w, r, err, "candidates") {
 		return
 	}
@@ -2314,7 +2359,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	wsp := reqWS(r)
-	st := &runProgress{st: runState{RunID: newReqID(), Kind: "draft", Step: "starting", IssueID: iss.ID}}
+	st := &runProgress{st: runState{RunID: newReqID(), Kind: "draft", Step: "starting", IssueID: iss.ID, PubID: iss.PublicationID}}
 	key := "draft-" + fmt.Sprint(iss.ID)
 	if prev, running := wsp.Runs.LoadOrStore(key, st); running {
 		pst := prev.(*runProgress)
@@ -3997,13 +4042,17 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	rid, _ := db(r).UpsertReader(ctx, pub.ID, demoReaderEmail, demoReaderName)
 	active, _ := db(r).HasActiveSubscription(ctx, rid)
 	key := r.URL.Query().Get("key")
+	keyValid := false
 	if key != "" {
-		if mrid, err := db(r).ReaderByMagicToken(ctx, pub.ID, key); err == nil && mrid == rid {
-			active = true
+		// The token is the bearer credential a paying reader's magic
+		// link carries (KLOX-13) — any active subscriber's token
+		// unlocks, not only the demo reader's.
+		if _, err := db(r).ReaderByMagicToken(ctx, pub.ID, key); err == nil {
+			keyValid = true
 		}
 	}
 	forceFree := r.URL.Query().Get("view") == "free"
-	unlocked := active && !forceFree
+	unlocked := (active || keyValid) && !forceFree
 	aiUsed, _ := db(r).IssueUsedAI(ctx, iss.ID)
 	md := delivery.ReaderBody(iss, pub, s.publicBase(r), aiUsed)
 	if !unlocked {
@@ -4013,12 +4062,16 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{
 		"publication": map[string]any{"name": rawPub.Name, "slug": rawPub.Slug, "language": rawPub.Language},
 		"issue":       map[string]any{"number": iss.Number, "subject": localizeSubject(iss.Subject, rawPub.Language), "created_at": iss.CreatedAt},
-		"body_md":     md, "gated": !unlocked, "subscribed": active,
+		"body_md":     md, "gated": !unlocked, "subscribed": active || keyValid,
 		"reader":        map[string]string{"name": demoReaderName},
 		"paid_sections": orEmpty(paidSectionTitles(iss, pub)),
 		// price on the reader page (KLOX-66): the gated card sells the
 		// subscription with the creator's price and the paid sections
-		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": localizePrice(rawPub.Paywall.Price, rawPub.Language)},
+		// test_mode/simulated label the checkout step before the reader
+		// pays (KLOX-13): dev-key checkouts carry "no real charge", the
+		// fake fallback is labeled simulated.
+		"paywall": map[string]any{"enabled": rawPub.Paywall.Enabled, "price": localizePrice(rawPub.Paywall.Price, rawPub.Language),
+			"test_mode": s.payProvider().TestMode(), "simulated": s.payProvider().Name() == payments.FakeName},
 	})
 }
 
@@ -4224,7 +4277,9 @@ func (s *Server) editSupportedFor(r *http.Request, item *docItem, dc *docContext
 func (s *Server) citedCorpus(d *pipeline.Dossier, dc *docContext, src pipeline.DossierSource) string {
 	if dc != nil {
 		if it, ok := dc.items[src.ItemID]; ok && it.ContentText != "" {
-			return it.ContentText
+			// the headline/standfirst counts as support (KLOX-100): a
+			// sentence echoing the article's own title is grounded.
+			return it.Title + "\n" + it.ContentText
 		}
 	}
 	var b strings.Builder
@@ -4268,8 +4323,13 @@ func (s *Server) composeFlagNotes(item *docItem, dc *docContext, line string) []
 		if corpus == "" {
 			corpus = d.Summary
 		}
-		if !pipeline.SupportedBySource(line, corpus) {
+		switch {
+		case !pipeline.SupportedBySource(line, corpus):
 			notes = append(notes, fmt.Sprintf("not supported by [%d]", n))
+		case pipeline.UnsupportedDate(line, corpus):
+			notes = append(notes, fmt.Sprintf("date not supported by [%d]", n))
+		case pipeline.NegationUnsupported(line, corpus):
+			notes = append(notes, fmt.Sprintf("negation not supported by [%d]", n))
 		}
 	}
 	if d != nil {
@@ -4323,7 +4383,9 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docCo
 		}
 		if dc != nil {
 			if it, ok := dc.items[src.ItemID]; ok && it.ContentText != "" {
-				corpus = append(corpus, it.ContentText)
+				// headline/standfirst count as support (KLOX-100) —
+				// same corpus as citedCorpus.
+				corpus = append(corpus, it.Title+"\n"+it.ContentText)
 				continue
 			}
 		}
@@ -4336,7 +4398,10 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docCo
 	if len(corpus) == 0 {
 		corpus = append(corpus, d.Summary)
 	}
-	if !pipeline.SupportedBySource(text, strings.Join(corpus, " ")) {
+	joined := strings.Join(corpus, " ")
+	if !pipeline.SupportedBySource(text, joined) ||
+		pipeline.UnsupportedDate(text, joined) ||
+		pipeline.NegationUnsupported(text, joined) {
 		return false
 	}
 	// model check on top of the floor (real mode); demo misses mean ok.

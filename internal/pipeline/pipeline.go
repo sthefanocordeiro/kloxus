@@ -337,12 +337,23 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		res.New += fresh
 	}
 	if res.New == 0 {
+		poolAvailable := false
 		if _, err := r.DB.LatestIssue(ctx, pub.ID); err == nil {
-			r.emit("collect", map[string]int{"items_read": res.Items, "new_items": res.New})
-			res.NoNewItems = true
-			return res, nil
+			// "Nothing new" means nothing to DRAFT, not nothing fetched:
+			// a fetch that turns up zero new items must not block a next
+			// edition while the bench still holds unused suggestions
+			// (KLOX-100). Only when the unused pool is empty is the run
+			// genuinely idle. A count error plays it safe and proceeds —
+			// an empty board is recoverable, a false "nothing new" is not.
+			unused, uerr := r.DB.UnusedCandidateCount(ctx, pub.ID)
+			if uerr == nil && unused == 0 {
+				r.emit("collect", map[string]int{"items_read": res.Items, "new_items": res.New})
+				res.NoNewItems = true
+				return res, nil
+			}
+			poolAvailable = true
 		}
-		if res.Items == 0 {
+		if res.Items == 0 && !poolAvailable {
 			return nil, fmt.Errorf("no items collected — check the publication's sources")
 		}
 	}
@@ -475,13 +486,13 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}{}
 	var detScores []float64
 	var detReasons []string
+	var enrich map[int64]*store.ItemEnrichment
 	if r.Deterministic {
 		// The free ranking reads the shared enrichment when it exists
 		// (KLOX-67 §7.2): topic tags matching the publication's topic or
 		// editorial line and the story's kind weight adjust the
 		// recency + diversity score. No paid call happens here — the
 		// enrichment fills asynchronously after ingest.
-		var enrich map[int64]*store.ItemEnrichment
 		var eids []int64
 		for i := range stories {
 			for j := range stories[i].Items {
@@ -517,6 +528,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			"Audience":      pub.Audience,
 			"Language":      pub.Language,
 			"EditorialLine": pub.EditorialLine,
+			"RejectTerms":   pub.RejectTerms,
 			"Guide":         r.guide(ctx, pub.ID),
 			"Stories":       ts,
 		}, &triage)
@@ -554,7 +566,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	var picks []lineupPick
 	if r.Deterministic {
-		picks = pickLineup(stories, detScores, detReasons, pub.Sections)
+		picks = pickLineup(stories, detScores, detReasons, pub, enrich)
 		r.record(ctx, pub.ID, issueID, "storylist", "deterministic", start, llm.Response{})
 	} else {
 		var picked struct {
@@ -571,6 +583,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			"Audience":      pub.Audience,
 			"Sections":      pub.Sections,
 			"EditorialLine": pub.EditorialLine,
+			"RejectTerms":   pub.RejectTerms,
 			"Guide":         r.guide(ctx, pub.ID),
 			"Stories":       ss,
 		}, &picked)
@@ -1200,9 +1213,17 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 						fmt.Sprintf("cites source [%d] that does not exist", n))
 					continue
 				}
-				if !SupportedBySource(s.text, textByItemID[src.ItemID]) {
+				corpus := textByItemID[src.ItemID]
+				switch {
+				case !SupportedBySource(s.text, corpus):
 					addFlag(int64(s.itemRef), s.text,
 						fmt.Sprintf("not supported by [%d]", n))
+				case UnsupportedDate(s.text, corpus):
+					addFlag(int64(s.itemRef), s.text,
+						fmt.Sprintf("date not supported by [%d]", n))
+				case NegationUnsupported(s.text, corpus):
+					addFlag(int64(s.itemRef), s.text,
+						fmt.Sprintf("negation not supported by [%d]", n))
 				}
 			}
 		}
@@ -1263,7 +1284,10 @@ func (r *Runner) sourceTexts(ctx context.Context, dossiers map[int]*Dossier) (ma
 		return nil, err
 	}
 	for id, it := range items {
-		out[id] = it.ContentText
+		// The headline counts as support (KLOX-100): a sentence echoing
+		// the article's own title or standfirst is grounded in the
+		// source, not a fabrication.
+		out[id] = it.Title + "\n" + it.ContentText
 	}
 	return out, nil
 }

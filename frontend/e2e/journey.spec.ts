@@ -536,9 +536,42 @@ async function readerJourney(page: Page) {
   expect(href).toContain("/p/futuro-proximo/");
   await page.goto(href!.replace(/^https?:\/\/[^/]+/, ""));
   await expect(page.getByText("For paying readers")).toBeVisible({ timeout: 15000 });
-  // subscribe → the magic-link offer appears
-  await page.getByRole("button", { name: "Subscribe" }).click();
-  await expect(page.getByText(/sign-in link/i).first()).toBeVisible({ timeout: 15000 });
+  // paid checkout (KLOX-13): the label must say test/simulated before
+  // any checkout opens — no real charge may ever look possible
+  await expect(
+    page.getByText(/test mode|modo de teste|simulated payment|pagamento de demonstração/i),
+  ).toBeVisible();
+  await page
+    .getByLabel(/email for the access link|e-mail para o link de acesso/i)
+    .fill("reader@example.com");
+  await page.getByRole("button", { name: /Subscribe with PIX|Assinar com PIX/ }).click();
+  // fake provider (no key configured): the "checkout" is the app's own
+  // return URL — status polls confirm and re-serve the access link.
+  // A live AbacatePay key instead navigates to the hosted checkout,
+  // which e2e cannot settle — off-origin is a valid outcome then.
+  const outcome = await Promise.race([
+    page
+      .waitForSelector("text=/Payment confirmed|Pagamento confirmado/i", { timeout: 30000 })
+      .then(() => "paid" as const)
+      .catch(() => null),
+    page
+      .waitForURL((u) => u.hostname.includes("abacatepay"), { timeout: 30000 })
+      .then(() => "external" as const)
+      .catch(() => null),
+  ]);
+  if (!outcome) {
+    throw new Error("paid checkout neither confirmed nor redirected to AbacatePay");
+  }
+  if (outcome === "paid") {
+    // outbox mode re-serves the magic link — opening it must unlock
+    const open = page.getByRole("link", {
+      name: /Open my subscriber access|Abrir meu acesso de assinante/,
+    });
+    if (await open.count()) {
+      await open.first().click();
+      await expect(page.getByText("For paying readers")).toBeHidden({ timeout: 15000 });
+    }
+  }
 }
 
 const viewports = [

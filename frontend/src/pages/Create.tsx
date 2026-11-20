@@ -1,12 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, ApiRequestError, type Proposal } from "../api";
+import { api, ApiRequestError, type Proposal, type ScrapeInfo } from "../api";
 import { useT } from "../i18n";
+import { useCreate } from "./createStrings";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card } from "../ui";
 import { StepCounter } from "../components/StepCounter";
 import { SectionBuilder, totalStories, SECTION_LIMITS } from "../components/SectionBuilder";
+
+// scrape warning codes (internal/sources/propose.go) → create.* keys
+const SCRAPE_WARNINGS: Record<string, "warnThin" | "warnGeneric"> = {
+  thin_content: "warnThin",
+  generic_sections: "warnGeneric",
+};
 
 // /new — the create-newsletter flow in two steps (§3.1): Sua newsletter
 // (paste card + the five editable blocks) → Seções (the section
@@ -14,6 +21,7 @@ import { SectionBuilder, totalStories, SECTION_LIMITS } from "../components/Sect
 // call happens anywhere in onboarding.
 export function CreateNewsletter() {
   const { t } = useT();
+  const c = useCreate();
   const nav = useNavigate();
   const qc = useQueryClient();
   const proposal = useQuery({ queryKey: ["proposal"], queryFn: api.proposal });
@@ -27,10 +35,27 @@ export function CreateNewsletter() {
   }, [existing, nav]);
   const [form, setForm] = useState<Proposal | null>(null);
   const [step, setStep] = useState(0); // 0 = newsletter, 1 = sections
+  const [paste, setPaste] = useState("");
+  const [scrape, setScrape] = useState<ScrapeInfo | null>(null);
 
   useEffect(() => {
     if (proposal.data && !form) setForm(proposal.data);
   }, [proposal.data, form]);
+
+  // KLOX-99 — the pasted URL goes to the scraper (Firecrawl in live
+  // mode, simulated in demo); the returned proposal replaces the sample
+  // in the form so the creator reviews what was extracted before
+  // anything is created.
+  const propose = useMutation({
+    mutationFn: api.propose,
+    onSuccess: (res) => {
+      setForm(res.proposal);
+      setScrape(res.scrape);
+    },
+  });
+  const submitPaste = () => {
+    if (paste.trim()) propose.mutate(paste.trim());
+  };
 
   const create = useMutation({
     mutationFn: () => {
@@ -84,28 +109,72 @@ export function CreateNewsletter() {
             <div className="mt-2 flex gap-2">
               <input
                 id="paste"
-                disabled
+                type="url"
+                value={paste}
+                onChange={(e) => setPaste(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    submitPaste();
+                  }
+                }}
+                disabled={propose.isPending}
                 placeholder={t.create.pastePlaceholder}
                 className="min-w-0 flex-1 rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal disabled:opacity-60"
               />
-              <Button variant="outline" size="sm" disabled>
-                {t.create.pasteAction}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!paste.trim() || propose.isPending}
+                onClick={submitPaste}
+              >
+                {propose.isPending ? c.pasteLoading : t.create.pasteAction}
               </Button>
             </div>
-            <p className="mt-2 text-xs text-muted">{t.create.pasteSoon}</p>
+            {propose.error ? (
+              <p className="mt-2 text-xs text-danger" role="alert">
+                {errText(t, propose.error)}
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-muted">{c.pasteHint}</p>
+            )}
           </Card>
+
+          {scrape && (
+            <Card className="mt-4 p-5" data-testid="scrape-preview">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Badge tone="teal">{c.extractedBadge}</Badge>
+                {scrape.simulated && <Badge tone="warn">{c.simulatedBadge}</Badge>}
+              </div>
+              <p className="text-sm font-medium">{scrape.title || scrape.url}</p>
+              <p className="mt-1 text-xs text-muted">
+                {c.extractedStats
+                  .replace("{words}", String(scrape.words))
+                  .replace("{sections}", String(form?.sections.length ?? 0))}
+              </p>
+              {scrape.warnings.map((w) => (
+                <p key={w} className="mt-1 text-xs text-warn">
+                  {SCRAPE_WARNINGS[w] ? c[SCRAPE_WARNINGS[w]] : w}
+                </p>
+              ))}
+              <p className="mt-2 text-xs text-muted">{c.extractedReview}</p>
+            </Card>
+          )}
 
           {form && (
             <Card className="mt-6 p-5">
               <div className="mb-4 flex items-center gap-2">
-                <Badge tone="teal">{t.create.sampleBadge}</Badge>
-                <span className="text-xs text-muted">{t.create.sampleHint}</span>
+                <Badge tone="teal">{scrape ? c.extractedBadge : t.create.sampleBadge}</Badge>
+                <span className="text-xs text-muted">
+                  {scrape ? c.extractedReview : t.create.sampleHint}
+                </span>
               </div>
 
               <Field label={t.create.name} value={form.name} onChange={(v) => set("name", v)} />
               <Field label={t.create.topic} value={form.topic} onChange={(v) => set("topic", v)} />
               <Field label={t.create.audience} value={form.audience} onChange={(v) => set("audience", v)} />
               <Field label={t.create.editorialLine} value={form.editorial_line} onChange={(v) => set("editorial_line", v)} area />
+              <Field label={t.create.rejectTerms} value={form.reject_terms ?? ""} onChange={(v) => set("reject_terms", v)} hint={t.create.rejectTermsHint} />
               <Field label={t.create.tone} value={form.tone} onChange={(v) => set("tone", v)} />
 
               {/* one button pattern across the onboarding steps (KLOX-79):
@@ -144,8 +213,8 @@ export function CreateNewsletter() {
   );
 }
 
-function Field({ label, value, onChange, area }: {
-  label: string; value: string; onChange: (v: string) => void; area?: boolean;
+function Field({ label, value, onChange, area, hint }: {
+  label: string; value: string; onChange: (v: string) => void; area?: boolean; hint?: string;
 }) {
   return (
     <label className="mt-3 block">
@@ -164,6 +233,7 @@ function Field({ label, value, onChange, area }: {
           className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
         />
       )}
+      {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
     </label>
   );
 }
