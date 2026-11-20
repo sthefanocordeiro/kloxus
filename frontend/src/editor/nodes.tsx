@@ -1,49 +1,20 @@
 import { useEffect, useRef, useState, type FC, type MouseEvent } from "react";
 import { mergeAttributes, Node } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
-import { createContext, useContext } from "react";
+import { useContext } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, Bold, Italic, Link2, PenLine, Plus, Quote, Trash2 } from "lucide-react";
 import { flagNote, sectionTitle, useT } from "../i18n";
 import { useComposer } from "./composerStrings";
 import { cn } from "../lib/cn";
 import { Button } from "../ui";
-// What the sentence/commentary node views can ask the issue page to do.
-export interface DocActions {
-  // returns null on success, or the refusal reason to show inline —
-  // the edit box stays open with the typed text either way
-  editSentence: (sid: string, text: string, citations: number[]) => Promise<string | null>;
-  interpret: (sid: string, text?: string) => Promise<boolean>;
-  removeSentence: (sid: string) => Promise<boolean>;
-  // bulk action: drop every flagged sentence of an item in one call
-  removeFlagged: (itemRef: number) => Promise<boolean>;
-  // open the evidence pane on item ref, optionally highlighting a
-  // citation's passage and flashing the sentence
-  showEvidence: (itemRef: number, opts?: { citeRef?: number; sid?: string; issueItemId?: number }) => void;
-  // manual compose: append editor-written text to an item — returns
-  // null on success or the refusal reason to show inline
-  addSentence: (itemRef: number, text: string, citations: number[], kind: "fact" | "interpretation") => Promise<string | null>;
-  // composer blocks (KLOX-66): index is the block's position inside the
-  // section's block list; updateBlock returns the refusal like
-  // editSentence, the others report plain success. insertBlock takes
-  // the gap position — blocks insert anywhere now (D3).
-  moveBlock: (section: string, index: number, dir: -1 | 1) => Promise<boolean>;
-  removeBlock: (section: string, index: number) => Promise<boolean>;
-  updateBlock: (section: string, index: number, text: string, url?: string) => Promise<string | null>;
-  insertBlock: (section: string, kind: "heading" | "divider" | "link" | "image" | "embed" | "text",
-    position?: number, text?: string, url?: string) => Promise<string | null>;
-  // opens the page-owned insert dialogs — image upload/URL, embed HTML
-  // and the standard-message library (D3)
-  openInsert: (section: string, index: number, kind: "image" | "embed" | "message") => void;
-  // uploads one image file (base64) → returns the /m/ URL, null on failure
-  uploadImage: (dataB64: string, contentType: string, name: string) => Promise<string | null>;
-  // opens the pauta picker for the section — the page owns the dialog;
-  // position is the gap the picker was opened from (append when unset)
-  pickPauta: (section: string, position?: number) => void;
-  // link-only toggle (KLOX-66 D2): the pauta ships its link with no
-  // written text — nothing to write or cite for it
-  toggleLinkOnly: (ref: number, linkOnly: boolean) => Promise<boolean>;
-  readOnly: boolean;
-}
+// The DocActions contract lives in ./actions so the compose surface
+// (components/Compose) can consume it without a runtime import cycle
+// back into this module — re-exported here so existing imports keep
+// working.
+export { DocActionsCtx } from "./actions";
+export type { ComposeDraft, ComposeInsert, DocActions } from "./actions";
+import { DocActionsCtx, type ComposeInsert } from "./actions";
+import { ComposeBox } from "../components/Compose";
 
 // insideCommentary reports whether a resolved position sits inside a
 // commentary block — a legacy name for the sentence-level guard; the
@@ -78,24 +49,6 @@ function blurEditor(editor: NodeViewProps["editor"]) {
 // affordance instead of only flashing (KLOX-52).
 export const FIX_SENTENCE_EVENT = "kloxus:fix-sentence";
 
-export const DocActionsCtx = createContext<DocActions>({
-  editSentence: async () => null,
-  interpret: async () => false,
-  removeSentence: async () => false,
-  removeFlagged: async () => false,
-  showEvidence: () => {},
-  addSentence: async () => null,
-  moveBlock: async () => false,
-  removeBlock: async () => false,
-  updateBlock: async () => null,
-  insertBlock: async () => null,
-  openInsert: () => {},
-  uploadImage: async () => null,
-  pickPauta: () => {},
-  toggleLinkOnly: async () => false,
-  readOnly: true,
-});
-
 interface Src {
   ref: number;
   name: string;
@@ -126,6 +79,9 @@ function SentenceView({ node }: NodeViewProps) {
   const [cites, setCites] = useState<number[]>(a.citations);
   const [editErr, setEditErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // tools pins the edit/remove row open — a click reveals it (touch has
+  // no hover); hover alone also reveals it via group-hover (KLOX-96)
+  const [tools, setTools] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   // register the element so "Fix now" / checklists can scroll + flash
@@ -164,6 +120,13 @@ function SentenceView({ node }: NodeViewProps) {
     }
   };
 
+  const openEdit = () => {
+    setDraft(text);
+    setCites(a.citations);
+    setEditErr("");
+    setEditing(true);
+  };
+
   const saveEdit = async () => {
     setBusy(true);
     setEditErr("");
@@ -180,6 +143,25 @@ function SentenceView({ node }: NodeViewProps) {
   const toggleCite = (n: number) =>
     setCites((c) => (c.includes(n) ? c.filter((x) => x !== n) : [...c, n].sort((x, y) => x - y)));
 
+  // the same three actions flagged sentences always carried — the flag
+  // row keeps them visible, every other sentence gets them on
+  // click/hover/double-click (KLOX-96: accepted phrases are editable
+  // and removable too)
+  const actionsRow = (
+    <span className="ml-auto flex items-center gap-2">
+      <Button size="sm" variant="outline" disabled={busy} onClick={openEdit}>
+        <PenLine size={12} /> {t.doc.edit}
+      </Button>
+      <Button size="sm" variant="outline" disabled={busy}
+        onClick={() => run(() => actions.interpret(a.sid, a.kind === "interpretation" ? undefined : text))}>
+        <Quote size={12} /> {t.doc.interpretation}
+      </Button>
+      <Button size="sm" variant="danger" disabled={busy} onClick={() => run(() => actions.removeSentence(a.sid))}>
+        <Trash2 size={12} /> {t.doc.remove}
+      </Button>
+    </span>
+  );
+
   return (
     <NodeViewWrapper
       ref={ref}
@@ -190,13 +172,25 @@ function SentenceView({ node }: NodeViewProps) {
       )}
     >
       <div className="flex items-start gap-2">
-        <p className={cn("flex-1 font-doc leading-7", a.flag && "underline decoration-danger decoration-2 underline-offset-4")}>
+        <p
+          className={cn("flex-1 font-doc leading-7", a.flag && "underline decoration-danger decoration-2 underline-offset-4")}
+          title={actions.readOnly ? undefined : t.doc.editHint}
+          onClick={() => {
+            if (!actions.readOnly) setTools((v) => !v);
+          }}
+          onDoubleClick={() => {
+            if (!actions.readOnly) openEdit();
+          }}
+        >
           {text}
           {a.citations.map((n) => (
             <button
               key={n}
               contentEditable={false}
-              onClick={() => actions.showEvidence(itemRef, { citeRef: n, sid: a.sid })}
+              onClick={(e) => {
+                e.stopPropagation();
+                actions.showEvidence(itemRef, { citeRef: n, sid: a.sid });
+              }}
               className="mx-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded bg-teal-soft px-1 align-super text-[11px] font-semibold text-teal hover:bg-teal hover:text-paper"
               aria-label={`source ${n}`}
             >
@@ -217,19 +211,16 @@ function SentenceView({ node }: NodeViewProps) {
             <AlertTriangle size={13} />
             {flagNote(lang, a.flag)}
           </span>
-          <span className="ml-auto flex items-center gap-2">
-            <Button size="sm" variant="outline" disabled={busy}
-              onClick={() => { setDraft(text); setCites(a.citations); setEditErr(""); setEditing(true); }}>
-              <PenLine size={12} /> {t.doc.edit}
-            </Button>
-            <Button size="sm" variant="outline" disabled={busy}
-              onClick={() => run(() => actions.interpret(a.sid, a.kind === "interpretation" ? undefined : text))}>
-              <Quote size={12} /> {t.doc.interpretation}
-            </Button>
-            <Button size="sm" variant="danger" disabled={busy} onClick={() => run(() => actions.removeSentence(a.sid))}>
-              <Trash2 size={12} /> {t.doc.remove}
-            </Button>
-          </span>
+          {actionsRow}
+        </div>
+      )}
+
+      {!a.flag && !actions.readOnly && (
+        <div
+          className={cn("mt-1 flex-wrap items-center gap-2", tools ? "flex" : "hidden group-hover:flex")}
+          contentEditable={false}
+        >
+          {actionsRow}
         </div>
       )}
 
@@ -314,23 +305,52 @@ function CommentaryView({ node, editor, getPos }: NodeViewProps) {
 
 // ItemHeadingView — the story's headline as a non-editable atom; click
 // selects it in the evidence pane. The headline lives in attrs so no
-// keystroke can rewrite or merge it into a sentence. A manual-compose
-// item with no sentences yet gets a dashed "write it" affordance that
-// opens the compose box in the evidence pane — link-only items
-// (links-format sections) are exempt: the link is the source (D2).
+// keystroke can rewrite or merge it into a sentence. The pauta's
+// writing surface lives right under it (KLOX-96): "Escreva esta pauta"
+// opens the inline composer in the document itself, and a written item
+// keeps an "add a sentence" affordance — the side pane is supporting
+// material, never the editor. Link-only items (links-format sections)
+// are exempt: the link is the source (D2).
 function ItemHeadingView({ node, editor }: NodeViewProps) {
   const { t } = useT();
   const b = useComposer();
   const actions = useContext(DocActionsCtx);
   const a = node.attrs as {
     ref: number; issueItemId: number; headline: string; empty: boolean; flagged: number;
-    linkOnly: boolean; format: string;
+    linkOnly: boolean; format: string; sources: Src[];
   };
   const [busy, setBusy] = useState(false);
+  const [insert, setInsert] = useState<ComposeInsert | null>(null);
   const linkItem = a.linkOnly || a.format === "links";
+  // the page owns which item's composer is open so it survives document
+  // refetches (every node view remounts on each add)
+  const composing = actions.composeRef === a.ref && !linkItem && !actions.readOnly;
+  // the latest prefill request for this item seeds the box — click a
+  // fact or a source excerpt in the rail and it lands here. Consume it
+  // on pickup: every document save remounts this view, and a pending
+  // insert must not seed a second time (KLOX-96)
+  const { composeInsert: ci, consumeInsert } = actions;
+  useEffect(() => {
+    if (ci && ci.ref === a.ref) {
+      setInsert(ci.insert);
+      consumeInsert(a.ref);
+    }
+  }, [ci, a.ref, consumeInsert]);
+  // a closed composer forgets the delivered insert — the parked draft
+  // already carries its text; reseeding on reopen would duplicate it
+  useEffect(() => {
+    if (!composing) setInsert(null);
+  }, [composing]);
   const open = () => {
     blurEditor(editor);
     actions.showEvidence(a.ref, { issueItemId: a.issueItemId });
+  };
+  const writeHere = () => {
+    // wide screens pair the composer with the item's facts in the rail;
+    // on phone the doc keeps the surface — the rail is a tab away
+    if (window.innerWidth >= 768) open();
+    else blurEditor(editor);
+    actions.composeFor(a.ref);
   };
   return (
     <NodeViewWrapper className="group mt-6" onMouseDown={(e: MouseEvent) => e.preventDefault()} data-item-ref={a.ref}>
@@ -344,6 +364,19 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
           )}
         </h3>
         <span className="flex shrink-0 items-center gap-1">
+          {!a.empty && !linkItem && !actions.readOnly && (
+            <button
+              type="button"
+              contentEditable={false}
+              disabled={busy}
+              title={t.compose.addLine}
+              aria-label={t.compose.addLine}
+              className="rounded p-1 text-muted transition-opacity hover:text-teal focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
+              onClick={writeHere}
+            >
+              <PenLine size={13} />
+            </button>
+          )}
           {!actions.readOnly && (
             <button
               type="button"
@@ -389,15 +422,27 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
       </div>
       {/* a link-only pauta ships the link itself — never a "write it"
           affordance, never a citation prompt (KLOX-66 D2) */}
-      {a.empty && !linkItem && !actions.readOnly && (
+      {a.empty && !linkItem && !actions.readOnly && !composing && (
         <button
           type="button"
           contentEditable={false}
-          onClick={open}
+          onClick={writeHere}
           className="mt-1 inline-flex w-full items-center gap-1.5 rounded-[var(--radius-card)] border border-dashed border-line px-3 py-2 text-left text-xs text-muted transition-colors hover:border-teal/60 hover:text-teal"
         >
           <PenLine size={12} /> {t.compose.emptySlot}
         </button>
+      )}
+      {/* the composer is the document: mousedown must not bubble to the
+          wrapper's preventDefault or the textarea never takes focus */}
+      {composing && (
+        <div contentEditable={false} onMouseDown={(e: MouseEvent) => e.stopPropagation()} className="mt-1">
+          <ComposeBox
+            item={{ ref: a.ref, sources: a.sources ?? [] }}
+            empty={a.empty}
+            insert={insert}
+            onClose={() => actions.composeClose(a.ref)}
+          />
+        </div>
       )}
     </NodeViewWrapper>
   );
@@ -1009,6 +1054,9 @@ export const ItemHeading = Node.create({
       empty: { default: false }, flagged: { default: 0 },
       section: { default: "" }, index: { default: 0 }, format: { default: "" },
       linkOnly: { default: false },
+      // the item's citation sources — the inline composer renders its
+      // [n] chips from them without a dossier fetch (KLOX-96)
+      sources: { default: [] },
     };
   },
   parseHTML() {

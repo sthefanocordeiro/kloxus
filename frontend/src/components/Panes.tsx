@@ -1,10 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useContext, useEffect, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, Circle, ExternalLink, Plus } from "lucide-react";
+import { ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, Circle, ExternalLink, Plus } from "lucide-react";
 import { api, type Check, type Coverage, type DocItem, type IssueDocument, type IssueItem } from "../api";
 import { coverageDone, coverageLabel, readyFromChecks } from "../docModel";
 import { DocActionsCtx } from "../editor/nodes";
-import { ComposeBox, type ComposeInsert } from "./Compose";
 import { sectionTitle, useT } from "../i18n";
 import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
@@ -164,23 +163,33 @@ export function scrollInPane(pane: HTMLElement, el: HTMLElement) {
     pane.scrollTop - pane.clientHeight / 2;
 }
 
+// The deterministic pipeline stores the triage rank note as the
+// dossier's one-line "interpretation" — it is jargon, not editorial
+// guidance, so the panel drops it (audit P0-3 / KLOX-96).
+const RANK_NOTE = /^(nota de relevância|relevance score)\s*:/i;
+
 export function EvidencePane({
   item,
   citeRef,
   sid,
   linkOnly,
+  pos,
+  onGo,
 }: {
   item: DocItem | null;
   citeRef?: number;
   sid?: string;
   // link-only pauta (links-format section): the link is the source —
-  // no compose box or insert-excerpt affordances (KLOX-65/D2)
+  // no compose or insert affordances (KLOX-65/D2)
   linkOnly?: boolean;
+  // one-pauta-at-a-time (KLOX-96): the item's slot in the writable list
+  // and a walker — the rail moves focus pauta by pauta
+  pos?: { index: number; total: number };
+  onGo?: (dir: -1 | 1) => void;
 }) {
   const { t, lang } = useT();
   const b = useComposer();
   const actions = useContext(DocActionsCtx);
-  const [insert, setInsert] = useState<ComposeInsert | null>(null);
   const dossier = useQuery({
     queryKey: ["dossier", item?.issue_item_id],
     queryFn: () => api.dossier(item!.issue_item_id),
@@ -217,19 +226,43 @@ export function EvidencePane({
   };
 
   // D2: a link-only pauta ships its story link with zero commentary —
-  // no compose box, no "insert excerpt" prompt, nothing pressuring the
-  // author to write. Sources stay: the link is what ships. Link-only is
-  // the section format (prop) or the item's own toggle (KLOX-66).
+  // no insert prompt, nothing pressuring the author to write. Sources
+  // stay: the link is what ships. Link-only is the section format
+  // (prop) or the item's own toggle (KLOX-66).
   const linkItem = !!linkOnly || !!item.link_only;
+  // writing lives in the document — the rail's facts and excerpts feed
+  // the inline composer through composeFor (KLOX-96)
+  const canWrite = item.issue_item_id !== 0 && !linkItem && !actions.readOnly;
+  const interpretation = (d?.interpretation ?? []).filter((s) => s.trim() !== "" && !RANK_NOTE.test(s));
   return (
     <div ref={flash} className="h-full space-y-4 overflow-y-auto p-3 text-sm">
+      {pos && pos.total > 1 && (
+        <div className="flex items-center justify-between text-xs text-muted">
+          <button
+            type="button"
+            disabled={pos.index <= 0}
+            onClick={() => onGo?.(-1)}
+            aria-label={t.evidence.prevPauta}
+            className="inline-flex items-center gap-0.5 rounded px-1 py-1 hover:text-ink disabled:opacity-40"
+          >
+            <ChevronLeft size={13} /> {t.evidence.prevPauta}
+          </button>
+          <span>{t.evidence.position(pos.index + 1, pos.total)}</span>
+          <button
+            type="button"
+            disabled={pos.index >= pos.total - 1}
+            onClick={() => onGo?.(1)}
+            aria-label={t.evidence.nextPauta}
+            className="inline-flex items-center gap-0.5 rounded px-1 py-1 hover:text-ink disabled:opacity-40"
+          >
+            {t.evidence.nextPauta} <ChevronRight size={13} />
+          </button>
+        </div>
+      )}
       <p className="font-doc font-semibold leading-6">
         {item.headline}
         {linkItem && <Badge tone="muted" className="ml-2 align-middle">{b.linkOnly}</Badge>}
       </p>
-      {item.issue_item_id !== 0 && !linkItem && !actions.readOnly && (
-        <ComposeBox item={item} insert={insert} />
-      )}
       {d && (
         <>
           {d.facts.length + (d.deep_facts?.length ?? 0) > 0 && (
@@ -238,16 +271,33 @@ export function EvidencePane({
               <ul className="space-y-1">
                 {[...d.facts, ...(d.deep_facts ?? [])].map((f, i) => (
                   <li key={i} className="text-[13px] leading-5">
-                    {f.text} <span className="text-teal text-xs">[{f.ref}]</span>
+                    {canWrite ? (
+                      <button
+                        type="button"
+                        title={t.evidence.useFact}
+                        aria-label={`${f.text} [${f.ref}]`}
+                        onClick={() => actions.composeFor(item.ref, { text: f.text, cite: f.ref, seq: i + 1 })}
+                        className="group/fact -mx-1.5 flex w-[calc(100%+12px)] items-start gap-1 rounded px-1.5 py-1 text-left transition-colors hover:bg-teal-soft/60"
+                      >
+                        <span className="flex-1">
+                          {f.text} <span className="text-teal text-xs">[{f.ref}]</span>
+                        </span>
+                        <Plus size={12} className="mt-1 shrink-0 text-muted group-hover/fact:text-teal" />
+                      </button>
+                    ) : (
+                      <span>
+                        {f.text} <span className="text-teal text-xs">[{f.ref}]</span>
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
             </section>
           )}
-          {d.interpretation.length > 0 && (
+          {interpretation.length > 0 && (
             <section>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{t.evidence.interpretation}</p>
-              <ul className="list-disc space-y-1 pl-5 text-[13px]">{d.interpretation.map((s, i) => <li key={i}>{s}</li>)}</ul>
+              <ul className="list-disc space-y-1 pl-5 text-[13px]">{interpretation.map((s, i) => <li key={i}>{s}</li>)}</ul>
             </section>
           )}
           {d.unknowns.length > 0 && (
@@ -280,14 +330,14 @@ export function EvidencePane({
               <p className="mt-1 border-l-2 border-line pl-2 text-[13px] leading-5 text-muted">
                 {evFor(s.ref) ?? s.excerpt}
               </p>
-              {item.issue_item_id !== 0 && !linkItem && !actions.readOnly && (
+              {canWrite && (
                 <button
                   type="button"
                   onClick={() =>
-                    setInsert((i) => ({
+                    actions.composeFor(item.ref, {
                       text: quotedExcerpt(evFor(s.ref) ?? s.excerpt, s.name),
-                      cite: s.ref, seq: (i?.seq ?? 0) + 1,
-                    }))
+                      cite: s.ref, seq: s.ref,
+                    })
                   }
                   title={t.compose.insertExcerpt(s.ref)}
                   aria-label={t.compose.insertExcerpt(s.ref)}

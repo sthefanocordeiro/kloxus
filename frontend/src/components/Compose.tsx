@@ -1,33 +1,58 @@
 import { useContext, useEffect, useRef, useState } from "react";
-import { PenLine } from "lucide-react";
-import type { DocItem } from "../api";
-import { DocActionsCtx } from "../editor/nodes";
+import { PenLine, X } from "lucide-react";
+import { DocActionsCtx, type ComposeInsert } from "../editor/actions";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { Button } from "../ui";
 
-// ComposeInsert is the evidence pane's way of pre-filling the box: a
-// source excerpt plus that source's citation ref. seq lets the same
-// excerpt insert twice.
-export interface ComposeInsert {
-  text: string;
-  cite: number;
-  seq: number;
+// the action contract moved to editor/actions (KLOX-96) — re-exported
+// here so existing imports keep working
+export type { ComposeInsert };
+
+// ComposeItem is the slice of a document item the box needs: its ref
+// and citation sources. A DocItem satisfies it, and so does the trimmed
+// shape an item heading carries in its attrs.
+export interface ComposeItem {
+  ref: number;
+  sources: { ref: number; name: string }[];
+  sentences?: { id: string }[];
 }
 
 // ComposeBox is the manual-writing surface for one lineup item: a
 // textarea, one toggle chip per source (they become the [n] citations),
 // an optional "my take" switch that stores an interpretation instead of
 // a fact, and the add button. No model call lives behind any of it.
-export function ComposeBox({ item, insert }: { item: DocItem; insert: ComposeInsert | null }) {
+// It renders inside the document, under the pauta's heading (KLOX-96).
+export function ComposeBox({
+  item,
+  empty: emptyProp,
+  insert,
+  onClose,
+}: {
+  item: ComposeItem;
+  // overrides the empty-from-sentences default — an item heading knows
+  // the item is empty without carrying its sentence list
+  empty?: boolean;
+  insert: ComposeInsert | null;
+  onClose?: () => void;
+}) {
   const { t } = useT();
   const actions = useContext(DocActionsCtx);
-  const [draft, setDraft] = useState("");
-  const [cites, setCites] = useState<number[]>([]);
-  const [myTake, setMyTake] = useState(false);
+  // the document rebuilds on every save — this view unmounts with it.
+  // The page parks the in-progress input (composeDraftTake/Save) so a
+  // remount mid-sentence loses nothing; the take consumes it once so
+  // the parked copy can't resurrect over newer input (KLOX-96)
+  const [parked] = useState(() => actions.composeDraftTake(item.ref));
+  const [draft, setDraft] = useState(parked?.text ?? "");
+  const [cites, setCites] = useState<number[]>(parked?.cites ?? []);
+  const [myTake, setMyTake] = useState(parked?.myTake ?? false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const area = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    actions.composeDraftSave(item.ref, { text: draft, cites, myTake });
+  }, [draft, cites, myTake, item.ref, actions]);
 
   useEffect(() => {
     if (!insert) return;
@@ -58,7 +83,7 @@ export function ComposeBox({ item, insert }: { item: DocItem; insert: ComposeIns
     }
   };
 
-  const empty = (item.sentences ?? []).length === 0;
+  const empty = emptyProp ?? (item.sentences ?? []).length === 0;
   return (
     <section
       aria-label={t.compose.title}
@@ -66,6 +91,16 @@ export function ComposeBox({ item, insert }: { item: DocItem; insert: ComposeIns
     >
       <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-teal">
         <PenLine size={12} /> {t.compose.title}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t.doc.cancel}
+            className="ml-auto rounded p-0.5 text-muted hover:text-ink"
+          >
+            <X size={13} />
+          </button>
+        )}
       </p>
       {empty && <p className="mb-2 text-xs text-muted">{t.compose.emptyHint}</p>}
       <textarea

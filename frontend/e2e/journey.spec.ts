@@ -199,8 +199,8 @@ async function boardOps(page: Page, isPhone: boolean) {
     // same through [data-sid])
     await expect(page.locator("[data-sid]")).toHaveCount(filled + 1, { timeout: 15000 });
     filled++;
-    // on phone the compose box lives behind the evidence tab — reopen
-    // the issue tab so the next slot is reachable
+    // the composer lives in the document (KLOX-96) — on phone make sure
+    // the Issue tab is in front so the next slot stays reachable
     if (isPhone) await page.getByRole("button", { name: /^Issue$/ }).click();
   }
 

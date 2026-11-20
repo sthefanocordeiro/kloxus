@@ -8,6 +8,8 @@ import {
   nextPendingSentence,
   readyFromChecks,
   sectionNeedsCommentary,
+  writableRefs,
+  writingProgress,
 } from "../docModel";
 
 const doc = (over: Partial<IssueDocument> = {}): IssueDocument => ({
@@ -171,3 +173,47 @@ describe("docToTiptap", () => {
 // keep Coverage import used
 const _cov: Coverage = { ok: 0, cited: 0, total: 0, flagged: 0 };
 void _cov;
+
+// KLOX-96: the "Escrevendo N de M" counter and the one-pauta walker both
+// count only pautas that ask for written text — link-only items and
+// links-format sections ship the link itself (KLOX-65/D2).
+describe("writing progress (KLOX-96)", () => {
+  const withLinks = () => {
+    const d = doc();
+    d.sections[0].items.push({
+      ref: 2,
+      issue_item_id: 20,
+      headline: "Empty story",
+      sentences: [],
+      sources: [],
+    });
+    d.sections[0].items.push({
+      ref: 3,
+      issue_item_id: 30,
+      headline: "Link-toggled",
+      sentences: [],
+      sources: [],
+      link_only: true,
+    });
+    d.sections.push({
+      title: "Quick links",
+      format: "links",
+      commentary: { mode: "none", text: "" },
+      items: [{ ref: 9, issue_item_id: 90, headline: "Just a link", sentences: [], sources: [] }],
+    });
+    return d;
+  };
+
+  it("counts writable items only, in edition order", () => {
+    expect(writableRefs(withLinks())).toEqual([1, 2]);
+  });
+
+  it("a writable item counts as done once it carries any sentence", () => {
+    expect(writingProgress(withLinks())).toEqual({ done: 1, total: 2 });
+  });
+
+  it("is zero over an empty edition", () => {
+    expect(writingProgress(doc({ sections: [] }))).toEqual({ done: 0, total: 0 });
+    expect(writableRefs(doc({ sections: [] }))).toEqual([]);
+  });
+});

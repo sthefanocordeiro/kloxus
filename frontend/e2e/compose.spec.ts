@@ -212,8 +212,9 @@ test("manual compose journey", async ({ page }) => {
     .click();
   await expect(page.getByText("too close to the source")).toHaveCount(0);
 
-  // write each item by hand: click the slot → compose box in the
-  // evidence pane → type a supported claim → cite its source → add
+  // write each item by hand: click the slot → the composer opens under
+  // the item heading in the document (KLOX-96) → type a supported claim
+  // → cite its source → add
   // rendered markdown places the citation inside final punctuation —
   // "… quando [1]." — so compare without the trailing '.'
   let firstWritten = "";
@@ -235,8 +236,14 @@ test("manual compose journey", async ({ page }) => {
   // audit reproduction (KLOX-52): a sentence added without picking a
   // source must land flagged exactly like an unsupported [n] — with a
   // visible reason and Edit/Remove — and "Review pending" must open the fix
-  // affordance, not only flash the sentence.
-  await page.locator("[data-item-ref] h3").first().click();
+  // affordance, not only flash the sentence. KLOX-96: the composer lives
+  // under the item heading now — the pencil affordance opens it for the
+  // FIRST item so the fix step's chips are firstSrc's.
+  await page
+    .locator("[data-item-ref]")
+    .first()
+    .getByRole("button", { name: "Add a sentence" })
+    .click();
   await expect(box).toBeVisible();
   await box
     .getByRole("textbox")
