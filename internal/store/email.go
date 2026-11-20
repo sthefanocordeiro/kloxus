@@ -358,6 +358,18 @@ func (p *Pool) SendsTodayAll(ctx context.Context, day string) (int, error) {
 	return n, err
 }
 
+// StaleSentCount counts provider-accepted sends still at 'sent' past
+// the given cutoff — Resend reports delivery only through the webhook,
+// so rows stuck here mean the endpoint is dead or disabled (KLOX-98).
+func (db *DB) StaleSentCount(ctx context.Context, cutoff string) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM outbox_emails
+		 WHERE workspace_id = $1 AND provider = 'resend' AND status = 'sent' AND created_at < $2`,
+		db.ws, cutoff).Scan(&n)
+	return n, err
+}
+
 // MailTarget is the ledger row a provider webhook reports on.
 type MailTarget struct {
 	ID          int64

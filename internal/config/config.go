@@ -73,7 +73,11 @@ type Config struct {
 	// never touches a real credential. Never set on a deployed app.
 	FakeResendURL   string
 	FirecrawlAPIKey string
-	AbacatePayKey   string
+	// ScrapesPerDay bounds Firecrawl scrapes (the "paste a link"
+	// proposal flow, KLOX-99) per workspace per UTC day — persisted in
+	// the paid_actions ledger like the §7.3 AI counters.
+	ScrapesPerDay int
+	AbacatePayKey string
 	PublicURL       string
 	WebhookSecret   string
 	// ResendWebhookSecret verifies Svix signatures on /webhooks/resend.
@@ -132,6 +136,7 @@ func Load() (*Config, error) {
 		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
 		FakeResendURL:   os.Getenv("KLOXUS_FAKE_RESEND_URL"),
 		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
+		ScrapesPerDay:   getint("KLOXUS_SCRAPES_PER_DAY", 5),
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),

@@ -207,6 +207,10 @@ const (
 	PaidActionResearch  = "research"
 	PaidActionCiteCheck = "citecheck"
 	PaidActionRerank    = "rerank"
+	// PaidActionScrape counts Firecrawl scrapes for the "paste a link"
+	// proposal flow (KLOX-99), capped by KLOXUS_SCRAPES_PER_DAY with
+	// ref_id 0 — no publication exists yet during onboarding.
+	PaidActionScrape = "scrape"
 )
 
 // PaidActionCount returns how many paid actions of kind against refID

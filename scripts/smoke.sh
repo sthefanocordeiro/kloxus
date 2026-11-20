@@ -160,6 +160,16 @@ outbox)
 live)
 	[ "$CLAIMED" = "false" ] \
 		|| die "refusing mail-capable checks: live target reports claimed='$CLAIMED' — sends could leave the app"
+	# Live mail without a working delivery webhook is a broken posture:
+	# sends stall at 'sent' and bounces never suppress (KLOX-98). The
+	# app reports its own secret posture; the probe proves the route is
+	# up and verifying — 401 on an unsigned event when the secret is
+	# loaded, 503 when it is not.
+	[ "$(jget mail_webhook)" = "configured" ] \
+		|| die "live mail but mail_webhook='$(jget mail_webhook)' — RESEND_WEBHOOK_SECRET missing: delivery events can never land"
+	code="$(req POST /webhooks/resend '{}')"
+	[ "$code" = "401" ] \
+		|| die "resend webhook probe: unsigned event answered $code, want 401 (route up, secret loaded)"
 	MAILPOSTURE="live"
 	;;
 *) die "refusing mail-capable checks: target reports mail='$MAIL' transport='$MAILT'" ;;
