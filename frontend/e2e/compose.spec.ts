@@ -211,6 +211,11 @@ test("manual compose journey", async ({ page }) => {
     .getByRole("button", { name: "Remove" })
     .click();
   await expect(page.getByText("too close to the source")).toHaveCount(0);
+  // the composer stays open for a next sentence on this pauta (KLOX-96
+  // write-in-document) — close it so the slot walk below starts from
+  // the first pauta, not the one still composing
+  await box.getByRole("button", { name: "Cancel" }).click();
+  await expect(box).toHaveCount(0);
 
   // write each item by hand: click the slot → the composer opens under
   // the item heading in the document (KLOX-96) → type a supported claim
@@ -229,6 +234,12 @@ test("manual compose journey", async ({ page }) => {
     await box.getByRole("button", { name: "Add to story" }).click();
     // the sentence lands in the document as a cited fact
     await expect(page.locator("[data-sid]")).toHaveCount(i + 1, { timeout: 15000 });
+    // close the composer between pautas: it stays open for a next
+    // sentence on the same pauta, and an open composer suppresses that
+    // pauta's empty slot — leaving it open would make the next
+    // emptySlot.first() re-enter this pauta instead of the next one
+    await box.getByRole("button", { name: "Cancel" }).click();
+    await expect(box).toHaveCount(0);
   }
   // every slot filled — the empty affordance is gone
   await expect(emptySlot).toHaveCount(0);
