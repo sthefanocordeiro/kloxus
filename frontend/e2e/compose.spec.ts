@@ -323,3 +323,102 @@ test("manual compose journey", async ({ page }) => {
     expect(prev.body_md).toMatch(/\/a\/\d+/);
   }
 });
+
+// KLOX-96 design review (390px rework): the Escrever surface's phone
+// tab bar used to render `position: static` as the last child of the
+// page scroll — a full-document scroll away (y ≈ 4434 on a real
+// edition) — and the per-heading pen / link-only controls measured
+// 21×21px. The bar is now fixed just above the global bottom nav and
+// the heading controls meet the 44px touch rule.
+test("mobile 390px: Escrever tab bar stays pinned, heading controls ≥44px", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await onboard(page);
+  // phone: the bench fills first; the issue column sits behind its tab
+  await expect(page.getByRole("button", { name: /This issue/ })).toBeVisible({ timeout: 120000 });
+  await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60000 });
+  await page.getByRole("button", { name: /This issue/ }).click();
+  await page.getByRole("button", { name: "Write it myself" }).click();
+  const emptySlot = page.getByRole("button", { name: /Write this story/ });
+  await expect(emptySlot.first()).toBeVisible({ timeout: 30000 });
+
+  const tabbar = page.getByRole("navigation", { name: "Issue panes" });
+  const globalNav = page.getByRole("navigation", { name: "Publications" });
+  await expect(tabbar).toBeVisible();
+
+  // pinned flush above the global bottom nav — on screen at scroll-top
+  // (the static bar sat ~3600px below the fold here) and never under it
+  const assertPinned = async () => {
+    const box = (await tabbar.boundingBox())!;
+    const nav = (await globalNav.boundingBox())!;
+    expect(box.y).toBeGreaterThan(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(nav.y + 1);
+    expect(box.y + box.height).toBeGreaterThan(nav.y - 4);
+    return box.y;
+  };
+  const yAtTop = await assertPinned();
+
+  // write one supported sentence so the item heading gains its
+  // per-heading controls — the pen only shows on non-empty pautas
+  const iid = page.url().match(/\/issues\/(\d+)/)![1];
+  const doc0 = (
+    await (await page.request.get(`/api/v1/issues/${iid}/document`)).json()
+  ).document;
+  let srcExcerpt = "";
+  let srcRef = 0;
+  for (const s of doc0.sections) {
+    for (const it of s.items) {
+      const src = (it.sources ?? []).find((x: { excerpt?: string; ref: number }) => x.excerpt);
+      if (src) {
+        srcExcerpt = src.excerpt;
+        srcRef = src.ref;
+        break;
+      }
+    }
+    if (srcExcerpt) break;
+  }
+  expect(srcExcerpt).toBeTruthy();
+  await emptySlot.first().click();
+  const box = page.locator('section[aria-label="Write this story"]');
+  await expect(box).toBeVisible();
+  await box.getByRole("textbox").fill(supportedSentence(srcExcerpt));
+  await box.getByRole("button", { name: new RegExp(`^\\[${srcRef}\\] `) }).click();
+  await box.getByRole("button", { name: "Add to story" }).click();
+  await expect(page.locator("[data-sid]").first()).toBeVisible({ timeout: 15000 });
+
+  // mid-document: scroll the edition — the bar must not move with the
+  // content
+  await page.evaluate(() => {
+    document.querySelector("main")!.scrollTop = 600;
+  });
+  expect(await assertPinned()).toBe(yAtTop);
+
+  // the rail is one tap away and the bar stays pinned while it is shown
+  await tabbar.getByRole("button", { name: "Sources and facts" }).click();
+  await expect(page.locator(".ProseMirror").first()).toBeHidden();
+  expect(await assertPinned()).toBe(yAtTop);
+  await tabbar.getByRole("button", { name: "Issue", exact: true }).click();
+  await expect(page.locator(".ProseMirror").first()).toBeVisible();
+
+  // per-heading controls meet the 44px touch rule on phone (they were
+  // 21×21px); the link-only toggle is reachable without hover too
+  const pen = page.getByRole("button", { name: "Add a sentence" }).first();
+  const link = page.getByRole("button", { name: "Ship as link only" }).first();
+  await expect(pen).toBeAttached();
+  await expect(link).toBeAttached();
+  for (const [name, btn] of [["pen", pen], ["link-only", link]] as const) {
+    const b = (await btn.boundingBox())!;
+    expect(b.height, name).toBeGreaterThanOrEqual(44);
+    expect(b.width, name).toBeGreaterThanOrEqual(44);
+  }
+
+  // no horizontal overflow at 390px
+  const overflow = await page.evaluate(() => ({
+    sw: document.documentElement.scrollWidth,
+    iw: window.innerWidth,
+  }));
+  expect(overflow.sw).toBeLessThanOrEqual(overflow.iw);
+
+  // desktop keeps the old flow — the phone bar never renders at ≥768px
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(tabbar).toBeHidden();
+});
