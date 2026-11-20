@@ -1236,6 +1236,37 @@ func TestAPIPublicationUpdatePartial(t *testing.T) {
 		t.Fatalf("rename PUT changed the section list: %d -> %d", len(bSecs), len(gSecs))
 	}
 
+	// --- KLOX-94: topic and reject_terms ride pointer semantics — an
+	// explicit "" clears while an absent key keeps the stored value ---
+	rr = apiCall(t, srv, "PUT", base, map[string]any{
+		"topic": "fintech e regulação", "reject_terms": "celular, games",
+	})
+	if rr.Code != 200 {
+		t.Fatalf("aderência PUT = %d: %s", rr.Code, shortBody(rr))
+	}
+	got = apiJSON(t, rr)["publication"].(map[string]any)
+	if got["topic"] != "fintech e regulação" || got["reject_terms"] != "celular, games" {
+		t.Fatalf("aderência fields did not land: %v / %v", got["topic"], got["reject_terms"])
+	}
+	// a body without the keys preserves both
+	rr = apiCall(t, srv, "PUT", base, map[string]any{"name": "Futuro Renomeado"})
+	if rr.Code != 200 {
+		t.Fatalf("preserve PUT = %d: %s", rr.Code, shortBody(rr))
+	}
+	got = apiJSON(t, rr)["publication"].(map[string]any)
+	if got["topic"] != "fintech e regulação" || got["reject_terms"] != "celular, games" {
+		t.Fatalf("absent keys did not preserve aderência fields: %v / %v", got["topic"], got["reject_terms"])
+	}
+	// explicit "" clears both
+	rr = apiCall(t, srv, "PUT", base, map[string]any{"topic": "", "reject_terms": ""})
+	if rr.Code != 200 {
+		t.Fatalf("clear PUT = %d: %s", rr.Code, shortBody(rr))
+	}
+	got = apiJSON(t, rr)["publication"].(map[string]any)
+	if got["topic"] != "" || got["reject_terms"] != "" {
+		t.Fatalf("explicit empty did not clear: %v / %v", got["topic"], got["reject_terms"])
+	}
+
 	// --- custom publication: canonicalPub swaps a custom pub's
 	// prompt-bearing fields for the demo sample on reads, so a partial
 	// PUT built on the substituted values would persist the sample's

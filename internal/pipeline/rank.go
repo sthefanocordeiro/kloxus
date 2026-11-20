@@ -44,6 +44,14 @@ const detMaxPerOutlet = 2
 // demoted rows still fill slots when nothing else remains.
 const nonEditorialPenalty = 12.0
 
+// rejectPenalty sinks a story that hits a creator-declared reject term
+// below every other candidate — deeper than feed noise, because the
+// newsletter's editorial line explicitly excludes the theme (KLOX-94).
+// Demoted, never silently dropped: the story stays on the bench with a
+// marked reason, and the auto-lineup never slots it. A manual board
+// move still overrides — the creator's call wins over the keyword.
+const rejectPenalty = 100.0
+
 // lineupPick is the deterministic equivalent of a storylist pick: the
 // story refs to merge (1-based positions into the run's stories), a
 // working title, a provenance reason and the target section.
@@ -198,14 +206,34 @@ var enrichmentKindWeight = map[string]float64{
 // deterministic heuristic, never to an error.
 func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publication, enrich map[int64]*store.ItemEnrichment) (scores []float64, reasons []string) {
 	scores, reasons = scoreStories(stories, lang)
-	if len(enrich) == 0 || pub == nil {
+	if pub == nil {
 		return scores, reasons
 	}
+	pt := ptLang(lang)
+	// KLOX-94: the editorial line's reject terms demote matching
+	// stories to the bench's tail, and the publication's declared topic
+	// lifts direct title/headline hits — the free stand-ins for the
+	// pgvector classification until it lands (sibling issue).
+	reject := parseTerms(pub.RejectTerms)
+	theme := topicTokens(pub.Topic)
+	needText := len(reject) > 0 || len(theme) > 0
 	// The folded keyword set the tags match against — the publication's
 	// declared topic plus its editorial line.
 	tokens := foldedTokens(pub.Topic + " " + pub.EditorialLine)
-	pt := ptLang(lang)
 	for i := range stories {
+		var hay string
+		var words map[string]bool
+		if needText {
+			hay, words = storySearchText(&stories[i], enrich)
+		}
+		if len(reject) > 0 && termsAny(reject, hay, words) {
+			scores[i] -= rejectPenalty
+			if pt {
+				reasons[i] += " · rejeitada pela linha editorial"
+			} else {
+				reasons[i] += " · rejected by the editorial line"
+			}
+		}
 		bestW := 0.0
 		haveKind := false
 		onTopic := false
@@ -220,6 +248,14 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 			}
 			for _, t := range e.Topics {
 				if topicMatches(t, tokens, pub) {
+					onTopic = true
+					break
+				}
+			}
+		}
+		if !onTopic {
+			for w := range theme {
+				if wordHit(w, words) {
 					onTopic = true
 					break
 				}
@@ -250,6 +286,163 @@ func foldedTokens(s string) map[string]bool {
 		out[w] = true
 	}
 	return out
+}
+
+// foldText is the phrase-level version of foldedTokens: lowercase,
+// accents stripped, whitespace collapsed — the same normalization
+// promo and non-editorial matching use on titles.
+func foldText(s string) string {
+	return strings.Join(strings.Fields(foldAccents.Replace(strings.ToLower(s))), " ")
+}
+
+// termSet is a parsed topics/keywords field: each comma-, semicolon-
+// or pipe-separated entry yields one single-word term per content word
+// ("celular e games" → celular, games) plus, when the entry holds more
+// than one content word, the whole folded phrase ("banco central" →
+// banco, central, "banco central") — so a full-phrase hit outranks a
+// partial one while keywords still match independently.
+type termSet [][]string
+
+// parseTerms splits a free-text topic or reject list into a termSet.
+// Creators write these fields as prose or keyword lists — commas and
+// semicolons are the phrase separators, stopwords never count alone.
+func parseTerms(s string) termSet {
+	var out termSet
+	for _, raw := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ';' || r == '|'
+	}) {
+		toks := strings.Fields(foldText(raw))
+		content := 0
+		for _, w := range toks {
+			if len(w) >= 3 && !termStopwords[w] {
+				out = append(out, []string{w})
+				content++
+			}
+		}
+		if content > 1 {
+			out = append(out, toks)
+		}
+	}
+	return out
+}
+
+// termMatch reports whether one parsed term hits the story's folded
+// text. A single-token term must appear as a whole word — "ia" cannot
+// match inside "dia", "games" inside "gamestay" — while a multi-word
+// term matches as a folded phrase.
+func termMatch(term []string, hay string, words map[string]bool) bool {
+	if len(term) == 1 {
+		return wordHit(term[0], words)
+	}
+	return strings.Contains(" "+hay+" ", " "+strings.Join(term, " ")+" ")
+}
+
+// wordHit tests one content word against the folded word set, tolerant
+// of the common plural endings — "fintech" hits "fintechs", "game"
+// hits "games", and a creator's plural term hits the singular headline
+// word. Prefix/substring tricks stay out so boundaries hold.
+func wordHit(w string, words map[string]bool) bool {
+	if words[w] || words[w+"s"] || words[w+"es"] {
+		return true
+	}
+	if strings.HasSuffix(w, "s") && len(w) > 3 && words[w[:len(w)-1]] {
+		return true
+	}
+	if strings.HasSuffix(w, "es") && len(w) > 4 && words[w[:len(w)-2]] {
+		return true
+	}
+	return false
+}
+
+// termsAny reports whether any term in the set hits the text.
+func termsAny(terms termSet, hay string, words map[string]bool) bool {
+	for _, t := range terms {
+		if termMatch(t, hay, words) {
+			return true
+		}
+	}
+	return false
+}
+
+// TermsMatch reports whether a free-text term list hits one text —
+// the shared reject/topic predicate for surfaces that can't hoist a
+// parsed set, like a per-title API check (KLOX-94).
+func TermsMatch(list, text string) bool {
+	hay := foldText(text)
+	return termsAny(parseTerms(list), hay, foldedTokens(hay))
+}
+
+// termsCount returns how many distinct terms hit the text — the
+// aderência strength a section's topic scores a story with.
+func termsCount(terms termSet, hay string, words map[string]bool) int {
+	n := 0
+	for _, t := range terms {
+		if termMatch(t, hay, words) {
+			n++
+		}
+	}
+	return n
+}
+
+// storySearchText folds the story's matchable text once — its own
+// title, member headlines and any enrichment topic tags — into a
+// phrase haystack plus the whole-word set single-token terms test
+// against (KLOX-94).
+func storySearchText(s *store.Story, enrich map[int64]*store.ItemEnrichment) (string, map[string]bool) {
+	var b strings.Builder
+	b.WriteString(s.Title)
+	for i := range s.Items {
+		b.WriteString(" ")
+		b.WriteString(s.Items[i].Title)
+		if e := enrich[s.Items[i].ID]; e != nil {
+			for _, tg := range e.Topics {
+				b.WriteString(" ")
+				b.WriteString(tg)
+			}
+		}
+	}
+	hay := foldText(b.String())
+	return hay, foldedTokens(hay)
+}
+
+// termStopwords are the function words a topic phrase contributes that
+// must never count as a theme signal on their own — "e", "de", "the".
+var termStopwords = map[string]bool{
+	"a": true, "as": true, "o": true, "os": true, "um": true, "uma": true,
+	"de": true, "da": true, "do": true, "das": true, "dos": true,
+	"e": true, "em": true, "no": true, "na": true, "nos": true, "nas": true,
+	"que": true, "para": true, "com": true, "por": true, "ao": true,
+	"the": true, "an": true, "and": true, "of": true, "to": true,
+	"in": true, "on": true, "for": true, "at": true, "by": true,
+}
+
+// topicTokens is the publication topic's discriminating vocabulary:
+// folded words of at least three letters minus the stopwords — short
+// tokens like "ia"/"ai" stay out because they are common word pieces.
+func topicTokens(s string) map[string]bool {
+	out := map[string]bool{}
+	for w := range foldedTokens(s) {
+		if len(w) >= 3 && !termStopwords[w] {
+			out[w] = true
+		}
+	}
+	return out
+}
+
+// SuggestSection names the section a bench candidate best fits: the
+// declared topic matching the most terms wins, ties settle on the
+// earlier section. "" means no section claims the story — the board
+// falls back to its first open slot (KLOX-94).
+func SuggestSection(title string, secs []config.Section) string {
+	hay := foldText(title)
+	words := foldedTokens(hay)
+	best, hits := "", 0
+	for _, sec := range secs {
+		if h := termsCount(parseTerms(sec.Topic), hay, words); h > hits {
+			best, hits = sec.Title, h
+		}
+	}
+	return best
 }
 
 // topicMatches reports whether an enrichment tag hits the publication's
@@ -431,11 +624,44 @@ func hasEvidence(s *store.Story) bool {
 // pass fills any slots left empty by it. Evidence-less stories are
 // skipped outright — they produce no issue item, so slotting one
 // would strand the section.
-func pickLineup(stories []store.Story, scores []float64, reasons []string, sections []config.Section) []lineupPick {
+//
+// Aderência (KLOX-94): a section with a declared topic prefers the
+// story matching the most topic terms — strongest first, score
+// breaking ties — and only relaxes to the global best when nothing
+// matches. A story hitting the newsletter's reject terms is never
+// auto-slotted; it stays a marked bench candidate the creator can
+// still place by hand.
+func pickLineup(stories []store.Story, scores []float64, reasons []string, pub *store.Publication, enrich map[int64]*store.ItemEnrichment) []lineupPick {
+	var sections []config.Section
+	var rejectTerms termSet
+	pt := false
+	if pub != nil {
+		sections = pub.Sections
+		rejectTerms = parseTerms(pub.RejectTerms)
+		pt = ptLang(pub.Language)
+	}
 	order := storyOrder(stories, scores)
 	slots := make([]int, len(sections))
+	secTopics := make([]termSet, len(sections))
+	needText := len(rejectTerms) > 0
 	for i, sec := range sections {
 		slots[i] = sec.Items
+		secTopics[i] = parseTerms(sec.Topic)
+		if len(secTopics[i]) > 0 {
+			needText = true
+		}
+	}
+	// Search text is built once per story — and only when some rule
+	// actually reads it — since it walks every member headline.
+	hay := make([]string, len(stories))
+	words := make([]map[string]bool, len(stories))
+	if needText {
+		for i := range stories {
+			hay[i], words[i] = storySearchText(&stories[i], enrich)
+		}
+	}
+	rejected := func(idx int) bool {
+		return len(rejectTerms) > 0 && termsAny(rejectTerms, hay[idx], words[idx])
 	}
 	placed := make([]bool, len(stories))
 	outlets := map[string]int{}
@@ -447,26 +673,57 @@ func pickLineup(stories []store.Story, scores []float64, reasons []string, secti
 				if slots[si] <= 0 {
 					continue
 				}
-				for _, idx := range order {
-					if placed[idx] || !hasEvidence(&stories[idx]) {
-						continue
+				eligible := func(idx int) bool {
+					if placed[idx] || !hasEvidence(&stories[idx]) || rejected(idx) {
+						return false
 					}
 					outlet := primaryOutlet(&stories[idx])
-					if pass == 0 && outlet != "" && outlets[outlet] >= detMaxPerOutlet {
-						continue
-					}
-					placed[idx] = true
-					slots[si]--
-					outlets[outlet]++
-					picks = append(picks, lineupPick{
-						Refs:    []int{idx + 1},
-						Title:   stories[idx].Title,
-						Why:     reasons[idx],
-						Section: sec.Title,
-					})
-					progress = true
-					break
+					return pass > 0 || outlet == "" || outlets[outlet] < detMaxPerOutlet
 				}
+				pick := -1
+				topicHits := 0
+				if len(secTopics[si]) > 0 {
+					// aderência first: the story matching the most of
+					// this section's topic terms wins the slot; order
+					// (score desc, id asc) breaks the tie.
+					for _, idx := range order {
+						if !eligible(idx) {
+							continue
+						}
+						if h := termsCount(secTopics[si], hay[idx], words[idx]); h > topicHits {
+							topicHits, pick = h, idx
+						}
+					}
+				}
+				if pick < 0 {
+					for _, idx := range order {
+						if eligible(idx) {
+							pick = idx
+							break
+						}
+					}
+				}
+				if pick < 0 {
+					continue
+				}
+				placed[pick] = true
+				slots[si]--
+				outlets[primaryOutlet(&stories[pick])]++
+				why := reasons[pick]
+				if topicHits > 0 {
+					if pt {
+						why += " · no tema da seção"
+					} else {
+						why += " · on the section topic"
+					}
+				}
+				picks = append(picks, lineupPick{
+					Refs:    []int{pick + 1},
+					Title:   stories[pick].Title,
+					Why:     why,
+					Section: sec.Title,
+				})
+				progress = true
 			}
 		}
 	}
