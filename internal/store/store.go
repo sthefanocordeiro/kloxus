@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -32,7 +33,13 @@ func TSUTC(t time.Time) string { return t.UTC().Format(tsLayout) }
 
 // Pool is the shared Postgres connection pool. Repository methods live
 // on DB, a workspace-scoped handle obtained from For.
-type Pool struct{ db *sql.DB }
+type Pool struct {
+	db *sql.DB
+	// vectorOnce/vectorOK cache the pgvector probe (KLOX-93): the
+	// extension is either in the image at boot or it is not.
+	vectorOnce sync.Once
+	vectorOK   bool
+}
 
 // Open connects to the Postgres database at url (DATABASE_URL) and
 // applies migrations. The exec query mode keeps the connection

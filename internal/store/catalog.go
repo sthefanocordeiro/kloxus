@@ -36,6 +36,8 @@ type CatalogSource struct {
 	LastFetchAt   string   `json:"last_fetch_at"`
 	LastStatus    string   `json:"last_status"`
 	RobotsAt      string   `json:"robots_at"`
+	APIDay        string   `json:"api_day"`
+	APICount      int      `json:"api_count"`
 }
 
 // Fetchable reports whether the scheduler may request this source at
@@ -49,7 +51,8 @@ func (c CatalogSource) Fetchable() bool {
 // catalogCols mirrors scanCatalog row order.
 const catalogCols = `id, slug, name, kind, url, feed_url, policy, domain, crawl_delay_ms,
 	poll_minutes, body_mode, credit_author, strip_css, note, enabled, suspended,
-	suspend_reason, etag, last_modified, last_fetch_at, last_status, robots_at`
+	suspend_reason, etag, last_modified, last_fetch_at, last_status, robots_at,
+	api_day, api_count`
 
 func scanCatalog(row interface{ Scan(...any) error }) (*CatalogSource, error) {
 	var c CatalogSource
@@ -58,7 +61,7 @@ func scanCatalog(row interface{ Scan(...any) error }) (*CatalogSource, error) {
 		&c.Policy, &c.Domain, &c.CrawlDelayMS, &c.PollMinutes, &c.BodyMode,
 		&c.CreditAuthor, &strip, &c.Note, &c.Enabled, &c.Suspended,
 		&c.SuspendReason, &c.ETag, &c.LastModified, &lastFetch, &lastStatus,
-		&robotsAt)
+		&robotsAt, &c.APIDay, &c.APICount)
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +156,24 @@ func (p *Pool) CatalogTouchRobots(ctx context.Context, id int64) error {
 	return err
 }
 
+// CatalogAPICount returns how many API requests the source has used on
+// the current UTC day (the counter resets when the day rolls over).
+func (p *Pool) CatalogAPICount(ctx context.Context, id int64, day string) (int, error) {
+	var n int
+	err := p.db.QueryRowContext(ctx,
+		`SELECT CASE WHEN api_day = $1 THEN api_count ELSE 0 END FROM source_catalog WHERE id = $2`,
+		day, id).Scan(&n)
+	return n, err
+}
+
+// CatalogAPIIncr counts one API request on the current UTC day.
+func (p *Pool) CatalogAPIIncr(ctx context.Context, id int64, day string) error {
+	_, err := p.db.ExecContext(ctx, `UPDATE source_catalog SET
+		api_day = $1, api_count = CASE WHEN api_day = $1 THEN api_count + 1 ELSE 1 END
+		WHERE id = $2`, day, id)
+	return err
+}
+
 // CatalogItem is what the ingest scheduler stores per fetched entry.
 type CatalogItem struct {
 	ExternalID    string
@@ -198,6 +219,194 @@ func (p *Pool) SaveCatalogItems(ctx context.Context, catalogID int64, raw []Cata
 		}
 	}
 	return added, nil
+}
+
+// MergeDJDetail preserves a stored detail fetch when a newer list
+// payload arrives without one: the aggregate body and its detail-only
+// meta keys survive until the story's updated_at moves — which marks
+// the revision stale and re-queues a detail fetch. Exported so the
+// ingest test fake mirrors the store's merge semantics.
+func MergeDJDetail(storedMeta map[string]any, storedText string, in *CatalogItem) {
+	df, _ := storedMeta["detail_fetched"].(bool)
+	if !df {
+		return
+	}
+	idf, _ := in.Meta["detail_fetched"].(bool)
+	if idf {
+		return // incoming IS a detail payload — it wins
+	}
+	// A strictly-newer updated_at on the list side means the story was
+	// revised after our detail fetch — drop it and re-queue. The stored
+	// detail's timestamp is often newer than the list snapshot it was
+	// fetched under, so compare as time, not equality.
+	st, _ := storedMeta["updated_at"].(string)
+	it, _ := in.Meta["updated_at"].(string)
+	if st != "" && it != "" {
+		t1, e1 := time.Parse(time.RFC3339, it)
+		t0, e0 := time.Parse(time.RFC3339, st)
+		if e1 == nil && e0 == nil && t1.After(t0) {
+			return // revised — stored detail is stale
+		}
+	}
+	in.ContentText = storedText
+	// Detail-sourced fields are preserved as a set — updated_at and
+	// description included — or every list refresh would churn the row
+	// between the two payload shapes.
+	for _, k := range []string{
+		"detail_fetched", "updated_at", "description",
+		"bullets", "cited_urls", "cited_outlets",
+	} {
+		if v, ok := storedMeta[k]; ok {
+			in.Meta[k] = v
+		}
+	}
+}
+
+// SaveDJItems upserts Daily Journal stories (KLOX-93). Unlike
+// SaveCatalogItems — insert-only, for feeds — a stored row refreshes
+// when the incoming payload actually changed (DJ revises stories and
+// the list ordering tracks the latest source activity), with one
+// exception: a detail-fetched aggregate body survives list-shape
+// refreshes that carry only the blurb (MergeDJDetail). New and changed
+// ids come back so the caller can log them; changed rows also lose
+// their deterministic semantic rows — the embedding and the local
+// classification no longer describe the text — and the sweep
+// recomputes them on the next pass. Idempotent: replaying the same
+// payload changes nothing.
+func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogItem) (added, changed int, err error) {
+	// Load the stored rows' meta + body once so list-only refreshes
+	// don't clobber a detail fetch (MergeDJDetail).
+	extIDs := make([]string, 0, len(raw))
+	for _, r := range raw {
+		extIDs = append(extIDs, r.ExternalID)
+	}
+	stored := map[string]struct {
+		meta map[string]any
+		text string
+	}{}
+	if len(extIDs) > 0 {
+		srows, err := p.db.QueryContext(ctx,
+			`SELECT external_id, content_text, meta_json FROM items
+			 WHERE catalog_id = $1 AND external_id = ANY($2)`, catalogID, extIDs)
+		if err != nil {
+			return 0, 0, err
+		}
+		defer srows.Close()
+		for srows.Next() {
+			var ext, text, mj string
+			if err := srows.Scan(&ext, &text, &mj); err != nil {
+				return 0, 0, err
+			}
+			var m map[string]any
+			_ = json.Unmarshal([]byte(mj), &m)
+			stored[ext] = struct {
+				meta map[string]any
+				text string
+			}{m, text}
+		}
+		if err := srows.Err(); err != nil {
+			return 0, 0, err
+		}
+	}
+	var changedIDs []int64
+	for _, r := range raw {
+		if sm, ok := stored[r.ExternalID]; ok {
+			MergeDJDetail(sm.meta, sm.text, &r)
+		}
+		kind := r.Kind
+		if kind == "" {
+			kind = "article"
+		}
+		if IsPromoTitle(r.Title) {
+			kind = "promo"
+		}
+		meta := r.Meta
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		data, _ := json.Marshal(meta)
+		var id int64
+		var inserted bool
+		err := p.db.QueryRowContext(ctx, `INSERT INTO items
+			(source_id, catalog_id, external_id, url, canonical_url, title, author, published_at, content_text, kind, meta_json, body_truncated)
+			VALUES (NULL,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			ON CONFLICT (catalog_id, external_id) WHERE catalog_id IS NOT NULL
+			DO UPDATE SET title = EXCLUDED.title, published_at = EXCLUDED.published_at,
+				content_text = EXCLUDED.content_text, kind = EXCLUDED.kind,
+				meta_json = EXCLUDED.meta_json, body_truncated = EXCLUDED.body_truncated
+			WHERE items.title IS DISTINCT FROM EXCLUDED.title
+			   OR items.published_at IS DISTINCT FROM EXCLUDED.published_at
+			   OR items.content_text IS DISTINCT FROM EXCLUDED.content_text
+			   OR items.meta_json IS DISTINCT FROM EXCLUDED.meta_json
+			RETURNING id, (xmax = 0)`,
+			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author,
+			r.PublishedAt, r.ContentText, kind, string(data), r.BodyTruncated).
+			Scan(&id, &inserted)
+		if err == sql.ErrNoRows {
+			continue // unchanged — the DO UPDATE WHERE skipped it
+		}
+		if err != nil {
+			return added, changed, err
+		}
+		if inserted {
+			added++
+		} else {
+			changed++
+			changedIDs = append(changedIDs, id)
+		}
+	}
+	if len(changedIDs) > 0 {
+		// Stale deterministic semantic rows are dropped, never
+		// rewritten in place — the sweep recomputes them next pass.
+		// AI enrichment rows (model not 'local-%') survive.
+		if _, err := p.db.ExecContext(ctx,
+			`DELETE FROM item_embedding WHERE item_id = ANY($1)`, changedIDs); err != nil {
+			return added, changed, err
+		}
+		if _, err := p.db.ExecContext(ctx,
+			`DELETE FROM item_enrichment WHERE item_id = ANY($1) AND model LIKE 'local-%'`, changedIDs); err != nil {
+			return added, changed, err
+		}
+	}
+	return added, changed, nil
+}
+
+// DJPendingDetails lists the catalog source's stored items that still
+// lack the detail-fetched body (meta.detail_fetched not set), newest
+// first — the Daily Journal detail backfill works this queue down
+// inside the daily request budget.
+func (p *Pool) DJPendingDetails(ctx context.Context, catalogID int64, limit int) ([]string, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT i.meta_json::jsonb ->> 'slug'
+		FROM items i
+		WHERE i.catalog_id = $1
+		  AND COALESCE(i.meta_json::jsonb ->> 'detail_fetched', '') <> 'true'
+		ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
+		         i.id DESC
+		LIMIT $2`, catalogID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		out = append(out, slug)
+	}
+	return out, rows.Err()
+}
+
+// IsBlockedDomain reports whether the catalog marks a domain as
+// blocked — a signal may cite it for display, but it is never fetched.
+func (p *Pool) IsBlockedDomain(ctx context.Context, domain string) (bool, error) {
+	var n int
+	err := p.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM source_catalog WHERE policy = 'blocked' AND domain = $1`,
+		strings.ToLower(strings.TrimSpace(domain))).Scan(&n)
+	return n > 0, err
 }
 
 // LogFetch appends one fetch outcome to the per-source log.

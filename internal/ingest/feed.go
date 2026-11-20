@@ -40,7 +40,11 @@ type Store interface {
 	CatalogMarkFetched(ctx context.Context, id int64, etag, lastModified, status string) error
 	CatalogSetSuspended(ctx context.Context, id int64, suspended bool, reason string) error
 	CatalogTouchRobots(ctx context.Context, id int64) error
+	CatalogAPICount(ctx context.Context, id int64, day string) (int, error)
+	CatalogAPIIncr(ctx context.Context, id int64, day string) error
 	SaveCatalogItems(ctx context.Context, catalogID int64, raw []store.CatalogItem) (int, error)
+	SaveDJItems(ctx context.Context, catalogID int64, raw []store.CatalogItem) (added, changed int, err error)
+	DJPendingDetails(ctx context.Context, catalogID int64, limit int) ([]string, error)
 	LogFetch(ctx context.Context, catalogID int64, status string, httpStatus, items, newItems int, detail string) error
 	PurgeOldBodies(ctx context.Context, olderThan time.Time) (int64, error)
 }
