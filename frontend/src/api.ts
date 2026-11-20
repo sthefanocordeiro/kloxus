@@ -621,8 +621,6 @@ export const api = {
   sourcePreview: (pubID: number | string, type: string, url: string) =>
     request<{ items: PreviewItem[]; note?: string }>(
       "GET", `/api/v1/publications/${pubID}/sources/preview?type=${type}&url=${encodeURIComponent(url)}`),
-  sourceAdd: (pubID: number | string, type: string, url: string, name?: string) =>
-    request<{ source: SourceRow }>("POST", `/api/v1/publications/${pubID}/sources`, { type, url, name }).then((r) => r.source),
   sourceConfirm: (pubID: number | string, include?: string[]) =>
     request<{ sources: SourceRow[] }>("POST", `/api/v1/publications/${pubID}/sources/confirm`, { include }).then((r) => r.sources),
   sourceDelete: (pubID: number | string, sid: number) =>

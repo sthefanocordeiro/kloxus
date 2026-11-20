@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, type PreviewItem } from "../api";
 import { useT } from "../i18n";
@@ -9,6 +9,8 @@ import { StepCounter } from "../components/StepCounter";
 
 // /publications/:id/sources — the onboarding sources screen: suggested fixture
 // sources with real previews, add/remove, and confirm → auto first run.
+// Its headline job is the aderência controls (KLOX-94): the theme, reject
+// terms and per-section pautas the suggestion engine ranks by.
 export function SourcesPage() {
   const { id } = useParams();
   const { t } = useT();
@@ -17,28 +19,50 @@ export function SourcesPage() {
   const [previews, setPreviews] = useState<Record<string, PreviewItem[] | "loading">>({});
   const [previewNote, setPreviewNote] = useState<Record<string, string>>({});
   const [sel, setSel] = useState<Record<string, boolean>>({});
-  const [ownURL, setOwnURL] = useState("");
-  const [ownName, setOwnName] = useState("");
-  const [ownType, setOwnType] = useState<"rss" | "page">("rss");
-  const [ownPreview, setOwnPreview] = useState<{ items: PreviewItem[]; note?: string } | null>(null);
+  const [adForm, setAdForm] = useState<{ topic: string; rejects: string; sections: Record<string, string> } | null>(null);
+  const [adSaved, setAdSaved] = useState(false);
 
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id!) });
   const sources = useQuery({ queryKey: ["sources", id], queryFn: () => api.sources(id!) });
   const catalog = useQuery({ queryKey: ["catalog", id], queryFn: () => api.sourceCatalog(id!) });
-  const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
-  // real mode is catalog-only: the server refuses pasted URLs, so the
-  // "add your own" form would only fail — explain instead (KLOX-49)
-  const catalogOnly = ws.data?.mode === "real";
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["sources", id] });
     qc.invalidateQueries({ queryKey: ["catalog", id] });
   };
 
-  const add = useMutation({
-    mutationFn: ({ type, url, name }: { type: string; url: string; name?: string }) =>
-      api.sourceAdd(id!, type, url, name),
-    onSuccess: () => { refresh(); setOwnURL(""); setOwnName(""); setOwnPreview(null); },
+  useEffect(() => {
+    if (pub.data && !adForm) {
+      const p = pub.data.publication;
+      setAdForm({
+        topic: p.topic,
+        rejects: p.reject_terms ?? "",
+        sections: Object.fromEntries(p.sections.map((s) => [s.id, s.topic ?? ""])),
+      });
+    }
+  }, [pub.data, adForm]);
+
+  // the aderência save sends the full section list back with the new
+  // topics — the PUT validates and replaces it wholesale (KLOX-94)
+  const saveAd = useMutation({
+    mutationFn: () =>
+      api.updatePublication(id!, {
+        topic: adForm!.topic,
+        reject_terms: adForm!.rejects,
+        sections: pub.data!.publication.sections.map((s) => ({
+          ...s,
+          topic: adForm!.sections[s.id] ?? "",
+        })),
+      }),
+    onSuccess: () => {
+      setAdSaved(true);
+      qc.invalidateQueries({ queryKey: ["publication", id] });
+    },
   });
+  const editAd = (patch: Partial<NonNullable<typeof adForm>>) => {
+    setAdForm((f) => (f ? { ...f, ...patch } : f));
+    setAdSaved(false);
+  };
+
   const remove = useMutation({
     mutationFn: (sid: number) => api.sourceDelete(id!, sid),
     onSuccess: refresh,
@@ -82,29 +106,55 @@ export function SourcesPage() {
       </h1>
       <p className="mt-1 text-sm text-muted">{t.sourcesPage.subtitle}</p>
 
-      {/* aderência card (KLOX-94): the topics the suggestion engine
-          ranks by, in the creator's own words — theme, reject terms
-          and each section's declared pauta */}
-      {pub.data && (
+      {/* aderência controls (KLOX-94): this page's job — the topics the
+          suggestion engine ranks by, in the creator's own words. Custom-
+          source submission is off the table by owner decision: the page
+          manages the catalog feeds plus these controls, nothing else. */}
+      {pub.data && adForm && (
         <Card className="mt-4 p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.aderenciaTitle}</h2>
           <p className="mt-1 text-xs text-muted">{t.sourcesPage.aderenciaHint}</p>
-          <dl className="mt-3 space-y-2 text-sm">
-            <div className="flex gap-2">
-              <dt className="shrink-0 font-medium text-muted">{t.sourcesPage.newsletterTheme}:</dt>
-              <dd className="min-w-0">{pub.data.publication.topic || "—"}</dd>
-            </div>
-            <div className="flex gap-2">
-              <dt className="shrink-0 font-medium text-muted">{t.sourcesPage.rejectsLabel}:</dt>
-              <dd className="min-w-0">{pub.data.publication.reject_terms || t.sourcesPage.noRejects}</dd>
-            </div>
+          <div className="mt-3 space-y-3">
+            <label className="block">
+              <span className="text-xs font-medium text-muted">{t.sourcesPage.newsletterTheme}</span>
+              <input
+                value={adForm.topic}
+                onChange={(e) => editAd({ topic: e.target.value })}
+                placeholder={t.sourcesPage.themePlaceholder}
+                className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-muted">{t.sourcesPage.rejectsLabel}</span>
+              <input
+                value={adForm.rejects}
+                onChange={(e) => editAd({ rejects: e.target.value })}
+                placeholder={t.create.rejectTerms}
+                className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+              />
+              <span className="mt-1 block text-xs text-muted">{t.create.rejectTermsHint}</span>
+            </label>
             {pub.data.publication.sections.map((s) => (
-              <div key={s.id} className="flex gap-2">
-                <dt className="shrink-0 font-medium text-muted">{s.title || "—"}:</dt>
-                <dd className="min-w-0">{s.topic?.trim() || t.sourcesPage.sectionTopicEmpty}</dd>
-              </div>
+              <label key={s.id} className="block">
+                <span className="text-xs font-medium text-muted">
+                  {s.title || "—"} · {t.sourcesPage.sectionTopicLabel}
+                </span>
+                <input
+                  value={adForm.sections[s.id] ?? ""}
+                  onChange={(e) => editAd({ sections: { ...adForm.sections, [s.id]: e.target.value } })}
+                  placeholder={t.sourcesPage.sectionTopicEmpty}
+                  className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+                />
+              </label>
             ))}
-          </dl>
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <Button size="sm" disabled={saveAd.isPending} onClick={() => saveAd.mutate()}>
+              {t.sourcesPage.save}
+            </Button>
+            {adSaved && <span className="text-xs text-teal">{t.sourcesPage.saved}</span>}
+          </div>
+          {saveAd.error && <p className="mt-2 text-xs text-danger">{errText(t, saveAd.error)}</p>}
         </Card>
       )}
 
@@ -185,63 +235,6 @@ export function SourcesPage() {
             ))}
           </div>
         </>
-      )}
-
-      {catalogOnly ? (
-        <Card className="mt-6 p-4">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
-            {/* the option must read "still in development" before
-                anything else — submissions do not work today (KLOX-81) */}
-            <Badge tone="warn">{t.sourcesPage.ownDev}</Badge>
-          </div>
-          <p className="mt-2 text-sm text-muted">{t.sourcesPage.ownDevFlow}</p>
-          <p className="mt-2 text-sm text-muted">{t.sourcesPage.ownCatalogOnly}</p>
-        </Card>
-      ) : (
-      <Card className="mt-6 p-4">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.own}</h2>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <select
-            value={ownType}
-            onChange={(e) => setOwnType(e.target.value as "rss" | "page")}
-            className="rounded border border-line bg-paper px-2 py-2 text-sm"
-          >
-            <option value="rss">{t.sourcesPage.ownType.rss}</option>
-            <option value="page">{t.sourcesPage.ownType.page}</option>
-          </select>
-          <input
-            value={ownName}
-            onChange={(e) => setOwnName(e.target.value)}
-            placeholder={t.sourcesPage.ownName}
-            aria-label={t.sourcesPage.ownName}
-            className="w-36 rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
-          />
-          <input
-            value={ownURL}
-            onChange={(e) => { setOwnURL(e.target.value); setOwnPreview(null); }}
-            placeholder={t.sourcesPage.ownPlaceholder}
-            className="min-w-0 flex-1 rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
-          />
-          <Button
-            variant="outline" size="sm" disabled={!ownURL.trim()}
-            onClick={async () => setOwnPreview(await api.sourcePreview(id!, ownType, ownURL).catch(() => ({ items: [] })))}
-          >
-            {t.sourcesPage.preview}
-          </Button>
-          <Button
-            variant="outline" size="sm" disabled={!ownURL.trim() || add.isPending}
-            onClick={() => add.mutate({ type: ownType, url: ownURL.trim(), name: ownName.trim() || undefined })}
-          >
-            {t.sourcesPage.ownAdd}
-          </Button>
-        </div>
-        {ownPreview?.note && <p className="mt-2 text-xs text-muted">{t.sourcesPage.simulated}</p>}
-        {ownPreview && ownPreview.items.length === 0 && !ownPreview.note && (
-          <p className="mt-2 text-xs text-muted">{t.sourcesPage.simulated}</p>
-        )}
-        {add.error && <p className="mt-2 text-xs text-danger">{errText(t, add.error)}</p>}
-      </Card>
       )}
 
       {/* one button pattern across the onboarding steps (KLOX-79):

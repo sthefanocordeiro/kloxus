@@ -1116,7 +1116,6 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Name          string           `json:"name"`
-		Topic         string           `json:"topic"`
 		Audience      string           `json:"audience"`
 		EditorialLine string           `json:"editorial_line"`
 		Tone          string           `json:"tone"`
@@ -1124,9 +1123,10 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 		AIDisclosure  string           `json:"ai_disclosure"`
 		Sections      []config.Section `json:"sections"`
 		Paywall       *apiPaywall      `json:"paywall"`
-		// RejectTerms rides a pointer so "clear the field" ("") is a
-		// real write while an absent key keeps the stored list — the
-		// keep-if-empty convention can't tell the two apart (KLOX-94).
+		// Topic and RejectTerms ride pointers so "clear the field" ("")
+		// is a real write while an absent key keeps the stored value —
+		// the keep-if-empty convention can't tell the two apart (KLOX-94).
+		Topic       *string `json:"topic"`
 		RejectTerms *string `json:"reject_terms"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
@@ -1134,7 +1134,7 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	def := &config.Publication{
-		Name: in.Name, Topic: in.Topic, Audience: in.Audience,
+		Name: in.Name, Topic: pub.Topic, Audience: in.Audience,
 		EditorialLine: in.EditorialLine, RejectTerms: pub.RejectTerms, Tone: in.Tone,
 		Language: pub.Language, Slug: pub.Slug,
 		Frequency:    in.Frequency,
@@ -1148,8 +1148,8 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 	if def.Name == "" {
 		def.Name = pub.Name
 	}
-	if def.Topic == "" {
-		def.Topic = pub.Topic
+	if in.Topic != nil {
+		def.Topic = strings.TrimSpace(*in.Topic)
 	}
 	if def.Audience == "" {
 		def.Audience = pub.Audience
