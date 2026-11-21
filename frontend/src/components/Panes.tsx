@@ -113,9 +113,13 @@ export function CoverageCounter({ coverage, onFixNow }: { coverage: Coverage; on
 export function ReadinessList({
   checks,
   onTarget,
+  heading = true,
 }: {
   checks: Check[];
   onTarget: (c: Check) => void;
+  // the card that hosts the list may already carry the title — the
+  // review step did, printing "Antes de aprovar" twice (KLOX-68)
+  heading?: boolean;
 }) {
   const { t, lang } = useT();
   // every check is translated here; the server's message stays a
@@ -129,9 +133,11 @@ export function ReadinessList({
   };
   return (
     <div>
-      <p className="mb-2 text-sm font-semibold">
-        {readyFromChecks(checks) ? t.readiness.ready : t.readiness.title}
-      </p>
+      {heading && (
+        <p className="mb-2 text-sm font-semibold">
+          {readyFromChecks(checks) ? t.readiness.ready : t.readiness.title}
+        </p>
+      )}
       <ul className="space-y-1.5">
         {checks.map((c, i) => (
           <li key={i} className="flex items-start gap-2 text-sm">

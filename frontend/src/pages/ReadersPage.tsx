@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Inbox } from "lucide-react";
 import { api } from "../api";
 import { useT } from "../i18n";
-import { Badge, Card } from "../ui";
+import { Card } from "../ui";
 
 // Leitores (§3.1): confirmed-reader and paying-subscriber counts, plus
 // the outbox entry point where subscription links land.
@@ -26,7 +26,10 @@ export function ReadersPage() {
           <p className="mt-1 text-sm text-muted">{t.readersPage.subscribers(r?.subscribers ?? 0)}</p>
         </Card>
       </div>
-      {!r?.confirmed && !r?.readers && (
+      {/* the API always keeps one unconfirmed demo reader row, so the
+          meaningful empty state is "no CONFIRMED readers yet" — the old
+          !confirmed && !readers condition could never fire (KLOX-68) */}
+      {!(r?.confirmed ?? r?.readers) && (
         <p className="mt-6 text-sm text-muted">{t.readersPage.empty}</p>
       )}
       <Link
@@ -35,7 +38,6 @@ export function ReadersPage() {
       >
         <Inbox size={15} aria-hidden />
         {t.readersPage.outboxLink}
-        <Badge tone="muted" className="ml-1">→</Badge>
       </Link>
     </div>
   );

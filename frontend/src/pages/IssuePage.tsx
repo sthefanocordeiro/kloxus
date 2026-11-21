@@ -1242,7 +1242,7 @@ function ReviewStep({
         <section className="space-y-3">
           <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
             <h2 className="mb-2 text-sm font-semibold">{t.readiness.title}</h2>
-            <ReadinessList checks={checks} onTarget={onTarget} />
+            <ReadinessList checks={checks} onTarget={onTarget} heading={false} />
           </div>
           <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
             <h2 className="mb-2 text-sm font-semibold">{t.send.approveSend}</h2>
