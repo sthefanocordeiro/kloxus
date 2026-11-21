@@ -683,7 +683,7 @@ export function IssuePage() {
                 <BlockedCard message={runBlocked} />
               </div>
             )}
-            <BuildBoard issue={issue} onDrafted={() => invalidate()} />
+            <BuildBoard key={issue.id} issue={issue} onDrafted={() => invalidate()} />
           </div>
         )
       ) : (

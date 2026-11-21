@@ -246,21 +246,9 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     );
   }, [candsQ.data]);
 
-  // Pagination resets only when the ISSUE changes — not on remount.
-  // A mount-time wipe ran after the cached-data effect had already
-  // restored the board, and a refetch that returns identical JSON
-  // keeps the same data reference (structural sharing), so nothing
-  // ever re-set it: Pautas → Escrever → Pautas skeletonized the board
-  // indefinitely (KLOX-68).
-  const prevIssueRef = useRef(issue.id);
-  useEffect(() => {
-    if (prevIssueRef.current === issue.id) return;
-    prevIssueRef.current = issue.id;
-    setBoard(null);
-    setExtraBench([]);
-    setPagesLoaded(1);
-    setBenchPage(0);
-  }, [issue.id]);
+  // Pagination/board state resets via the parent's key={issue.id}
+  // remount — an in-place reset effect raced the cached-data restore
+  // above and left the skeleton up indefinitely (KLOX-68).
 
   // has_more answers "is there a page after THIS page" — derive the
   // next fetch's existence from the authoritative bench total and the
