@@ -224,6 +224,7 @@ export const dict = {
     review: {
       editedAfterApproval: "You changed the issue after approving. Approve it again to send.",
       edit: "Edit",
+      actions: "Actions",
       scheduleSend: "Schedule send",
       export: "Export",
       pdfHint: "PDF opens the print dialog — pick “Save as PDF”.",
@@ -280,7 +281,6 @@ export const dict = {
       no_runs: "No run yet — prepare the issue first",
       not_sent: "This issue has not been sent yet",
       not_approved: "Approve the issue first",
-      not_implemented: "Not available yet",
       rate_limited: "Too many tries — wait a bit and try again",
       one_newsletter: "This account already has a newsletter — one newsletter per account",
       internal: "Internal error — try again in a moment",
@@ -324,7 +324,6 @@ export const dict = {
       unsubscribed: "Unsubscribed",
       unsubHint: "You will no longer receive this newsletter.",
       unsubFailed: "This unsubscribe link is not valid.",
-      subscriberView: "Reader view",
       subscribeEmail: "Get new issues by email",
       emailPlaceholder: "you@example.com",
       subscribeEmailAction: "Send sign-in link",
@@ -393,7 +392,7 @@ export const dict = {
       footerPrivacy: "Privacy",
       footerContact: "Contact",
       menu: "Menu",
-      sourcesStrip: "Reads real sources like",
+      sourcesStrip: "Works with the feeds you already read",
       mock: {
         docTitle: "The big one",
         items: [
@@ -548,6 +547,7 @@ export const dict = {
       tone: "Tone",
       frequency: "Frequency",
       price: "Price",
+      pricePlaceholder: "e.g. $10/month",
       free: "Free",
       guideLink: "Editorial guide",
       outboxLink: "Outbox",
@@ -792,6 +792,7 @@ export const dict = {
     review: {
       editedAfterApproval: "Você mudou a edição depois de aprovar. Aprove de novo para enviar.",
       edit: "Editar",
+      actions: "Ações",
       scheduleSend: "Agendar envio",
       export: "Exportar",
       pdfHint: "O PDF abre a janela de impressão — escolha “Salvar como PDF”.",
@@ -848,7 +849,6 @@ export const dict = {
       no_runs: "Ainda não houve preparo — prepare a edição primeiro",
       not_sent: "Esta edição ainda não foi enviada",
       not_approved: "Aprove a edição primeiro",
-      not_implemented: "Ainda não disponível",
       rate_limited: "Muitas tentativas — espere um pouco e tente de novo",
       one_newsletter: "Esta conta já tem uma newsletter — uma newsletter por conta",
       internal: "Erro interno — tente de novo em instantes",
@@ -892,7 +892,6 @@ export const dict = {
       unsubscribed: "Inscrição cancelada",
       unsubHint: "Você não receberá mais esta newsletter.",
       unsubFailed: "Este link de cancelamento não é válido.",
-      subscriberView: "Visão do leitor",
       subscribeEmail: "Receba edições novas por e-mail",
       emailPlaceholder: "você@exemplo.com",
       subscribeEmailAction: "Enviar link de acesso",
@@ -961,7 +960,7 @@ export const dict = {
       footerPrivacy: "Privacidade",
       footerContact: "Contato",
       menu: "Menu de navegação",
-      sourcesStrip: "Lê fontes reais como",
+      sourcesStrip: "Funciona com os feeds que você já lê",
       mock: {
         docTitle: "O destaque",
         items: [
@@ -1116,6 +1115,7 @@ export const dict = {
       tone: "Tom",
       frequency: "Frequência",
       price: "Preço",
+      pricePlaceholder: "ex.: R$ 10/mês",
       free: "Grátis",
       guideLink: "Guia editorial",
       outboxLink: "Caixa de saída",

@@ -122,7 +122,7 @@ func TestPaywallNoteLocalized(t *testing.T) {
 	if n := paywallNote("pt-BR", 0); !strings.Contains(n, "assinantes") {
 		t.Fatalf("pt note expected, got %q", n)
 	}
-	if n := paywallNote("pt-BR", 3); !strings.Contains(n, "mais 3 pautas") {
+	if n := paywallNote("pt-BR", 3); !strings.Contains(n, "mais 3 matérias") {
 		t.Fatalf("pt counted note expected, got %q", n)
 	}
 	if n := paywallNote("en", 0); !strings.Contains(n, "Subscribers only") {

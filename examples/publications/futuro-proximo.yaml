@@ -36,6 +36,6 @@ sources:
     url: fixtures/pages/observatorio-aberto.html
 paywall:
   enabled: true
-  price: "V$ 12/month"
+  price: ""
   paid_sections: [O destaque]
 ai_disclosure: short
