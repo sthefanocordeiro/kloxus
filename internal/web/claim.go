@@ -8,8 +8,10 @@ package web
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -371,7 +373,12 @@ func (s *Server) confirmSub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", 500)
 		return
 	}
+	// With no public issue yet /latest would 404 — land on the
+	// newsletter page instead, which is built for the empty archive.
 	target := fmt.Sprintf("/p/%s/latest", pub.Slug)
+	if _, err := wdb.LatestPublicIssue(r.Context(), pub.ID); errors.Is(err, sql.ErrNoRows) {
+		target = fmt.Sprintf("/p/%s", pub.Slug)
+	}
 	if q := tokSuffix(r); q != "" {
 		target += "?" + strings.TrimPrefix(q, "&")
 	}
