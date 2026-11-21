@@ -211,9 +211,15 @@ test("manual compose journey", async ({ page }) => {
     .getByRole("button", { name: "Remove" })
     .click();
   await expect(page.getByText("too close to the source")).toHaveCount(0);
+  // the composer stays open for a next sentence on this pauta (KLOX-96
+  // write-in-document) — close it so the slot walk below starts from
+  // the first pauta, not the one still composing
+  await box.getByRole("button", { name: "Cancel" }).click();
+  await expect(box).toHaveCount(0);
 
-  // write each item by hand: click the slot → compose box in the
-  // evidence pane → type a supported claim → cite its source → add
+  // write each item by hand: click the slot → the composer opens under
+  // the item heading in the document (KLOX-96) → type a supported claim
+  // → cite its source → add
   // rendered markdown places the citation inside final punctuation —
   // "… quando [1]." — so compare without the trailing '.'
   let firstWritten = "";
@@ -228,6 +234,12 @@ test("manual compose journey", async ({ page }) => {
     await box.getByRole("button", { name: "Add to story" }).click();
     // the sentence lands in the document as a cited fact
     await expect(page.locator("[data-sid]")).toHaveCount(i + 1, { timeout: 15000 });
+    // close the composer between pautas: it stays open for a next
+    // sentence on the same pauta, and an open composer suppresses that
+    // pauta's empty slot — leaving it open would make the next
+    // emptySlot.first() re-enter this pauta instead of the next one
+    await box.getByRole("button", { name: "Cancel" }).click();
+    await expect(box).toHaveCount(0);
   }
   // every slot filled — the empty affordance is gone
   await expect(emptySlot).toHaveCount(0);
@@ -235,8 +247,14 @@ test("manual compose journey", async ({ page }) => {
   // audit reproduction (KLOX-52): a sentence added without picking a
   // source must land flagged exactly like an unsupported [n] — with a
   // visible reason and Edit/Remove — and "Review pending" must open the fix
-  // affordance, not only flash the sentence.
-  await page.locator("[data-item-ref] h3").first().click();
+  // affordance, not only flash the sentence. KLOX-96: the composer lives
+  // under the item heading now — the pencil affordance opens it for the
+  // FIRST item so the fix step's chips are firstSrc's.
+  await page
+    .locator("[data-item-ref]")
+    .first()
+    .getByRole("button", { name: "Add a sentence" })
+    .click();
   await expect(box).toBeVisible();
   await box
     .getByRole("textbox")
@@ -318,4 +336,103 @@ test("manual compose journey", async ({ page }) => {
     expect(prev.body_md).toContain(firstWritten);
     expect(prev.body_md).toMatch(/\/a\/\d+/);
   }
+});
+
+// KLOX-96 design review (390px rework): the Escrever surface's phone
+// tab bar used to render `position: static` as the last child of the
+// page scroll — a full-document scroll away (y ≈ 4434 on a real
+// edition) — and the per-heading pen / link-only controls measured
+// 21×21px. The bar is now fixed just above the global bottom nav and
+// the heading controls meet the 44px touch rule.
+test("mobile 390px: Escrever tab bar stays pinned, heading controls ≥44px", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await onboard(page);
+  // phone: the bench fills first; the issue column sits behind its tab
+  await expect(page.getByRole("button", { name: /This issue/ })).toBeVisible({ timeout: 120000 });
+  await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60000 });
+  await page.getByRole("button", { name: /This issue/ }).click();
+  await page.getByRole("button", { name: "Write it myself" }).click();
+  const emptySlot = page.getByRole("button", { name: /Write this story/ });
+  await expect(emptySlot.first()).toBeVisible({ timeout: 30000 });
+
+  const tabbar = page.getByRole("navigation", { name: "Issue panes" });
+  const globalNav = page.getByRole("navigation", { name: "Publications" });
+  await expect(tabbar).toBeVisible();
+
+  // pinned flush above the global bottom nav — on screen at scroll-top
+  // (the static bar sat ~3600px below the fold here) and never under it
+  const assertPinned = async () => {
+    const box = (await tabbar.boundingBox())!;
+    const nav = (await globalNav.boundingBox())!;
+    expect(box.y).toBeGreaterThan(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(nav.y + 1);
+    expect(box.y + box.height).toBeGreaterThan(nav.y - 4);
+    return box.y;
+  };
+  const yAtTop = await assertPinned();
+
+  // write one supported sentence so the item heading gains its
+  // per-heading controls — the pen only shows on non-empty pautas
+  const iid = page.url().match(/\/issues\/(\d+)/)![1];
+  const doc0 = (
+    await (await page.request.get(`/api/v1/issues/${iid}/document`)).json()
+  ).document;
+  let srcExcerpt = "";
+  let srcRef = 0;
+  for (const s of doc0.sections) {
+    for (const it of s.items) {
+      const src = (it.sources ?? []).find((x: { excerpt?: string; ref: number }) => x.excerpt);
+      if (src) {
+        srcExcerpt = src.excerpt;
+        srcRef = src.ref;
+        break;
+      }
+    }
+    if (srcExcerpt) break;
+  }
+  expect(srcExcerpt).toBeTruthy();
+  await emptySlot.first().click();
+  const box = page.locator('section[aria-label="Write this story"]');
+  await expect(box).toBeVisible();
+  await box.getByRole("textbox").fill(supportedSentence(srcExcerpt));
+  await box.getByRole("button", { name: new RegExp(`^\\[${srcRef}\\] `) }).click();
+  await box.getByRole("button", { name: "Add to story" }).click();
+  await expect(page.locator("[data-sid]").first()).toBeVisible({ timeout: 15000 });
+
+  // mid-document: scroll the edition — the bar must not move with the
+  // content
+  await page.evaluate(() => {
+    document.querySelector("main")!.scrollTop = 600;
+  });
+  expect(await assertPinned()).toBe(yAtTop);
+
+  // the rail is one tap away and the bar stays pinned while it is shown
+  await tabbar.getByRole("button", { name: "Sources and facts" }).click();
+  await expect(page.locator(".ProseMirror").first()).toBeHidden();
+  expect(await assertPinned()).toBe(yAtTop);
+  await tabbar.getByRole("button", { name: "Issue", exact: true }).click();
+  await expect(page.locator(".ProseMirror").first()).toBeVisible();
+
+  // per-heading controls meet the 44px touch rule on phone (they were
+  // 21×21px); the link-only toggle is reachable without hover too
+  const pen = page.getByRole("button", { name: "Add a sentence" }).first();
+  const link = page.getByRole("button", { name: "Ship as link only" }).first();
+  await expect(pen).toBeAttached();
+  await expect(link).toBeAttached();
+  for (const [name, btn] of [["pen", pen], ["link-only", link]] as const) {
+    const b = (await btn.boundingBox())!;
+    expect(b.height, name).toBeGreaterThanOrEqual(44);
+    expect(b.width, name).toBeGreaterThanOrEqual(44);
+  }
+
+  // no horizontal overflow at 390px
+  const overflow = await page.evaluate(() => ({
+    sw: document.documentElement.scrollWidth,
+    iw: window.innerWidth,
+  }));
+  expect(overflow.sw).toBeLessThanOrEqual(overflow.iw);
+
+  // desktop keeps the old flow — the phone bar never renders at ≥768px
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(tabbar).toBeHidden();
 });
