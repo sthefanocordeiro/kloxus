@@ -34,6 +34,13 @@ function renderBox(actions: Partial<DocActions>, it: DocItem = item(), insert: C
     uploadImage: async () => null,
     toggleLinkOnly: async () => false,
     pickPauta: () => {},
+    composeFor: () => {},
+    composeClose: () => {},
+    composeRef: null,
+    composeInsert: null,
+    consumeInsert: () => {},
+    composeDraftTake: () => null,
+    composeDraftSave: () => {},
     readOnly: false,
     ...actions,
   };

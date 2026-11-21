@@ -51,6 +51,8 @@ test("create flow: sample fields stay realistic and Voltar works", async ({ page
   // exact: the KLOX-94 reject-terms field ("Nunca pautar — Temas
   // separados") also matches a plain /Tema/ lookup
   await expect(page.getByLabel("Linha editorial")).not.toHaveValue(/Valdória/i);
+  // exact: KLOX-100 added the "Nunca pautar Temas separados" field — a
+  // substring match would resolve to two labels
   await expect(page.getByLabel("Tema", { exact: true })).not.toHaveValue(/valdoriana/i);
 
   // Voltar leaves /new for the publications list — no dead controls

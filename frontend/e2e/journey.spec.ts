@@ -199,9 +199,19 @@ async function boardOps(page: Page, isPhone: boolean) {
     // same through [data-sid])
     await expect(page.locator("[data-sid]")).toHaveCount(filled + 1, { timeout: 15000 });
     filled++;
-    // on phone the compose box lives behind the evidence tab — reopen
-    // the issue tab so the next slot is reachable
+    // the composer lives in the document (KLOX-96) — on phone make sure
+    // the Issue tab is in front so the next slot stays reachable
     if (isPhone) await page.getByRole("button", { name: /^Issue$/ }).click();
+  }
+
+  // the last add leaves the composer open on the last pauta — KLOX-96
+  // keeps it up for a next sentence, and its textarea is part of the
+  // ProseMirror tree, so the seal check below would read the draft back
+  // as document text. Close it: the document itself is what's sealed.
+  const openBox = page.locator('section[aria-label="Write this story"]');
+  if ((await openBox.count()) > 0) {
+    await openBox.getByRole("button", { name: "Cancel" }).click();
+    await expect(openBox).toHaveCount(0);
   }
 
   // 6) the document is sealed: clicking a section or item heading and

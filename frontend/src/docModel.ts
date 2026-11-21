@@ -39,7 +39,6 @@ export function sectionNeedsCommentary(doc: IssueDocument, title: string): boole
 export function readyFromChecks(checks: Check[]): boolean {
   return checks.length > 0 && checks.every((c) => c.ok);
 }
-
 // failingChecks returns the checks that still block approval.
 export function failingChecks(checks: Check[]): Check[] {
   return checks.filter((c) => !c.ok);
@@ -174,6 +173,7 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
           linkOnly: (item.link_only ?? false) || sec.format === "links",
           empty: (item.sentences ?? []).length === 0,
           flagged: (item.sentences ?? []).filter((s) => s.flag).length,
+          sources: item.sources ?? [],
         },
       });
       for (const s of item.sentences ?? []) {

@@ -79,8 +79,8 @@ test.describe("first-run path (KLOX-90)", () => {
     await expect(storyTitle).toBeVisible({ timeout: 120_000 });
 
     await page.getByRole("button", { name: /Escrever eu mesmo/ }).click();
-    await expect(page.getByRole("button", { name: "Pautas", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Pautas", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Pautas", exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Pautas", exact: true }).first().click();
     await expect(storyTitle).toBeVisible({ timeout: 15_000 });
   });
 });

@@ -4,10 +4,11 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
-import { BookOpen, CalendarClock, ChevronDown, ClipboardCheck, Download, ExternalLink, Eye, Pencil, Plus, Send, Trash2, Wrench } from "lucide-react";
+import { BookOpen, CalendarClock, ChevronDown, ClipboardCheck, Download, ExternalLink, Eye, ListChecks, Pencil, Plus, Send, Trash2 } from "lucide-react";
 import { api, ApiRequestError, type Candidate, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
 import { blockTextMd, docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
-import { BlockAdd, BlockDivider, BlockEmbed, BlockHeading, BlockImage, BlockLink, BlockText, Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideEditable, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
+import { writableRefs, writingProgress } from "../editor/writeProgress";
+import { BlockAdd, BlockDivider, BlockEmbed, BlockHeading, BlockImage, BlockLink, BlockText, Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideEditable, IssueDoc, ItemHeading, SectionHeading, Sentence, type ComposeDraft, type ComposeInsert, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
 import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
@@ -27,6 +28,7 @@ import { StepCounter } from "../components/StepCounter";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
 import { BlockedCard, BoardSkeleton, BuildBoard, StepRail } from "./Board";
 import { NotFound } from "./ErrorPage";
+import { useWrite } from "../editor/writeStrings";
 
 // scroll the editor pane to a sentence/item element and flash it —
 // constrained to the pane so other panes don't move. Returns the
@@ -49,6 +51,7 @@ export function IssuePage() {
   const { id } = useParams();
   const issueID = Number(id);
   const { t } = useT();
+  const w = useWrite();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const runID = params.get("run");
@@ -111,8 +114,19 @@ export function IssuePage() {
 
   // evidence pane selection
   const [sel, setSel] = useState<{ ref: number; issueItemId: number; citeRef?: number; sid?: string } | null>(null);
-  const [rightTab, setRightTab] = useState<"evidence" | "preview">("evidence");
-  const [mobileTab, setMobileTab] = useState<"list" | "doc" | "side">("doc");
+  // the Escrever surface is two columns (KLOX-96): the document — the
+  // real writing surface — and one supporting rail holding the pauta
+  // list, the selected pauta's facts/sources, and the preview
+  const [railTab, setRailTab] = useState<"pautas" | "evidence" | "preview">("evidence");
+  const [mobileTab, setMobileTab] = useState<"doc" | "rail">("doc");
+  // the in-document composer: which item's is open plus the last
+  // fact/excerpt prefill — page-owned so node-view remounts don't lose it
+  const [composeRef, setComposeRef] = useState<number | null>(null);
+  const [composeInsert, setComposeInsert] = useState<{ ref: number; insert: ComposeInsert | null; seq: number } | null>(null);
+  const composeSeq = useRef(0);
+  // parked composer inputs, ref→draft — a ref, not state: keystrokes
+  // write here without re-rendering the whole document (KLOX-96)
+  const composeDrafts = useRef(new Map<number, ComposeDraft>());
   const editorWrapRef = useRef<HTMLDivElement>(null);
   const [saved, setSaved] = useState<"" | "saving" | "saved">("");
 
@@ -136,8 +150,38 @@ export function IssuePage() {
       showEvidence: (ref, opts) => {
         const item = findItem(doc ?? null, ref);
         setSel({ ref, issueItemId: item?.issue_item_id ?? 0, citeRef: opts?.citeRef, sid: opts?.sid });
-        setRightTab("evidence");
-        if (window.innerWidth < 768) setMobileTab("side");
+        setRailTab("evidence");
+        if (window.innerWidth < 768) setMobileTab("rail");
+      },
+      composeFor: (ref, insert) => {
+        setComposeRef(ref);
+        if (insert) {
+          composeSeq.current += 1;
+          setComposeInsert({ ref, insert, seq: composeSeq.current });
+        }
+        // on phone the surface is the doc tab — bring it forward before
+        // flashing the pauta the composer opened under
+        if (window.innerWidth < 768) setMobileTab("doc");
+        setTimeout(() => {
+          flashEl(editorWrapRef.current, `[data-item-ref="${ref}"]`);
+        }, 60);
+      },
+      composeClose: (ref) => setComposeRef((r) => (r === ref ? null : r)),
+      composeRef,
+      composeInsert,
+      consumeInsert: (ref) =>
+        setComposeInsert((c) => (c && c.ref === ref ? null : c)),
+      composeDraftTake: (ref) => {
+        const d = composeDrafts.current.get(ref) ?? null;
+        composeDrafts.current.delete(ref);
+        return d;
+      },
+      composeDraftSave: (ref, d) => {
+        if (!d.text.trim() && d.cites.length === 0 && !d.myTake) {
+          composeDrafts.current.delete(ref);
+        } else {
+          composeDrafts.current.set(ref, d);
+        }
       },
       editSentence: async (sid, text, citations) => {
         try {
@@ -292,7 +336,7 @@ export function IssuePage() {
       },
       pickPauta: (section, position) => setPautaPick({ section, position }),
     }),
-    [doc, issueID, invalidate, resync, qc, showToast, t],
+    [doc, issueID, invalidate, resync, qc, showToast, t, composeRef, composeInsert],
   );
 
   // the "+ Pauta" affordance opens a picker over the bench — stories
@@ -535,16 +579,20 @@ export function IssuePage() {
     }
     if (c.target.kind === "sentence") goToSentence(`[data-sid="${c.target.ref}"]`, { fix: true });
     else if (c.target.kind === "item") {
-      goToSentence(`[data-item-ref="${c.target.ref}"]`);
-      // the fix surface for an item is its evidence pane — the compose
-      // box lives there, so select the item instead of only flashing
-      actions.showEvidence(Number(c.target.ref));
+      // the fix surface for an unwritten item is its in-document
+      // composer — open it under the heading; wide screens pair it with
+      // the item's facts in the rail (KLOX-96)
+      actions.composeFor(Number(c.target.ref));
+      if (window.innerWidth >= 768) actions.showEvidence(Number(c.target.ref));
     } else if (c.target.kind === "section") {
       // the commentary card is the affordance — a click focuses it
       goToSentence(`[data-commentary="${c.target.ref}"]`, { click: true });
     } else if (c.target.kind === "issue") {
-      // open story decisions live in the list pane
-      if (window.innerWidth < 768) setMobileTab("list");
+      // open story decisions live in the pauta list
+      if (window.innerWidth < 768) {
+        setMobileTab("rail");
+        setRailTab("pautas");
+      }
     }
   };
 
@@ -689,23 +737,11 @@ export function IssuePage() {
       ) : (
         doc && (
           <>
-            {/* all three panes stay mounted — visibility toggles per
-                breakpoint so the editor is never double-mounted */}
+            {/* two panes stay mounted — visibility toggles per breakpoint
+                so the editor is never double-mounted (KLOX-96: the old
+                left/right columns merged into one supporting rail) */}
             <DocActionsCtx.Provider value={actions}>
               <div className="flex min-h-0 flex-1 flex-col pb-16 md:flex-row md:pb-0">
-                <aside
-                  className={cn(
-                    "min-h-0 shrink-0 overflow-y-auto border-line md:w-64 md:flex-none md:border-r",
-                    mobileTab === "list" ? "block flex-1" : "hidden md:block",
-                  )}
-                >
-                  <PautasPane
-                    doc={doc}
-                    items={itemsQ.data?.items}
-                    selectedRef={sel?.ref ?? null}
-                    onSelect={(ref, iid) => actions.showEvidence(ref, { issueItemId: iid })}
-                  />
-                </aside>
                 <main
                   ref={editorWrapRef}
                   className={cn(
@@ -713,37 +749,96 @@ export function IssuePage() {
                     mobileTab === "doc" ? "block" : "hidden md:block",
                   )}
                 >
+                  {(() => {
+                    const p = writingProgress(doc);
+                    return p.total > 0 ? (
+                      <div className="sticky top-0 z-10 border-b border-line bg-paper px-4 py-2 backdrop-blur">
+                        <div className="flex items-center gap-3">
+                          <span className="shrink-0 text-xs font-medium text-muted">
+                            {w.writing(p.done, p.total)}
+                          </span>
+                          <div
+                            role="progressbar"
+                            aria-label={w.writing(p.done, p.total)}
+                            aria-valuemin={0}
+                            aria-valuemax={p.total}
+                            aria-valuenow={p.done}
+                            className="h-1.5 min-w-0 flex-1 rounded-full bg-line/60"
+                          >
+                            <div
+                              className="h-full rounded-full bg-teal"
+                              style={{ width: `${Math.round((p.done / p.total) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
                   <EditorContent editor={editor} />
                 </main>
                 <aside
                   className={cn(
                     "min-h-0 shrink-0 flex-col border-line md:flex md:w-80 md:flex-none md:border-l",
-                    mobileTab === "side" ? "flex flex-1" : "hidden",
+                    mobileTab === "rail" ? "flex flex-1" : "hidden",
                   )}
                 >
                   <div className="flex border-b border-line text-xs">
-                    {(["evidence", "preview"] as const).map((tb) => (
+                    {(
+                      [
+                        ["pautas", t.pautas],
+                        ["evidence", t.evidence.title],
+                        ["preview", t.preview.title],
+                      ] as const
+                    ).map(([tb, label]) => (
                       <button
                         key={tb}
-                        onClick={() => setRightTab(tb)}
+                        onClick={() => setRailTab(tb)}
                         className={cn(
-                          // 34 px tabs were under the touch-target
-                          // minimum (§4.3, KLOX-68)
-                          "inline-flex min-h-11 flex-1 items-center justify-center px-3 font-medium md:min-h-10",
-                          rightTab === tb ? "border-b-2 border-teal text-ink" : "text-muted",
+                          "inline-flex min-h-11 flex-1 items-center justify-center truncate px-2 font-medium md:min-h-10",
+                          railTab === tb ? "border-b-2 border-teal text-ink" : "text-muted",
                         )}
                       >
-                        {tb === "evidence" ? t.evidence.title : t.preview.title}
+                        {label}
                       </button>
                     ))}
                   </div>
                   <div className="min-h-0 flex-1">
-                    {rightTab === "evidence" ? (
+                    {railTab === "pautas" ? (
+                      <PautasPane
+                        doc={doc}
+                        items={itemsQ.data?.items}
+                        selectedRef={sel?.ref ?? null}
+                        onSelect={(ref, iid) => {
+                          actions.showEvidence(ref, { issueItemId: iid });
+                          // one-pauta focus (KLOX-96): the list drives the
+                          // document — on phone the rail keeps the facts
+                          if (window.innerWidth >= 768) {
+                            goToSentence(`[data-item-ref="${ref}"]`);
+                          }
+                        }}
+                      />
+                    ) : railTab === "evidence" ? (
                       <EvidencePane
                         item={sel ? findItem(doc, sel.ref) : null}
                         citeRef={sel?.citeRef}
                         sid={sel?.sid}
                         linkOnly={!!sel && findItemFormat(doc, sel.ref) === "links"}
+                        pos={(() => {
+                          const refs = writableRefs(doc);
+                          const idx = sel ? refs.indexOf(sel.ref) : -1;
+                          return idx >= 0 ? { index: idx, total: refs.length } : undefined;
+                        })()}
+                        onGo={(dir) => {
+                          const refs = writableRefs(doc);
+                          const idx = sel ? refs.indexOf(sel.ref) : -1;
+                          const next = refs[idx + dir];
+                          if (idx >= 0 && next !== undefined) {
+                            actions.showEvidence(next, { issueItemId: findItem(doc, next)?.issue_item_id });
+                            if (window.innerWidth >= 768) {
+                              goToSentence(`[data-item-ref="${next}"]`);
+                            }
+                          }
+                        }}
                       />
                     ) : (
                       <PreviewPane issueID={issueID} />
@@ -763,34 +858,33 @@ export function IssuePage() {
             >
               {(
                 [
-                  ["list", <BookOpen key="i" size={15} />, t.pautas],
+                  ["pautas", <ListChecks key="i" size={15} />, t.pautas],
                   ["doc", <ClipboardCheck key="i" size={15} />, t.issue],
-                  ["side", <Eye key="i" size={15} />, rightTab === "evidence" ? t.evidence.title : t.preview.title],
+                  ["evidence", <BookOpen key="i" size={15} />, t.evidence.title],
+                  ["preview", <Eye key="i" size={15} />, t.preview.title],
                 ] as const
               ).map(([k, icon, label]) => (
                 <button
                   key={k}
-                  onClick={() => setMobileTab(k)}
-                  aria-pressed={mobileTab === k}
+                  onClick={() => {
+                    if (k === "doc") setMobileTab("doc");
+                    else {
+                      setRailTab(k);
+                      setMobileTab("rail");
+                    }
+                  }}
+                  aria-pressed={k === "doc" ? mobileTab === "doc" : mobileTab === "rail" && railTab === k}
                   className={cn(
                     "flex min-h-11 flex-1 flex-col items-center gap-0.5 py-2",
-                    mobileTab === k ? "text-teal" : "text-muted",
+                    (k === "doc" ? mobileTab === "doc" : mobileTab === "rail" && railTab === k)
+                      ? "text-teal"
+                      : "text-muted",
                   )}
                 >
                   {icon}
                   {label}
                 </button>
               ))}
-              <button
-                onClick={() => {
-                  setRightTab(rightTab === "evidence" ? "preview" : "evidence");
-                  setMobileTab("side");
-                }}
-                className="flex min-h-11 flex-1 flex-col items-center gap-0.5 py-2 text-muted"
-              >
-                <Wrench size={15} />
-                {rightTab === "evidence" ? t.preview.title : t.evidence.title}
-              </button>
             </nav>
           </>
         )
