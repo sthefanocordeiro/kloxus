@@ -28,7 +28,7 @@ export function ReaderShell() {
                 key={l}
                 onClick={() => setLang(l)}
                 className={
-                  "rounded px-2 py-1 " +
+                  "flex h-11 min-w-11 items-center justify-center rounded-md px-1.5 md:h-10 md:min-w-10 " +
                   (lang === l ? "bg-ink text-paper font-medium" : "text-muted hover:text-ink")
                 }
                 aria-pressed={lang === l}

@@ -8,7 +8,9 @@ package web_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -97,5 +99,44 @@ func TestReaderPublicURL(t *testing.T) {
 	// Leitores screen must not count it
 	if v["confirmed"].(float64) != 0 {
 		t.Errorf("confirmed = %v, want 0", v["confirmed"])
+	}
+}
+
+// Subscribe → confirm on a newsletter with no public issue yet must not
+// land on /latest (404): it goes to the newsletter page instead.
+func TestConfirmSubEmptyArchiveRedirect(t *testing.T) {
+	srv, _, pub, _ := demoServer(t)
+	base := "/api/v1/p/" + pub.Slug
+	if rr := apiCall(t, srv, "GET", base+"/latest", nil); rr.Code != 404 {
+		t.Fatalf("precondition: /latest = %d, want 404 on an empty archive", rr.Code)
+	}
+	rr := apiCall(t, srv, "POST", base+"/subscribe", map[string]string{"email": "novo@example.com"})
+	if rr.Code != 200 {
+		t.Fatalf("subscribe = %d: %s", rr.Code, rr.Body.String())
+	}
+	var res struct {
+		ConfirmURL string `json:"confirm_url"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil || res.ConfirmURL == "" {
+		t.Fatalf("no confirm_url in %s", rr.Body.String())
+	}
+	u := res.ConfirmURL[strings.Index(res.ConfirmURL, "/confirm-sub"):]
+	rr = apiCall(t, srv, "GET", u, nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("confirm-sub = %d, want 303", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); !strings.HasPrefix(loc, "/p/"+pub.Slug) || strings.Contains(loc, "/latest") {
+		t.Fatalf("Location = %q, want the newsletter page, not /latest", loc)
+	}
+
+	// once an edition is out, the confirmation lands on it
+	srv2, db2, pub2, _ := demoServer(t)
+	sentIssue(t, db2, pub2.ID, 1, "Edição um")
+	rr = apiCall(t, srv2, "POST", "/api/v1/p/"+pub2.Slug+"/subscribe", map[string]string{"email": "novo@example.com"})
+	_ = json.Unmarshal(rr.Body.Bytes(), &res)
+	u = res.ConfirmURL[strings.Index(res.ConfirmURL, "/confirm-sub"):]
+	rr = apiCall(t, srv2, "GET", u, nil)
+	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/latest") {
+		t.Fatalf("Location = %q, want /latest once an issue is public", loc)
 	}
 }
