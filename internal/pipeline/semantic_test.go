@@ -164,7 +164,11 @@ func TestSemanticSweepInvalidatesOnUpdate(t *testing.T) {
 		t.Fatalf("update c=%d err=%v", c, err)
 	}
 	// The changed row is pending again.
-	pending, err := pool.UnembeddedItems(ctx, embedding.Model, 50)
+	// The item is a shared catalog row (no workspace), so workspace
+	// scoping alone cannot exclude other runs' catalog backlog; the
+	// limit must also exceed any realistic queue so the check does not
+	// depend on where the revised row sorts in a shared database.
+	pending, err := pool.UnembeddedItemsFor(ctx, ws.Workspace(), embedding.Model, 1_000_000)
 	if err != nil {
 		t.Fatalf("pending: %v", err)
 	}
