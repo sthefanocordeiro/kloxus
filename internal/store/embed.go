@@ -84,13 +84,23 @@ type UnembeddedRow struct {
 // the backfill path for everything stored before embeddings existed.
 // Promo rows are skipped: they never enter candidate sets.
 func (p *Pool) UnembeddedItems(ctx context.Context, model string, limit int) ([]UnembeddedRow, error) {
+	return p.UnembeddedItemsFor(ctx, "", model, limit)
+}
+
+// UnembeddedItemsFor is UnembeddedItems scoped to one workspace: only
+// items owned by ws (plus catalog items, which have no workspace —
+// they are shared) are listed. An empty ws keeps the global scan.
+// Tests use the scoped form so a sweep in one package never classifies
+// another package's test items on the shared DATABASE_URL.
+func (p *Pool) UnembeddedItemsFor(ctx context.Context, ws, model string, limit int) ([]UnembeddedRow, error) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT it.id, it.title, it.content_text, it.meta_json
 		FROM items it
 		LEFT JOIN item_embedding ie ON ie.item_id = it.id AND ie.model = $1
 		WHERE ie.item_id IS NULL AND it.kind <> 'promo'
+		  AND ($2 = '' OR it.workspace_id IS NULL OR it.workspace_id = $2)
 		ORDER BY it.fetched_at DESC, it.id DESC
-		LIMIT $2`, model, limit)
+		LIMIT $3`, model, ws, limit)
 	if err != nil {
 		return nil, err
 	}

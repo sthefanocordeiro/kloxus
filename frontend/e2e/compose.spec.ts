@@ -289,8 +289,11 @@ test("manual compose journey", async ({ page }) => {
   neverRealMail(await workspaceInfo(page));
   const [sendResp] = await Promise.all([
     page.waitForResponse((r) => r.url().endsWith("/send") && r.request().method() === "POST"),
-    // the approved header cluster's direct button (KLOX-80)
-    page.getByRole("button", { name: "Send a test" }).click(),
+    // the test send lives in the Actions menu (KLOX-101)
+    (async () => {
+      await page.getByRole("button", { name: "Actions" }).click();
+      await page.getByRole("button", { name: "Send a test" }).click();
+    })(),
   ]);
   const sendBody = await sendResp.json();
   expect(sendBody.issue.status).toBe("approved");

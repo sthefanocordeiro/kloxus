@@ -47,7 +47,9 @@ test("create flow: live paste option, realistic example, working Voltar", async 
 test("create flow: sample fields stay realistic and Voltar works", async ({ page }) => {
   await onboard(page);
 
-  // the sample's fields read realistic — no fictional place names
+  // the sample's fields read realistic — no fictional place names.
+  // exact: the KLOX-94 reject-terms field ("Nunca pautar — Temas
+  // separados") also matches a plain /Tema/ lookup
   await expect(page.getByLabel("Linha editorial")).not.toHaveValue(/Valdória/i);
   // exact: KLOX-100 added the "Nunca pautar Temas separados" field — a
   // substring match would resolve to two labels

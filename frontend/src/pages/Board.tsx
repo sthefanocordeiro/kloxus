@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { GripVertical, Minus, Plus, Search } from "lucide-react";
 import { api, ApiRequestError, type Candidate, type CandidatesResponse, type Dossier, type IssueSummary, type LineupEntry, type Run, type RunEvent } from "../api";
 import { sectionTitle, useT } from "../i18n";
+import { useBoardStrings } from "./boardStrings";
 
 import { cn } from "../lib/cn";
 import { errText, isNoItemsFailure, runErrText } from "../lib/errors";
@@ -124,7 +125,30 @@ interface BoardStrings {
   add: string; remove: string; moveTo: string; full: string;
   openDossier: string; aiBadge: string; rejectBadge: string; removeWhy: string;
   reasonChips: readonly string[]; reasonOther: string; justRemove: string;
+  kinds: Record<string, string>; badgeOffTopic: string;
+  hiddenBench: (n: number) => string; showHidden: string; hideHidden: string;
   [k: string]: unknown;
+}
+
+// KLOX-95: relative publish age on the card — same shape as the Go
+// agoLabel ("há 3 h" / "3 h ago"; the date beyond a week).
+function timeAgo(iso: string, pt: boolean): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const d = Math.max(0, Date.now() - t);
+  if (d < 3600_000) {
+    const m = Math.floor(d / 60000) + 1;
+    return pt ? `há ${m} min` : `${m} min ago`;
+  }
+  if (d < 86400_000) {
+    const h = Math.floor(d / 3600_000);
+    return pt ? `há ${h} h` : `${h} h ago`;
+  }
+  if (d < 7 * 86400_000) {
+    const dd = Math.floor(d / 86400_000);
+    return pt ? `há ${dd} d` : `${dd} d ago`;
+  }
+  return iso.slice(0, 10);
 }
 
 function boardFrom(c: CandidatesResponse): Board {
@@ -152,10 +176,36 @@ function lineupOf(board: Board): LineupEntry[] {
 
 // --- the build board ---
 
+// Drag is a desktop affordance (the grip icon hides below md, and
+// touch scrolling must not fight a draggable card) — track the same
+// md breakpoint the grip uses.
+function useIsDesktop() {
+  const [is, setIs] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const h = () => setIs(mq.matches);
+    mq.addEventListener("change", h);
+    return () => mq.removeEventListener("change", h);
+  }, []);
+  return is;
+}
+
 export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafted?: () => void }) {
   const { t, lang } = useT();
+  // KLOX-95 board-only strings (article-type chip, hidden toggle,
+  // badges) live in boardStrings.ts — the shared dict is part of the
+  // 150 KiB landing budget.
+  const boardStrings = useBoardStrings();
   const qc = useQueryClient();
-  const candsQ = useQuery({ queryKey: ["candidates", issue.id], queryFn: () => api.candidates(issue.id) });
+  // KLOX-95: foreign-language and off-topic suggestions are hidden by
+  // default; the toggle serves them back (hidden_bench keeps the
+  // concealed count honest in both states).
+  const [showHidden, setShowHidden] = useState(false);
+  const candsQ = useQuery({
+    queryKey: ["candidates", issue.id, showHidden],
+    queryFn: () => api.candidates(issue.id, 0, showHidden),
+  });
+  const isDesktop = useIsDesktop();
   const [board, setBoard] = useState<Board | null>(null);
   // bench pagination (KLOX-45): the API pages the top-150 bench at 50
   // a page; later pages merge into `extraBench`, and at most one page
@@ -225,13 +275,14 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
   useEffect(() => { setToast(null); }, [issue.status]);
 
   const putLineup = useMutation({
-    mutationFn: (v: { entries: LineupEntry[]; prev?: Board }) => api.lineup(issue.id, v.entries),
+    mutationFn: (v: { entries: LineupEntry[]; prev?: Board }) => api.lineup(issue.id, v.entries, showHidden),
     onSuccess: (r) => {
-      qc.setQueryData(["candidates", issue.id], (old: CandidatesResponse | undefined) =>
+      qc.setQueryData(["candidates", issue.id, showHidden], (old: CandidatesResponse | undefined) =>
         old ? {
           ...old, candidates: r.candidates,
           bench_total: r.bench_total ?? old.bench_total,
           has_more: r.has_more ?? old.has_more,
+          hidden_bench: r.hidden_bench ?? old.hidden_bench,
         } : old,
       );
     },
@@ -418,6 +469,12 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(storyID));
   };
+  // a cancelled or off-target drag never fires onDrop — clear the ref
+  // on dragend so a stale story id can't ride into the next drop
+  const onDragEnd = () => {
+    dragRef.current = null;
+    setDropZone(null);
+  };
   const onDrop = (section: string, idx?: number) => (e: React.DragEvent) => {
     e.preventDefault();
     setDropZone(null);
@@ -436,6 +493,12 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     e.preventDefault();
     setDropZone(zone);
   };
+  // dragleave also fires when the pointer moves onto a child of the
+  // zone — only clear when it truly left the zone's subtree, or the
+  // drop highlight flickers on the way to a slot
+  const allowLeave = (e: React.DragEvent) => {
+    if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) setDropZone(null);
+  };
 
   // Merge the loaded pages (page 0 lives in board.bench, later pages in
   // extraBench), then show at most BENCH_PAGE cards at once — the spec
@@ -453,7 +516,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     if (loadingMore || !board) return;
     setLoadingMore(true);
     try {
-      const resp = await api.candidates(issue.id, pagesLoaded);
+      const resp = await api.candidates(issue.id, pagesLoaded, showHidden);
       setPagesLoaded((n) => n + 1);
       const seen = new Set<number>();
       for (const c of board.bench) seen.add(c.story_id);
@@ -592,7 +655,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
         <section
           className={cn("min-h-0 flex-col overflow-y-auto border-line p-4 md:flex md:border-r", boardTab === "bench" ? "flex" : "hidden md:flex")}
           onDragOver={allow("bench")}
-          onDragLeave={() => setDropZone(null)}
+          onDragLeave={allowLeave}
           onDrop={onDropBench}
           aria-label={t.board.bench}
         >
@@ -621,18 +684,29 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
               </select>
             </div>
           </div>
+          {(candsQ.data.hidden_bench ?? 0) > 0 && (
+            <button
+              className="mb-2 text-[11px] text-muted underline underline-offset-2 hover:text-ink"
+              onClick={() => setShowHidden((v) => !v)}
+            >
+              {boardStrings.hiddenBench(candsQ.data.hidden_bench!)} ·{" "}
+              {showHidden ? boardStrings.hideHidden : boardStrings.showHidden}
+            </button>
+          )}
           <div className={cn("space-y-2", dropZone === "bench" && "rounded-lg outline-dashed outline-2 outline-teal")}>
             {benchVisible.length === 0 && <p className="py-6 text-center text-xs text-muted">{t.board.emptyBench}</p>}
             {benchVisible.map((c, bi) => (
               <StoryCard
                 key={c.story_id}
                 c={c}
-                board={t.board}
+                board={boardStrings}
                 side="bench"
                 delay={Math.min(bi * 40, 480)}
                 focused={focusKey === `b${c.story_id}`}
                 onFocus={() => setFocusKey(`b${c.story_id}`)}
+                canDrag={isDesktop}
                 onDragStart={onDragStart(c.story_id)}
+                onDragEnd={onDragEnd}
                 onOpen={() => setSheet(c)}
                 onAdd={() =>
                   c.suggested_section && !sectionFull(c.suggested_section)
@@ -712,7 +786,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                 data-section={s.title}
                 className={cn("mb-4", dropZone === `sec:${s.title}` && "rounded-lg outline-dashed outline-2 outline-teal")}
                 onDragOver={allow(`sec:${s.title}`)}
-                onDragLeave={() => setDropZone(null)}
+                onDragLeave={allowLeave}
                 onDrop={onDrop(s.title)}
               >
                 <div className="mb-1.5 flex items-baseline gap-2 px-1">
@@ -743,12 +817,14 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                       <div className="min-w-0 flex-1">
                         <StoryCard
                           c={c}
-                          board={t.board}
+                          board={boardStrings}
                           side="issue"
                           lead={si === 0 && i === 0}
                           focused={focusKey === `s${c.story_id}`}
                           onFocus={() => setFocusKey(`s${c.story_id}`)}
+                          canDrag={isDesktop}
                           onDragStart={onDragStart(c.story_id)}
+                          onDragEnd={onDragEnd}
                           onOpen={() => setSheet(c)}
                           onRemove={() => removeToBench(c.story_id)}
                           onReject={(reason) => rejectWith(c, reason)}
@@ -990,7 +1066,9 @@ function StoryCard({
   delay,
   lead,
   onFocus,
+  canDrag,
   onDragStart,
+  onDragEnd,
   onOpen,
   onAdd,
   onRemove,
@@ -1006,7 +1084,9 @@ function StoryCard({
   delay?: number;
   lead?: boolean;
   onFocus: () => void;
+  canDrag: boolean;
   onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
   onOpen: () => void;
   onAdd?: () => void;
   onRemove?: () => void;
@@ -1015,8 +1095,16 @@ function StoryCard({
   sections: { title: string; capacity: number }[];
   sectionFull: (s: string) => boolean;
 }) {
+  const { lang } = useT();
   const [otherReason, setOtherReason] = useState("");
   const needsReasonOffer = side === "issue" && c.origin === "phaseA" && !!c.item_id;
+  const pt = lang.startsWith("pt");
+  const kindLabel = c.kind ? board.kinds[c.kind] : undefined;
+  // KLOX-97: the whole card is the drag source — the explainer promises
+  // "drop a story here", and a 14px low-contrast grip was the only
+  // draggable element, so grabbing the card (the natural gesture) did
+  // nothing. The grip stays as the visible affordance.
+  const draggable = canDrag && c.available;
   return (
     <Card
       className={cn(
@@ -1024,12 +1112,16 @@ function StoryCard({
         lead && "border-ink/30 p-4",
         focused && "ring-2 ring-teal",
         !c.available && "opacity-60",
+        draggable && "cursor-grab active:cursor-grabbing",
       )}
       style={delay ? { animationDelay: `${delay}ms` } : undefined}
       onFocus={onFocus}
       tabIndex={0}
       role="button"
       aria-label={`${c.title} — ${board[side === "bench" ? "add" : "remove"] as string}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onKeyDown={(e) => {
         if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON") onOpen();
       }}
@@ -1038,6 +1130,7 @@ function StoryCard({
         <span
           draggable={c.available}
           onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
           className="mt-1 hidden cursor-grab text-muted/60 hover:text-muted md:block"
           aria-hidden="true"
         >
@@ -1046,6 +1139,27 @@ function StoryCard({
         <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
           <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
           <p className="mt-0.5 text-xs text-muted">{c.outlets.join(", ")}</p>
+          {/* KLOX-95: type label + publish age + filter badges — only
+              what the enrichment actually classified; an unenriched
+              card stays title/outlet. */}
+          {(kindLabel || c.published_at || c.foreign || c.off_topic) && (
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted">
+              {kindLabel && (
+                <span className="rounded-full border border-line px-1.5 py-px">{kindLabel}</span>
+              )}
+              {c.published_at && <span>{timeAgo(c.published_at, pt)}</span>}
+              {c.foreign && c.language && (
+                <span className="rounded-full border border-line px-1.5 py-px text-muted/80">
+                  {c.language.toUpperCase()}
+                </span>
+              )}
+              {c.off_topic && (
+                <span className="rounded-full border border-line px-1.5 py-px text-muted/80">
+                  {board.badgeOffTopic}
+                </span>
+              )}
+            </p>
+          )}
           {c.summary && <p className="mt-0.5 text-xs leading-4 text-ink/70">{c.summary}</p>}
           {c.ai_draft && (
             // KLOX-67: the pauta body arrived AI-written and is still

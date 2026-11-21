@@ -1,4 +1,4 @@
-import { BadgeCheck, BookOpen, PenLine, Wallet } from "lucide-react";
+import { BookOpen, PenLine, Wallet } from "lucide-react";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Card } from "../ui";
@@ -33,12 +33,7 @@ export function Landing() {
             <div className="mt-7">
               <SiteCta size="lg" entry={entry} />
             </div>
-            <p className="mt-4">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-1.5 text-sm font-semibold text-teal">
-                <BadgeCheck size={15} aria-hidden />
-                {t.landing.tryLine}
-              </span>
-            </p>
+            <p className="mt-4 text-sm text-paper/80">{t.landing.tryLine}</p>
             {entry.start.error && (
               <p role="alert" className="mt-2 text-sm text-danger-soft">
                 {errText(t, entry.start.error)}
