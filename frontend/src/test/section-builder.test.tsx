@@ -3,6 +3,7 @@
 // contract every caller relies on — stable ids, onChange-shaped
 // updates, reorder/remove/add semantics, templates and the 20-story
 // edition ceiling.
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NewsletterSection } from "../api";
@@ -22,14 +23,21 @@ const make = (over: Partial<NewsletterSection> = {}): NewsletterSection => ({
 
 function setup(initial: NewsletterSection[]) {
   const onChange = vi.fn();
-  render(<SectionBuilder value={initial} onChange={onChange} />);
+  // access options only show with publishing on (KLOX-122)
+  const qc = new QueryClient();
+  qc.setQueryData(["workspace"], { id: "w", label: "w", mode: "demo", hosted: false, llm_mode: "auto", publishing: true });
+  render(
+    <QueryClientProvider client={qc}>
+      <SectionBuilder value={initial} onChange={onChange} />
+    </QueryClientProvider>,
+  );
   return onChange;
 }
 
 describe("SectionBuilder", () => {
   it("shows the live story total and skeleton preview", () => {
     setup([make({ items: 3 }), make({ items: 5 })]);
-    expect(screen.getByText("Your edition will have 8 stories")).toBeVisible();
+    expect(screen.getByText("Your piece will have 8 stories")).toBeVisible();
     expect(screen.getByText("Preview")).toBeVisible();
   });
 
@@ -91,10 +99,10 @@ describe("SectionBuilder", () => {
 
   it("explains what a section is and what each format means (KLOX-81)", () => {
     setup([make()]);
-    expect(screen.getByText(/Each block is a section of the edition/)).toBeVisible();
+    expect(screen.getByText(/Each block is a section of the piece/)).toBeVisible();
     // the legend names all three formats; the picked format's help
     // also sits under the Format select
-    expect(screen.getAllByText(/the one that opens the edition/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/the one that opens the piece/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/cited facts plus your take/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/nothing to write/).length).toBeGreaterThanOrEqual(1);
   });

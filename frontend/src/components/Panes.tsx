@@ -8,6 +8,7 @@ import { DocActionsCtx } from "../editor/nodes";
 import { sectionTitle, useT } from "../i18n";
 import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
+import { usePublishing } from "../lib/publishing";
 import { fmtDate } from "../lib/fmt";
 import { Markdown } from "../markdown";
 import { Badge, Button, Card, SkeletonLine } from "../ui";
@@ -372,8 +373,13 @@ export function EvidencePane({
 
 export function PreviewPane({ issueID }: { issueID: number }) {
   const { t } = useT();
-  const [reader, setReader] = useState("non-subscriber");
-  const [surface, setSurface] = useState("email");
+  // KLOXUS_PUBLISHING off (KLOX-122): no reader/email/phone toggles - the
+  // pane just shows the piece, full text.
+  const publishing = usePublishing();
+  const [pickedReader, setReader] = useState("non-subscriber");
+  const [pickedSurface, setSurface] = useState("email");
+  const reader = publishing ? pickedReader : "subscriber";
+  const surface = publishing ? pickedSurface : "web";
   const pv = useQuery({
     queryKey: ["preview", issueID, reader, surface],
     queryFn: () => api.preview(issueID, reader, surface),
@@ -389,7 +395,7 @@ export function PreviewPane({ issueID }: { issueID: number }) {
   };
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap gap-3 border-b border-line p-3">
+      {publishing && <div className="flex flex-wrap gap-3 border-b border-line p-3">
         {(
           [
             [t.preview.reader, readers, reader, setReader],
@@ -414,7 +420,7 @@ export function PreviewPane({ issueID }: { issueID: number }) {
             ))}
           </div>
         ))}
-      </div>
+      </div>}
       <div className={cn("flex-1 overflow-y-auto p-4", surface === "phone" && "mx-auto w-[360px]")}>
         {pv.data ? <Markdown md={pv.data.body_md} /> : <SkeletonLine className="w-64" />}
       </div>

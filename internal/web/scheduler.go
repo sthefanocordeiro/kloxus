@@ -75,6 +75,9 @@ func (s *Server) dispatchDue(ctx context.Context, pool *store.Pool) {
 func (s *Server) runJob(ctx context.Context, pool *store.Pool, j store.Job) error {
 	switch j.Kind {
 	case store.JobKindSendIssue:
+		if !s.d.Cfg.PublishingEnabled {
+			return fmt.Errorf("publishing is off (KLOXUS_PUBLISHING): scheduled send skipped")
+		}
 		return s.sendScheduledIssue(ctx, pool, j)
 	default:
 		return fmt.Errorf("unknown job kind %q", j.Kind)

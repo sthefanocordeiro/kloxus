@@ -4,12 +4,12 @@ import { expect, test, type Page } from "@playwright/test";
 // publication created, sources not yet confirmed, no edition yet.
 // The pub home must gate "Preparar próxima edição" instead of letting
 // the run die on "no items collected", the Edições list must carry
-// real empty copy, and the sidebar must not glow "Edição atual" on
+// real empty copy, and the sidebar must not glow "Peça atual" on
 // pages where no edition exists.
 
 async function createdNoSources(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: /minha newsletter/ }).first().click();
+  await page.getByRole("button", { name: /meu Radar/ }).first().click();
   await page.waitForURL(/\/new/);
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
@@ -46,16 +46,16 @@ test.describe("first-run path (KLOX-90)", () => {
   test("nav: only the route's section glows", async ({ page }) => {
     const pubID = await createdNoSources(page);
 
-    // pub home — "Edições" glows; "Edição atual" points at the same URL
+    // pub home — "Peças" glows; "Peça atual" points at the same URL
     // but must not glow (no edition exists)
     await page.goto(`/publications/${pubID}`);
-    await expect(navLink(page, "Edição atual")).not.toHaveClass(/bg-teal-soft/);
-    await expect(navLink(page, "Edições")).toHaveClass(/bg-teal-soft/);
+    await expect(navLink(page, "Peça atual")).not.toHaveClass(/bg-teal-soft/);
+    await expect(navLink(page, "Peças")).toHaveClass(/bg-teal-soft/);
 
     // sources sub-page — only "Fontes" glows
     await page.goto(`/publications/${pubID}/sources`);
-    await expect(navLink(page, "Edição atual")).not.toHaveClass(/bg-teal-soft/);
-    await expect(navLink(page, "Edições")).not.toHaveClass(/bg-teal-soft/);
+    await expect(navLink(page, "Peça atual")).not.toHaveClass(/bg-teal-soft/);
+    await expect(navLink(page, "Peças")).not.toHaveClass(/bg-teal-soft/);
     await expect(navLink(page, "Fontes")).toHaveClass(/bg-teal-soft/);
   });
 
@@ -67,7 +67,7 @@ test.describe("first-run path (KLOX-90)", () => {
   test("board comes back after Escrever → Pautas", async ({ page }) => {
     test.setTimeout(240_000);
     await page.goto("/");
-    await page.getByRole("button", { name: /minha newsletter/ }).first().click();
+    await page.getByRole("button", { name: /meu Radar/ }).first().click();
     await page.waitForURL(/\/new/);
     await page.getByRole("button", { name: "Avançar", exact: true }).click();
     await page.getByRole("button", { name: "Avançar", exact: true }).click();

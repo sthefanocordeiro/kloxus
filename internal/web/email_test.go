@@ -67,7 +67,8 @@ func liveDeps(t *testing.T, mailer delivery.Sender, tweak func(*config.Config)) 
 	ctx := context.Background()
 	base := t.TempDir()
 	cfg := &config.Config{
-		Mode: "demo", Port: 8080,
+		PublishingEnabled: true,
+		Mode:              "demo", Port: 8080,
 		OutDir:      base + "/out",
 		ModelTriage: "claude-haiku-5-5", ModelDraft: "claude-sonnet-5-5", MaxDeepDives: 3,
 		EmailDailyCap:          80,
@@ -890,7 +891,7 @@ func TestGlobalCapAcrossWorkspaces(t *testing.T) {
 		t.Fatalf("OpenHosted: %v", err)
 	}
 	t.Cleanup(mgr.Close)
-	cfg := &config.Config{Mode: "demo", EmailDailyCap: 1, EmailWorkspaceDailyCap: 25}
+	cfg := &config.Config{PublishingEnabled: true, Mode: "demo", EmailDailyCap: 1, EmailWorkspaceDailyCap: 25}
 	srv := web.New(web.Deps{
 		WS: mgr, Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
@@ -1083,7 +1084,8 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 	}
 	t.Cleanup(mgr.Close)
 	cfg := &config.Config{
-		Mode: "demo", EmailDailyCap: 80, EmailWorkspaceDailyCap: 25,
+		PublishingEnabled: true,
+		Mode:              "demo", EmailDailyCap: 80, EmailWorkspaceDailyCap: 25,
 		ResendWebhookSecret: "whsec_" + base64.StdEncoding.EncodeToString([]byte("test-webhook-secret-32-bytes!!")),
 	}
 	srv := web.New(web.Deps{

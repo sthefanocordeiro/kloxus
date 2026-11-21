@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { BookOpen, Inbox, LayoutTemplate } from "lucide-react";
 import { api, type Publication } from "../api";
 import { useT } from "../i18n";
+import { usePublishing } from "../lib/publishing";
 import { errText } from "../lib/errors";
 import { Button, Card } from "../ui";
 import { KDialog } from "../ui-overlays";
@@ -13,6 +14,7 @@ import { KDialog } from "../ui-overlays";
 // explicit confirmation.
 export function SettingsPage() {
   const { t } = useT();
+  const publishing = usePublishing();
   const { id } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -68,7 +70,7 @@ export function SettingsPage() {
         <Field label={t.settingsPage.editorialLine} value={form.editorial_line} onChange={(v) => set("editorial_line", v)} area />
         <Field label={t.settingsPage.rejectTerms} value={form.reject_terms ?? ""} onChange={(v) => set("reject_terms", v)} hint={t.settingsPage.rejectTermsHint} />
         <Field label={t.settingsPage.tone} value={form.tone} onChange={(v) => set("tone", v)} />
-        {form.paywall.enabled && (
+        {publishing && form.paywall.enabled && (
           <Field
             label={t.settingsPage.price}
             value={form.paywall.price}
@@ -89,18 +91,22 @@ export function SettingsPage() {
       </Card>
 
       <Card className="flex flex-wrap gap-4 p-5">
-        <Link to={`/publications/${p.id}/template`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
-          <LayoutTemplate size={15} aria-hidden />
-          {t.templatePage.title}
-        </Link>
+        {publishing && (
+          <Link to={`/publications/${p.id}/template`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
+            <LayoutTemplate size={15} aria-hidden />
+            {t.templatePage.title}
+          </Link>
+        )}
         <Link to={`/publications/${p.id}/guide`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
           <BookOpen size={15} aria-hidden />
           {t.settingsPage.guideLink}
         </Link>
-        <Link to={`/publications/${p.id}/outbox`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
-          <Inbox size={15} aria-hidden />
-          {t.settingsPage.outboxLink}
-        </Link>
+        {publishing && (
+          <Link to={`/publications/${p.id}/outbox`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
+            <Inbox size={15} aria-hidden />
+            {t.settingsPage.outboxLink}
+          </Link>
+        )}
       </Card>
 
       <Card className="border-danger/40 p-5">

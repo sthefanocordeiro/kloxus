@@ -15,7 +15,7 @@ test.use({ locale: "pt-BR" });
 async function onboard(page: import("@playwright/test").Page) {
   await page.goto("/");
   await page
-    .getByRole("button", { name: /minha newsletter/ })
+    .getByRole("button", { name: /meu Radar/ })
     .first()
     .click();
   await page.waitForURL(/\/new/);

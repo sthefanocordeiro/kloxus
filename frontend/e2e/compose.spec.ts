@@ -24,7 +24,7 @@ type EditorWindow = Window & {
   };
 };
 
-const issueCol = (page: Page) => page.locator('section[aria-label="This issue"]');
+const issueCol = (page: Page) => page.locator('section[aria-label="This piece"]');
 const benchCol = (page: Page) => page.locator('section[aria-label="Suggestions"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
@@ -49,13 +49,13 @@ function verbatimPaste(excerpt: string): string {
 async function onboard(page: Page) {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /The research is done/ })).toBeVisible({ timeout: 15000 });
-  await page.getByRole("button", { name: /Create your newsletter/ }).first().click();
+  await page.getByRole("button", { name: /Create your Radar/ }).first().click();
   await page.waitForURL(/\/new/);
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Next", exact: true }).click();
   // both steps now share the one "Next" label — wait for the section
   // step to render so the second click can't land on page 1's button
-  await expect(page.getByText(/Your edition will have \d+ stor/)).toBeVisible();
+  await expect(page.getByText(/Your piece will have \d+ stor/)).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.waitForURL(/\/publications\/\d+\/sources/);
   await expect(page.getByText("Suggested sources")).toBeVisible();
@@ -66,7 +66,7 @@ async function onboard(page: Page) {
 }
 
 async function boardReady(page: Page) {
-  await expect(page.getByRole("heading", { name: "This issue" })).toBeVisible({ timeout: 120000 });
+  await expect(page.getByRole("heading", { name: "This piece" })).toBeVisible({ timeout: 120000 });
   await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60000 });
 }
 
@@ -116,7 +116,7 @@ async function typeCommentary(page: Page) {
 }
 
 async function approveIssue(page: Page) {
-  const btns = page.getByRole("button", { name: "Approve issue" });
+  const btns = page.getByRole("button", { name: "Finish review" });
   await btns.first().click();
   await expect(btns.nth(1)).toBeVisible({ timeout: 30000 });
   await btns.nth(1).click();
@@ -355,8 +355,8 @@ test("mobile 390px: Escrever tab bar stays pinned, heading controls ≥44px", as
   const emptySlot = page.getByRole("button", { name: /Write this story/ });
   await expect(emptySlot.first()).toBeVisible({ timeout: 30000 });
 
-  const tabbar = page.getByRole("navigation", { name: "Issue panes" });
-  const globalNav = page.getByRole("navigation", { name: "Publications" });
+  const tabbar = page.getByRole("navigation", { name: "Piece panes" });
+  const globalNav = page.getByRole("navigation", { name: "Radar" });
   await expect(tabbar).toBeVisible();
 
   // pinned flush above the global bottom nav — on screen at scroll-top
@@ -410,7 +410,7 @@ test("mobile 390px: Escrever tab bar stays pinned, heading controls ≥44px", as
   await tabbar.getByRole("button", { name: "Sources and facts" }).click();
   await expect(page.locator(".ProseMirror").first()).toBeHidden();
   expect(await assertPinned()).toBe(yAtTop);
-  await tabbar.getByRole("button", { name: "Issue", exact: true }).click();
+  await tabbar.getByRole("button", { name: "Piece", exact: true }).click();
   await expect(page.locator(".ProseMirror").first()).toBeVisible();
 
   // per-heading controls meet the 44px touch rule on phone (they were

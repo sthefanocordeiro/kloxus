@@ -45,7 +45,7 @@ function callAll(fn: (...args: never[]) => string): string[] {
 
 // Strings allowed to read identically in both locales: proper names,
 // loanwords and brand terms.
-const IDENTICAL_OK = new Set(["Kloxus", "web", "Legal", "Menu", "Links"]);
+const IDENTICAL_OK = new Set(["Radar" /* KLOX-122: same word in both locales */, "Kloxus", "web", "Legal", "Menu", "Links"]);
 
 // Function leaves whose output is language-neutral by design
 // (joiners/formatters, not translated copy).
@@ -160,7 +160,7 @@ describe("pt glossary (KLOX-64 §2)", () => {
   const t = dict.pt;
 
   it("uses the exact required strings", () => {
-    expect(t.board.steps).toEqual(["Pautas", "Escrever", "Revisar e enviar"]);
+    expect(t.board.steps).toEqual(["Pautas", "Escrever", "Revisar"]);
     expect(t.coverage.ok).toBe("fatos com fonte");
     expect(t.coverage.fixNow).toBe("Ver pendências");
     expect(t.compose.emptySlot).toBe("Escreva esta pauta");
@@ -177,9 +177,9 @@ describe("pt glossary (KLOX-64 §2)", () => {
   });
 
   it("pluralizes draftAction — never '(1 pautas)'", () => {
-    expect(t.board.draftAction(1)).toBe("Redigir a edição (1 pauta)");
-    expect(t.board.draftAction(2)).toBe("Redigir a edição (2 pautas)");
-    expect(t.board.draftAction(7)).toBe("Redigir a edição (7 pautas)");
+    expect(t.board.draftAction(1)).toBe("Redigir a peça (1 pauta)");
+    expect(t.board.draftAction(2)).toBe("Redigir a peça (2 pautas)");
+    expect(t.board.draftAction(7)).toBe("Redigir a peça (7 pautas)");
   });
 
   it("agrees sectionFull on 'seção', not on the section title", () => {

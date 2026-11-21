@@ -230,7 +230,7 @@ async function onboardToBoard(page: Page): Promise<string> {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /A pauta pronta/ })).toBeVisible({ timeout: 15000 });
   await auditScreen(page, "landing");
-  await page.getByRole("button", { name: /Criar minha newsletter/ }).first().click();
+  await page.getByRole("button", { name: /Criar meu Radar/ }).first().click();
   await page.waitForURL(/\/new/);
   await expect(page.locator('input[value*="Futuro"]').first()).toBeVisible({ timeout: 15000 });
   await auditScreen(page, "onboard-step1");

@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, GripVertical, Link2, Minus, Newspaper, Plus, Star, 
 import type { NewsletterSection } from "../api";
 import { useT, type Lang } from "../i18n";
 import { cn } from "../lib/cn";
+import { usePublishing } from "../lib/publishing";
 import { Button } from "../ui";
 
 // SectionBuilder (KLOX-65): the creator-defined section list — add,
@@ -70,6 +71,7 @@ export function SectionBuilder({
   showPreview?: boolean;
 }) {
   const { t, lang } = useT();
+  const publishing = usePublishing();
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const total = totalStories(value);
@@ -235,17 +237,19 @@ export function SectionBuilder({
                 </select>
               </label>
 
+              {publishing && (
               <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted">{t.builder.access}</span>
-                <select
-                  value={s.access}
-                  onChange={(e) => update(i, { access: e.target.value as NewsletterSection["access"] })}
-                  className="mt-1 w-full rounded border border-line bg-paper px-2 py-2 text-sm outline-none focus:border-teal"
-                >
-                  <option value="all">{t.builder.accesses.all}</option>
-                  <option value="subscribers">{t.builder.accesses.subscribers}</option>
-                </select>
-              </label>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted">{t.builder.access}</span>
+                  <select
+                    value={s.access}
+                    onChange={(e) => update(i, { access: e.target.value as NewsletterSection["access"] })}
+                    className="mt-1 w-full rounded border border-line bg-paper px-2 py-2 text-sm outline-none focus:border-teal"
+                  >
+                    <option value="all">{t.builder.accesses.all}</option>
+                    <option value="subscribers">{t.builder.accesses.subscribers}</option>
+                  </select>
+                </label>
+              )}
 
               {/* the aderência hook (KLOX-94): the pauta this section
                   wants, as keywords — suggestions rank toward it */}
@@ -291,7 +295,7 @@ export function SectionBuilder({
                 {s.format === "featured" && <Star size={11} />}
                 {s.format === "links" && <Link2 size={11} />}
                 {s.title || t.builder.namePlaceholder}
-                {s.access === "subscribers" && <span className="text-teal">· {t.builder.accesses.subscribers}</span>}
+                {publishing && s.access === "subscribers" && <span className="text-teal">· {t.builder.accesses.subscribers}</span>}
               </div>
               {s.topic?.trim() && <p className="mt-0.5 truncate text-[11px] italic text-muted">“{s.topic.trim()}”</p>}
               {s.format === "links" ? (

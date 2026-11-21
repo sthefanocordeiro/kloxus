@@ -245,6 +245,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(ctx)
 	}
 
+	if !s.d.Cfg.PublishingEnabled && isPublishingPath(r) {
+		// KLOXUS_PUBLISHING=off (default, KLOX-122): the reader-facing
+		// surface is hidden - routes stay in the code, requests 404.
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			apiErr(w, http.StatusNotFound, "not_found", "not found")
+		} else {
+			http.NotFound(w, r)
+		}
+		return
+	}
+
 	if r.URL.Path == "/healthz" || r.URL.Path == "/robots.txt" ||
 		r.URL.Path == "/api/v1/sample" || strings.HasPrefix(r.URL.Path, "/sample/a") ||
 		strings.HasPrefix(r.URL.Path, "/m/") {
@@ -286,6 +297,40 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// isPublishingPath reports the routes that only exist while publishing
+// is on: reader pages, subscribe/unsub, paywall and payments, sending
+// and the outbox.
+func isPublishingPath(r *http.Request) bool {
+	p := r.URL.Path
+	for _, pre := range []string{"/p/", "/unsub", "/confirm-sub", "/outbox/", "/webhooks/abacatepay",
+		"/api/v1/p/", "/api/v1/unsub", "/api/v1/outbox/"} {
+		if p == strings.TrimSuffix(pre, "/") || strings.HasPrefix(p, pre) {
+			return true
+		}
+	}
+	if p == "/p" {
+		return true
+	}
+	if strings.HasPrefix(p, "/publications/") && (strings.HasSuffix(p, "/outbox") || strings.HasSuffix(p, "/readers")) {
+		return true
+	}
+	if strings.HasPrefix(p, "/api/v1/publications/") {
+		for _, suf := range []string{"/outbox", "/reader", "/paywall/simulate", "/paywall/cancel"} {
+			if strings.HasSuffix(p, suf) {
+				return true
+			}
+		}
+	}
+	if strings.HasPrefix(p, "/api/v1/issues/") {
+		for _, suf := range []string{"/send", "/hold", "/after"} {
+			if strings.HasSuffix(p, suf) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isEventStream reports the SSE endpoint: GET /api/v1/runs/{id}/events

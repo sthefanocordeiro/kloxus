@@ -12,7 +12,7 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
     page.getByRole("heading", { name: /The research is done/ }),
   ).toBeVisible({ timeout: 15000 });
   await page
-    .getByRole("button", { name: /Create your newsletter/ })
+    .getByRole("button", { name: /Create your Radar/ })
     .first()
     .click();
   await page.waitForURL(/\/new/);
@@ -23,7 +23,7 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
   await page.getByRole("button", { name: "Next", exact: true }).click();
   // both steps now share the one "Next" label — wait for the section
   // step to render so the second click can't land on page 1's button
-  await expect(page.getByText(/Your edition will have \d+ stor/)).toBeVisible();
+  await expect(page.getByText(/Your piece will have \d+ stor/)).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.waitForURL(/\/publications\/(\d+)\/sources/);
   const pubId = page.url().match(/publications\/(\d+)/)![1];
@@ -33,12 +33,12 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
   await expect(settingsNav).toHaveAttribute("href", `/publications/${pubId}/settings`);
   await settingsNav.click();
   await page.waitForURL(new RegExp(`/publications/${pubId}/settings`));
-  await page.getByRole("link", { name: "Newsletter template" }).click();
+  await page.getByRole("link", { name: "Radar template" }).click();
   await page.waitForURL(new RegExp(`/publications/${pubId}/template`));
 
   // the effective default is one story slot per section
   await expect(
-    page.getByRole("heading", { name: "Newsletter template" }),
+    page.getByRole("heading", { name: "Radar template" }),
   ).toBeVisible({ timeout: 15000 });
   const slots = page.getByRole("combobox", { name: "Story" });
   await expect(slots).toHaveCount(3);
@@ -61,7 +61,7 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
   // cleanup: delete the newsletter so the workspace returns to empty
   await settingsNav.click();
   await page.waitForURL(new RegExp(`/publications/${pubId}/settings`));
-  await page.getByRole("button", { name: "Delete newsletter", exact: true }).click();
+  await page.getByRole("button", { name: "Delete Radar", exact: true }).click();
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Yes, delete it", exact: true })

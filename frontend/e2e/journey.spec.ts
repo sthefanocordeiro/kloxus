@@ -146,7 +146,7 @@ async function boardOps(page: Page, isPhone: boolean) {
   //    itself, then fill each empty item slot by hand the way
   //    compose.spec.ts does — a real draft lands with sentences and
   //    skips the fill
-  await page.getByRole("button", { name: /Draft the issue/ }).click();
+  await page.getByRole("button", { name: /Draft the piece/ }).click();
   await expect(page.locator(".ProseMirror").first()).toBeVisible({
     timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000,
   });
@@ -201,8 +201,8 @@ async function boardOps(page: Page, isPhone: boolean) {
     await expect(page.locator("[data-sid]")).toHaveCount(filled + 1, { timeout: 15000 });
     filled++;
     // the composer lives in the document (KLOX-96) — on phone make sure
-    // the Issue tab is in front so the next slot stays reachable
-    if (isPhone) await page.getByRole("button", { name: /^Issue$/ }).click();
+    // the Piece tab is in front so the next slot stays reachable
+    if (isPhone) await page.getByRole("button", { name: /^Piece$/ }).click();
   }
 
   // the last add leaves the composer open on the last pauta — KLOX-96
@@ -226,14 +226,14 @@ async function boardOps(page: Page, isPhone: boolean) {
   for (let i = 0; i < n; i++) {
     // an item-heading click opens the evidence pane — on phone that
     // swaps tabs, so reopen the document before the next heading
-    if (isPhone) await page.getByRole("button", { name: /^Issue$/ }).click();
+    if (isPhone) await page.getByRole("button", { name: /^Piece$/ }).click();
     await headings.nth(i).click();
     await page.keyboard.type("XYZ", { delay: 10 });
   }
   await page.waitForTimeout(300);
   expect(await docEl.first().textContent()).toBe(before);
   await expect(docEl.getByText("XYZ")).toHaveCount(0);
-  if (isPhone) await page.getByRole("button", { name: /^Issue$/ }).click();
+  if (isPhone) await page.getByRole("button", { name: /^Piece$/ }).click();
 }
 
 async function clearFlags(page: Page) {
@@ -300,7 +300,7 @@ async function typeCommentary(page: Page) {
 }
 
 async function approveIssue(page: Page) {
-  const btns = page.getByRole("button", { name: "Approve issue" });
+  const btns = page.getByRole("button", { name: "Finish review" });
   // header trigger opens the readiness popover; its Approve button is
   // rendered only when every check is green — waiting for it also waits
   // out any readiness refetch race
@@ -349,7 +349,7 @@ async function scheduleAndHold(page: Page) {
   );
   await page.getByRole("button", { name: "Hold" }).click();
   await held;
-  await expect(page.getByRole("button", { name: "Approve issue" }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "Finish review" }).first()).toBeVisible({ timeout: 15000 });
 }
 
 async function sendTestKeepsEditable(page: Page) {
@@ -525,7 +525,7 @@ async function readerJourney(page: Page) {
   // visitor's first stop
   await page.goto("/p/futuro-proximo" + tokQ);
   await expect(page.getByRole("heading", { level: 1, name: "Futuro Próximo" })).toBeVisible({ timeout: 15000 });
-  await expect(page.getByRole("heading", { name: "Editions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pieces" })).toBeVisible();
   await expect(page.getByText("Latest")).toBeVisible();
   // subscribe capture runs the existing double opt-in. Outbox mode
   // answers with the confirm link itself; under live mail the link only
@@ -655,12 +655,12 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   // the sidebar repeats the single newsletter's link (KLOX-66) — the
   // publication card is the one inside main
   await page.getByRole("main").getByRole("link", { name: /Futuro Próximo/ }).click();
-  await page.getByRole("button", { name: "Prepare next issue" }).click();
+  await page.getByRole("button", { name: "Prepare next piece" }).click();
   await expect(
     page
       .getByText(/Nothing new/)
       .or(page.getByText(/Preparing the issue/))
-      .or(page.getByRole("heading", { name: "This issue" })),
+      .or(page.getByRole("heading", { name: "This piece" })),
   ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
 
   // reset wipes the workspace — the visitor walks onboarding again and
@@ -671,7 +671,7 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   const reset = page.getByRole("button", { name: "Reset test data" });
   if (!(await reset.isVisible())) return;
   await reset.click();
-  await expect(page.getByRole("button", { name: /Create your newsletter/ }).first()).toBeVisible({
+  await expect(page.getByRole("button", { name: /Create your Radar/ }).first()).toBeVisible({
     timeout: 15000,
   });
   await onboard(page);

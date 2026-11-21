@@ -67,8 +67,8 @@ test("mobile 390px: issue pane tab bar is pinned above the global nav", async ({
   await page.getByRole("button", { name: "Write it myself" }).click();
   await expect(page.locator(".ProseMirror").first()).toBeVisible({ timeout: 60_000 });
 
-  const tabbar = page.getByRole("navigation", { name: "Issue panes" });
-  const globalNav = page.getByRole("navigation", { name: "Publications" });
+  const tabbar = page.getByRole("navigation", { name: "Piece panes" });
+  const globalNav = page.getByRole("navigation", { name: "Radar" });
   await expect(tabbar).toBeVisible();
 
   // pinned inside the viewport and flush above the global nav — never
@@ -88,7 +88,7 @@ test("mobile 390px: issue pane tab bar is pinned above the global nav", async ({
   await expect(page.getByText("Reader", { exact: true })).toBeVisible();
   await tabbar.getByRole("button", { name: "Stories" }).click();
   await expect(page.getByRole("button", { name: /— (approved|to decide)$/ }).first()).toBeVisible();
-  await tabbar.getByRole("button", { name: "Issue" }).click();
+  await tabbar.getByRole("button", { name: "Piece" }).click();
   await expect(page.locator(".ProseMirror").first()).toBeVisible();
 
   // desktop keeps the old flow — the phone bar never renders at ≥768px

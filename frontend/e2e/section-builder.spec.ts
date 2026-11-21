@@ -13,7 +13,7 @@ test("section builder onboarding, Seções screen and Configurações delete", a
     page.getByRole("heading", { name: /The research is done/ }),
   ).toBeVisible({ timeout: 15000 });
   await page
-    .getByRole("button", { name: /Create your newsletter/ })
+    .getByRole("button", { name: /Create your Radar/ })
     .first()
     .click();
   await page.waitForURL(/\/new/);
@@ -27,11 +27,11 @@ test("section builder onboarding, Seções screen and Configurações delete", a
   // step 2: the builder lists the proposal's sections; adding a section
   // moves the live edition total
   await expect(
-    page.getByText(/Your edition will have \d+ stories/),
+    page.getByText(/Your piece will have \d+ stories/),
   ).toBeVisible();
   await page.getByRole("button", { name: "Add section" }).click();
   await expect(
-    page.getByText(/Your edition will have \d+ stories/),
+    page.getByText(/Your piece will have \d+ stories/),
   ).toBeVisible();
   const newName = page.getByPlaceholder("Section name").last();
   await newName.fill("Quick links");
@@ -71,14 +71,14 @@ test("section builder onboarding, Seções screen and Configurações delete", a
 
   // danger zone: deletion sits behind an explicit confirmation dialog —
   // cancelling keeps the newsletter, confirming removes it
-  await page.getByRole("button", { name: "Delete newsletter", exact: true }).click();
+  await page.getByRole("button", { name: "Delete Radar", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(
-    dialog.getByRole("heading", { name: "Delete this newsletter?" }),
+    dialog.getByRole("heading", { name: "Delete this Radar?" }),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toBeHidden();
-  await page.getByRole("button", { name: "Delete newsletter", exact: true }).click();
+  await page.getByRole("button", { name: "Delete Radar", exact: true }).click();
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Yes, delete it", exact: true })

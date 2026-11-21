@@ -48,7 +48,7 @@ func (c *countSpend) SetAppSetting(_ context.Context, key, value string) error {
 func detGuardDeps(spend *countSpend, g *llm.Guard) *Server {
 	g.Store = spend
 	return &Server{d: Deps{
-		Cfg:   &config.Config{Mode: "real", LLMMode: "off"},
+		Cfg:   &config.Config{PublishingEnabled: true, Mode: "real", LLMMode: "off"},
 		Guard: g,
 		LLM:   llm.None{},
 	}}

@@ -106,7 +106,7 @@ describe("create-newsletter flow (KLOX-79)", () => {
     expect(await screen.findByText("editions screen")).toBeVisible();
     // the create flow never renders — no heading, no paste card
     expect(screen.queryByLabelText("Paste a link")).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Create your newsletter" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Create your Radar" })).toBeNull();
   });
 
   it("keeps the create flow hidden while the publications query is in flight", async () => {
@@ -115,7 +115,7 @@ describe("create-newsletter flow (KLOX-79)", () => {
     // the query never resolves — the flow must never appear in the meantime
     await waitFor(() => expect(document.querySelector("[aria-busy]")).not.toBeNull());
     expect(screen.queryByLabelText("Paste a link")).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Create your newsletter" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Create your Radar" })).toBeNull();
   });
 
   it("paste-a-link is live — the scraped proposal fills the form for review", async () => {
@@ -174,7 +174,7 @@ describe("create-newsletter flow (KLOX-79)", () => {
   it("points the /new Voltar at /publications, not at the page itself", async () => {
     vi.mocked(api.publications).mockResolvedValue([]);
     renderAt("/new", true);
-    const back = await screen.findByRole("link", { name: "Back to Publications" });
+    const back = await screen.findByRole("link", { name: "Back to Radar" });
     expect(back).toHaveAttribute("href", "/publications");
   });
 
@@ -192,7 +192,7 @@ describe("create-newsletter flow (KLOX-79)", () => {
     // reading order is back ← forward (Voltar left, Avançar right)
     expect(back.compareDocumentPosition(fwd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(back);
-    expect(await screen.findByRole("heading", { name: "Create your newsletter" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Create your Radar" })).toBeVisible();
   });
 
   it("a raced one_newsletter 409 leaves the flow — no in-flow notice", async () => {
