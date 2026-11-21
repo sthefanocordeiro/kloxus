@@ -28,9 +28,10 @@ type Scheduler struct {
 	log       *log.Logger
 	now       func() time.Time
 	lastPurge time.Time
-	// Daily polls Daily Journal's public API — the primary source
-	// (KLOX-93). Nil disables API sources; tests inject an httptest
-	// client.
+	// Daily polls Daily Journal's public API. Dormant since KLOX-114
+	// (the seed row left the catalog); SetupDailyJournal only wires it
+	// when a 'daily-journal' row exists. Nil disables API sources;
+	// tests inject an httptest client.
 	Daily *DailyJournal
 	// AfterPoll, when set, runs once after each PollOnce — the shared
 	// AI enrichment sweep (KLOX-67) and the deterministic semantic
@@ -149,8 +150,9 @@ func (s *Scheduler) SetupDailyJournal(ctx context.Context, ua string) {
 }
 
 // pollAPI dispatches API-backed catalog sources. Daily Journal is the
-// only one today (slug 'daily-journal', re-added by KLOX-93); unknown
-// API slugs are skipped rather than guessed.
+// only one the client knows (slug 'daily-journal' — out of the catalog
+// since KLOX-114, kept for an opt-in re-seed); unknown API slugs are
+// skipped rather than guessed.
 func (s *Scheduler) pollAPI(ctx context.Context, cs *store.CatalogSource) {
 	if cs.Slug != "daily-journal" || s.Daily == nil {
 		return

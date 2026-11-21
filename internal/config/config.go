@@ -96,9 +96,10 @@ type Config struct {
 	// Ingest governs the global source scheduler (D29). IngestEnabled
 	// starts the poll loop (real mode defaults it on, demo off).
 	IngestEnabled bool
-	// DailyJournalEnabled polls the Daily Journal public API — the
-	// primary source since KLOX-93. On by default;
-	// KLOXUS_INGEST_DAILY_JOURNAL=0 opts out (RSS stays as fallback).
+	// DailyJournalEnabled polls the Daily Journal public API. Off by
+	// default since KLOX-114 (owner decision — DJ left the catalog
+	// again); KLOXUS_INGEST_DAILY_JOURNAL=1 opts back in when a
+	// 'daily-journal' catalog row is seeded.
 	DailyJournalEnabled bool
 }
 
@@ -181,9 +182,10 @@ func Load() (*Config, error) {
 	if v := os.Getenv("KLOXUS_INGEST"); v != "" {
 		cfg.IngestEnabled = v == "1" || v == "true" || v == "yes"
 	}
-	// Daily Journal is the primary source (KLOX-93) — on by default;
-	// KLOXUS_INGEST_DAILY_JOURNAL=0 falls back to RSS-only ingestion.
-	cfg.DailyJournalEnabled = true
+	// Daily Journal is opt-in since KLOX-114 — off by default;
+	// KLOXUS_INGEST_DAILY_JOURNAL=1 re-enables it for a re-seeded
+	// 'daily-journal' catalog row.
+	cfg.DailyJournalEnabled = false
 	if v := os.Getenv("KLOXUS_INGEST_DAILY_JOURNAL"); v != "" {
 		cfg.DailyJournalEnabled = v == "1" || v == "true" || v == "yes"
 	}

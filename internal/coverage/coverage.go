@@ -1,9 +1,9 @@
 // Package coverage measures whether Daily Journal alone covers a
-// niche well enough to be the primary source (KLOX-93 acceptance
-// criterion: a per-niche hit-rate report feeds the single-source vs
-// RSS-fallback decision on KLOX-92). Everything is deterministic — the
-// hashing embedder + lexicon classifier, no paid calls — so the report
-// replays identically on the same API snapshot.
+// niche well enough to be the primary source (the KLOX-93 acceptance
+// criterion; DJ left the catalog again under KLOX-114, so the report
+// now only informs a possible future re-add). Everything is
+// deterministic — the hashing embedder + lexicon classifier, no paid
+// calls — so the report replays identically on the same API snapshot.
 package coverage
 
 import (
