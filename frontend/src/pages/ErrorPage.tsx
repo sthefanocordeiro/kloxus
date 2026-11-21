@@ -2,11 +2,39 @@ import { isRouteErrorResponse, Link, useRouteError } from "react-router-dom";
 import { useT } from "../i18n";
 import { Button, Card } from "../ui";
 
+// Shared "not found" card — unknown routes (the catch-all), missing
+// issues and missing publications all land here instead of spinning.
+export function NotFound() {
+  const { t } = useT();
+  return (
+    <div className="flex flex-1 items-center justify-center p-4">
+      <Card className="w-full max-w-md text-center">
+        <p className="font-doc text-xl font-semibold">{t.error.notFoundTitle}</p>
+        <p className="mt-1 text-sm text-muted">{t.error.notFoundDetail}</p>
+        <div className="mt-4 flex justify-center">
+          <Link to="/">
+            <Button size="sm" variant="outline">
+              {t.error.home}
+            </Button>
+          </Link>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // Route error boundary — a render failure shows this instead of
 // crashing the app (React Router's default is a bare error dump).
 export function ErrorPage() {
   const { t } = useT();
   const err = useRouteError();
+  if (isRouteErrorResponse(err) && err.status === 404) {
+    return (
+      <div className="flex min-h-screen flex-col bg-paper">
+        <NotFound />
+      </div>
+    );
+  }
   const detail = isRouteErrorResponse(err)
     ? `${err.status} ${err.statusText}`
     : err instanceof Error
