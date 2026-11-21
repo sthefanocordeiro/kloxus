@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { workspaceInfo } from "./mail.ts";
 
 // KLOX-79: the create-newsletter flow guards its entry — an account
 // that already has a newsletter never sees the form (redirected to its
@@ -6,7 +7,9 @@ import { expect, test } from "@playwright/test";
 // names, and Voltar is a working control. KLOX-99: the "Cole um link"
 // option is live — a pasted URL goes to the scraper and the extracted
 // proposal fills the editable form for review before anything is
-// created (demo runs the simulated provider and says so).
+// created (demo runs the simulated provider and says so). KLOX-103:
+// the paste assertions branch on the target's own reported mode — the
+// fake provider's output only exists where the demo wired it.
 test.use({ locale: "pt-BR" });
 
 async function onboard(page: import("@playwright/test").Page) {
@@ -28,18 +31,46 @@ test("create flow: live paste option, realistic example, working Voltar", async 
   await expect(page.getByRole("button", { name: "Criar a partir disso" })).toBeDisabled(); // empty input
   await expect(page.getByText("está em desenvolvimento")).toHaveCount(0);
 
+  // the scraper the target wired decides what a paste can honestly
+  // return — the workspace endpoint reports it ("demo" is exactly the
+  // response's scrape.simulated flag: propose.go labels on Mode==demo).
+  // Fail closed: an unknown or missing mode takes the real branch,
+  // which accepts only a coded refusal or a non-simulated extraction.
+  const simulated = (await workspaceInfo(page)).mode === "demo";
+
   // pasting a URL proposes a template for review — the demo's provider
   // is simulated and the preview says so honestly
   await paste.fill("https://meu-blog.com.br");
   await page.getByRole("button", { name: "Criar a partir disso" }).click();
   const preview = page.getByTestId("scrape-preview");
-  await expect(preview).toBeVisible();
-  await expect(preview.getByText("Demonstração — nenhuma página foi buscada")).toBeVisible();
-  await expect(preview).toContainText("Do seu link");
-  // the extracted proposal replaced the sample in the editable form —
-  // the fake provider derives the site name from the pasted host
-  await expect(page.getByLabel("Nome")).toHaveValue("Meu Blog");
-  await expect(page.getByLabel("Linha editorial")).toHaveValue(/Priorize/);
+  if (simulated) {
+    await expect(preview).toBeVisible();
+    await expect(preview.getByText("Demonstração — nenhuma página foi buscada")).toBeVisible();
+    await expect(preview).toContainText("Do seu link");
+    // the extracted proposal replaced the sample in the editable form —
+    // the fake provider derives the site name from the pasted host
+    await expect(page.getByLabel("Nome")).toHaveValue("Meu Blog");
+    await expect(page.getByLabel("Linha editorial")).toHaveValue(/Priorize/);
+  } else {
+    // a real provider never invents the fake output: an unreadable URL
+    // gets a coded alert (scrape_failed/blocked/cap — or unavailable
+    // on a keyless deploy), a readable one a real extraction. A live
+    // scrape can spend most of the server's provider budget, so the
+    // first wait gets a wide margin.
+    const alert = page.getByRole("alert");
+    await expect(alert.or(preview)).toBeVisible({ timeout: 90_000 });
+    await expect(
+      page.getByText("Demonstração — nenhuma página foi buscada"),
+    ).toHaveCount(0);
+    if (await alert.isVisible()) {
+      await expect(alert).toContainText(
+        /Não conseguimos ler a página|quase não deu texto legível|não está configurada|limite diário de importação/,
+      );
+    } else {
+      await expect(preview).toContainText("Do seu link");
+      await expect(page.getByLabel("Nome")).not.toHaveValue("");
+    }
+  }
   // nothing was created — the flow still waits at step 1
   await expect(page.getByRole("button", { name: "Avançar", exact: true })).toBeVisible();
 });
