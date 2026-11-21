@@ -98,6 +98,16 @@ export interface PublicIssue {
   paywall?: { enabled: boolean; price: string; test_mode?: boolean; simulated?: boolean };
 }
 
+// The /p/{slug} newsletter landing page (KLOX-102): the publication's
+// own brand plus its public editions archive — the same sent/scheduled/
+// test-sent visibility the issue page enforces. Reading an edition
+// stays on /p/{slug}/{num}, where the paywall gating applies.
+export interface PublicNewsletter {
+  publication: { name: string; slug: string; language: string };
+  editions: { number: number; subject: string; created_at: string }[];
+  paywall?: { enabled: boolean; price: string };
+}
+
 export interface AfterSend {
   issue: IssueSummary;
   public_url: string;
@@ -630,12 +640,15 @@ export const api = {
   after: (issueID: number) => request<AfterSend>("GET", `/api/v1/issues/${issueID}/after`),
   publicIssue: (slug: string, num: string | number, query = "") =>
     request<PublicIssue>("GET", `/api/v1/p/${slug}/${num}${query}`),
+  // The /p/{slug} landing page: brand + editions archive (KLOX-102).
+  publicNewsletter: (slug: string, query = "") =>
+    request<PublicNewsletter>("GET", `/api/v1/p/${slug}${query}`),
   outbox: (pubID: number) =>
     request<{ emails: OutboxEmail[] }>("GET", `/api/v1/publications/${pubID}/outbox`).then((r) => r.emails),
   outboxEmail: (id: number) =>
     request<{ email: OutboxEmail }>("GET", `/api/v1/outbox/${id}`).then((r) => r.email),
   reader: (pubID: number) =>
-    request<{ reader: { email: string; name: string }; subscribed: boolean; subscribers?: number; readers?: number; confirmed?: number; issue?: IssueSummary }>(
+    request<{ reader: { email: string; name: string }; subscribed: boolean; subscribers?: number; readers?: number; confirmed?: number; public_url?: string; issue?: IssueSummary }>(
       "GET", `/api/v1/publications/${pubID}/reader`),
   paywallSimulate: (pubID: number | string, query = "") =>
     request<{ subscribed: boolean; outbox_email_id: number; magic_link: string }>(

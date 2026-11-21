@@ -244,6 +244,38 @@ func (db *DB) LatestPublicIssue(ctx context.Context, pubID int64) (*Issue, error
 		 ORDER BY number DESC LIMIT 1`, db.ws, pubID))
 }
 
+// PublicIssues lists the publication's publicly visible issues — sent,
+// scheduled or test-sent — newest first, capped at limit: the editions
+// archive the /p/{slug} newsletter page offers (KLOX-102). Drafted or
+// approved-but-unsent issues stay private.
+func (db *DB) PublicIssues(ctx context.Context, pubID int64, limit int) ([]*Issue, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT `+issueCols+` FROM issues WHERE workspace_id = $1 AND publication_id = $2
+		 AND (status IN ('sent','scheduled') OR test_sent_at <> '')
+		 ORDER BY number DESC LIMIT $3`, db.ws, pubID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Issue
+	for rows.Next() {
+		var i Issue
+		var flags, commentary, sections string
+		if err := rows.Scan(&i.ID, &i.PublicationID, &i.Number, &i.Status,
+			&i.Subject, &i.BodyMD, &flags, &commentary, &sections, &i.CreatedAt, &i.ScheduledAt, &i.TestSentAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(flags), &i.Flags)
+		json.Unmarshal([]byte(commentary), &i.Commentary)
+		json.Unmarshal([]byte(sections), &i.Sections)
+		out = append(out, &i)
+	}
+	return out, rows.Err()
+}
+
 // IssueRejectionReasons returns the rejection reasons still standing on
 // an issue's items — the rules the editorial guide learned from it. An
 // undone rejection (whose latest decision is no longer "reject") drops

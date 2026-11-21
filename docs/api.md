@@ -807,8 +807,12 @@ reason).
 ```json
 {"reader": {"email": "demo@reader.test", "name": "Demo Reader"},
  "subscribed": false, "subscribers": 0, "readers": 1,
+ "public_url": "https://demo.example/p/futuro-proximo?tok=…",
  "issue": {"id": 1, "number": 1, "status": "sent", "…": "…"}}
 ```
+`public_url` is the copyable subscribe link (KLOX-102): the stable
+public newsletter page, carrying the sealed `?tok=` in hosted mode so
+it opens for an anonymous visitor. It never carries the workspace id.
 
 ### `POST /api/v1/publications/{id}/paywall/simulate`
 Simulates a paid subscription and records the magic-link email in the
@@ -826,6 +830,18 @@ These serve the public reader pages (`/p/<slug>/<num>`, `/unsub`).
 They accept `?tok=` — an AES-GCM sealed workspace reference — so a
 reader link opens in any browser without ever exposing the editor's
 workspace id. `?ws=` from links delivered before the change still works.
+
+### `GET /api/v1/p/{slug}?tok=…`
+The public newsletter landing page (KLOX-102): the publication's own
+brand plus its editions archive — the same sent/scheduled/test-sent
+visibility the issue page enforces (drafted issues stay private).
+Reading an edition stays on `/p/{slug}/{num}`, where the paywall
+gating applies per access rules.
+```json
+{"publication": {"name": "Futuro Próximo", "slug": "futuro-proximo", "language": "pt-BR"},
+ "editions": [{"number": 2, "subject": "…", "created_at": "…"}],
+ "paywall": {"enabled": true, "price": "R$ 12/mês"}}
+```
 
 ### `GET /api/v1/p/{slug}/{num}?key=…&tok=…&view=free`
 `num` is the issue number (`latest` also works). Only `sent` or
