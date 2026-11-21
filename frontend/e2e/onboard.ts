@@ -42,7 +42,7 @@ export async function boardReady(page: Page, isPhone: boolean) {
   // column sits behind its tab — the tab bar is the ready signal there.
   await expect(
     isPhone
-      ? page.getByRole("button", { name: /This issue/ })
+      ? page.getByRole("button", { name: /This piece/ })
       : page.getByRole("heading", { name: "This piece" }),
     // hosted runs the real pipeline (~10 min); local fixtures land fast
   ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 120_000 });

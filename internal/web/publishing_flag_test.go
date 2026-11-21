@@ -1,11 +1,14 @@
 package web
 
 import (
+	"context"
+	"strings"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
 // KLOX-122: with KLOXUS_PUBLISHING off (default) every reader-facing
@@ -34,5 +37,15 @@ func TestIsPublishingPathKeepsEditorRoutes(t *testing.T) {
 		if isPublishingPath(httptest.NewRequest("GET", p, nil)) {
 			t.Errorf("%s should stay available", p)
 		}
+	}
+}
+
+// With the flag off the scheduler refuses a queued send_issue before it
+// touches the pool, so a stale job can never mail readers.
+func TestRunJobRefusesSendWhenPublishingOff(t *testing.T) {
+	s := &Server{d: Deps{Cfg: &config.Config{Mode: "demo"}}}
+	err := s.runJob(context.Background(), nil, store.Job{Kind: store.JobKindSendIssue})
+	if err == nil || !strings.Contains(err.Error(), "publishing is off") {
+		t.Fatalf("runJob err = %v, want publishing-is-off refusal", err)
 	}
 }

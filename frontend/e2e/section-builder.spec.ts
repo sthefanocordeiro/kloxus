@@ -1,4 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
+
+test.skip(publishingOff, PUBLISHING_SKIP_REASON);
 
 // KLOX-65: the creator-defined section builder and the Configurações
 // screen. This spec stops before the first collection — creating the
@@ -53,7 +56,7 @@ test("section builder onboarding, Seções screen and Configurações delete", a
   await added.fill("Links I liked");
   await page.getByRole("button", { name: "Save sections", exact: true }).click();
   await expect(
-    page.getByText(/Sections saved — they apply to the next edition/),
+    page.getByText(/Sections saved — they apply to the next piece/),
   ).toBeVisible({ timeout: 15000 });
 
   // Configurações: editable identity fields plus the danger zone

@@ -1,4 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
+
+test.skip(publishingOff, PUBLISHING_SKIP_REASON);
 
 // KLOX-72: the newsletter template editor under Configurações —
 // reachable from the settings link card, seeded with one story slot

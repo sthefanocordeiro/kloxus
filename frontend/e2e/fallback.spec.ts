@@ -5,6 +5,9 @@ import {
   preflight,
   setFakeFailing,
 } from "./mail.ts";
+import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
+
+test.skip(publishingOff, PUBLISHING_SKIP_REASON);
 
 // Fallback coverage (KLOX-32): provider failure is tested as its own
 // intentional state — never as a tolerated outcome of a success check.

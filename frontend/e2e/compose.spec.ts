@@ -7,6 +7,9 @@ import {
   preflight,
   workspaceInfo,
 } from "./mail.ts";
+import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
+
+test.skip(publishingOff, PUBLISHING_SKIP_REASON);
 
 // Manual compose journey (KLOX-32): pick candidates → "Write it myself"
 // opens the issue as empty item slots → the editor writes each pauta by
@@ -144,7 +147,7 @@ test("manual compose journey", async ({ page }) => {
   const wk = sectionBox(page, "Vale saber");
   await wk.getByRole("button", { name: "Remove", exact: true }).first().click();
   await page.getByRole("button", { name: "just remove" }).click();
-  await benchCol(page).getByRole("button", { name: "Add to issue", exact: true }).first().click();
+  await benchCol(page).getByRole("button", { name: "Add to piece", exact: true }).first().click();
   await settleBenchAdd(page);
 
   // manual compose: the lineup becomes empty slots — no draft run
@@ -348,9 +351,9 @@ test("mobile 390px: Escrever tab bar stays pinned, heading controls ≥44px", as
   await page.setViewportSize({ width: 390, height: 844 });
   await onboard(page);
   // phone: the bench fills first; the issue column sits behind its tab
-  await expect(page.getByRole("button", { name: /This issue/ })).toBeVisible({ timeout: 120000 });
+  await expect(page.getByRole("button", { name: /This piece/ })).toBeVisible({ timeout: 120000 });
   await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60000 });
-  await page.getByRole("button", { name: /This issue/ }).click();
+  await page.getByRole("button", { name: /This piece/ }).click();
   await page.getByRole("button", { name: "Write it myself" }).click();
   const emptySlot = page.getByRole("button", { name: /Write this story/ });
   await expect(emptySlot.first()).toBeVisible({ timeout: 30000 });

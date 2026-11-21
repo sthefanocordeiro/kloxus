@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 // KLOX-90 (KLOX-84 audit P1): the first-run path a judge walks —
 // publication created, sources not yet confirmed, no edition yet.
-// The pub home must gate "Preparar próxima edição" instead of letting
+// The pub home must gate "Preparar próxima peça" instead of letting
 // the run die on "no items collected", the Edições list must carry
 // real empty copy, and the sidebar must not glow "Peça atual" on
 // pages where no edition exists.
@@ -31,7 +31,7 @@ test.describe("first-run path (KLOX-90)", () => {
 
     // gated: the button stays disabled and the hint points at Fontes —
     // the dead-end "no items collected" run can no longer start
-    const prepare = page.getByRole("button", { name: "Preparar próxima edição" });
+    const prepare = page.getByRole("button", { name: "Preparar próxima peça" });
     await expect(prepare).toBeDisabled();
     await expect(page.getByText(/Confirme suas fontes primeiro/)).toBeVisible();
     await expect(page.getByRole("link", { name: "Abrir fontes" })).toHaveAttribute(
@@ -40,7 +40,7 @@ test.describe("first-run path (KLOX-90)", () => {
     );
 
     // the Edições list carries copy, never a bare dash
-    await expect(page.getByText("Nenhuma edição ainda — prepare a primeira.")).toBeVisible();
+    await expect(page.getByText("Nenhuma peça ainda — prepare a primeira.")).toBeVisible();
   });
 
   test("nav: only the route's section glows", async ({ page }) => {

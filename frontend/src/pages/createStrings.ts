@@ -11,7 +11,7 @@ const en = {
   extractedBadge: "From your link",
   simulatedBadge: "Simulated — no page was fetched",
   extractedStats: "{words} words extracted · {sections} sections proposed",
-  extractedReview: "Review and edit below — it only becomes your newsletter when you create it.",
+  extractedReview: "Review and edit below — it only becomes your radar when you create it.",
   warnThin: "The page had little readable text — the proposal may need extra editing.",
   warnGeneric: "No clear sections were found — the classic structure is proposed instead.",
 };
@@ -22,7 +22,7 @@ const pt: typeof en = {
   extractedBadge: "Do seu link",
   simulatedBadge: "Demonstração — nenhuma página foi buscada",
   extractedStats: "{words} palavras extraídas · {sections} seções propostas",
-  extractedReview: "Revise e edite abaixo — vira sua newsletter só quando você criar.",
+  extractedReview: "Revise e edite abaixo — vira seu radar só quando você criar.",
   warnThin: "A página tinha pouco texto legível — a proposta pode precisar de mais edição.",
   warnGeneric: "Sem seções claras na página — a estrutura clássica foi proposta.",
 };

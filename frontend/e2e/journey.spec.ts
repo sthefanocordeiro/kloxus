@@ -8,6 +8,9 @@ import {
   preflight,
   workspaceInfo,
 } from "./mail.ts";
+import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
+
+test.skip(publishingOff, PUBLISHING_SKIP_REASON);
 
 // The judge path at both widths: landing → cited sample → create the
 // sample newsletter → sources → auto first run → build board → remove
@@ -83,7 +86,7 @@ async function settleBenchAdd(page: Page) {
 
 async function boardOps(page: Page, isPhone: boolean) {
   const off = await llmOff(page);
-  const tabIssue = page.getByRole("button", { name: /This issue/ });
+  const tabIssue = page.getByRole("button", { name: /This piece/ });
   const tabBench = page.getByRole("button", { name: /^Suggestions/ });
   if (isPhone) await tabIssue.click();
 
@@ -104,7 +107,7 @@ async function boardOps(page: Page, isPhone: boolean) {
   //    full suggested section opens the section chooser instead of
   //    failing.
   if (isPhone) await tabBench.click();
-  await benchCol(page).getByRole("button", { name: "Add to issue", exact: true }).nth(1).click();
+  await benchCol(page).getByRole("button", { name: "Add to piece", exact: true }).nth(1).click();
   await settleBenchAdd(page);
 
   // 3) move a Worth-knowing story into Quick links via the move menu —
@@ -659,7 +662,7 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   await expect(
     page
       .getByText(/Nothing new/)
-      .or(page.getByText(/Preparing the issue/))
+      .or(page.getByText(/Preparing the piece/))
       .or(page.getByRole("heading", { name: "This piece" })),
   ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
 

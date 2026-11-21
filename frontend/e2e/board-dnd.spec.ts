@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { preflight } from "./mail.ts";
+import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
+
+test.skip(publishingOff, PUBLISHING_SKIP_REASON);
 
 // KLOX-97: the board explainer promises drag ("Drop a story here" /
 // "Solte uma pauta aqui") but the owner's E2E found pautas do not drag
