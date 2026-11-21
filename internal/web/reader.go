@@ -207,9 +207,9 @@ func paywallNote(lang string, more int) string {
 	if more > 0 {
 		if ptLang(lang) {
 			if more == 1 {
-				return "Exclusivo para assinantes — assine para ler esta e mais 1 pauta."
+				return "Exclusivo para assinantes — assine para ler esta e mais 1 matéria."
 			}
-			return fmt.Sprintf("Exclusivo para assinantes — assine para ler esta e mais %d pautas.", more)
+			return fmt.Sprintf("Exclusivo para assinantes — assine para ler esta e mais %d matérias.", more)
 		}
 		if more == 1 {
 			return "Subscribers only — subscribe to read this and 1 more story."

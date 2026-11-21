@@ -219,7 +219,7 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 	needText := len(reject) > 0 || len(theme) > 0
 	// The folded keyword set the tags match against — the publication's
 	// declared topic plus its editorial line.
-	tokens := foldedTokens(pub.Topic + " " + pub.EditorialLine)
+	tokens := FoldedTokens(pub.Topic + " " + pub.EditorialLine)
 	for i := range stories {
 		var hay string
 		var words map[string]bool
@@ -247,7 +247,7 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 				bestW, haveKind = w, true
 			}
 			for _, t := range e.Topics {
-				if topicMatches(t, tokens, pub) {
+				if TopicMatches(t, tokens, pub) {
 					onTopic = true
 					break
 				}
@@ -276,9 +276,9 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 	return scores, reasons
 }
 
-// foldedTokens lowercases, strips accents and splits on word
+// FoldedTokens lowercases, strips accents and splits on word
 // boundaries — the same fold the deals list uses.
-func foldedTokens(s string) map[string]bool {
+func FoldedTokens(s string) map[string]bool {
 	out := map[string]bool{}
 	for _, w := range strings.FieldsFunc(foldAccents.Replace(strings.ToLower(s)), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
@@ -288,7 +288,7 @@ func foldedTokens(s string) map[string]bool {
 	return out
 }
 
-// foldText is the phrase-level version of foldedTokens: lowercase,
+// foldText is the phrase-level version of FoldedTokens: lowercase,
 // accents stripped, whitespace collapsed — the same normalization
 // promo and non-editorial matching use on titles.
 func foldText(s string) string {
@@ -369,7 +369,7 @@ func termsAny(terms termSet, hay string, words map[string]bool) bool {
 // parsed set, like a per-title API check (KLOX-94).
 func TermsMatch(list, text string) bool {
 	hay := foldText(text)
-	return termsAny(parseTerms(list), hay, foldedTokens(hay))
+	return termsAny(parseTerms(list), hay, FoldedTokens(hay))
 }
 
 // termsCount returns how many distinct terms hit the text — the
@@ -402,7 +402,7 @@ func storySearchText(s *store.Story, enrich map[int64]*store.ItemEnrichment) (st
 		}
 	}
 	hay := foldText(b.String())
-	return hay, foldedTokens(hay)
+	return hay, FoldedTokens(hay)
 }
 
 // termStopwords are the function words a topic phrase contributes that
@@ -421,7 +421,7 @@ var termStopwords = map[string]bool{
 // tokens like "ia"/"ai" stay out because they are common word pieces.
 func topicTokens(s string) map[string]bool {
 	out := map[string]bool{}
-	for w := range foldedTokens(s) {
+	for w := range FoldedTokens(s) {
 		if len(w) >= 3 && !termStopwords[w] {
 			out[w] = true
 		}
@@ -435,7 +435,7 @@ func topicTokens(s string) map[string]bool {
 // falls back to its first open slot (KLOX-94).
 func SuggestSection(title string, secs []config.Section) string {
 	hay := foldText(title)
-	words := foldedTokens(hay)
+	words := FoldedTokens(hay)
 	best, hits := "", 0
 	for _, sec := range secs {
 		if h := termsCount(parseTerms(sec.Topic), hay, words); h > hits {
@@ -445,11 +445,11 @@ func SuggestSection(title string, secs []config.Section) string {
 	return best
 }
 
-// topicMatches reports whether an enrichment tag hits the publication's
+// TopicMatches reports whether an enrichment tag hits the publication's
 // topic tokens. "IA" is special-cased: the folded token "ia" is a
 // Portuguese verb form, so it only counts as a literal uppercase "IA"
 // in the original text or as "inteligência artificial".
-func topicMatches(tag string, tokens map[string]bool, pub *store.Publication) bool {
+func TopicMatches(tag string, tokens map[string]bool, pub *store.Publication) bool {
 	if tag == "IA" {
 		if tokens["inteligencia"] && tokens["artificial"] {
 			return true

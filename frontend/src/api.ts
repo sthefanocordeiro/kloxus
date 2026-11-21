@@ -180,6 +180,15 @@ export interface Candidate {
   available: boolean;
   /** KLOX-67 §7.2: one-line AI summary; empty until the sweep runs. */
   summary?: string;
+  /** KLOX-95: enrichment card fields — article type slug, detected
+   * language, topic tags, newest member publish time. */
+  kind?: string;
+  language?: string;
+  topics?: string[];
+  published_at?: string;
+  /** KLOX-95: hidden by default — different language / off-topic. */
+  foreign?: boolean;
+  off_topic?: boolean;
   /** KLOX-67: lineup card whose pauta body is still AI-written. */
   ai_draft?: boolean;
   /** KLOX-94: bench story the newsletter's reject terms exclude — it
@@ -211,6 +220,9 @@ export interface CandidatesResponse {
   page_size: number;
   bench_total: number;
   has_more: boolean;
+  // KLOX-95: how many bench suggestions the default filter hides
+  // (foreign-language / off-topic) — the toggle's honest count.
+  hidden_bench?: number;
 }
 
 export interface StoryItem {
@@ -494,20 +506,22 @@ export const api = {
     request<{ item: IssueItem; pending: number; guide?: { version: number; added?: string[] } }>(
       "POST", `/api/v1/issues/${issueID}/items/${itemID}/decisions`, { kind, reason },
     ),
-  candidates: (issueID: number, page = 0) =>
-    request<CandidatesResponse>("GET", `/api/v1/issues/${issueID}/candidates?page=${page}`),
+  // all=true serves the default-filtered (foreign-language / off-topic)
+  // suggestions back — the board's "show hidden" toggle.
+  candidates: (issueID: number, page = 0, all = false) =>
+    request<CandidatesResponse>("GET", `/api/v1/issues/${issueID}/candidates?page=${page}${all ? "&all=1" : ""}`),
   // editorial rerank ("Ordenar pela minha linha editorial") — capped to
   // 2 paid calls per newsletter per day; {reranked:false} keeps the
   // free order and is not an error.
   rerank: (issueID: number) =>
     request<{ reranked: boolean }>("POST", `/api/v1/issues/${issueID}/rerank`, {}),
-  lineup: (issueID: number, entries: LineupEntry[]) =>
+  lineup: (issueID: number, entries: LineupEntry[], all = false) =>
     request<{
       candidates: Candidate[];
-      bench_total?: number; has_more?: boolean; page?: number; page_size?: number;
+      bench_total?: number; has_more?: boolean; page?: number; page_size?: number; hidden_bench?: number;
       guide?: { version: number; added?: string[] };
     }>(
-      "PUT", `/api/v1/issues/${issueID}/lineup`, { entries },
+      "PUT", `/api/v1/issues/${issueID}/lineup${all ? "?all=1" : ""}`, { entries },
     ),
   story: (sid: number) => request<{ story: StoryDetail }>("GET", `/api/v1/stories/${sid}`).then((r) => r.story),
   editSentence: (issueID: number, sid: string, text: string, citations: number[], version: string) =>

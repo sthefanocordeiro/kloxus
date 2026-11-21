@@ -77,7 +77,7 @@ func TestSemanticSweepBackfills(t *testing.T) {
 		t.Fatalf("seed AI row: %v", err)
 	}
 
-	s := &SemanticSweep{Pool: pool}
+	s := &SemanticSweep{Pool: pool, WS: db.Workspace()}
 	n, err := s.Sweep(ctx, 100)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
@@ -136,6 +136,7 @@ func TestSemanticSweepBackfills(t *testing.T) {
 // rows via SaveDJItems and the sweep recomputes against the new text.
 func TestSemanticSweepInvalidatesOnUpdate(t *testing.T) {
 	pool := testdb.Pool(t)
+	ws := testdb.WS(t)
 	ctx := context.Background()
 
 	cat := catalogBySlug(t, pool, "daily-journal")
@@ -151,7 +152,7 @@ func TestSemanticSweepInvalidatesOnUpdate(t *testing.T) {
 	if _, _, err := pool.SaveDJItems(ctx, cat.ID, dj); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	s := &SemanticSweep{Pool: pool}
+	s := &SemanticSweep{Pool: pool, WS: ws.Workspace()}
 	if _, err := s.Sweep(ctx, 50); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}

@@ -194,19 +194,19 @@ func TestScoreStoriesEnriched(t *testing.T) {
 
 func TestTopicMatchesIA(t *testing.T) {
 	pub := &store.Publication{Topic: "IA e startups"}
-	if !topicMatches("IA", foldedTokens(pub.Topic+" "+pub.EditorialLine), pub) {
+	if !TopicMatches("IA", FoldedTokens(pub.Topic+" "+pub.EditorialLine), pub) {
 		t.Error("literal IA should match")
 	}
 	// lowercase "ia" in prose must NOT match the IA tag — it is a PT verb
 	pub2 := &store.Publication{Topic: "quem lê via whatsapp"}
-	if topicMatches("IA", foldedTokens(pub2.Topic), pub2) {
+	if TopicMatches("IA", FoldedTokens(pub2.Topic), pub2) {
 		t.Error("lowercase ia must not match the IA tag")
 	}
 	pub3 := &store.Publication{Topic: "inteligência artificial"}
-	if !topicMatches("IA", foldedTokens(pub3.Topic), pub3) {
+	if !TopicMatches("IA", FoldedTokens(pub3.Topic), pub3) {
 		t.Error("inteligência artificial should match the IA tag")
 	}
-	if !topicMatches("tecnologia", foldedTokens("mídia e tecnologia"), pub) {
+	if !TopicMatches("tecnologia", FoldedTokens("mídia e tecnologia"), pub) {
 		t.Error("plain tag should fold and match")
 	}
 }

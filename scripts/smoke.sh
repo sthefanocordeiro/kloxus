@@ -116,27 +116,31 @@ WSID="$(jget workspace.id)"; [ -n "$WSID" ] || die "no workspace id returned"
 say "anonymous workspace $WSID created"
 
 # --- 4b. transport preflight — fail closed before mail/model-capable ops ---
-# The server itself must prove a no-AI posture before smoke touches a
-# run, draft, claim or send route — two qualify:
+# The server itself must prove a known posture before smoke touches a
+# run, draft, claim or send route — three qualify:
 #   - mode=demo: the deterministic demo/replay pipeline; llm auto|off are
 #     both model-free (the replay provider answers fixtures).
 #   - mode=real + llm_mode=off: the deterministic no-model pipeline over
 #     the shared ingested items — catalog sources never fetch per-run and
 #     llm.None fails any model call loudly, so the same journey verifies
 #     the real app with zero paid AI.
-# A real target with the model enabled or an unknown mode fails here —
-# before the first mail- or model-capable request. Client flags and
-# NXDOMAIN recipients are not evidence.
+#   - mode=real + llm_mode=auto (KLOX-95): the AI engine is on — the same
+#     journey exercises real Anthropic calls inside the KLOX-67 spend
+#     guards (≤2 runs/workspace/day, ≤200k tokens/run, ≤$0.25/run,
+#     ≤$1/day). A guard refusal lands as run status blocked and dies
+#     loudly in wait_run — cap enforcement is part of the evidence.
+# An unknown mode or llm_mode fails here — before the first mail- or
+# model-capable request. Client flags and NXDOMAIN recipients are not
+# evidence.
 MODE="$(jget mode)"; LLMMODE="$(jget llm_mode)"
 case "$MODE" in
 demo)
 	case "$LLMMODE" in auto|off) ;; *) die "refusing: unknown llm_mode '$LLMMODE'" ;; esac
 	;;
 real)
-	[ "$LLMMODE" = "off" ] \
-		|| die "refusing: real target reports llm_mode='$LLMMODE' — verification needs the deterministic pipeline (llm_mode=off)"
+	case "$LLMMODE" in off|auto) ;; *) die "refusing: unknown llm_mode '$LLMMODE'" ;; esac
 	;;
-*) die "refusing: unknown mode '$MODE' — verification needs the demo pipeline or real mode with llm_mode=off" ;;
+*) die "refusing: unknown mode '$MODE' — verification needs the demo pipeline or real mode with llm_mode=off|auto" ;;
 esac
 # Mail posture decides which send checks run at step 11 (KLOX-59). Live
 # mail is not itself a refusal — the production app runs mail=live so

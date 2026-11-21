@@ -107,8 +107,15 @@ func (e *Enricher) Sweep(ctx context.Context, limit int) (enriched int, err erro
 		}
 		n, err := e.enrichBatch(ctx, items[start:end])
 		if err != nil {
-			// The batch is dropped, not retried — the next sweep
-			// picks these items up again.
+			// A guard refusal (daily cap, kill switch) blocks every
+			// later batch identically — stop the sweep; the pending
+			// items wait for the next pass when the window reopens.
+			if _, blocked := llm.AsBlocked(err); blocked {
+				slog.Info("enrich sweep paused by spend guard", "err", err)
+				return enriched, nil
+			}
+			// Any other batch failure is dropped, not retried — the
+			// next sweep picks these items up again.
 			slog.Warn("enrich batch failed", "items", end-start, "err", err)
 			continue
 		}
@@ -120,10 +127,10 @@ func (e *Enricher) Sweep(ctx context.Context, limit int) (enriched int, err erro
 // enrichBatch classifies one batch and stores the rows.
 func (e *Enricher) enrichBatch(ctx context.Context, items []store.UnenrichedItem) (int, error) {
 	type row struct {
-		Ref      int
-		Title    string
-		Outlet   string
-		Excerpt  string
+		Ref     int
+		Title   string
+		Outlet  string
+		Excerpt string
 	}
 	data := struct {
 		Kinds  []struct{ Slug, Label string }

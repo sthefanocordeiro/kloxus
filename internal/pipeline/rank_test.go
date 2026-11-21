@@ -390,13 +390,13 @@ func TestPublicationTopicBonus(t *testing.T) {
 
 func TestParseTermsAndSuggestSection(t *testing.T) {
 	terms := parseTerms("celular e games, banco central")
-	if !termsAny(terms, "novo celular dobravel chega", foldedTokens("novo celular dobravel chega")) {
+	if !termsAny(terms, "novo celular dobravel chega", FoldedTokens("novo celular dobravel chega")) {
 		t.Fatal("celular should hit")
 	}
-	if !termsAny(terms, "banco central corta juros", foldedTokens("banco central corta juros")) {
+	if !termsAny(terms, "banco central corta juros", FoldedTokens("banco central corta juros")) {
 		t.Fatal("banco central should hit")
 	}
-	if termsAny(terms, "gamescom abre inscricoes", foldedTokens("gamescom abre inscricoes")) {
+	if termsAny(terms, "gamescom abre inscricoes", FoldedTokens("gamescom abre inscricoes")) {
 		t.Fatal("phrase 'games' should not hit inside 'gamescom'")
 	}
 	secs := []config.Section{
