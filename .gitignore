@@ -28,3 +28,8 @@ frontend/recordings/
 # agent runtime artifacts
 .multica/
 /AGENTS.md
+
+# local scratch (KLOX-68 evidence runs)
+.local/
+.polish-shots/
+frontend/test-results/

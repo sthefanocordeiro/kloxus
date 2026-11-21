@@ -58,4 +58,29 @@ test.describe("first-run path (KLOX-90)", () => {
     await expect(navLink(page, "Edições")).not.toHaveClass(/bg-teal-soft/);
     await expect(navLink(page, "Fontes")).toHaveClass(/bg-teal-soft/);
   });
+
+  // KLOX-68: the board must survive a write-view round trip. The
+  // pagination-reset effect used to wipe the restored board on every
+  // mount; a refetch returning identical JSON kept the same data
+  // reference (structural sharing), so nothing ever re-set it and the
+  // board stayed a skeleton.
+  test("board comes back after Escrever → Pautas", async ({ page }) => {
+    test.setTimeout(240_000);
+    await page.goto("/");
+    await page.getByRole("button", { name: /minha newsletter/ }).first().click();
+    await page.waitForURL(/\/new/);
+    await page.getByRole("button", { name: "Avançar", exact: true }).click();
+    await page.getByRole("button", { name: "Avançar", exact: true }).click();
+    await page.waitForURL(/\/publications\/(\d+)\/sources/);
+    await page.getByRole("button", { name: "Avançar", exact: true }).click();
+    await page.waitForURL(/\/issues\/\d+/, { timeout: 600_000 });
+
+    const storyTitle = page.locator("p.font-doc").first();
+    await expect(storyTitle).toBeVisible({ timeout: 120_000 });
+
+    await page.getByRole("button", { name: /Escrever eu mesmo/ }).click();
+    await expect(page.getByRole("button", { name: "Pautas", exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Pautas", exact: true }).first().click();
+    await expect(storyTitle).toBeVisible({ timeout: 15_000 });
+  });
 });

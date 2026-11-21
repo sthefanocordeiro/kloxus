@@ -29,7 +29,10 @@ export function ReadersPage() {
         </Card>
         {r?.public_url && <SubscribeLink url={r.public_url} />}
       </div>
-      {!r?.confirmed && !r?.readers && (
+      {/* the API always keeps one unconfirmed demo reader row, so the
+          meaningful empty state is "no CONFIRMED readers yet" (KLOX-68);
+          gated on r so it never flashes while the page loads */}
+      {r && !(r.confirmed ?? r.readers) && (
         <p className="mt-6 text-sm text-muted">{t.empty}</p>
       )}
       <Link
