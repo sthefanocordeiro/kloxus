@@ -4,7 +4,7 @@ import { Inbox } from "lucide-react";
 import { useRef, useState } from "react";
 import { api } from "../api";
 import { useReadersPage } from "./readersPageStrings";
-import { Badge, Button, Card } from "../ui";
+import { Button, Card } from "../ui";
 
 // Leitores (§3.1): confirmed-reader and paying-subscriber counts, the
 // copyable subscribe link (KLOX-102) and the outbox entry point where
@@ -41,7 +41,6 @@ export function ReadersPage() {
       >
         <Inbox size={15} aria-hidden />
         {t.outboxLink}
-        <Badge tone="muted" className="ml-1">→</Badge>
       </Link>
     </div>
   );
