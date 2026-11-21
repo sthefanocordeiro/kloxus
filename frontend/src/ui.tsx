@@ -75,3 +75,9 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
     />
   );
 }
+
+// Loading placeholder for content surfaces — a quiet skeleton line
+// instead of a bare "…" (§4.4: every state looks finished).
+export function SkeletonLine({ className }: { className?: string }) {
+  return <div className={cn("h-4 w-40 animate-pulse rounded bg-line/60", className)} aria-hidden />;
+}

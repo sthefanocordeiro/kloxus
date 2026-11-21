@@ -1052,7 +1052,9 @@ function StoryCard({
         >
           <GripVertical size={14} />
         </span>
-        <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
+        {/* py/-my padding puts the title hit area at the 40 px desktop /
+            44 px mobile minimum without moving the text (§4.3, KLOX-68) */}
+        <button className="min-w-0 flex-1 py-1.5 -my-1.5 text-left" onClick={onOpen}>
           <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
           <p className="mt-0.5 text-xs text-muted">{c.outlets.join(", ")}</p>
           {c.summary && <p className="mt-0.5 text-xs leading-4 text-ink/70">{c.summary}</p>}

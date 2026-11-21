@@ -350,9 +350,13 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
               contentEditable={false}
               disabled={busy}
               title={linkItem ? b.linkOnlyOff : b.linkOnlyOn}
+              aria-label={linkItem ? b.linkOnlyOff : b.linkOnlyOn}
               aria-pressed={a.linkOnly}
               className={cn(
-                "rounded p-1 transition-opacity",
+                // negative-margin padding lifts the 21 px icon button to
+                // the touch-target minimum without moving the headline
+                // (§4.3, KLOX-68)
+                "rounded p-4 -m-4 transition-opacity",
                 a.linkOnly ? "text-teal" : "text-muted opacity-0 hover:text-teal group-hover:opacity-100",
               )}
               onClick={async () => {
@@ -394,7 +398,7 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
           type="button"
           contentEditable={false}
           onClick={open}
-          className="mt-1 inline-flex w-full items-center gap-1.5 rounded-[var(--radius-card)] border border-dashed border-line px-3 py-2 text-left text-xs text-muted transition-colors hover:border-teal/60 hover:text-teal"
+          className="mt-1 inline-flex min-h-11 w-full items-center gap-1.5 rounded-[var(--radius-card)] border border-dashed border-line px-3 text-left text-xs text-muted transition-colors hover:border-teal/60 hover:text-teal md:min-h-10"
         >
           <PenLine size={12} /> {t.compose.emptySlot}
         </button>
@@ -807,32 +811,32 @@ function BlockAddView({ node }: NodeViewProps) {
                 ] as const
               ).map(([k, label]) => (
                 <button key={k} type="button" disabled={busy}
-                  className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                  className="inline-flex min-h-11 items-center rounded-full border border-line px-2.5 text-xs text-ink hover:border-teal hover:text-teal md:min-h-10"
                   onClick={() => (k === "divider" ? void insert("divider") : setKind(k))}>
                   {label}
                 </button>
               ))}
               <button type="button" disabled={busy}
-                className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                className="inline-flex min-h-11 items-center rounded-full border border-line px-2.5 text-xs text-ink hover:border-teal hover:text-teal md:min-h-10"
                 onClick={() => { close(); actions.openInsert(a.section, a.index, "image"); }}>
                 {b.image}
               </button>
               <button type="button" disabled={busy}
-                className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                className="inline-flex min-h-11 items-center rounded-full border border-line px-2.5 text-xs text-ink hover:border-teal hover:text-teal md:min-h-10"
                 onClick={() => { close(); actions.openInsert(a.section, a.index, "embed"); }}>
                 {b.embed}
               </button>
               <button type="button" disabled={busy}
-                className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                className="inline-flex min-h-11 items-center rounded-full border border-line px-2.5 text-xs text-ink hover:border-teal hover:text-teal md:min-h-10"
                 onClick={() => { close(); actions.openInsert(a.section, a.index, "message"); }}>
                 {b.message}
               </button>
               <button type="button" disabled={busy}
-                className="rounded-full border border-teal px-2.5 py-1 text-xs font-medium text-teal hover:bg-teal hover:text-paper"
+                className="inline-flex min-h-11 items-center rounded-full border border-teal px-2.5 text-xs font-medium text-teal hover:bg-teal hover:text-paper md:min-h-10"
                 onClick={() => { close(); actions.pickPauta(a.section, a.index); }}>
                 {b.pauta}
               </button>
-              <button type="button" className="text-xs text-muted hover:text-ink" onClick={close}>
+              <button type="button" aria-label={b.close} className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-xs text-muted hover:text-ink md:min-h-10 md:min-w-10" onClick={close}>
                 ✕
               </button>
             </div>

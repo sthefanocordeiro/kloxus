@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import { api } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
-import { Button, Card } from "../ui";
+import { Button, Card, SkeletonLine } from "../ui";
 import { ShellPrimary } from "../components/ShellPortal";
 
 export function Publications() {
@@ -39,7 +39,7 @@ export function Publications() {
           </Link>
         </ShellPrimary>
       )}
-      {pubs.isLoading && <p className="text-muted">…</p>}
+      {pubs.isLoading && <SkeletonLine />}
       {pubs.data?.length === 0 && (
         <Card className="p-6 text-center">
           <p className="text-sm text-muted">{t.landing.subhead}</p>

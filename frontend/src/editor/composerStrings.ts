@@ -26,6 +26,7 @@ const en = {
   msgNamePh: "Name",
   msgBodyPh: "Text…",
   msgDelete: "Delete",
+  close: "Close",
 };
 
 const pt: typeof en = {
@@ -51,6 +52,7 @@ const pt: typeof en = {
   msgNamePh: "Nome",
   msgBodyPh: "Texto…",
   msgDelete: "Excluir",
+  close: "Fechar",
 };
 
 export type ComposerStrings = typeof en;

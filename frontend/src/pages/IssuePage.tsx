@@ -727,7 +727,9 @@ export function IssuePage() {
                         key={tb}
                         onClick={() => setRightTab(tb)}
                         className={cn(
-                          "flex-1 px-3 py-2 font-medium",
+                          // 34 px tabs were under the touch-target
+                          // minimum (§4.3, KLOX-68)
+                          "inline-flex min-h-11 flex-1 items-center justify-center px-3 font-medium md:min-h-10",
                           rightTab === tb ? "border-b-2 border-teal text-ink" : "text-muted",
                         )}
                       >

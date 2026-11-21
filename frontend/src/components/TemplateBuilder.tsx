@@ -7,7 +7,7 @@ import { api, type NewsletterSection, type StdMessage, type TemplateBlock } from
 import { useComposer } from "../editor/composerStrings";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
-import { Button } from "../ui";
+import { Button, SkeletonLine } from "../ui";
 
 // TemplateBuilder (KLOX-72): the newsletter's default edition layout —
 // an ordered block list reusing the composer's vocabulary. Fixed
@@ -276,16 +276,16 @@ export function TemplateBuilder({
       <div className="mt-3 flex flex-wrap gap-1.5">
         {FIXED_KINDS.map((k) => (
           <button key={k} type="button" onClick={() => add(k)}
-            className="rounded-full border border-line bg-paper-raised px-3 py-1.5 text-xs font-medium text-ink hover:border-teal hover:text-teal">
+            className="inline-flex min-h-11 items-center rounded-full border border-line bg-paper-raised px-3 text-xs font-medium text-ink hover:border-teal hover:text-teal md:min-h-10">
             {kindLabel(k)}
           </button>
         ))}
         <button type="button" onClick={() => add("section")}
-          className="rounded-full border border-line bg-paper-raised px-3 py-1.5 text-xs font-medium text-ink hover:border-teal hover:text-teal">
+          className="inline-flex min-h-11 items-center rounded-full border border-line bg-paper-raised px-3 text-xs font-medium text-ink hover:border-teal hover:text-teal md:min-h-10">
           {t.templatePage.sectionSlot}
         </button>
         <button type="button" onClick={() => void openMessages()}
-          className="inline-flex items-center gap-1 rounded-full border border-teal px-3 py-1.5 text-xs font-medium text-teal hover:bg-teal hover:text-paper">
+          className="inline-flex min-h-11 items-center gap-1 rounded-full border border-teal px-3 text-xs font-medium text-teal hover:bg-teal hover:text-paper md:min-h-10">
           <MessageSquareText size={12} aria-hidden />
           {b.message}
         </button>
@@ -293,7 +293,7 @@ export function TemplateBuilder({
 
       {msgOpen && (
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto rounded-[var(--radius-card)] border border-line bg-paper-raised p-2">
-          {msgs === null && <p className="text-sm text-muted">…</p>}
+          {msgs === null && <SkeletonLine />}
           {msgs !== null && msgs.length === 0 && (
             <p className="text-sm text-muted">{b.msgEmpty}</p>
           )}
