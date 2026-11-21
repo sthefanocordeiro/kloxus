@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { benchCol, boardReady, issueCol, onboard } from "./onboard.ts";
 import {
   claimIfSynthetic,
+  fakeLive,
   fakeRequests,
   neverRealMail,
   preflight,
@@ -516,13 +517,26 @@ async function readerJourney(page: Page) {
   await expect(page.getByRole("heading", { level: 1, name: "Futuro Próximo" })).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("heading", { name: "Editions" })).toBeVisible();
   await expect(page.getByText("Latest")).toBeVisible();
-  // subscribe capture runs the existing double opt-in — outbox mode
-  // answers with the confirm link itself, so the flow completes here
+  // subscribe capture runs the existing double opt-in. Outbox mode
+  // answers with the confirm link itself; under live mail the link only
+  // travels in the email, so the journey reads it off the synthetic
+  // provider's receipt log (positive proof of what crossed the wire).
   await page.getByPlaceholder("you@example.com").fill("reader@example.com");
   await page.getByRole("button", { name: "Send sign-in link" }).click();
-  const confirm = page.getByRole("link", { name: "Confirm the subscription" });
-  await expect(confirm).toBeVisible({ timeout: 15000 });
-  await confirm.click();
+  if (fakeLive) {
+    const confirmMail = async () =>
+      (await fakeRequests(page)).requests
+        .filter((r) => r.to?.includes("reader@example.com") && /confirm-sub\?/.test(r.text ?? ""))
+        .pop();
+    await expect.poll(async () => !!(await confirmMail()), { timeout: 15000 }).toBe(true);
+    const link = (await confirmMail())!.text!.match(/https?:\/\/[^\s)]+\/confirm-sub\?[^\s)]+/)![0];
+    // the visitor opens the emailed link — same origin, path + query only
+    await page.goto(link.replace(/^https?:\/\/[^/]+/, ""));
+  } else {
+    const confirm = page.getByRole("link", { name: "Confirm the subscription" });
+    await expect(confirm).toBeVisible({ timeout: 15000 });
+    await confirm.click();
+  }
   // confirming lands back on the reader page — the latest issue
   await expect(page.getByText("For paying readers")).toBeVisible({ timeout: 15000 });
   // the editions archive lists the edition just sent — browsing it
