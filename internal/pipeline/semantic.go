@@ -19,9 +19,14 @@ import (
 
 // SemanticSweep embeds + classifies items that lack a current
 // embedding row. Backfill is the same code path: items stored before
-// the layer existed appear in UnembeddedItems until swept.
+// the layer existed appear in UnembeddedItems until swept. WS, when
+// set, scopes the sweep to one workspace (plus shared catalog items)
+// so a test in one package never classifies another package's test
+// items on the shared DATABASE_URL; production leaves it empty and the
+// sweep stays global.
 type SemanticSweep struct {
 	Pool *store.Pool
+	WS   string
 }
 
 // Sweep embeds/classifies up to limit pending items. Idempotent —
@@ -32,7 +37,7 @@ func (s *SemanticSweep) Sweep(ctx context.Context, limit int) (int, error) {
 	if s == nil || s.Pool == nil {
 		return 0, nil
 	}
-	items, err := s.Pool.UnembeddedItems(ctx, embedding.Model, limit)
+	items, err := s.Pool.UnembeddedItemsFor(ctx, s.WS, embedding.Model, limit)
 	if err != nil {
 		return 0, err
 	}

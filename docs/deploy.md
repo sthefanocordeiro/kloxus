@@ -159,14 +159,22 @@ scripts/smoke.sh https://kloxus.fly.dev            # health → SPA → sample �
 cd frontend && E2E_BASE_URL=https://kloxus.fly.dev npx playwright test
 ```
 
-Hosted verification must never send real email or call a paid model.
-The safe path is selected by server-side evidence, not a client flag —
-`smoke.sh` and every e2e spec preflight `/api/v1/workspace` and refuse
-to run a mail-capable step the target's own posture can't prove safe.
-`smoke.sh` accepts two no-AI postures: the deterministic demo pipeline
-(`mode=demo`), or the real app with the model hard-off (`mode=real`,
-`llm_mode=off` — deterministic runs over the shared ingested items,
-with `llm.None` failing any model call loudly). On the mail dimension
+Hosted verification must never send real email; model calls are
+accepted only on the real app inside the spend guards. The safe path
+is selected by server-side evidence, not a client flag — `smoke.sh`
+and every e2e spec preflight `/api/v1/workspace` and refuse to run a
+mail-capable step the target's own posture can't prove safe. On the
+model dimension `smoke.sh` accepts three postures: the deterministic
+demo pipeline (`mode=demo` — replay fixtures, model-free either way);
+the real app with the model hard-off (`mode=real`, `llm_mode=off` —
+deterministic runs over the shared ingested items, with `llm.None`
+failing any model call loudly); and, since KLOX-95 turned the engine
+on, the real app with `llm_mode=auto` — the same journey then makes
+real Anthropic calls bounded by the KLOX-67 guards (≤2
+runs/workspace/day, ≤200k tokens/run, ≤$0.25/run, ≤$1/day, kill
+switch). A guard refusal surfaces as run status `blocked` and fails
+the smoke loudly — that refusal is itself the cap-enforcement
+evidence. On the mail dimension
 (KLOX-59) it accepts two postures: outbox (`mail=outbox`,
 `mail_transport=outbox`), which runs the full claim-and-send journey;
 or live mail (`mail=live`) on an unclaimed workspace, where the readers
@@ -174,8 +182,8 @@ send must hit the claim gate (409 — the provider is never touched) and
 the test send must land in the outbox ledger (`delivery=outbox`,
 `provider=outbox` — nothing mailed). A live target that reports
 `claimed=true` fails closed, since a test send there would reach the
-owner for real — as do an unknown transport and a real target with the
-model enabled. The e2e specs still require the demo pipeline — their
+owner for real — as do an unknown transport and a real target with an
+unknown `llm_mode`. The e2e specs still require the demo pipeline — their
 journeys depend on fixture content the real target does not serve.
 
 The live-mail contract (claim gate, confirmed readers, `delivery`
