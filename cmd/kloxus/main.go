@@ -26,6 +26,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/embed"
+	"github.com/sthefanocordeiro/kloxus/internal/rerank"
 	"github.com/sthefanocordeiro/kloxus/internal/ingest"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/payments"
@@ -343,6 +344,10 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 			embedWorker = &embed.Worker{Store: pool, Embedder: emb, Log: log.Default()}
 			embedWorker.Start()
 			go embedWorker.Run(context.Background())
+		}
+		if rr := newReranker(cfg, pool); rr != nil {
+			pipeline.DefaultReranker = rr // stage 2 (KLOX-110)
+			pipeline.Stage2.K, pipeline.Stage2.Floor = cfg.RerankK, cfg.RerankFloor
 		}
 		sched.AfterPoll = func(ctx context.Context) {
 			defer embedWorker.Kick() // nil-safe; non-blocking
@@ -847,6 +852,41 @@ func cmdIngestStatus() error {
 // newEmbedder builds the Voyage-backed embedder from config, or nil
 // when embeddings are off or no key is set (ranking then uses the FTS
 // fallback). The key is read from VOYAGE_API_SECRET and never printed.
+// newReranker builds the Voyage-backed stage-2 reranker, or nil when it is
+// off or no key is set (stage-1 order then stands).
+func newReranker(cfg *config.Config, pool *store.Pool) rerank.Reranker {
+	if strings.EqualFold(cfg.RerankProvider, "off") {
+		log.Printf("rerank: provider off - stage-1 order stands")
+		return nil
+	}
+	if cfg.VoyageKey == "" {
+		log.Printf("rerank: VOYAGE_API_SECRET not set - stage-1 order stands")
+		return nil
+	}
+	rr, err := rerank.New(rerank.Config{Provider: cfg.RerankProvider, Model: cfg.RerankModel}, newVoyageClient(cfg, pool))
+	if err != nil {
+		log.Printf("rerank: %v - stage-1 order stands", err)
+		return nil
+	}
+	return rr
+}
+
+func newVoyageClient(cfg *config.Config, pool *store.Pool) *voyage.Client {
+	return &voyage.Client{
+		Key:    cfg.VoyageKey,
+		Ledger: pool,
+		Log:    log.Default(),
+		Limits: map[voyage.Group]voyage.Limits{
+			voyage.GroupEmbed:  {RPM: cfg.VoyageEmbedRPM, TPM: cfg.VoyageEmbedTPM},
+			voyage.GroupRerank: {RPM: cfg.VoyageRerankRPM, TPM: cfg.VoyageRerankTPM},
+		},
+		Caps: map[voyage.Group]float64{
+			voyage.GroupEmbed:  cfg.EmbedDailyUSD,
+			voyage.GroupRerank: cfg.RerankDailyUSD,
+		},
+	}
+}
+
 func newEmbedder(cfg *config.Config, pool *store.Pool) embed.Embedder {
 	if strings.EqualFold(cfg.EmbedProvider, "off") {
 		log.Printf("embeddings: provider off - ranking uses the FTS fallback")
