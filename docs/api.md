@@ -345,10 +345,13 @@ paged away.
   "status": "approved", "origin": "phaseA", "position": 0,
   "dossier": true, "available": true,
   "summary": "One-line AI summary of the story.",
+  "kind": "noticia", "language": "pt", "topics": ["tecnologia"],
+  "published_at": "2026-11-24T09:12:00Z",
   "ai_draft": false
 }],
  "sections": [{"title": "O destaque", "capacity": 1, "commentary": "required"}],
  "page": 0, "page_size": 50, "bench_total": 137, "has_more": true,
+ "hidden_bench": 6,
  "demo": true}
 ```
 - `bench_total` counts bench stories only (in-issue stories excluded);
@@ -362,6 +365,22 @@ paged away.
 - `summary` is the shared AI enrichment's one-line PT summary
   (KLOX-67); absent while an item is un-enriched — enrichment fills in
   asynchronously after ingest.
+- `kind`/`language`/`topics`/`published_at` are the card's detail
+  fields (KLOX-95): the article-type slug (`noticia`, `analise`,
+  `tutorial`, `forum`, `lancamento`, `lista`, `publieditorial`,
+  `entretenimento`, `esporte`, `efemeride`, `outro`), the detected
+  language, the fixed-list topic tags and the newest member's publish
+  time. The first three are AI enrichment — absent while the story is
+  un-enriched, and the card falls back to title/outlet; `published_at`
+  is item metadata and appears whenever a member carries a parseable
+  date.
+- `foreign`/`off_topic` mark the suggestions the bench hides by
+  default (KLOX-95): a member language different from the
+  publication's, or classified topics that never intersect the
+  declared `topic`/`editorial_line`. `?all=1` serves them back;
+  `hidden_bench` counts how many bench stories the default view
+  conceals (same number either way — in-issue stories are never
+  filtered). A story without enrichment is never filtered.
 - `ai_draft` on a lineup card means the pauta body arrived AI-written
   and is still unedited; the composer renders its "Gerado por IA"
   marker from the same flag, and any author edit clears it.
