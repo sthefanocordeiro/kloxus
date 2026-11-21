@@ -1688,7 +1688,9 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 	hidden := map[int64]bool{}
 	for _, c := range bench {
 		foreign, offTopic := cardFlags(pub, cards[c.Story.ID], c.Story.Title)
-		if foreign || offTopic {
+		// KLOX-109: the stage-1 verdict (relevance floor / English in a
+		// Portuguese publication) hides through the same filter.
+		if c.Hidden != "" || foreign || offTopic {
 			hidden[c.Story.ID] = true
 		}
 	}
@@ -1764,6 +1766,12 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate, 
 			cv.Topics = card.Topics
 			cv.PublishedAt = card.PublishedAt
 			cv.Foreign, cv.OffTopic = cardFlags(pub, card, c.Story.Title)
+		}
+		switch c.Hidden {
+		case "off_topic":
+			cv.OffTopic = true
+		case "english":
+			cv.Foreign = true
 		}
 		if c.Item != nil {
 			cv.ItemID = c.Item.ID
