@@ -1,3 +1,4 @@
+import { useWrite } from "../editor/writeStrings";
 import { useQuery } from "@tanstack/react-query";
 import { useContext, useEffect, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, Circle, ExternalLink, Plus } from "lucide-react";
@@ -187,6 +188,7 @@ export function EvidencePane({
   pos?: { index: number; total: number };
   onGo?: (dir: -1 | 1) => void;
 }) {
+  const w = useWrite();
   const { t, lang } = useT();
   const b = useComposer();
   const actions = useContext(DocActionsCtx);
@@ -242,20 +244,20 @@ export function EvidencePane({
             type="button"
             disabled={pos.index <= 0}
             onClick={() => onGo?.(-1)}
-            aria-label={t.evidence.prevPauta}
+            aria-label={w.prevPauta}
             className="inline-flex items-center gap-0.5 rounded px-1 py-1 hover:text-ink disabled:opacity-40"
           >
-            <ChevronLeft size={13} /> {t.evidence.prevPauta}
+            <ChevronLeft size={13} /> {w.prevPauta}
           </button>
-          <span>{t.evidence.position(pos.index + 1, pos.total)}</span>
+          <span>{w.position(pos.index + 1, pos.total)}</span>
           <button
             type="button"
             disabled={pos.index >= pos.total - 1}
             onClick={() => onGo?.(1)}
-            aria-label={t.evidence.nextPauta}
+            aria-label={w.nextPauta}
             className="inline-flex items-center gap-0.5 rounded px-1 py-1 hover:text-ink disabled:opacity-40"
           >
-            {t.evidence.nextPauta} <ChevronRight size={13} />
+            {w.nextPauta} <ChevronRight size={13} />
           </button>
         </div>
       )}
@@ -274,15 +276,15 @@ export function EvidencePane({
                     {canWrite ? (
                       <button
                         type="button"
-                        title={t.evidence.useFact}
+                        title={w.useFact}
                         aria-label={`${f.text} [${f.ref}]`}
                         onClick={() => actions.composeFor(item.ref, { text: f.text, cite: f.ref, seq: i + 1 })}
-                        className="group/fact -mx-1.5 flex w-[calc(100%+12px)] items-start gap-1 rounded px-1.5 py-1 text-left transition-colors hover:bg-teal-soft/60"
+                        className="flex w-full items-start gap-1 rounded px-1.5 py-1 text-left transition-colors hover:bg-teal-soft"
                       >
                         <span className="flex-1">
                           {f.text} <span className="text-teal text-xs">[{f.ref}]</span>
                         </span>
-                        <Plus size={12} className="mt-1 shrink-0 text-muted group-hover/fact:text-teal" />
+                        <Plus size={12} className="mt-1 shrink-0 text-teal" />
                       </button>
                     ) : (
                       <span>

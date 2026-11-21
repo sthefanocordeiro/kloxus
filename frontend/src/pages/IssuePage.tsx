@@ -6,7 +6,8 @@ import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { BookOpen, CalendarClock, ChevronDown, ClipboardCheck, Download, ExternalLink, Eye, ListChecks, Pencil, Plus, Send, Trash2 } from "lucide-react";
 import { api, ApiRequestError, type Candidate, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
-import { blockTextMd, docToTiptap, nextPendingSentence, readyFromChecks, writableRefs, writingProgress } from "../docModel";
+import { blockTextMd, docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
+import { writableRefs, writingProgress } from "../editor/writeProgress";
 import { BlockAdd, BlockDivider, BlockEmbed, BlockHeading, BlockImage, BlockLink, BlockText, Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideEditable, IssueDoc, ItemHeading, SectionHeading, Sentence, type ComposeDraft, type ComposeInsert, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
 import { useComposer } from "../editor/composerStrings";
@@ -27,6 +28,7 @@ import { StepCounter } from "../components/StepCounter";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
 import { BlockedCard, BoardSkeleton, BuildBoard, StepRail } from "./Board";
 import { NotFound } from "./ErrorPage";
+import { useWrite } from "../editor/writeStrings";
 
 // scroll the editor pane to a sentence/item element and flash it —
 // constrained to the pane so other panes don't move. Returns the
@@ -49,6 +51,7 @@ export function IssuePage() {
   const { id } = useParams();
   const issueID = Number(id);
   const { t } = useT();
+  const w = useWrite();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const runID = params.get("run");
@@ -738,7 +741,7 @@ export function IssuePage() {
                 so the editor is never double-mounted (KLOX-96: the old
                 left/right columns merged into one supporting rail) */}
             <DocActionsCtx.Provider value={actions}>
-              <div className="flex min-h-0 flex-1 flex-col max-md:pb-16 md:flex-row">
+              <div className="flex min-h-0 flex-1 flex-col pb-16 md:flex-row md:pb-0">
                 <main
                   ref={editorWrapRef}
                   className={cn(
@@ -749,21 +752,21 @@ export function IssuePage() {
                   {(() => {
                     const p = writingProgress(doc);
                     return p.total > 0 ? (
-                      <div className="sticky top-0 z-10 border-b border-line bg-paper/95 px-4 py-2 backdrop-blur">
+                      <div className="sticky top-0 z-10 border-b border-line bg-paper px-4 py-2 backdrop-blur">
                         <div className="flex items-center gap-3">
                           <span className="shrink-0 text-xs font-medium text-muted">
-                            {t.doc.writing(p.done, p.total)}
+                            {w.writing(p.done, p.total)}
                           </span>
                           <div
                             role="progressbar"
-                            aria-label={t.doc.writing(p.done, p.total)}
+                            aria-label={w.writing(p.done, p.total)}
                             aria-valuemin={0}
                             aria-valuemax={p.total}
                             aria-valuenow={p.done}
                             className="h-1.5 min-w-0 flex-1 rounded-full bg-line/60"
                           >
                             <div
-                              className="h-full rounded-full bg-teal transition-all"
+                              className="h-full rounded-full bg-teal"
                               style={{ width: `${Math.round((p.done / p.total) * 100)}%` }}
                             />
                           </div>

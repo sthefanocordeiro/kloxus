@@ -15,6 +15,7 @@ export { DocActionsCtx } from "./actions";
 export type { ComposeDraft, ComposeInsert, DocActions } from "./actions";
 import { DocActionsCtx, type ComposeInsert } from "./actions";
 import { ComposeBox } from "../components/Compose";
+import { useWrite } from "./writeStrings";
 
 // insideCommentary reports whether a resolved position sits inside a
 // commentary block — a legacy name for the sentence-level guard; the
@@ -64,6 +65,7 @@ interface Src {
 // Remove, no "dismiss".
 function SentenceView({ node }: NodeViewProps) {
   const { t, lang } = useT();
+  const w = useWrite();
   const actions = useContext(DocActionsCtx);
   const a = node.attrs as {
     sid: string;
@@ -174,7 +176,7 @@ function SentenceView({ node }: NodeViewProps) {
       <div className="flex items-start gap-2">
         <p
           className={cn("flex-1 font-doc leading-7", a.flag && "underline decoration-danger decoration-2 underline-offset-4")}
-          title={actions.readOnly ? undefined : t.doc.editHint}
+          title={actions.readOnly ? undefined : w.editHint}
           onClick={() => {
             if (!actions.readOnly) setTools((v) => !v);
           }}
@@ -313,6 +315,7 @@ function CommentaryView({ node, editor, getPos }: NodeViewProps) {
 // are exempt: the link is the source (D2).
 function ItemHeadingView({ node, editor }: NodeViewProps) {
   const { t } = useT();
+  const w = useWrite();
   const b = useComposer();
   const actions = useContext(DocActionsCtx);
   const a = node.attrs as {
@@ -369,8 +372,8 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
               type="button"
               contentEditable={false}
               disabled={busy}
-              title={t.compose.addLine}
-              aria-label={t.compose.addLine}
+              title={w.addLine}
+              aria-label={w.addLine}
               className="flex h-11 w-11 items-center justify-center rounded text-muted transition-opacity hover:text-teal focus-visible:opacity-100 md:size-auto md:p-1 md:opacity-0 md:group-hover:opacity-100"
               onClick={writeHere}
             >

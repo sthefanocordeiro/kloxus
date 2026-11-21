@@ -8,9 +8,8 @@ import {
   nextPendingSentence,
   readyFromChecks,
   sectionNeedsCommentary,
-  writableRefs,
-  writingProgress,
 } from "../docModel";
+import { writableRefs, writingProgress } from "../editor/writeProgress";
 
 const doc = (over: Partial<IssueDocument> = {}): IssueDocument => ({
   issue_id: 1,
