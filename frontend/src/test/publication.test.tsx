@@ -84,11 +84,19 @@ describe("PublicationPage first-run state (KLOX-90)", () => {
 
     const btn = await screen.findByRole("button", { name: "Prepare next issue" });
     await waitFor(() => expect(btn).toBeDisabled());
-    expect(screen.getByRole("link", { name: "Open sources" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "Open sources" })).toHaveAttribute(
       "href",
       "/publications/42/sources",
     );
     expect(await screen.findByText("No issues yet — prepare the first one.")).toBeInTheDocument();
+  });
+
+  it("shows a skeleton, not the sources hint, while sources load (KLOX-126)", async () => {
+    vi.mocked(api.sources).mockReturnValue(new Promise(() => {}));
+    renderPage();
+
+    expect(await screen.findByTestId("sources-skeleton")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open sources" })).toBeNull();
   });
 
   it("enables Prepare once a source is confirmed", async () => {
