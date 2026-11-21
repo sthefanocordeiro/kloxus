@@ -348,29 +348,29 @@ export const dict = {
       starting: "Opening your session…",
       headline: "The research is done. The writing is yours.",
       subhead:
-        "Kloxus reads the sources you choose, picks what matters and lines up your next issue. You write, review and send.",
+        "For your post, your newsletter, your blog or your intranet.",
       tryLine: "Try it without signing up.",
       shotAlt: "The Kloxus editor with a drafted issue and its sources",
       howTitle: "How it works",
       howSteps: [
-        { title: "Choose your sources", body: "The sites and feeds you already read." },
+        { title: "Say what you cover", body: "Your topics and sources." },
         {
-          title: "Approve the lineup",
-          body: "Kloxus suggests this week's stories. You keep the ones that matter.",
+          title: "Pick today's story list",
+          body: "Kloxus picks what matters. You choose.",
         },
-        { title: "Write and send", body: "With your sources beside you, in your own voice." },
+        { title: "Write and take it where you publish", body: "With your sources beside you, in your own voice." },
       ],
       cardsTitle: "Made for people who write",
       cards: [
         { title: "Your voice", body: "AI does the research. The words and the opinion are yours." },
         { title: "Sources in sight", body: "Every fact shows where it came from." },
-        { title: "Readers who pay", body: "Lock any section for paying subscribers." },
+        { title: "Goes where you publish", body: "Copy the finished text to where you publish." },
       ],
       faqTitle: "Questions",
       faq: [
         {
           q: "Do I need an account?",
-          a: "Not to try it. To send real email, you confirm your address.",
+          a: "Not to try it. Open a session and start writing.",
         },
         {
           q: "Does the AI write for me?",
@@ -381,11 +381,11 @@ export const dict = {
           a: "Sources that allow automated reading. We respect each site's rules.",
         },
         {
-          q: "Does anything reach my readers without my approval?",
-          a: "Never. Every issue waits for your approval.",
+          q: "Does Kloxus publish for me?",
+          a: "Never. You write and take the text to wherever you publish.",
         },
       ],
-      closingTitle: "Your next issue starts here.",
+      closingTitle: "Your next story list starts here.",
       footerProduct: "Product",
       footerLegal: "Legal",
       footerTerms: "Terms",
@@ -395,6 +395,8 @@ export const dict = {
       sourcesStrip: "Works with the feeds you already read",
       mock: {
         docTitle: "The big one",
+        railTitle: "Today",
+        editorTitle: "Post editor",
         items: [
           "Regulator opens consultation on AI in hiring",
           "New handheld console surprises on battery life",
@@ -584,7 +586,7 @@ export const dict = {
     dismiss: "Descartar",
     status: {
       "": "preparando",
-      reviewing: "decisões",
+      reviewing: "pauta",
       drafted: "rascunho",
       approved: "aprovada",
       scheduled: "agendada",
@@ -601,7 +603,7 @@ export const dict = {
       noNewItems: "Nada novo nas fontes desde a última edição",
       noItems: "Nada foi coletado — confira as fontes da newsletter",
       openSources: "Abrir fontes",
-      sourcesFirst: "Confirme suas fontes primeiro para preparar a edição",
+      sourcesFirst: "Confirme suas fontes primeiro para preparar a pauta",
       step: {
         starting: "começando",
         collect: "Leu as fontes",
@@ -619,7 +621,7 @@ export const dict = {
     decisions: { pending: "a decidir", approve: "Aprovar", reject: "Rejeitar", alternative: "Trocar", undo: "Desfazer" },
     draft: { action: "Redigir a edição", running: "Redigindo…" },
     board: {
-      title: "Montar a edição",
+      title: "Preparar a pauta",
       bench: "Sugestões",
       issue: "Esta edição",
       search: "Buscar sugestões…",
@@ -661,7 +663,7 @@ export const dict = {
       benchPageOf: "{page} de {pages}",
       benchLoadMore: "Carregar mais sugestões",
       benchLoading: "Carregando…",
-      preparing: "Preparando a edição…",
+      preparing: "Preparando a pauta…",
       drafting: "Redigindo a edição…",
       composeAction: "Escrever eu mesmo",
       composing: "Preparando vagas vazias…",
@@ -915,29 +917,29 @@ export const dict = {
       starting: "Abrindo sua sessão…",
       headline: "A pauta pronta. A escrita é sua.",
       subhead:
-        "O Kloxus lê as fontes que você escolhe, separa o que vale a pena e prepara a pauta da sua newsletter. Você escreve, revisa e envia.",
+        "Para seu post, sua newsletter, seu blog ou sua intranet.",
       tryLine: "Teste sem cadastro.",
       shotAlt: "O editor do Kloxus com uma edição em rascunho e as fontes",
       howTitle: "Como funciona",
       howSteps: [
-        { title: "Escolha suas fontes", body: "Os sites e feeds que você já lê." },
+        { title: "Diga do que você fala", body: "Seus temas e fontes." },
         {
-          title: "Aprove a pauta",
-          body: "O Kloxus sugere as notícias da semana. Você fica com as que importam.",
+          title: "Escolha a pauta do dia",
+          body: "O Kloxus separa o que vale. Você escolhe.",
         },
-        { title: "Escreva e envie", body: "Com as fontes ao lado, no seu tom." },
+        { title: "Escreva e leve para onde publica", body: "Com as fontes ao lado, no seu tom." },
       ],
       cardsTitle: "Feito para quem escreve",
       cards: [
         { title: "Sua voz", body: "A IA pesquisa. O texto e a opinião são seus." },
         { title: "Fontes à vista", body: "Cada fato mostra de onde veio." },
-        { title: "Leitores que pagam", body: "Feche as seções que quiser para assinantes." },
+        { title: "Vai para onde você publica", body: "Copie o texto pronto para onde publica." },
       ],
       faqTitle: "Perguntas",
       faq: [
         {
           q: "Preciso criar conta?",
-          a: "Não para testar. Para enviar e-mails de verdade, você confirma seu endereço.",
+          a: "Não para testar. Abra sua sessão e comece a escrever.",
         },
         {
           q: "A IA escreve por mim?",
@@ -948,11 +950,11 @@ export const dict = {
           a: "Fontes que permitem leitura automatizada. Respeitamos as regras de cada site.",
         },
         {
-          q: "Algo vai para meus leitores sem eu aprovar?",
-          a: "Nunca. Toda edição espera sua aprovação.",
+          q: "O Kloxus publica por mim?",
+          a: "Nunca. Você escreve e leva o texto para onde publica.",
         },
       ],
-      closingTitle: "Sua próxima edição começa aqui.",
+      closingTitle: "Sua próxima pauta começa aqui.",
       footerProduct: "Produto",
       footerLegal: "Jurídico",
       footerTerms: "Termos",
@@ -962,6 +964,8 @@ export const dict = {
       sourcesStrip: "Funciona com os feeds que você já lê",
       mock: {
         docTitle: "O destaque",
+        railTitle: "Hoje",
+        editorTitle: "Editor de post",
         items: [
           "Regulador abre consulta sobre IA em contratações",
           "Novo console portátil surpreende na bateria",
@@ -1074,7 +1078,7 @@ export const dict = {
       saveWithEmail: "Salvar com seu e-mail",
       savedWith: (e: string) => `Salvo com ${e}`,
       newNewsletter: "Nova newsletter",
-      preparing: "Nova edição",
+      preparing: "Nova pauta",
       creating: "Crie sua newsletter",
       language: "Idioma",
       issueTabs: "Painéis da edição",

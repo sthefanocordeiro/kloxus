@@ -22,6 +22,9 @@ export function PublicationPage() {
   // "no items collected" — gate Prepare until the sources step is done
   // (KLOX-90)
   const hasSources = (sources.data?.length ?? 0) > 0;
+  // KLOX-126: while sources load, hasSources is false — don't flash the
+  // "confirm your sources first" hint, show a skeleton instead.
+  const sourcesLoading = !sources.isSuccess && !sources.isError;
   const start = useMutation({
     mutationFn: () => api.startRun(Number(id)),
     // "Prepare" opens the build board straight away — the run landing page
@@ -37,12 +40,13 @@ export function PublicationPage() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6">
       <ShellPrimary>
-        <Button size="sm" onClick={() => start.mutate()} disabled={start.isPending || !hasSources}>
+        <Button size="sm" onClick={() => start.mutate()} disabled={start.isPending || sourcesLoading || !hasSources}>
           {start.isPending ? t.run.running : t.run.start}
         </Button>
       </ShellPrimary>
 
-      {!hasSources && (
+      {sourcesLoading && <div className="mb-4 h-5 w-64 animate-pulse rounded bg-border" aria-hidden="true" data-testid="sources-skeleton" />}
+      {!sourcesLoading && !hasSources && (
         <p className="mb-4 text-sm text-muted">
           {t.run.sourcesFirst} —{" "}
           <Link to={`/publications/${id}/sources`} className="text-teal underline">

@@ -1,4 +1,4 @@
-import { BookOpen, PenLine, Wallet } from "lucide-react";
+import { BookOpen, ClipboardCopy, PenLine } from "lucide-react";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Card } from "../ui";
@@ -17,7 +17,7 @@ export function Landing() {
   const { t } = useT();
   const entry = useSiteEntry();
 
-  const cardIcons = [PenLine, BookOpen, Wallet];
+  const cardIcons = [PenLine, BookOpen, ClipboardCopy];
 
   return (
     <div className="min-h-dvh bg-paper text-ink">
@@ -170,7 +170,7 @@ function HeroMock() {
       <div className="grid sm:grid-cols-[2fr_3fr]">
         <div className="hidden border-r border-line bg-surface/70 p-3 sm:block">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-            {t.board.bench}
+            {m.railTitle}
           </p>
           <ul className="mt-2 grid gap-2">
             {m.items.map((title, i) => (
@@ -185,7 +185,7 @@ function HeroMock() {
         </div>
         <div className="p-4 sm:p-5">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-            {t.nav.edition}
+            {m.editorTitle}
           </p>
           <p className="mt-1 font-doc text-xl font-semibold leading-snug">{m.docTitle}</p>
           <div className="mt-3 grid gap-2" aria-hidden="true">
