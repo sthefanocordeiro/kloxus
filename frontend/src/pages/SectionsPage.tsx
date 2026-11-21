@@ -33,6 +33,7 @@ export function SectionsPage() {
     onSuccess: () => {
       setSaved(true);
       qc.invalidateQueries({ queryKey: ["publication", id] });
+      if (onboarding) nav(`/publications/${id}/sources`);
     },
   });
 
@@ -72,7 +73,7 @@ export function SectionsPage() {
             </Button>
           )}
           <Button disabled={!valid || save.isPending} onClick={() => save.mutate()}>
-            {save.isPending ? t.sectionsPage.saving : t.sectionsPage.save}
+            {save.isPending ? t.sectionsPage.saving : onboarding ? t.create.next : t.sectionsPage.save}
           </Button>
         </div>
       </Card>
