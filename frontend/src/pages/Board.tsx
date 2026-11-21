@@ -587,7 +587,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             key={tab}
             onClick={() => setBoardTab(tab)}
             className={cn(
-              "rounded-[var(--radius-btn)] px-3 py-1.5 text-xs font-medium",
+              "min-h-11 rounded-[var(--radius-btn)] px-3 py-1.5 text-xs font-medium",
               boardTab === tab ? "bg-ink text-paper" : "text-muted",
             )}
           >
@@ -1069,8 +1069,8 @@ function StoryCard({
         </button>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {side === "bench" && c.available && (
-            <Button size="sm" variant="outline" className="h-7 px-2" onClick={onAdd} aria-label={board.add}>
-              <Plus size={13} />
+            <Button size="icon" variant="outline" onClick={onAdd} aria-label={board.add}>
+              <Plus size={15} />
             </Button>
           )}
           {side === "issue" && (
@@ -1078,8 +1078,8 @@ function StoryCard({
               {needsReasonOffer ? (
                 <RemoveMenu board={board} onReject={onReject!} otherReason={otherReason} setOtherReason={setOtherReason} />
               ) : (
-                <Button size="sm" variant="outline" className="h-7 px-2" onClick={onRemove} aria-label={board.remove}>
-                  <Minus size={13} />
+                <Button size="icon" variant="outline" onClick={onRemove} aria-label={board.remove}>
+                  <Minus size={15} />
                 </Button>
               )}
               <MoveMenu board={board} sections={sections} sectionFull={sectionFull} onMoveTo={onMoveTo} exclude={c.section} />
@@ -1106,7 +1106,7 @@ function MoveMenu({
   return (
     <KPopover
       trigger={
-        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-label={board.moveTo}>
+        <Button size="sm" variant="ghost" className="px-2 text-xs" aria-label={board.moveTo}>
           {board.moveTo}
         </Button>
       }
@@ -1148,8 +1148,8 @@ function RemoveMenu({
   return (
     <KPopover
       trigger={
-        <Button size="sm" variant="outline" className="h-7 px-2" aria-label={board.remove}>
-          <Minus size={13} />
+        <Button size="icon" variant="outline" aria-label={board.remove}>
+          <Minus size={15} />
         </Button>
       }
     >
