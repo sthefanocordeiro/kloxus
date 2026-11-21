@@ -34,35 +34,45 @@ export function StepCounter({
             const done = i + 1 < current;
             const active = i + 1 === current;
             const navigable = !active && !!onStep && (done || navAhead);
+            const chip = (
+              <span
+                className={cn(
+                  "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",
+                  done ? "bg-teal-soft text-teal" : active ? "bg-teal text-white" : "bg-line text-muted",
+                )}
+                aria-hidden
+              >
+                {done ? <Check size={11} /> : i + 1}
+              </span>
+            );
             return (
               <li key={label} className="flex shrink-0 items-center gap-1.5">
                 {i > 0 && <span className="text-muted/40" aria-hidden>·</span>}
-                <span
-                  className={cn(
-                    "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",
-                    done ? "bg-teal-soft text-teal" : active ? "bg-teal text-white" : "bg-line text-muted",
-                  )}
-                  aria-hidden
-                >
-                  {done ? <Check size={11} /> : i + 1}
-                </span>
                 {navigable ? (
+                  // the whole step (chip + label) is the hit area — a
+                  // bare text button was 16 px tall, under the 40 px
+                  // desktop / 44 px mobile minimum (§4.3, KLOX-68)
                   <button
                     type="button"
                     onClick={() => onStep(i)}
+                    aria-label={label}
                     className={cn(
-                      "hidden font-medium hover:underline sm:inline",
+                      "inline-flex items-center gap-1.5 rounded-md px-3 py-3 -mx-3 -my-3 font-medium hover:underline",
                       done ? "text-teal" : "text-muted hover:text-ink",
                     )}
                   >
-                    {label}
+                    {chip}
+                    <span className="hidden sm:inline">{label}</span>
                   </button>
                 ) : (
-                  <span className={cn(
-                    active ? "font-semibold text-ink" : done ? "hidden text-teal sm:inline" : "hidden text-muted sm:inline",
-                  )}>
-                    {label}
-                  </span>
+                  <>
+                    {chip}
+                    <span className={cn(
+                      active ? "font-semibold text-ink" : done ? "hidden text-teal sm:inline" : "hidden text-muted sm:inline",
+                    )}>
+                      {label}
+                    </span>
+                  </>
                 )}
               </li>
             );

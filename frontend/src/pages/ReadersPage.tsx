@@ -4,7 +4,7 @@ import { Inbox } from "lucide-react";
 import { useRef, useState } from "react";
 import { api } from "../api";
 import { useReadersPage } from "./readersPageStrings";
-import { Badge, Button, Card } from "../ui";
+import { Button, Card } from "../ui";
 
 // Leitores (§3.1): confirmed-reader and paying-subscriber counts, the
 // copyable subscribe link (KLOX-102) and the outbox entry point where
@@ -29,7 +29,10 @@ export function ReadersPage() {
         </Card>
         {r?.public_url && <SubscribeLink url={r.public_url} />}
       </div>
-      {!r?.confirmed && !r?.readers && (
+      {/* the API always keeps one unconfirmed demo reader row, so the
+          meaningful empty state is "no CONFIRMED readers yet" (KLOX-68);
+          gated on r so it never flashes while the page loads */}
+      {r && !(r.confirmed ?? r.readers) && (
         <p className="mt-6 text-sm text-muted">{t.empty}</p>
       )}
       <Link
@@ -38,7 +41,6 @@ export function ReadersPage() {
       >
         <Inbox size={15} aria-hidden />
         {t.outboxLink}
-        <Badge tone="muted" className="ml-1">→</Badge>
       </Link>
     </div>
   );

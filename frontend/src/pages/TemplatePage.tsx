@@ -5,7 +5,7 @@ import { api } from "../api";
 import { TemplateBuilder, toRows, type TemplateRow } from "../components/TemplateBuilder";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
-import { Button, Card } from "../ui";
+import { Button, Card, SkeletonLine } from "../ui";
 
 // Modelo (KLOX-72): edit the newsletter's default edition template —
 // the ordered block list every new edition materializes. Template
@@ -39,7 +39,7 @@ export function TemplatePage() {
   });
 
   const pub = pubQ.data?.publication;
-  if (!pub || !tplQ.data || !rows) return <div className="p-6 text-sm text-muted">…</div>;
+  if (!pub || !tplQ.data || !rows) return <div className="p-6"><SkeletonLine /></div>;
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-6">

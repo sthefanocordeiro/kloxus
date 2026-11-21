@@ -10,7 +10,7 @@ import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
 import { fmtDate } from "../lib/fmt";
 import { Markdown } from "../markdown";
-import { Badge, Button, Card } from "../ui";
+import { Badge, Button, Card, SkeletonLine } from "../ui";
 
 // --- left pane: the issue's pautas, grouped by section ---
 
@@ -113,9 +113,13 @@ export function CoverageCounter({ coverage, onFixNow }: { coverage: Coverage; on
 export function ReadinessList({
   checks,
   onTarget,
+  heading = true,
 }: {
   checks: Check[];
   onTarget: (c: Check) => void;
+  // the card that hosts the list may already carry the title — the
+  // review step did, printing "Antes de aprovar" twice (KLOX-68)
+  heading?: boolean;
 }) {
   const { t, lang } = useT();
   // every check is translated here; the server's message stays a
@@ -129,21 +133,28 @@ export function ReadinessList({
   };
   return (
     <div>
-      <p className="mb-2 text-sm font-semibold">
-        {readyFromChecks(checks) ? t.readiness.ready : t.readiness.title}
-      </p>
-      <ul className="space-y-1.5">
+      {heading && (
+        <p className="mb-2 text-sm font-semibold">
+          {readyFromChecks(checks) ? t.readiness.ready : t.readiness.title}
+        </p>
+      )}
+      <ul className="space-y-0.5">
         {checks.map((c, i) => (
-          <li key={i} className="flex items-start gap-2 text-sm">
+          <li key={i} className="flex items-center gap-2 text-sm">
             {c.ok ? (
-              <CheckCircle2 size={15} className="mt-0.5 text-teal shrink-0" />
+              <CheckCircle2 size={15} className="text-teal shrink-0" />
             ) : (
-              <Circle size={15} className="mt-0.5 text-danger shrink-0" />
+              <Circle size={15} className="text-danger shrink-0" />
             )}
             <button
               disabled={c.ok || !c.target}
               onClick={() => onTarget(c)}
-              className={cn("text-left", !c.ok && c.target && "text-danger underline decoration-dotted")}
+              className={cn(
+                // checklist rows are jump targets — 20 px was under the
+                // touch-target minimum (§4.3, KLOX-68)
+                "inline-flex min-h-11 flex-1 items-center gap-1 text-left md:min-h-10",
+                !c.ok && c.target && "text-danger underline decoration-dotted",
+              )}
             >
               {labelFor(c)}
             </button>
@@ -391,7 +402,12 @@ export function PreviewPane({ issueID }: { issueID: number }) {
               <button
                 key={o}
                 onClick={() => (set as (v: string) => void)(o)}
-                className={cn("rounded px-2 py-1", val === o ? "bg-ink text-paper" : "bg-line/50 text-muted")}
+                className={cn(
+                  // 24 px toggle chips were under the touch-target
+                  // minimum (§4.3, KLOX-68)
+                  "inline-flex min-h-11 items-center rounded px-2.5 md:min-h-10",
+                  val === o ? "bg-ink text-paper" : "bg-line/50 text-muted",
+                )}
               >
                 {names[o]}
               </button>
@@ -400,7 +416,7 @@ export function PreviewPane({ issueID }: { issueID: number }) {
         ))}
       </div>
       <div className={cn("flex-1 overflow-y-auto p-4", surface === "phone" && "mx-auto w-[360px]")}>
-        {pv.data ? <Markdown md={pv.data.body_md} /> : <p className="text-sm text-muted">…</p>}
+        {pv.data ? <Markdown md={pv.data.body_md} /> : <SkeletonLine className="w-64" />}
       </div>
     </div>
   );

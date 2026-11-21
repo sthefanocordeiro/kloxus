@@ -5,7 +5,7 @@ import { api, ApiRequestError } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Markdown } from "../markdown";
-import { Badge, Button, Card } from "../ui";
+import { Badge, Button, Card, SkeletonLine } from "../ui";
 import { NotFound } from "./ErrorPage";
 
 // /publications/:id/guide — the editorial guide's screen: the rules the
@@ -31,7 +31,7 @@ export function GuidePage() {
   });
 
   if (guide.isLoading) {
-    return <p className="p-6 text-sm text-muted">…</p>;
+    return <div className="p-6"><SkeletonLine /></div>;
   }
   if (guide.isError) {
     if (guide.error instanceof ApiRequestError && guide.error.status === 404) {

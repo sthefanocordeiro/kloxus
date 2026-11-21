@@ -245,9 +245,10 @@ export function AppShell() {
           ))}
           <Drop
             side="top"
+            className="h-full"
             trigger={(open) => (
               <button
-                className="flex h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium text-muted"
+                className="flex h-14 w-full flex-col items-center justify-center gap-0.5 text-[11px] font-medium text-muted"
                 aria-label={t.nav.more}
                 aria-expanded={open}
                 aria-haspopup="menu"
@@ -272,10 +273,14 @@ function Drop({
   trigger,
   children,
   side = "bottom",
+  className,
 }: {
   trigger: (open: boolean) => ReactNode;
   children: ReactNode;
   side?: "top" | "bottom";
+  // lets a grid cell stretch its trigger — the bottom tab bar's "Mais"
+  // button shrank to its text (25 px wide) without it (KLOX-68)
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -295,8 +300,8 @@ function Drop({
     };
   }, [open]);
   return (
-    <div ref={ref} className="relative">
-      <span onClick={() => setOpen((o) => !o)}>{trigger(open)}</span>
+    <div ref={ref} className={cn("relative", className)}>
+      <span onClick={() => setOpen((o) => !o)} className="flex h-full w-full">{trigger(open)}</span>
       {open && (
         <div
           className={cn(

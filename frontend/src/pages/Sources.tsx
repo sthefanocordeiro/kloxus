@@ -4,7 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api, type PreviewItem } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
-import { Badge, Button, Card } from "../ui";
+import { Badge, Button, Card, SkeletonLine } from "../ui";
 import { StepCounter } from "../components/StepCounter";
 
 // /publications/:id/sources — the onboarding sources screen: suggested fixture
@@ -149,7 +149,9 @@ export function SourcesPage() {
             ))}
           </div>
           <div className="mt-3 flex items-center gap-3">
-            <Button size="sm" disabled={saveAd.isPending} onClick={() => saveAd.mutate()}>
+            {/* outline: the screen's one primary is the forward action
+                below — two filled buttons competed for it (§4.3, KLOX-68) */}
+            <Button variant="outline" size="sm" disabled={saveAd.isPending} onClick={() => saveAd.mutate()}>
               {t.sourcesPage.save}
             </Button>
             {adSaved && <span className="text-xs text-teal">{t.sourcesPage.saved}</span>}
@@ -217,7 +219,7 @@ export function SourcesPage() {
                     {t.sourcesPage.preview}
                   </Button>
                 </div>
-                {previews[o.url] === "loading" && <p className="mt-2 text-xs text-muted">…</p>}
+                {previews[o.url] === "loading" && <SkeletonLine className="mt-2 h-3 w-32" />}
                 {Array.isArray(previews[o.url]) && (
                   <ul className="mt-2 grid grid-cols-1 gap-1 border-t border-line pt-2 text-sm">
                     {(previews[o.url] as PreviewItem[]).map((it, i) => (

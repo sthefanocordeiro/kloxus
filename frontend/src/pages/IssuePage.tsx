@@ -731,7 +731,7 @@ export function IssuePage() {
                 <BlockedCard message={runBlocked} />
               </div>
             )}
-            <BuildBoard issue={issue} onDrafted={() => invalidate()} />
+            <BuildBoard key={issue.id} issue={issue} onDrafted={() => invalidate()} />
           </div>
         )
       ) : (
@@ -794,7 +794,7 @@ export function IssuePage() {
                         key={tb}
                         onClick={() => setRailTab(tb)}
                         className={cn(
-                          "flex-1 truncate px-2 py-2 font-medium",
+                          "inline-flex min-h-11 flex-1 items-center justify-center truncate px-2 font-medium md:min-h-10",
                           railTab === tb ? "border-b-2 border-teal text-ink" : "text-muted",
                         )}
                       >
@@ -1364,7 +1364,7 @@ function ReviewStep({
         <section className="space-y-3">
           <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
             <h2 className="mb-2 text-sm font-semibold">{t.readiness.title}</h2>
-            <ReadinessList checks={checks} onTarget={onTarget} />
+            <ReadinessList checks={checks} onTarget={onTarget} heading={false} />
           </div>
           <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
             <h2 className="mb-2 text-sm font-semibold">{t.send.approveSend}</h2>

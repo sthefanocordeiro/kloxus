@@ -386,9 +386,10 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
               contentEditable={false}
               disabled={busy}
               title={linkItem ? b.linkOnlyOff : b.linkOnlyOn}
+              aria-label={linkItem ? b.linkOnlyOff : b.linkOnlyOn}
               aria-pressed={a.linkOnly}
               className={cn(
-                "flex h-11 w-11 items-center justify-center rounded transition-opacity md:size-auto md:p-1",
+                "flex h-11 w-11 items-center justify-center rounded transition-opacity md:size-10 md:-m-[9.5px] md:p-0",
                 a.linkOnly
                   ? "text-teal"
                   : "text-muted opacity-100 hover:text-teal md:opacity-0 md:group-hover:opacity-100",
@@ -432,7 +433,7 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
           type="button"
           contentEditable={false}
           onClick={writeHere}
-          className="mt-1 inline-flex w-full items-center gap-1.5 rounded-[var(--radius-card)] border border-dashed border-line px-3 py-2 text-left text-xs text-muted transition-colors hover:border-teal/60 hover:text-teal"
+          className="mt-1 inline-flex min-h-11 w-full items-center gap-1.5 rounded-[var(--radius-card)] border border-dashed border-line px-3 text-left text-xs text-muted transition-colors hover:border-teal/60 hover:text-teal md:min-h-10"
         >
           <PenLine size={12} /> {t.compose.emptySlot}
         </button>
@@ -839,7 +840,7 @@ function BlockAddView({ node }: NodeViewProps) {
         <div className="flex h-4 items-center justify-center">
           <span className="absolute inset-x-2 top-1/2 h-px bg-transparent transition-colors group-hover/gap:bg-line" />
           <button type="button" onClick={() => setOpen(true)} aria-label={b.add}
-            className="relative rounded-full border border-transparent bg-paper p-0.5 text-transparent transition-colors hover:border-teal hover:text-teal group-hover/gap:border-line group-hover/gap:text-muted">
+            className="relative -my-3 inline-flex size-11 items-center justify-center rounded-full border border-transparent bg-transparent p-0.5 text-transparent md:size-10 transition-colors hover:border-teal hover:text-teal group-hover/gap:border-line group-hover/gap:text-muted">
             <Plus size={12} />
           </button>
         </div>
@@ -857,32 +858,32 @@ function BlockAddView({ node }: NodeViewProps) {
                 ] as const
               ).map(([k, label]) => (
                 <button key={k} type="button" disabled={busy}
-                  className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                  className="inline-flex min-h-11 items-center rounded-full border border-line px-2.5 text-xs text-ink hover:border-teal hover:text-teal md:min-h-10"
                   onClick={() => (k === "divider" ? void insert("divider") : setKind(k))}>
                   {label}
                 </button>
               ))}
               <button type="button" disabled={busy}
-                className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                className="inline-flex min-h-11 items-center rounded-full border border-line px-2.5 text-xs text-ink hover:border-teal hover:text-teal md:min-h-10"
                 onClick={() => { close(); actions.openInsert(a.section, a.index, "image"); }}>
                 {b.image}
               </button>
               <button type="button" disabled={busy}
-                className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                className="inline-flex min-h-11 items-center rounded-full border border-line px-2.5 text-xs text-ink hover:border-teal hover:text-teal md:min-h-10"
                 onClick={() => { close(); actions.openInsert(a.section, a.index, "embed"); }}>
                 {b.embed}
               </button>
               <button type="button" disabled={busy}
-                className="rounded-full border border-line px-2.5 py-1 text-xs text-ink hover:border-teal hover:text-teal"
+                className="inline-flex min-h-11 items-center rounded-full border border-line px-2.5 text-xs text-ink hover:border-teal hover:text-teal md:min-h-10"
                 onClick={() => { close(); actions.openInsert(a.section, a.index, "message"); }}>
                 {b.message}
               </button>
               <button type="button" disabled={busy}
-                className="rounded-full border border-teal px-2.5 py-1 text-xs font-medium text-teal hover:bg-teal hover:text-paper"
+                className="inline-flex min-h-11 items-center rounded-full border border-teal px-2.5 text-xs font-medium text-teal hover:bg-teal hover:text-paper md:min-h-10"
                 onClick={() => { close(); actions.pickPauta(a.section, a.index); }}>
                 {b.pauta}
               </button>
-              <button type="button" className="text-xs text-muted hover:text-ink" onClick={close}>
+              <button type="button" aria-label={b.close} className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-xs text-muted hover:text-ink md:min-h-10 md:min-w-10" onClick={close}>
                 ✕
               </button>
             </div>

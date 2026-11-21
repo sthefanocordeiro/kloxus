@@ -246,12 +246,9 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
     );
   }, [candsQ.data]);
 
-  useEffect(() => {
-    setBoard(null);
-    setExtraBench([]);
-    setPagesLoaded(1);
-    setBenchPage(0);
-  }, [issue.id]);
+  // Pagination/board state resets via the parent's key={issue.id}
+  // remount — an in-place reset effect raced the cached-data restore
+  // above and left the skeleton up indefinitely (KLOX-68).
 
   // has_more answers "is there a page after THIS page" — derive the
   // next fetch's existence from the authoritative bench total and the
@@ -1136,7 +1133,9 @@ function StoryCard({
         >
           <GripVertical size={14} />
         </span>
-        <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
+        {/* py/-my padding puts the title hit area at the 40 px desktop /
+            44 px mobile minimum without moving the text (§4.3, KLOX-68) */}
+        <button className="min-w-0 flex-1 py-1.5 -my-1.5 text-left" onClick={onOpen}>
           <p className={cn("font-doc text-sm font-semibold leading-5", lead && "text-base leading-6")}>{c.title}</p>
           <p className="mt-0.5 text-xs text-muted">{c.outlets.join(", ")}</p>
           {/* KLOX-95: type label + publish age + filter badges — only

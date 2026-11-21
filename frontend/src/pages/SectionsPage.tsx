@@ -4,7 +4,7 @@ import { useParams } from "react-router-dom";
 import { api, type NewsletterSection } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
-import { Button, Card } from "../ui";
+import { Button, Card, SkeletonLine } from "../ui";
 import { SectionBuilder, totalStories, SECTION_LIMITS } from "../components/SectionBuilder";
 
 // Seções (§3.1, KLOX-65): the creator's section builder — the same
@@ -32,7 +32,7 @@ export function SectionsPage() {
   });
 
   if (!pub.data || sections === null) {
-    return <div className="p-6 text-sm text-muted">…</div>;
+    return <div className="p-6"><SkeletonLine /></div>;
   }
   const valid =
     sections.length > 0 &&
