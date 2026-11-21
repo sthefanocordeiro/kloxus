@@ -395,6 +395,10 @@ type StoryTriage struct {
 	StoryID int64
 	Score   float64
 	Reason  string
+	// Rel and Hidden carry the stage-1 verdict (KLOX-109): relevance
+	// 0-1 and "" | "off_topic" | "english". Left zero by the paid path.
+	Rel    float64
+	Hidden string
 }
 
 // SetStoriesTriage applies every verdict in one UPDATE. Deterministic
@@ -408,14 +412,18 @@ func (db *DB) SetStoriesTriage(ctx context.Context, updates []StoryTriage) error
 	ids := make([]int64, len(updates))
 	scores := make([]float64, len(updates))
 	reasons := make([]string, len(updates))
+	rels := make([]float64, len(updates))
+	hidden := make([]string, len(updates))
 	for i, u := range updates {
-		ids[i], scores[i], reasons[i] = u.StoryID, u.Score, u.Reason
+		ids[i], scores[i], reasons[i], rels[i], hidden[i] = u.StoryID, u.Score, u.Reason, u.Rel, u.Hidden
 	}
 	_, err := db.ExecContext(ctx, `
-		UPDATE stories s SET triage_score = u.score, triage_reason = u.reason
-		FROM unnest($2::bigint[], $3::float8[], $4::text[]) AS u(id, score, reason)
+		UPDATE stories s SET triage_score = u.score, triage_reason = u.reason,
+		       rel = u.rel, stage1_hidden = u.hidden
+		FROM unnest($2::bigint[], $3::float8[], $4::text[], $5::float8[], $6::text[])
+		     AS u(id, score, reason, rel, hidden)
 		WHERE s.workspace_id = $1 AND s.id = u.id`,
-		db.ws, ids, scores, reasons)
+		db.ws, ids, scores, reasons, rels, hidden)
 	return err
 }
 
@@ -944,6 +952,9 @@ type RankedCandidate struct {
 	Rank       int        // 1 = best triage score of this run
 	Duplicates int        // same-event stories merged into this one
 	Dossier    bool
+	// Hidden is the stage-1 filter flag (KLOX-109): "", "off_topic" or
+	// "english".
+	Hidden string
 }
 
 // RankedCandidates lists the run's ranked stories for an issue: every
@@ -957,7 +968,7 @@ type RankedCandidate struct {
 func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]RankedCandidate, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT s.id, s.title, COALESCE(s.triage_score,0), COALESCE(s.triage_reason,''),
-		       (SELECT COUNT(*) FROM story_items si WHERE si.story_id = s.id),
+		       (SELECT COUNT(*) FROM story_items si WHERE si.story_id = s.id), s.stage1_hidden,
 		       ii.id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft,
 		       EXISTS(SELECT 1 FROM dossiers d WHERE d.workspace_id = $1 AND d.issue_item_id = ii.id)
 		FROM stories s
@@ -989,7 +1000,7 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 	for rows.Next() {
 		var (
 			storyID, members        int64
-			title, reason           string
+			title, reason, hidden   string
 			score                   float64
 			iiID, iiPos             sql.NullInt64
 			iiSec, iiStatus, iiOrig sql.NullString
@@ -998,14 +1009,14 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 			iiDraft                 sql.NullBool
 			dossier                 bool
 		)
-		if err := rows.Scan(&storyID, &title, &score, &reason, &members,
+		if err := rows.Scan(&storyID, &title, &score, &reason, &members, &hidden,
 			&iiID, &iiSec, &iiScore, &iiReason, &iiStatus, &iiOrig, &iiPos, &iiOrigSec, &iiDraft,
 			&dossier); err != nil {
 			return nil, err
 		}
 		c := RankedCandidate{
 			Story: &Story{ID: storyID, Title: title, TriageScore: score, TriageReason: reason},
-			Rank:  len(out) + 1, Duplicates: int(members) - 1, Dossier: dossier,
+			Rank:  len(out) + 1, Duplicates: int(members) - 1, Dossier: dossier, Hidden: hidden,
 		}
 		if iiID.Valid {
 			c.Item = &IssueItem{

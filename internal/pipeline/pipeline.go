@@ -68,6 +68,10 @@ type Runner struct {
 	// degraded path keeps the manual slot. Nil means the deterministic
 	// skeleton exactly as before.
 	Research *Researcher
+	// Embedder embeds the publication profile for stage-1 ranking
+	// (KLOX-109); nil uses DefaultEmbedder, and no embedder at all ranks
+	// by the FTS fallback.
+	Embedder QueryEmbedder
 }
 
 // StepEvent reports a finished pipeline step with its real counts — never
@@ -486,6 +490,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}{}
 	var detScores []float64
 	var detReasons []string
+	var hiddenStory []bool
 	var enrich map[int64]*store.ItemEnrichment
 	if r.Deterministic {
 		// The free ranking reads the shared enrichment when it exists
@@ -501,13 +506,23 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		}
 		enrich, _ = r.DB.EnrichmentsForItems(ctx, eids)
 		detScores, detReasons = scoreStoriesEnriched(stories, pub.Language, pub, enrich)
+		// Stage 1 (KLOX-109): embedding cosine against the publication
+		// profile (FTS when vectors are missing) replaces the recency +
+		// diversity order; the editorial-line demotions stay on top.
+		s1 := r.rankStage1(ctx, pub, stories, detReasons, enrich)
+		detScores, detReasons = s1.Scores, s1.Reasons
+		hiddenStory = make([]bool, len(stories))
+		for i, h := range s1.Hidden {
+			hiddenStory[i] = h != ""
+		}
 		updates := make([]store.StoryTriage, len(stories))
 		for i := range stories {
 			scoreByRef[i+1] = struct {
 				score  float64
 				reason string
 			}{detScores[i], detReasons[i]}
-			updates[i] = store.StoryTriage{StoryID: stories[i].ID, Score: detScores[i], Reason: detReasons[i]}
+			updates[i] = store.StoryTriage{StoryID: stories[i].ID, Score: detScores[i], Reason: detReasons[i],
+				Rel: s1.Rel[i], Hidden: s1.Hidden[i]}
 		}
 		// One UPDATE for the whole run: deterministic triage scores
 		// every story, and at shared-catalog scale a call per story
@@ -566,7 +581,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	var picks []lineupPick
 	if r.Deterministic {
-		picks = pickLineup(stories, detScores, detReasons, pub, enrich)
+		picks = pickLineupSkipping(stories, detScores, detReasons, pub, enrich, hiddenStory)
 		r.record(ctx, pub.ID, issueID, "storylist", "deterministic", start, llm.Response{})
 	} else {
 		var picked struct {

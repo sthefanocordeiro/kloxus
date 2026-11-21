@@ -893,6 +893,14 @@ func hasEvidence(s *store.Story) bool {
 // auto-slotted; it stays a marked bench candidate the creator can
 // still place by hand.
 func pickLineup(stories []store.Story, scores []float64, reasons []string, pub *store.Publication, enrich map[int64]*store.ItemEnrichment) []lineupPick {
+	return pickLineupSkipping(stories, scores, reasons, pub, enrich, nil)
+}
+
+// pickLineupSkipping is pickLineup with a stage-1 exclusion list
+// (KLOX-109): stories flagged hidden (off-topic / English) are never
+// auto-slotted - a thin lineup beats an off-theme one. They stay on
+// the bench behind the board's filter.
+func pickLineupSkipping(stories []store.Story, scores []float64, reasons []string, pub *store.Publication, enrich map[int64]*store.ItemEnrichment, skip []bool) []lineupPick {
 	var sections []config.Section
 	var rejectTerms termSet
 	var skipAlts [][]string
@@ -938,7 +946,7 @@ func pickLineup(stories []store.Story, scores []float64, reasons []string, pub *
 					continue
 				}
 				eligible := func(idx int) bool {
-					if placed[idx] || !hasEvidence(&stories[idx]) || rejected(idx) {
+					if placed[idx] || !hasEvidence(&stories[idx]) || rejected(idx) || (skip != nil && skip[idx]) {
 						return false
 					}
 					outlet := primaryOutlet(&stories[idx])

@@ -336,6 +336,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		// in its own goroutine, never blocks ingestion.
 		var embedWorker *embed.Worker
 		if emb := newEmbedder(cfg, pool); emb != nil {
+			pipeline.DefaultEmbedder = emb // stage-1 profile embedding (KLOX-109)
 			embedWorker = &embed.Worker{Store: pool, Embedder: emb, Log: log.Default()}
 			embedWorker.Start()
 			go embedWorker.Run(context.Background())
