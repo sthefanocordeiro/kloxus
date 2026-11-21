@@ -9,6 +9,7 @@ package web_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -355,6 +356,97 @@ func TestCandidatesRejectTermsSurviveHiddenFilter(t *testing.T) {
 	}
 	if fr["rejected_editorial"] != true || fr["foreign"] != true {
 		t.Errorf("rejected+foreign card markers = %v %v", fr["rejected_editorial"], fr["foreign"])
+	}
+}
+
+// TestCandidatesEditorialSkipMarks is the KLOX-115 board contract: a
+// subject the editorial line tells the desk to skip ("Pule games")
+// hits the same reject policy as declared reject_terms — the bench
+// card carries rejected_editorial, sinks to the tail, and gets no
+// section suggestion — even when only the enrichment tag betrays the
+// subject (the "fintech vendo GTA 6" case).
+func TestCandidatesEditorialSkipMarks(t *testing.T) {
+	ctx := context.Background()
+	srv, db, pub, _ := demoServer(t)
+	if _, err := db.ExecContext(ctx,
+		`UPDATE publications SET editorial_line = $1 WHERE id = $2`,
+		"Foco em tecnologia. Pule games.", pub.ID); err != nil {
+		t.Fatalf("set editorial_line: %v", err)
+	}
+
+	issueID, err := db.CreateIssue(ctx, pub.ID, 1, "s", "", nil)
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	srcs, err := db.Sources(ctx, pub.ID)
+	if err != nil || len(srcs) == 0 {
+		t.Fatalf("Sources: %v", err)
+	}
+	nonce := fmt.Sprintf("skip-%d", time.Now().UnixNano())
+	mkStory := func(ext, title string, score float64) (storyID, itemID int64) {
+		if err := db.QueryRowContext(ctx,
+			`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text, kind)
+			 VALUES ($1,$2,$3,$4,$5,'body','article') RETURNING id`,
+			db.Workspace(), srcs[0].ID, ext, "https://x.example/"+ext, title).Scan(&itemID); err != nil {
+			t.Fatalf("insert item %s: %v", ext, err)
+		}
+		var err error
+		if storyID, err = db.CreateStory(ctx, pub.ID, title, 1, "https://x.example/"+ext); err != nil {
+			t.Fatalf("CreateStory %s: %v", title, err)
+		}
+		if err := db.AddStoryItem(ctx, storyID, itemID); err != nil {
+			t.Fatalf("AddStoryItem %s: %v", title, err)
+		}
+		if err := db.SetStoryTriage(ctx, storyID, score, "seeded"); err != nil {
+			t.Fatalf("SetStoryTriage %s: %v", title, err)
+		}
+		return storyID, itemID
+	}
+	enrich := func(itemID int64, topics string) {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO item_enrichment (item_id, ai_kind, promotional, topics_json, summary_pt, language, model)
+			 VALUES ($1,'noticia',false,$2,'s','pt','test')`, itemID, topics); err != nil {
+			t.Fatalf("enrich item %d: %v", itemID, err)
+		}
+	}
+
+	// Clean title, banned subject tag — the GTA-6 shape: only the
+	// "games" tag betrays it. And one ordinary on-topic story.
+	_, gtaItem := mkStory(nonce+"-a", "GTA VI ganha nova data", 9)
+	_, keepItem := mkStory(nonce+"-b", "Nova feature de apps", 8)
+	enrich(gtaItem, `["games"]`)
+	enrich(keepItem, `["tecnologia"]`)
+
+	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
+	rr := apiCall(t, srv, "GET", issueURL+"/candidates?all=1", nil)
+	if rr.Code != 200 {
+		t.Fatalf("candidates = %d: %s", rr.Code, shortBody(rr))
+	}
+	resp := apiJSON(t, rr)
+	var gta, keep map[string]any
+	for _, c := range resp["candidates"].([]any) {
+		m := c.(map[string]any)
+		switch m["title"] {
+		case "GTA VI ganha nova data":
+			gta = m
+		case "Nova feature de apps":
+			keep = m
+		}
+	}
+	if gta == nil || keep == nil {
+		t.Fatalf("cards missing: gta=%v keep=%v", gta, keep)
+	}
+	if gta["rejected_editorial"] != true {
+		t.Errorf("skip-clause story lacks rejected_editorial: %v", gta)
+	}
+	if gta["suggested_section"] != nil {
+		t.Errorf("rejected story got a section suggestion: %v", gta["suggested_section"])
+	}
+	if !strings.Contains(gta["reason"].(string), "rejeitada pela linha editorial") {
+		t.Errorf("skip marker missing from reason: %v", gta["reason"])
+	}
+	if keep["rejected_editorial"] != nil {
+		t.Errorf("clean story wrongly rejected: %v", keep)
 	}
 }
 
