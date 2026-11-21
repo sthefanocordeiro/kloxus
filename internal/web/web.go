@@ -85,6 +85,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /sample/a/", s.sampleArticle) // tolerate a stray trailing slash
 	m.HandleFunc("GET /a/{id}", s.articlePage)
 	m.HandleFunc("GET /outbox/{id}/eml", s.outboxEML)
+	m.HandleFunc("GET /outbox/{id}/html", s.outboxHTML)
 	m.HandleFunc("POST /webhooks/firecrawl", s.firecrawlWebhook)
 	m.HandleFunc("GET /api/v1/admin/llm", s.apiAdminLLM)
 	m.HandleFunc("POST /api/v1/admin/llm", s.apiAdminLLMSet)
@@ -215,7 +216,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Request-Id", rid)
 	// baseline hardening on every response (KLOX-56): no sniffing, no
 	// foreign framing, trimmed referrers, and a self-scoped CSP. The
-	// frame-src covers the outbox preview's sandboxed srcdoc iframe.
+	// frame-src 'self' covers the outbox preview's fetched iframe.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	// HSTS on every response (KLOX-66 §8): the hosted app only serves
@@ -229,6 +230,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
 			"img-src 'self' data: https:; connect-src 'self'; "+
+			"font-src 'self' data:; "+
 			"frame-src 'self' about: https://youtube.com https://www.youtube.com "+
 			"https://youtube-nocookie.com https://www.youtube-nocookie.com "+
 			"https://player.vimeo.com https://open.spotify.com https://w.soundcloud.com "+

@@ -1,8 +1,19 @@
 import type { Lang } from "../i18n";
 
+// The API stores timestamps as naive UTC ("2026-11-20 14:30:00", no
+// zone marker). new Date() reads that as LOCAL time — in Brazil every
+// stored time displayed three hours early (KLOX-100). Parse the naive
+// shape explicitly as UTC; RFC3339/ISO strings keep their own zone.
+const NAIVE_TS = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+function parseAPITime(iso: string): Date {
+  const s = iso.trim();
+  return new Date(NAIVE_TS.test(s) ? s.replace(" ", "T") + "Z" : s);
+}
+
 // Reader-locale date formatting (pt-BR / en-US).
 export function fmtDate(iso: string, lang: Lang, withTime = false): string {
-  const d = new Date(iso);
+  const d = parseAPITime(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return new Intl.DateTimeFormat(lang === "pt" ? "pt-BR" : "en-US", {
     dateStyle: "medium",
