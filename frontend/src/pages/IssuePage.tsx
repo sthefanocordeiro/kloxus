@@ -847,13 +847,11 @@ export function IssuePage() {
 
             {/* phone tab bar — fixed just above the global bottom nav
                 (3.5rem bar + home-indicator inset) so it never scrolls
-                out of reach mid-document; pb-16 on the panes above keeps
-                the last content line clear of it (design review KLOX-96,
-                same defect as KLOX-89) */}
+                out of reach mid-document; pb-16 on the panes above
+                keeps the last content line clear of it (KLOX-89) */}
             <nav
               aria-label={t.nav.issueTabs}
-              style={{ bottom: "calc(3.5rem + env(safe-area-inset-bottom))" }}
-              className="fixed inset-x-0 z-40 flex border-t border-line bg-paper-raised text-xs md:hidden"
+              className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-40 flex border-t border-line bg-paper-raised text-xs md:hidden"
             >
               {(
                 [
