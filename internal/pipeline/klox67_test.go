@@ -194,19 +194,25 @@ func TestScoreStoriesEnriched(t *testing.T) {
 
 func TestTopicMatchesIA(t *testing.T) {
 	pub := &store.Publication{Topic: "IA e startups"}
-	if !TopicMatches("IA", FoldedTokens(pub.Topic+" "+pub.EditorialLine), pub) {
+	src := PositiveEditorialText(pub)
+	if !TopicMatches("IA", FoldedTokens(src), src) {
 		t.Error("literal IA should match")
 	}
 	// lowercase "ia" in prose must NOT match the IA tag — it is a PT verb
 	pub2 := &store.Publication{Topic: "quem lê via whatsapp"}
-	if TopicMatches("IA", FoldedTokens(pub2.Topic), pub2) {
+	if TopicMatches("IA", FoldedTokens(pub2.Topic), pub2.Topic) {
 		t.Error("lowercase ia must not match the IA tag")
 	}
 	pub3 := &store.Publication{Topic: "inteligência artificial"}
-	if !TopicMatches("IA", FoldedTokens(pub3.Topic), pub3) {
+	if !TopicMatches("IA", FoldedTokens(pub3.Topic), pub3.Topic) {
 		t.Error("inteligência artificial should match the IA tag")
 	}
-	if !TopicMatches("tecnologia", FoldedTokens("mídia e tecnologia"), pub) {
+	// a skipped subject never counts — even written as a literal AI
+	pubSkip := &store.Publication{Topic: "fintech", EditorialLine: "Pule AI e games."}
+	if TopicMatches("IA", FoldedTokens(PositiveEditorialText(pubSkip)), PositiveEditorialText(pubSkip)) {
+		t.Error("IA inside a skip clause must not count as on-topic")
+	}
+	if !TopicMatches("tecnologia", FoldedTokens("mídia e tecnologia"), "mídia e tecnologia") {
 		t.Error("plain tag should fold and match")
 	}
 }

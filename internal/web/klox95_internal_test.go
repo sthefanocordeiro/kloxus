@@ -19,30 +19,36 @@ func TestCardFlags(t *testing.T) {
 		name                    string
 		pub                     *store.Publication
 		card                    *store.StoryCard
+		title                   string
 		wantForeign, wantOffTop bool
 	}{
-		{"no enrichment stays visible", pub, nil, false, false},
-		{"empty card stays visible", pub, &store.StoryCard{}, false, false},
+		{"no enrichment stays visible", pub, nil, "", false, false},
+		{"empty card stays visible", pub, &store.StoryCard{}, "", false, false},
 		{"en member vs pt pub is foreign", pub,
-			&store.StoryCard{Language: "en", Topics: []string{"tecnologia"}}, true, false},
+			&store.StoryCard{Language: "en", Topics: []string{"tecnologia"}}, "", true, false},
 		{"pt-BR vs pt is not foreign", pub,
-			&store.StoryCard{Language: "pt", Topics: []string{"tecnologia"}}, false, false},
+			&store.StoryCard{Language: "pt", Topics: []string{"tecnologia"}}, "", false, false},
 		{"off-topic topics hide", pub,
-			&store.StoryCard{Language: "pt", Topics: []string{"cripto", "games"}}, false, true},
+			&store.StoryCard{Language: "pt", Topics: []string{"cripto", "games"}}, "", false, true},
 		{"one matching topic keeps", pub,
-			&store.StoryCard{Language: "pt", Topics: []string{"cripto", "startups"}}, false, false},
+			&store.StoryCard{Language: "pt", Topics: []string{"cripto", "startups"}}, "", false, false},
+		{"theme-phrase title clears off-topic like the scorer", pub,
+			&store.StoryCard{Language: "pt", Topics: []string{"cripto"}}, "Avanço da tecnologia no Brasil", false, false},
+		{"skip-clause words never rescue a tag", &store.Publication{
+			Language: "pt-BR", Topic: "fintech", EditorialLine: "Pule games."},
+			&store.StoryCard{Language: "pt", Topics: []string{"games"}}, "", false, true},
 		{"topic-less card cannot be off-topic", pub,
-			&store.StoryCard{Language: "pt"}, false, false},
+			&store.StoryCard{Language: "pt"}, "", false, false},
 		{"no declared topic cannot be off-topic",
 			&store.Publication{Language: "pt"},
-			&store.StoryCard{Language: "pt", Topics: []string{"cripto"}}, false, false},
+			&store.StoryCard{Language: "pt", Topics: []string{"cripto"}}, "", false, false},
 		{"unknown pub language never hides", &store.Publication{Topic: "tecnologia"},
-			&store.StoryCard{Language: "en", Topics: []string{"tecnologia"}}, false, false},
+			&store.StoryCard{Language: "en", Topics: []string{"tecnologia"}}, "", false, false},
 		{"foreign and off-topic can both hold", pub,
-			&store.StoryCard{Language: "es", Topics: []string{"cripto"}}, true, true},
+			&store.StoryCard{Language: "es", Topics: []string{"cripto"}}, "", true, true},
 	}
 	for _, tc := range cases {
-		f, o := cardFlags(tc.pub, tc.card)
+		f, o := cardFlags(tc.pub, tc.card, tc.title)
 		if f != tc.wantForeign || o != tc.wantOffTop {
 			t.Errorf("%s: flags = (%v,%v), want (%v,%v)",
 				tc.name, f, o, tc.wantForeign, tc.wantOffTop)

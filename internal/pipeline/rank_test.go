@@ -388,6 +388,122 @@ func TestPublicationTopicBonus(t *testing.T) {
 	}
 }
 
+// TestEditorialSkipDemotes is the KLOX-115 stopgap contract: a subject
+// the editorial line tells the desk to skip ("pule games") demotes the
+// story exactly like a declared reject term — marked, never slotted —
+// and the skipped word never counts as on-topic vocabulary either.
+func TestEditorialSkipDemotes(t *testing.T) {
+	stories := []store.Story{
+		detStory(1, "GTA VI ganha nova data", "2025-01-05", 1),
+		detStory(2, "Fintechs respondem a nova regra do BC", "2025-01-05", 1),
+	}
+	// the subject tag carries the hit even with a clean title — the
+	// "fintech vendo GTA 6" case: enrichment labels it games, the
+	// editorial line bans games.
+	stories[0].Items[0].ID = 11
+	pub := &store.Publication{
+		Language:      "pt-BR",
+		Topic:         "fintech",
+		EditorialLine: "Foco em fintech. Pule games.",
+		Sections:      []config.Section{{Title: "Radar", Items: 2}},
+	}
+	enrich := map[int64]*store.ItemEnrichment{
+		11: {ItemID: 11, Kind: "noticia", Topics: []string{"games"}},
+	}
+	scores, reasons := scoreStoriesEnriched(stories, "pt-BR", pub, enrich)
+	if scores[0] >= scores[1] {
+		t.Fatalf("skipped-subject story not demoted: %v", scores)
+	}
+	if !strings.Contains(reasons[0], "rejeitada pela linha editorial") {
+		t.Fatalf("skip marker missing: %q", reasons[0])
+	}
+	if strings.Contains(reasons[0], "no tema") {
+		t.Fatalf("skipped subject counted as on-topic: %q", reasons[0])
+	}
+	picks := pickLineup(stories, scores, reasons, pub, enrich)
+	for _, p := range picks {
+		if p.Refs[0] == 1 {
+			t.Fatalf("skipped story auto-slotted: %+v", picks)
+		}
+	}
+	if len(picks) != 1 || picks[0].Refs[0] != 2 {
+		t.Fatalf("picks = %+v, want only the fintech story", picks)
+	}
+}
+
+// TestEditorialSkipClauses covers the parsing edge cases the canonical
+// sample line exercises: qualifiers ("sem disponibilidade no Brasil")
+// never leak into the ban list, exceptions ("a menos que …") end the
+// skip run, "em vez de" splits a preference mid-sentence, and a weak
+// word mid-clause ("impacto sem hype") is not a ban.
+func TestEditorialSkipClauses(t *testing.T) {
+	line := "Priorize impacto real em vez de anúncios e hype. " +
+		"Pule lançamentos sem disponibilidade no Brasil. " +
+		"Pule rodadas de investimento, a menos que mudem um mercado. " +
+		"Prefira fontes primárias."
+	pos, skip := editorialLineSplit(line)
+	for _, banned := range []string{"anuncios", "hype", "lancamentos", "rodadas", "investimento"} {
+		if !strings.Contains(skip, banned) {
+			t.Errorf("skip list missing %q: %q", banned, skip)
+		}
+	}
+	for _, leaked := range []string{"brasil", "disponibilidade", "mercado", "fontes", "impacto"} {
+		if strings.Contains(skip, leaked) {
+			t.Errorf("qualifier/positive word %q leaked into skip list: %q", leaked, skip)
+		}
+	}
+	if !strings.Contains(pos, "fontes") || strings.Contains(pos, "anúncios") || strings.Contains(pos, "hype") {
+		t.Errorf("positive text wrong: %q", pos)
+	}
+	// scoring end-to-end: "lançamentos" bans, "Brasil" alone doesn't,
+	// and the conjunction needs both words — "investimento" alone must
+	// not kill a fintech story.
+	stories := []store.Story{
+		detStory(1, "Lançamentos da semana no streaming", "2025-01-05", 1),
+		detStory(2, "Nubank expande operações no Brasil", "2025-01-05", 1),
+		detStory(3, "Fintech recebe investimento do BNDES", "2025-01-05", 1),
+	}
+	pub := &store.Publication{Language: "pt-BR", EditorialLine: line}
+	scores, reasons := scoreStoriesEnriched(stories, "pt-BR", pub, nil)
+	if scores[0] >= scores[1] || scores[0] >= scores[2] {
+		t.Fatalf("ban-list story not demoted: %v", scores)
+	}
+	if !strings.Contains(reasons[0], "rejeitada pela linha editorial") {
+		t.Fatalf("skip marker missing: %q", reasons[0])
+	}
+	for _, i := range []int{1, 2} {
+		if strings.Contains(reasons[i], "rejeitada") {
+			t.Fatalf("story %d wrongly rejected: %q", i, reasons[i])
+		}
+	}
+}
+
+// TestThemePhraseMatch is the KLOX-115 phrase/weight contract: a theme
+// entry only counts when every content word hits — "banco central"
+// needs banco AND central, so "banco de dados" and "bancos SQL" stop
+// reading as on-topic while a real BC headline still scores the boost.
+func TestThemePhraseMatch(t *testing.T) {
+	stories := []store.Story{
+		detStory(1, "Banco de dados do FBI vaza na internet", "2025-01-05", 1),
+		detStory(2, "Bancos de dados SQL ganham nova versão", "2025-01-05", 1),
+		detStory(3, "Banco Central anuncia nova regra do Pix", "2025-01-05", 1),
+		detStory(4, "Mercado reage a decisão sobre juros", "2025-01-05", 1),
+	}
+	pub := &store.Publication{Language: "pt-BR", Topic: "banco central, Pix"}
+	scores, reasons := scoreStoriesEnriched(stories, "pt-BR", pub, nil)
+	for _, i := range []int{0, 1, 3} {
+		if strings.Contains(reasons[i], "no tema") {
+			t.Fatalf("loose-word story %d marked on-topic: %q", i, reasons[i])
+		}
+	}
+	if !strings.Contains(reasons[2], "no tema") {
+		t.Fatalf("phrase hit not rewarded: %q", reasons[2])
+	}
+	if scores[2] <= scores[0] || scores[2] <= scores[1] || scores[2] <= scores[3] {
+		t.Fatalf("phrase-hit story not lifted: %v", scores)
+	}
+}
+
 func TestParseTermsAndSuggestSection(t *testing.T) {
 	terms := parseTerms("celular e games, banco central")
 	if !termsAny(terms, "novo celular dobravel chega", FoldedTokens("novo celular dobravel chega")) {

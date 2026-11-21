@@ -1581,7 +1581,12 @@ func langPrefix(s string) string {
 // declared topic or editorial line. A story without enrichment — or
 // without classifiable topics — stays visible: absent data is never a
 // reason to hide a suggestion.
-func cardFlags(pub *store.Publication, card *store.StoryCard) (foreign, offTopic bool) {
+//
+// KLOX-115: the on-topic predicate is the scorer's own source of truth
+// (P1-9) — the tag match reads the editorial line minus its skip
+// clauses, and a title satisfying the topic's phrase alternatives
+// clears off_topic exactly like the run's "no tema" reason.
+func cardFlags(pub *store.Publication, card *store.StoryCard, title string) (foreign, offTopic bool) {
 	if pub == nil || card == nil {
 		return false, false
 	}
@@ -1589,18 +1594,33 @@ func cardFlags(pub *store.Publication, card *store.StoryCard) (foreign, offTopic
 		foreign = true
 	}
 	if len(card.Topics) > 0 {
-		tokens := pipeline.FoldedTokens(pub.Topic + " " + pub.EditorialLine)
+		pos := pipeline.PositiveEditorialText(pub)
+		tokens := pipeline.FoldedTokens(pos)
 		if len(tokens) > 0 {
 			offTopic = true
 			for _, tag := range card.Topics {
-				if pipeline.TopicMatches(tag, tokens, pub) {
+				if pipeline.TopicMatches(tag, tokens, pos) {
 					offTopic = false
 					break
 				}
 			}
+			if offTopic && pipeline.ThemeTitleHit(pub, title) {
+				offTopic = false
+			}
 		}
 	}
 	return foreign, offTopic
+}
+
+// cardRejectText is the text the bench's reject check reads — the
+// story title plus its enrichment tags, mirroring the scorer's search
+// text so a tag-only hit ("GTA 6" → games) marks the same story the
+// score demoted (KLOX-115).
+func cardRejectText(title string, card *store.StoryCard) string {
+	if card == nil || len(card.Topics) == 0 {
+		return title
+	}
+	return title + " " + strings.Join(card.Topics, " ")
 }
 
 // candidatePage cuts the ranked pool to the board's window: every
@@ -1636,16 +1656,6 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 			}
 		}
 	}
-	// KLOX-94: reject-term hits sink to the bench tail — marked, never
-	// silently dropped (rejectedEditorial flags them in the views). The
-	// partition is stable, so rank order survives inside each half.
-	if pub != nil && strings.TrimSpace(pub.RejectTerms) != "" {
-		sort.SliceStable(bench, func(a, b int) bool {
-			ra := pipeline.TermsMatch(pub.RejectTerms, bench[a].Story.Title)
-			rb := pipeline.TermsMatch(pub.RejectTerms, bench[b].Story.Title)
-			return !ra && rb
-		})
-	}
 	// KLOX-95: the hidden set (foreign-language / off-topic) is computed
 	// on the full bench, so hidden_bench stays honest in both ?all
 	// states — the default view drops those suggestions, ?all=1 serves
@@ -1661,9 +1671,23 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 	if err != nil {
 		return nil, nil, err
 	}
+	// KLOX-94: reject hits sink to the bench tail — marked, never
+	// silently dropped (rejectedEditorial flags them in the views). The
+	// partition is stable, so rank order survives inside each half.
+	// KLOX-115 widens the list to the editorial line's skip clauses and
+	// matches the tags too, so a clean title carrying a banned subject
+	// tag ("GTA 6" → games) sinks the same way the score did.
+	if pub != nil {
+		rejects := func(c store.RankedCandidate) bool {
+			return pipeline.RejectMatch(pub, cardRejectText(c.Story.Title, cards[c.Story.ID]))
+		}
+		sort.SliceStable(bench, func(a, b int) bool {
+			return !rejects(bench[a]) && rejects(bench[b])
+		})
+	}
 	hidden := map[int64]bool{}
 	for _, c := range bench {
-		foreign, offTopic := cardFlags(pub, cards[c.Story.ID])
+		foreign, offTopic := cardFlags(pub, cards[c.Story.ID], c.Story.Title)
 		if foreign || offTopic {
 			hidden[c.Story.ID] = true
 		}
@@ -1739,7 +1763,7 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate, 
 			cv.Language = card.Language
 			cv.Topics = card.Topics
 			cv.PublishedAt = card.PublishedAt
-			cv.Foreign, cv.OffTopic = cardFlags(pub, card)
+			cv.Foreign, cv.OffTopic = cardFlags(pub, card, c.Story.Title)
 		}
 		if c.Item != nil {
 			cv.ItemID = c.Item.ID
@@ -1753,11 +1777,12 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate, 
 			// alternative story re-adds where it once sat
 			cv.SuggestedSection = c.Item.Section
 		} else {
-			// A bench story hitting the reject terms carries the
+			// A bench story hitting the reject policy carries the
 			// marker and gets no section suggestion — the policy is
-			// visible, never silent (KLOX-94).
-			if pub != nil && strings.TrimSpace(pub.RejectTerms) != "" &&
-				pipeline.TermsMatch(pub.RejectTerms, c.Story.Title) {
+			// visible, never silent (KLOX-94; KLOX-115 adds the
+			// editorial line's skip clauses and the tag-aware text).
+			if pub != nil &&
+				pipeline.RejectMatch(pub, cardRejectText(c.Story.Title, cards[c.Story.ID])) {
 				cv.RejectedEditorial = true
 				if strings.HasPrefix(strings.ToLower(pub.Language), "pt") {
 					cv.Reason += " · rejeitada pela linha editorial"

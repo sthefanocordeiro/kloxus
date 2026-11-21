@@ -210,23 +210,28 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 		return scores, reasons
 	}
 	pt := ptLang(lang)
-	// KLOX-94: the editorial line's reject terms demote matching
-	// stories to the bench's tail, and the publication's declared topic
-	// lifts direct title/headline hits — the free stand-ins for the
-	// pgvector classification until it lands (sibling issue).
+	// KLOX-94: the newsletter's reject terms demote matching stories
+	// to the bench's tail. KLOX-115 adds the editorial line's own skip
+	// clauses to that policy — "Pule games" sinks games-tagged stories
+	// the same −100 — and the declared topic lifts phrase hits, not
+	// loose words: "banco central" needs banco AND central, so "banco
+	// de dados" stops reading as on-topic.
 	reject := parseTerms(pub.RejectTerms)
-	theme := topicTokens(pub.Topic)
-	needText := len(reject) > 0 || len(theme) > 0
+	skip := skipTerms(pub.EditorialLine)
+	theme := phraseTerms(pub.Topic)
+	needText := len(reject)+len(skip)+len(theme) > 0
 	// The folded keyword set the tags match against — the publication's
-	// declared topic plus its editorial line.
-	tokens := FoldedTokens(pub.Topic + " " + pub.EditorialLine)
+	// declared topic plus the editorial line minus its skip clauses,
+	// so "pule games" never counts "games" as a theme word.
+	posText := PositiveEditorialText(pub)
+	tokens := FoldedTokens(posText)
 	for i := range stories {
 		var hay string
 		var words map[string]bool
 		if needText {
 			hay, words = storySearchText(&stories[i], enrich)
 		}
-		if len(reject) > 0 && termsAny(reject, hay, words) {
+		if (len(reject) > 0 && termsAny(reject, hay, words)) || phraseAny(skip, words) {
 			scores[i] -= rejectPenalty
 			if pt {
 				reasons[i] += " · rejeitada pela linha editorial"
@@ -247,19 +252,14 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 				bestW, haveKind = w, true
 			}
 			for _, t := range e.Topics {
-				if TopicMatches(t, tokens, pub) {
+				if TopicMatches(t, tokens, posText) {
 					onTopic = true
 					break
 				}
 			}
 		}
 		if !onTopic {
-			for w := range theme {
-				if wordHit(w, words) {
-					onTopic = true
-					break
-				}
-			}
+			onTopic = phraseAny(theme, words)
 		}
 		if haveKind {
 			scores[i] += bestW
@@ -416,17 +416,277 @@ var termStopwords = map[string]bool{
 	"in": true, "on": true, "for": true, "at": true, "by": true,
 }
 
-// topicTokens is the publication topic's discriminating vocabulary:
-// folded words of at least three letters minus the stopwords — short
-// tokens like "ia"/"ai" stay out because they are common word pieces.
-func topicTokens(s string) map[string]bool {
-	out := map[string]bool{}
-	for w := range FoldedTokens(s) {
-		if len(w) >= 3 && !termStopwords[w] {
-			out[w] = true
+// textToks splits folded text into letter/digit tokens — punctuation
+// never rides a word the way strings.Fields lets it.
+func textToks(s string) []string {
+	return strings.FieldsFunc(foldText(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+}
+
+// skipVerbs open an exclusion clause in the editorial line ("Pule
+// games", "Skip deals"): the subjects they govern join the reject
+// policy and never count as on-topic vocabulary (KLOX-115).
+var skipVerbs = map[string]bool{
+	"pule": true, "pular": true, "ignore": true, "ignorar": true,
+	"evite": true, "evitar": true, "skip": true, "avoid": true,
+	"exclude": true, "exclua": true, "excluir": true,
+}
+
+// weakSkipWords open an exclusion clause only at a clause boundary —
+// mid-clause they are ordinary function words ("impacto sem hype" is
+// a preference, not a ban; "no Brasil" is a place, not a "no").
+var weakSkipWords = map[string]bool{
+	"sem": true, "nada": true, "nao": true, "nunca": true,
+	"nenhum": true, "nenhuma": true, "without": true, "never": true,
+}
+
+// includeVerbs flip a clause back to positive coverage ("Prefira
+// fontes primárias", "cover fintech").
+var includeVerbs = map[string]bool{
+	"prefira": true, "preferir": true, "prefer": true,
+	"cubra": true, "cobrir": true, "cover": true,
+	"priorize": true, "priorizar": true, "prioritize": true,
+	"foque": true, "focar": true, "focus": true,
+	"destaque": true, "highlight": true, "inclua": true, "include": true,
+}
+
+// skipPhraseMarkers are multi-word negative pivots safe to honor
+// mid-clause — "Priorize impacto real em vez de anúncios e hype".
+var skipPhraseMarkers = []string{
+	"em vez de", "ao inves de", "instead of", "rather than",
+}
+
+// skipExceptionClauses end a skip run without feeding either list: a
+// qualification like "a menos que mudem um mercado" is fine print on
+// the ban, not more ban-list and not coverage vocabulary.
+var skipExceptionClauses = []string{
+	"a menos que", "a nao ser", "salvo", "exceto", "mas",
+	"unless", "except", "but",
+}
+
+// skipFragmentStops cut a skip fragment where its qualifier begins —
+// "Pule lançamentos sem disponibilidade no Brasil" bans "lançamentos",
+// never "brasil" or "disponibilidade" (KLOX-115).
+var skipFragmentStops = map[string]bool{
+	"sem": true, "que": true, "quando": true, "onde": true,
+	"no": true, "na": true, "nos": true, "nas": true,
+	"a": true, "as": true, "salvo": true, "exceto": true,
+	"porque": true, "pois": true, "enquanto": true, "vez": true,
+	"inves": true, "than": true,
+	"unless": true, "except": true, "but": true,
+	"since": true, "because": true, "while": true,
+}
+
+// editorialLineSplit separates an editorial line's positive coverage
+// text from its skip clauses. Sentences split on .!?; and newlines,
+// clauses on commas. A clause opening with a skip verb — or carrying
+// a phrase marker like "em vez de" — turns its subject list into
+// reject vocabulary; an include verb flips the run back to positive,
+// and an exception clause ("a menos que …") is neither. Positive
+// clauses keep their original case so the literal "IA"/"AI" tag check
+// still works; skip fragments return folded tokens.
+func editorialLineSplit(line string) (positive string, skip string) {
+	var pos, sk strings.Builder
+	for _, sent := range strings.FieldsFunc(line, func(r rune) bool {
+		return r == '.' || r == '!' || r == '?' || r == ';' || r == '\n'
+	}) {
+		skipping := false
+		for _, clause := range strings.Split(sent, ",") {
+			toks := textToks(clause)
+			if len(toks) == 0 {
+				continue
+			}
+			joined := strings.Join(toks, " ")
+			except := false
+			for _, e := range skipExceptionClauses {
+				if strings.HasPrefix(joined, e) {
+					except = true
+					break
+				}
+			}
+			if except {
+				skipping = false
+				continue
+			}
+			// A mid-clause phrase marker pivots the clause: the part
+			// before it keeps the current polarity, the part after it
+			// is always ban-list.
+			if before, after, ok := phraseMarkerCut(toks); ok {
+				if !skipping {
+					pos.WriteString(strings.Join(before, " ") + " ")
+				}
+				sk.WriteString(skipFragment(after))
+				skipping = true
+				continue
+			}
+			switch first := toks[0]; {
+			case skipVerbs[first], weakSkipWords[first]:
+				skipping = true
+				sk.WriteString(skipFragment(toks[1:]))
+			case includeVerbs[first]:
+				skipping = false
+				pos.WriteString(strings.TrimSpace(clause) + " ")
+			default:
+				if skipping {
+					sk.WriteString(skipFragment(toks))
+				} else {
+					pos.WriteString(strings.TrimSpace(clause) + " ")
+				}
+			}
 		}
 	}
+	return strings.TrimSpace(pos.String()), strings.TrimSpace(sk.String())
+}
+
+// phraseMarkerCut splits a clause's tokens around the first phrase
+// marker ("em vez de", "instead of"); ok is false when none appears.
+func phraseMarkerCut(toks []string) (before, after []string, ok bool) {
+	for i := 0; i < len(toks); i++ {
+		for _, m := range skipPhraseMarkers {
+			mt := strings.Fields(m)
+			if i+len(mt) > len(toks) {
+				continue
+			}
+			match := true
+			for j, w := range mt {
+				if toks[i+j] != w {
+					match = false
+					break
+				}
+			}
+			if match {
+				return toks[:i], toks[i+len(mt):], true
+			}
+		}
+	}
+	return toks, nil, false
+}
+
+// skipFragment keeps the ban's subject list and drops its qualifier:
+// tokens up to the first stop word ("sem", "que", "unless"), joined
+// with the "; " separator phraseTerms reads as the entry boundary.
+func skipFragment(toks []string) string {
+	var out []string
+	for _, w := range toks {
+		if skipFragmentStops[w] {
+			break
+		}
+		out = append(out, w)
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return strings.Join(out, " ") + "; "
+}
+
+// skipTerms parses the editorial line's skip clauses into
+// conjunctions — the same shape phraseTerms gives the topic — so a
+// skip entry only counts when every content word hits ("rodadas de
+// investimento" bans funding rounds, not every "investimento" story).
+func skipTerms(line string) [][]string {
+	_, skip := editorialLineSplit(line)
+	if skip == "" {
+		return nil
+	}
+	return phraseTerms(skip)
+}
+
+// phraseTerms parses a theme or skip list into conjunctions
+// (KLOX-115): entries split on , ; | and a bare "e"/"and", and every
+// content word inside an entry must hit for it to count. "banco
+// central" needs banco AND central — a loose "banco" in "banco de
+// dados" stops qualifying — while "fintech e regulação" still rewards
+// either subject.
+func phraseTerms(s string) [][]string {
+	var out [][]string
+	for _, entry := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ';' || r == '|'
+	}) {
+		var cur []string
+		flush := func() {
+			var words []string
+			for _, w := range cur {
+				if len(w) >= 3 && !termStopwords[w] {
+					words = append(words, w)
+				}
+			}
+			if len(words) > 0 {
+				out = append(out, words)
+			}
+			cur = nil
+		}
+		for _, w := range textToks(entry) {
+			if w == "e" || w == "and" {
+				flush()
+			} else {
+				cur = append(cur, w)
+			}
+		}
+		flush()
+	}
 	return out
+}
+
+// phraseHit reports whether one conjunction is fully present — every
+// content word must hit the folded word set (plural-tolerant).
+func phraseHit(alt []string, words map[string]bool) bool {
+	for _, w := range alt {
+		if !wordHit(w, words) {
+			return false
+		}
+	}
+	return len(alt) > 0
+}
+
+// phraseAny reports whether any conjunction is fully present.
+func phraseAny(alts [][]string, words map[string]bool) bool {
+	for _, a := range alts {
+		if phraseHit(a, words) {
+			return true
+		}
+	}
+	return false
+}
+
+// PositiveEditorialText is the publication's on-topic source text —
+// the declared topic plus the editorial line minus its skip clauses
+// (KLOX-115). "Pule games" stops counting "games" as a theme word
+// while "Prefira fontes primárias" keeps its vocabulary.
+func PositiveEditorialText(pub *store.Publication) string {
+	if pub == nil {
+		return ""
+	}
+	pos, _ := editorialLineSplit(pub.EditorialLine)
+	return strings.TrimSpace(pub.Topic + " " + pos)
+}
+
+// RejectMatch reports whether a text hits the publication's effective
+// reject list (KLOX-115): the declared reject_terms plus the subjects
+// the editorial line tells the desk to skip. It is the request-time
+// mirror of the run-time scorer's demotion — callers pass the story
+// title plus its enrichment tags so a tag-only hit ("GTA 6" carrying
+// the "games" tag) marks the same story the score sank.
+func RejectMatch(pub *store.Publication, text string) bool {
+	if pub == nil {
+		return false
+	}
+	hay := foldText(text)
+	words := FoldedTokens(hay)
+	return termsAny(parseTerms(pub.RejectTerms), hay, words) ||
+		phraseAny(skipTerms(pub.EditorialLine), words)
+}
+
+// ThemeTitleHit reports whether a title satisfies one of the
+// publication topic's conjunction alternatives (KLOX-115) — the
+// request-time mirror of the scorer's theme match, so the card's
+// off_topic flag and the stored "no tema" reason read the same source
+// of truth (P1-9).
+func ThemeTitleHit(pub *store.Publication, title string) bool {
+	if pub == nil {
+		return false
+	}
+	return phraseAny(phraseTerms(pub.Topic), FoldedTokens(foldText(title)))
 }
 
 // SuggestSection names the section a bench candidate best fits: the
@@ -446,15 +706,16 @@ func SuggestSection(title string, secs []config.Section) string {
 }
 
 // TopicMatches reports whether an enrichment tag hits the publication's
-// topic tokens. "IA" is special-cased: the folded token "ia" is a
+// on-topic tokens. "IA" is special-cased: the folded token "ia" is a
 // Portuguese verb form, so it only counts as a literal uppercase "IA"
-// in the original text or as "inteligência artificial".
-func TopicMatches(tag string, tokens map[string]bool, pub *store.Publication) bool {
+// in the original source text or as "inteligência artificial". posSource
+// is PositiveEditorialText — skip clauses stay out of the IA check too.
+func TopicMatches(tag string, tokens map[string]bool, posSource string) bool {
 	if tag == "IA" {
 		if tokens["inteligencia"] && tokens["artificial"] {
 			return true
 		}
-		for _, w := range strings.Fields(pub.Topic + " " + pub.EditorialLine) {
+		for _, w := range strings.Fields(posSource) {
 			if w == "IA" || w == "AI" {
 				return true
 			}
@@ -634,16 +895,18 @@ func hasEvidence(s *store.Story) bool {
 func pickLineup(stories []store.Story, scores []float64, reasons []string, pub *store.Publication, enrich map[int64]*store.ItemEnrichment) []lineupPick {
 	var sections []config.Section
 	var rejectTerms termSet
+	var skipAlts [][]string
 	pt := false
 	if pub != nil {
 		sections = pub.Sections
 		rejectTerms = parseTerms(pub.RejectTerms)
+		skipAlts = skipTerms(pub.EditorialLine)
 		pt = ptLang(pub.Language)
 	}
 	order := storyOrder(stories, scores)
 	slots := make([]int, len(sections))
 	secTopics := make([]termSet, len(sections))
-	needText := len(rejectTerms) > 0
+	needText := len(rejectTerms)+len(skipAlts) > 0
 	for i, sec := range sections {
 		slots[i] = sec.Items
 		secTopics[i] = parseTerms(sec.Topic)
@@ -661,7 +924,8 @@ func pickLineup(stories []store.Story, scores []float64, reasons []string, pub *
 		}
 	}
 	rejected := func(idx int) bool {
-		return len(rejectTerms) > 0 && termsAny(rejectTerms, hay[idx], words[idx])
+		return (len(rejectTerms) > 0 && termsAny(rejectTerms, hay[idx], words[idx])) ||
+			phraseAny(skipAlts, words[idx])
 	}
 	placed := make([]bool, len(stories))
 	outlets := map[string]int{}
