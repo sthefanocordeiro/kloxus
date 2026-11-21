@@ -793,7 +793,7 @@ function BlockAddView({ node }: NodeViewProps) {
         <div className="flex h-4 items-center justify-center">
           <span className="absolute inset-x-2 top-1/2 h-px bg-transparent transition-colors group-hover/gap:bg-line" />
           <button type="button" onClick={() => setOpen(true)} aria-label={b.add}
-            className="relative rounded-full border border-transparent bg-paper p-0.5 text-transparent transition-colors hover:border-teal hover:text-teal group-hover/gap:border-line group-hover/gap:text-muted">
+            className="relative -my-3 inline-flex size-11 items-center justify-center rounded-full border border-transparent bg-transparent p-0.5 text-transparent md:size-10 transition-colors hover:border-teal hover:text-teal group-hover/gap:border-line group-hover/gap:text-muted">
             <Plus size={12} />
           </button>
         </div>
