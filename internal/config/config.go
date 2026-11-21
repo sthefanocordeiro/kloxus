@@ -101,6 +101,19 @@ type Config struct {
 	// again); KLOXUS_INGEST_DAILY_JOURNAL=1 opts back in when a
 	// 'daily-journal' catalog row is seeded.
 	DailyJournalEnabled bool
+
+	// Ranking engine (KLOX-108). VoyageKey is the Fly secret
+	// VOYAGE_API_SECRET - never logged. Limits default to half the
+	// account's limits; caps are daily USD per model group.
+	VoyageKey       string
+	EmbedProvider   string // KLOXUS_EMBED_PROVIDER voyage|off
+	EmbedModel      string // KLOXUS_EMBED_MODEL
+	VoyageEmbedRPM  int
+	VoyageEmbedTPM  int
+	VoyageRerankRPM int
+	VoyageRerankTPM int
+	EmbedDailyUSD   float64
+	RerankDailyUSD  float64
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
@@ -145,6 +158,15 @@ func Load() (*Config, error) {
 		ScrapesPerDay:   getint("KLOXUS_SCRAPES_PER_DAY", 5),
 		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
 		AbacatePayWebhookSecret: os.Getenv("ABACATEPAY_WEBHOOK_SECRET"),
+		VoyageKey:       os.Getenv("VOYAGE_API_SECRET"),
+		EmbedProvider:   getenv("KLOXUS_EMBED_PROVIDER", "voyage"),
+		EmbedModel:      getenv("KLOXUS_EMBED_MODEL", "voyage-4-lite"),
+		VoyageEmbedRPM:  getint("KLOXUS_VOYAGE_EMBED_RPM", 1000),
+		VoyageEmbedTPM:  getint("KLOXUS_VOYAGE_EMBED_TPM", 8000000),
+		VoyageRerankRPM: getint("KLOXUS_VOYAGE_RERANK_RPM", 1000),
+		VoyageRerankTPM: getint("KLOXUS_VOYAGE_RERANK_TPM", 2000000),
+		EmbedDailyUSD:   getfloat("KLOXUS_EMBED_DAILY_USD", 0.05),
+		RerankDailyUSD:  getfloat("KLOXUS_RERANK_DAILY_USD", 0.10),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
 		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),

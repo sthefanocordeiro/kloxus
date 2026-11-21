@@ -25,12 +25,14 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/coverage"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
+	"github.com/sthefanocordeiro/kloxus/internal/embed"
 	"github.com/sthefanocordeiro/kloxus/internal/ingest"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/payments"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/voyage"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
@@ -60,6 +62,8 @@ func main() {
 		err = cmdIngest(os.Args[2:])
 	case "coverage":
 		err = cmdCoverage(os.Args[2:])
+	case "embed-backfill":
+		err = cmdEmbedBackfill(os.Args[2:])
 	case "record":
 		err = cmdRecord(os.Args[2:])
 	case "llm-check":
@@ -93,6 +97,7 @@ usage:
   kloxus ingest status                      show the global fetch log
   kloxus coverage [--pages n] [--base url] [--out file]
                                               Daily Journal niche-coverage report (KLOX-93)
+  kloxus embed-backfill [--days n]            embed the last n days of items with Voyage (refuses above USD 0.10)
   kloxus record --publication <ref> [--dir d]    regenerate LLM fixtures (real mode)
   kloxus record --live --def <yaml> [--dump-feeds d] [--sample-out d] [--dir d]
                                               record one real issue (feeds + LLM + sample export)
@@ -327,7 +332,16 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		if cfg.Mode != "demo" && !cfg.LLMOff() {
 			enr = &pipeline.Enricher{Pool: pool, LLM: provider, Model: cfg.ModelTriage}
 		}
+		// Voyage embedding queue (KLOX-108): kicked after each poll, runs
+		// in its own goroutine, never blocks ingestion.
+		var embedWorker *embed.Worker
+		if emb := newEmbedder(cfg, pool); emb != nil {
+			embedWorker = &embed.Worker{Store: pool, Embedder: emb, Log: log.Default()}
+			embedWorker.Start()
+			go embedWorker.Run(context.Background())
+		}
 		sched.AfterPoll = func(ctx context.Context) {
+			defer embedWorker.Kick() // nil-safe; non-blocking
 			if n, err := sem.Sweep(ctx, 200); err != nil {
 				log.Printf("semantic sweep: %v", err)
 			} else if n > 0 {
@@ -824,4 +838,60 @@ func cmdIngestStatus() error {
 		}
 	}
 	return nil
+}
+
+// newEmbedder builds the Voyage-backed embedder from config, or nil
+// when embeddings are off or no key is set (ranking then uses the FTS
+// fallback). The key is read from VOYAGE_API_SECRET and never printed.
+func newEmbedder(cfg *config.Config, pool *store.Pool) embed.Embedder {
+	if strings.EqualFold(cfg.EmbedProvider, "off") {
+		log.Printf("embeddings: provider off - ranking uses the FTS fallback")
+		return nil
+	}
+	if cfg.VoyageKey == "" {
+		log.Printf("embeddings: VOYAGE_API_SECRET not set - ranking uses the FTS fallback")
+		return nil
+	}
+	client := &voyage.Client{
+		Key:    cfg.VoyageKey,
+		Ledger: pool,
+		Log:    log.Default(),
+		Limits: map[voyage.Group]voyage.Limits{
+			voyage.GroupEmbed:  {RPM: cfg.VoyageEmbedRPM, TPM: cfg.VoyageEmbedTPM},
+			voyage.GroupRerank: {RPM: cfg.VoyageRerankRPM, TPM: cfg.VoyageRerankTPM},
+		},
+		Caps: map[voyage.Group]float64{
+			voyage.GroupEmbed:  cfg.EmbedDailyUSD,
+			voyage.GroupRerank: cfg.RerankDailyUSD,
+		},
+	}
+	emb, err := embed.New(embed.Config{Provider: cfg.EmbedProvider, Model: cfg.EmbedModel}, client)
+	if err != nil {
+		log.Printf("embeddings: %v - ranking uses the FTS fallback", err)
+		return nil
+	}
+	return emb
+}
+
+// cmdEmbedBackfill embeds the last --days of items (newest first,
+// resumable: stored items leave the pending set). It prints the
+// projected tokens and list cost first and refuses above USD 0.10.
+func cmdEmbedBackfill(args []string) error {
+	fs := flag.NewFlagSet("embed-backfill", flag.ContinueOnError)
+	days := fs.Int("days", 7, "how many days back to embed")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, pool, _, err := openDemoDB()
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	emb := newEmbedder(cfg, pool)
+	if emb == nil {
+		return errors.New("embeddings are off or VOYAGE_API_SECRET is not set")
+	}
+	w := &embed.Worker{Store: pool, Embedder: emb, Log: log.Default()}
+	_, err = w.Backfill(context.Background(), *days, func(m string) { fmt.Println(m) })
+	return err
 }
