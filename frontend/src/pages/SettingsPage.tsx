@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { BookOpen, Inbox, LayoutTemplate } from "lucide-react";
 import { api, type Publication } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Button, Card } from "../ui";
+import { StepCounter } from "../components/StepCounter";
 import { KDialog } from "../ui-overlays";
 
 // Configurações (§3.1, KLOX-65): the publication's editorial identity,
@@ -15,6 +16,8 @@ export function SettingsPage() {
   const { t } = useT();
   const { id } = useParams();
   const nav = useNavigate();
+  // onboarding round-trip (KLOX-113): Seções → Voltar lands here as step 1
+  const onboarding = useSearchParams()[0].get("onboarding") === "1";
   const qc = useQueryClient();
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id!) });
   const [form, setForm] = useState<Publication | null>(null);
@@ -40,6 +43,7 @@ export function SettingsPage() {
       setSaved(true);
       qc.invalidateQueries({ queryKey: ["publication", id] });
       qc.invalidateQueries({ queryKey: ["publications"] });
+      if (onboarding) nav(`/publications/${id}/sections?onboarding=1`);
     },
   });
 
@@ -61,6 +65,7 @@ export function SettingsPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-6">
+      {onboarding && <StepCounter steps={t.steps.onboarding} current={1} />}
       <Card className="p-5">
         <Field label={t.settingsPage.name} value={form.name} onChange={(v) => set("name", v)} />
         <Field label={t.settingsPage.topic} value={form.topic} onChange={(v) => set("topic", v)} />
@@ -83,7 +88,7 @@ export function SettingsPage() {
         {saved && <p className="mt-3 text-xs font-medium text-teal">{t.settingsPage.saved}</p>}
         <div className="mt-5">
           <Button disabled={save.isPending || !form.name.trim()} onClick={() => save.mutate()}>
-            {save.isPending ? t.settingsPage.saving : t.settingsPage.save}
+            {save.isPending ? t.settingsPage.saving : onboarding ? t.create.next : t.settingsPage.save}
           </Button>
         </div>
       </Card>

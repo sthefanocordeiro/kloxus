@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type NewsletterSection } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Button, Card, SkeletonLine } from "../ui";
+import { StepCounter } from "../components/StepCounter";
 import { SectionBuilder, totalStories, SECTION_LIMITS } from "../components/SectionBuilder";
 
 // Seções (§3.1, KLOX-65): the creator's section builder — the same
@@ -14,6 +15,10 @@ import { SectionBuilder, totalStories, SECTION_LIMITS } from "../components/Sect
 export function SectionsPage() {
   const { t } = useT();
   const { id } = useParams();
+  const nav = useNavigate();
+  // onboarding flow (Sources → Voltar): shows the step counter and a
+  // Voltar back to step 1 (KLOX-113)
+  const onboarding = useSearchParams()[0].get("onboarding") === "1";
   const qc = useQueryClient();
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id!) });
   const [sections, setSections] = useState<NewsletterSection[] | null>(null);
@@ -41,6 +46,14 @@ export function SectionsPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl p-4 md:p-6">
+      {onboarding && (
+        <StepCounter
+          className="mb-4"
+          steps={t.steps.onboarding}
+          current={2}
+          onStep={(i) => nav(i === 0 ? `/publications/${id}/settings?onboarding=1` : `/publications/${id}/sources`)}
+        />
+      )}
       <Card className="p-5">
         <SectionBuilder
           value={sections}
@@ -52,7 +65,12 @@ export function SectionsPage() {
         <p className="mt-3 text-xs text-muted">{t.builder.nextEdition}</p>
         {save.error && <p className="mt-2 text-xs text-danger">{errText(t, save.error)}</p>}
         {saved && <p className="mt-2 text-xs font-medium text-teal">{t.sectionsPage.saved}</p>}
-        <div className="mt-4 flex justify-end">
+        <div className="mt-4 flex items-center justify-end gap-3">
+          {onboarding && (
+            <Button variant="outline" disabled={save.isPending} onClick={() => nav(`/publications/${id}/settings?onboarding=1`)}>
+              {t.nav.back}
+            </Button>
+          )}
           <Button disabled={!valid || save.isPending} onClick={() => save.mutate()}>
             {save.isPending ? t.sectionsPage.saving : t.sectionsPage.save}
           </Button>
