@@ -316,8 +316,8 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	go pool.KeepAlive(context.Background(), time.Minute)
 	if cfg.IngestEnabled {
 		// The global feed scheduler — feeds fetch once for every
-		// workspace (D29). Daily Journal is the primary source now
-		// (KLOX-93); RSS stays as coverage fallback.
+		// workspace (D29). Daily Journal left the catalog again
+		// (KLOX-114); its client stays opt-in via the env flag.
 		sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
 		if cfg.DailyJournalEnabled {
 			sched.SetupDailyJournal(context.Background(), ingest.DefaultUserAgent)

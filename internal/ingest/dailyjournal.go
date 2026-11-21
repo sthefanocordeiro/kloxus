@@ -1,7 +1,7 @@
 package ingest
 
-// Daily Journal ingestion (KLOX-93 — DJ is the primary source again,
-// owner directive; the D31 client returns extended). Public JSON API
+// Daily Journal ingestion (KLOX-93 client; dormant since KLOX-114 —
+// DJ left the catalog and the flag defaults off). Public JSON API
 // only — no HTML pages are ever fetched. The list endpoint carries
 // title + description + categories; the detail endpoint carries the
 // aggregate body, bullets and cited source articles, which we store as
@@ -232,7 +232,7 @@ func (d *DailyJournal) Detail(ctx context.Context, slug string) (*DJItem, error)
 
 // ToCatalogItem maps an API record to a shared catalog row. DJ items
 // are kind='article' now: the aggregate body is DJ's own editorial
-// text, cited as Daily Journal — the primary-source posture of KLOX-93
+// text, cited as Daily Journal — the store-all posture of KLOX-93
 // (D31's links-only signal treatment is gone).
 func (d *DailyJournal) ToCatalogItem(it DJItem) store.CatalogItem {
 	cited := make([]string, 0, len(it.Sources))

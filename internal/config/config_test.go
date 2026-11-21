@@ -111,6 +111,39 @@ func TestLLMMode(t *testing.T) {
 	}
 }
 
+// TestDailyJournalDefault pins the KLOX-114 regression: the Daily
+// Journal is opt-in. Unset/empty env keeps it off (the KLOX-93
+// default-on is what flooded the catalog with general politics);
+// =1/true/yes opt back in for a re-seeded catalog row.
+func TestDailyJournalDefault(t *testing.T) {
+	t.Setenv("KLOXUS_INGEST_DAILY_JOURNAL", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DailyJournalEnabled {
+		t.Fatal("DailyJournalEnabled = true by default, want opt-in off")
+	}
+	for _, v := range []string{"1", "true", "yes"} {
+		t.Setenv("KLOXUS_INGEST_DAILY_JOURNAL", v)
+		cfg, err = Load()
+		if err != nil {
+			t.Fatalf("Load(%q): %v", v, err)
+		}
+		if !cfg.DailyJournalEnabled {
+			t.Errorf("DailyJournalEnabled = false with KLOXUS_INGEST_DAILY_JOURNAL=%q", v)
+		}
+	}
+	t.Setenv("KLOXUS_INGEST_DAILY_JOURNAL", "0")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load(0): %v", err)
+	}
+	if cfg.DailyJournalEnabled {
+		t.Error("DailyJournalEnabled = true with =0")
+	}
+}
+
 func TestBind(t *testing.T) {
 	t.Setenv("KLOXUS_BIND", "")
 	cfg, err := Load()
