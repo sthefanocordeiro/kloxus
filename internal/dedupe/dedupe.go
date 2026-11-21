@@ -263,3 +263,43 @@ func assign(units [][]int, sims []uint64, ntok []int, published []time.Time, n i
 	}
 	return clusterOf
 }
+
+// TitleSameEvent reports whether two headlines from different outlets
+// cover the same event (KLOX-121: five GTA 6 stories → one). It is
+// deliberately conservative: the headlines must share at least three
+// distinctive tokens covering 60% of the shorter one, or two tokens at
+// 67% when one is a number or a short code ("gta 6"). Callers still
+// bound the merge by recency and MaxClusterSize.
+func TitleSameEvent(a, b string) bool {
+	ta, tb := distinct(a), distinct(b)
+	if len(ta) == 0 || len(tb) == 0 {
+		return false
+	}
+	shared, hasNum := 0, false
+	for t := range ta {
+		if tb[t] {
+			shared++
+			for _, r := range t {
+				if unicode.IsDigit(r) {
+					hasNum = true
+				}
+			}
+		}
+	}
+	min := len(ta)
+	if len(tb) < min {
+		min = len(tb)
+	}
+	cover := float64(shared) / float64(min)
+	return (shared >= 3 && cover >= 0.6) || (shared >= 2 && hasNum && cover >= 0.67)
+}
+
+func distinct(title string) map[string]bool {
+	out := map[string]bool{}
+	for _, t := range contentTokens(title) {
+		if len([]rune(t)) >= 3 || (len(t) >= 1 && unicode.IsDigit([]rune(t)[0])) {
+			out[t] = true
+		}
+	}
+	return out
+}

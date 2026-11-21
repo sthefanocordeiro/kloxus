@@ -1679,10 +1679,10 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 	// KLOX-115 widens the list to the editorial line's skip clauses and
 	// matches the tags too, so a clean title carrying a banned subject
 	// tag ("GTA 6" → games) sinks the same way the score did.
+	rejects := func(c store.RankedCandidate) bool {
+		return pub != nil && pipeline.RejectMatch(pub, cardRejectText(c.Story.Title, cards[c.Story.ID]))
+	}
 	if pub != nil {
-		rejects := func(c store.RankedCandidate) bool {
-			return pipeline.RejectMatch(pub, cardRejectText(c.Story.Title, cards[c.Story.ID]))
-		}
 		sort.SliceStable(bench, func(a, b int) bool {
 			return !rejects(bench[a]) && rejects(bench[b])
 		})
@@ -1692,7 +1692,9 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 		foreign, offTopic := cardFlags(pub, cards[c.Story.ID], c.Story.Title)
 		// KLOX-109: the stage-1 verdict (relevance floor / English in a
 		// Portuguese publication) hides through the same filter.
-		if c.Hidden != "" || foreign || offTopic {
+		// KLOX-121: skip-list subjects (games, promoções, …) are "fora
+		// do tema" by default — hidden, shown only under ?all=1.
+		if c.Hidden != "" || foreign || offTopic || rejects(c) {
 			hidden[c.Story.ID] = true
 		}
 	}

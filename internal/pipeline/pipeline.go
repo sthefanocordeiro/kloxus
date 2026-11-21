@@ -401,6 +401,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		groups[clusters[i]] = append(groups[clusters[i]], it)
 	}
 	groups = mergeCitedGroups(groups)
+	groups = mergeEventGroups(groups)
 	ordered := make([][]store.Item, 0, len(groups))
 	for _, g := range groups {
 		ordered = append(ordered, g)
@@ -2119,6 +2120,73 @@ func mergeCitedGroups(groups map[int][]store.Item) map[int][]store.Item {
 	merged := map[int][]store.Item{}
 	for id, g := range groups {
 		merged[find(id)] = append(merged[find(id)], g...)
+	}
+	return merged
+}
+
+// mergeEventGroups folds clusters whose headlines cover the same event
+// from different outlets (KLOX-121) — SimHash only catches republished
+// bodies, not five outlets reporting one launch. Merges are bounded by
+// the 72 h window and MaxClusterSize, and never chain past the cap.
+func mergeEventGroups(groups map[int][]store.Item) map[int][]store.Item {
+	ids := make([]int, 0, len(groups))
+	for id := range groups {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	when := func(it store.Item) time.Time {
+		if t, ok := parsePublished(it.PublishedAt); ok {
+			return t
+		}
+		t, _ := parsePublished(it.FetchedAt)
+		return t
+	}
+	parent := map[int]int{}
+	size := map[int]int{}
+	for _, id := range ids {
+		size[id] = len(groups[id])
+	}
+	find := func(x int) int {
+		for {
+			p, ok := parent[x]
+			if !ok || p == x {
+				return x
+			}
+			x = p
+		}
+	}
+	same := func(a, b []store.Item) bool {
+		for _, x := range a {
+			for _, y := range b {
+				tx, ty := when(x), when(y)
+				if tx.IsZero() || ty.IsZero() || tx.Sub(ty) > dedupe.MaxMergeAge || ty.Sub(tx) > dedupe.MaxMergeAge {
+					continue
+				}
+				if dedupe.TitleSameEvent(x.Title, y.Title) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for i, a := range ids {
+		for _, b := range ids[i+1:] {
+			ra, rb := find(a), find(b)
+			if ra == rb || size[ra]+size[rb] > dedupe.MaxClusterSize {
+				continue
+			}
+			if same(groups[a], groups[b]) {
+				parent[rb] = ra
+				size[ra] += size[rb]
+			}
+		}
+	}
+	if len(parent) == 0 {
+		return groups
+	}
+	merged := map[int][]store.Item{}
+	for _, id := range ids {
+		merged[find(id)] = append(merged[find(id)], groups[id]...)
 	}
 	return merged
 }
