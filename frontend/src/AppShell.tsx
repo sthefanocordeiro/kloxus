@@ -20,6 +20,7 @@ import { useT, type Lang, type T } from "./i18n";
 import { cn } from "./lib/cn";
 import { BackButton } from "./components/BackButton";
 import { ClaimEmail } from "./components/ClaimEmail";
+import { usePublishing } from "./lib/publishing";
 
 interface Crumb {
   label: string;
@@ -71,6 +72,7 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
 export function AppShell() {
   const { t, lang, setLang } = useT();
   const { pathname } = useLocation();
+  const publishing = usePublishing();
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, retry: false, staleTime: Infinity });
 
   const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
@@ -101,14 +103,32 @@ export function AppShell() {
   const pubBase = pubKey ? `/publications/${pubKey}` : "/publications";
   const editionTo = latest ? `/issues/${latest.id}` : pubBase;
 
-  const items = [
-    { to: editionTo, label: t.nav.edition, icon: Newspaper, section: "edition", end: true },
-    { to: pubBase, label: t.nav.editions, icon: Layers, section: "editions", end: true },
-    { to: `${pubBase}/readers`, label: t.nav.readers, icon: Users, section: "readers" },
-    { to: `${pubBase}/sources`, label: t.sources, icon: Rss, section: "sources" },
-    { to: `${pubBase}/sections`, label: t.nav.sections, icon: LayoutGrid, section: "sections" },
-    { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },
-  ];
+  // KLOXUS_PUBLISHING off (KLOX-122): Hoje · Peças · Radar · Configurações.
+  // Readers, send and the outbox are not reachable from the nav.
+  const items = publishing
+    ? [
+        { to: editionTo, label: t.nav.edition, icon: Newspaper, section: "edition", end: true },
+        { to: pubBase, label: t.nav.editions, icon: Layers, section: "editions", end: true },
+        { to: `${pubBase}/readers`, label: t.nav.readers, icon: Users, section: "readers" },
+        { to: `${pubBase}/sources`, label: t.sources, icon: Rss, section: "sources" },
+        { to: `${pubBase}/sections`, label: t.nav.sections, icon: LayoutGrid, section: "sections" },
+        { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },
+      ]
+    : [
+        { to: editionTo, label: t.nav.today, icon: Newspaper, section: "edition", end: true },
+        { to: pubBase, label: t.nav.editions, icon: Layers, section: "editions", end: true },
+        { to: `${pubBase}/sources`, label: t.nav.radar, icon: Rss, section: "radar" },
+        { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },
+      ];
+  // the Radar entry spans its configuration pages
+  const section = !publishing && ["sources", "sections", "more"].includes(chrome.section) ? "radar" : chrome.section;
+  const radarTabs = !publishing && section === "radar"
+    ? [
+        { to: `${pubBase}/sources`, label: t.sources, on: chrome.section === "sources" },
+        { to: `${pubBase}/sections`, label: t.nav.sections, on: chrome.section === "sections" },
+        { to: `${pubBase}/guide`, label: t.guide.title, on: chrome.section === "more" },
+      ]
+    : [];
 
   const back = chrome.crumbs[chrome.crumbs.length - 1];
 
@@ -154,7 +174,7 @@ export function AppShell() {
               className={() =>
                 cn(
                   "flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium transition-colors duration-150",
-                  chrome.section === it.section
+                  section === it.section
                     ? "bg-teal-soft text-teal"
                     : "text-muted hover:bg-line/50 hover:text-ink",
                 )
@@ -216,6 +236,23 @@ export function AppShell() {
           </div>
         </header>
 
+        {radarTabs.length > 0 && (
+          <nav aria-label={t.nav.radar} className="flex shrink-0 gap-1 border-b border-line bg-paper-raised px-4">
+            {radarTabs.map((tab) => (
+              <Link
+                key={tab.to}
+                to={tab.to}
+                aria-current={tab.on ? "page" : undefined}
+                className={cn(
+                  "inline-flex min-h-11 items-center border-b-2 px-3 text-sm font-medium md:min-h-10",
+                  tab.on ? "border-teal text-ink" : "border-transparent text-muted hover:text-ink",
+                )}
+              >
+                {tab.label}
+              </Link>
+            ))}
+          </nav>
+        )}
         <main className="min-h-0 flex-1 overflow-y-auto pb-20 md:pb-0">
           <Outlet />
         </main>
@@ -226,24 +263,21 @@ export function AppShell() {
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           aria-label={t.publications}
         >
-          {[
-            { to: editionTo, label: t.nav.edition, icon: Newspaper, active: chrome.section === "edition" },
-            { to: pubBase, label: t.nav.editions, icon: Layers, active: chrome.section === "editions" },
-            { to: `${pubBase}/readers`, label: t.nav.readers, icon: Users, active: chrome.section === "readers" },
-          ].map((tab) => (
+          {(publishing ? items.slice(0, 3) : items)
+            .map((tab) => (
             <Link
               key={tab.label}
               to={tab.to}
               className={cn(
                 "flex h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium",
-                tab.active ? "text-teal" : "text-muted",
+                section === tab.section ? "text-teal" : "text-muted",
               )}
             >
               <tab.icon size={20} aria-hidden />
               {tab.label}
             </Link>
           ))}
-          <Drop
+          {publishing && <Drop
             side="top"
             className="h-full"
             trigger={(open) => (
@@ -259,7 +293,7 @@ export function AppShell() {
             )}
           >
             <MoreMenu pubBase={pubBase} />
-          </Drop>
+          </Drop>}
         </nav>
       </div>
     </div>

@@ -71,7 +71,8 @@ func TestRunTimeoutReleasesPublication(t *testing.T) {
 
 	mgr := workspace.OpenLocal(db, seed)
 	cfg := &config.Config{
-		Mode: "demo", Port: 8080,
+		PublishingEnabled: true,
+		Mode:              "demo", Port: 8080,
 		OutDir:      t.TempDir(),
 		ModelTriage: "claude-haiku-5-5", ModelDraft: "claude-sonnet-5-5", MaxDeepDives: 3,
 	}

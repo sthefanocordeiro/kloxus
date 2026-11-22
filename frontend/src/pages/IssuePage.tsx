@@ -12,6 +12,7 @@ import { BlockAdd, BlockDivider, BlockEmbed, BlockHeading, BlockImage, BlockLink
 import { useT } from "../i18n";
 import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
+import { usePublishing } from "../lib/publishing";
 import { errText, runErrText } from "../lib/errors";
 import { fmtDate } from "../lib/fmt";
 
@@ -48,6 +49,7 @@ function flashEl(docEl: HTMLElement | null, sel: string): HTMLElement | null {
 const BOARD_STATUSES = new Set(["draft", "reviewing", "blocked", ""]);
 
 export function IssuePage() {
+  const publishing = usePublishing();
   const { id } = useParams();
   const issueID = Number(id);
   const { t } = useT();
@@ -677,8 +679,8 @@ export function IssuePage() {
               onApproved={() => invalidate()}
             />
           )}
-          {issue.status === "scheduled" && <HoldBar issue={issue} onDone={() => invalidate()} />}
-          {issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
+          {publishing && issue.status === "scheduled" && <HoldBar issue={issue} onDone={() => invalidate()} />}
+          {publishing && issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
         </div>
       </header>
 
@@ -915,7 +917,7 @@ export function IssuePage() {
           onDone={() => { setInsertDlg(null); }}
         />
       )}
-      {(issue.status === "sent" || issue.status === "scheduled" || !!issue.test_sent_at) && (
+      {publishing && (issue.status === "sent" || issue.status === "scheduled" || !!issue.test_sent_at) && (
         <AfterSend issue={issue} onToast={showToast} />
       )}
       {toast && (
@@ -963,6 +965,7 @@ function ApproveBar({
   onApproved: () => void;
 }) {
   const { t } = useT();
+  const publishing = usePublishing();
   const ready = readyFromChecks(checks);
   const [confirm, setConfirm] = useState(false);
   const [audience, setAudience] = useState<"nobody" | "readers">("nobody");
@@ -1011,7 +1014,12 @@ function ApproveBar({
       >
         <ReadinessList checks={checks} onTarget={onTarget} />
         {ready && issue.status !== "approved" && (
-          <Button className="mt-3 w-full" size="sm" onClick={() => setConfirm(true)}>
+          <Button
+            className="mt-3 w-full"
+            size="sm"
+            disabled={flow.isPending}
+            onClick={() => (publishing ? setConfirm(true) : flow.mutate())}
+          >
             {t.readiness.approve}
           </Button>
         )}
@@ -1022,6 +1030,7 @@ function ApproveBar({
         )}
       </KPopover>
 
+      {publishing && (
       <KDialog open={confirm} onOpenChange={setConfirm} title={t.send.approveSend}>
         <p className="mb-3 text-sm font-semibold">
           #{issue.number} · {issue.subject}
@@ -1109,6 +1118,7 @@ function ApproveBar({
         </div>
         {flow.error && <p className="mt-2 text-xs text-danger">{errText(t, flow.error)}</p>}
       </KDialog>
+      )}
     </>
   );
 }
@@ -1143,7 +1153,67 @@ async function exportIssuePDF(issueID: number) {
 // action row buried at the bottom of the review column. Sends keep
 // the same confirm dialog, and the live-mail claim gate rides along
 // inside it.
-function ReviewActions({ issue, onDone, onToast, onEdit }: {
+function ReviewActions(props: {
+  issue: IssueSummary;
+  onDone: () => void;
+  onToast: (text: string) => void;
+  onEdit?: () => void;
+}) {
+  // KLOXUS_PUBLISHING off (KLOX-122): a finished piece offers edit and
+  // export only — no send, schedule, test or reader preview.
+  return usePublishing() ? <PublishingReviewActions {...props} /> : <PieceActions {...props} />;
+}
+
+function PieceActions({ issue, onToast, onEdit }: {
+  issue: IssueSummary;
+  onDone: () => void;
+  onToast: (text: string) => void;
+  onEdit?: () => void;
+}) {
+  const { t } = useT();
+  const exportURL = (fmt: string) => `/api/v1/issues/${issue.id}/export?fmt=${fmt}`;
+  const menuItem =
+    "flex w-full items-center gap-2 rounded-[var(--radius-btn)] px-2 py-1.5 text-left text-sm text-ink hover:bg-surface disabled:opacity-50";
+  return (
+    <span className="flex flex-wrap items-center justify-end gap-1.5">
+      {onEdit && (
+        <Button size="sm" variant="ghost" onClick={onEdit}>
+          <Pencil size={12} /> {t.review.edit}
+        </Button>
+      )}
+      <KPopover
+        trigger={
+          <Button size="sm" variant="outline">
+            {t.review.export} <ChevronDown size={11} />
+          </Button>
+        }
+      >
+        <KPopoverClose asChild>
+          <a className={menuItem} href={exportURL("html")} download>
+            <Download size={13} /> HTML
+          </a>
+        </KPopoverClose>
+        <KPopoverClose asChild>
+          <a className={menuItem} href={exportURL("markdown")} download>
+            <Download size={13} /> Markdown
+          </a>
+        </KPopoverClose>
+        <KPopoverClose asChild>
+          <button
+            type="button"
+            className={menuItem}
+            onClick={() => void exportIssuePDF(issue.id).catch(() => onToast(t.review.exportFailed))}
+          >
+            <Download size={13} /> PDF
+          </button>
+        </KPopoverClose>
+        <p className="mt-1 px-2 text-[11px] text-muted">{t.review.pdfHint}</p>
+      </KPopover>
+    </span>
+  );
+}
+
+function PublishingReviewActions({ issue, onDone, onToast, onEdit }: {
   issue: IssueSummary;
   onDone: () => void;
   onToast: (text: string) => void;
@@ -1341,6 +1411,7 @@ function ReviewStep({
   onChanged: () => void;
 }) {
   const { t } = useT();
+  const publishing = usePublishing();
   const ready = checks.length > 0 && checks.every((c) => c.ok);
   const approveMut = useMutation({
     mutationFn: () => api.approve(issueID),
@@ -1367,7 +1438,7 @@ function ReviewStep({
             <ReadinessList checks={checks} onTarget={onTarget} heading={false} />
           </div>
           <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
-            <h2 className="mb-2 text-sm font-semibold">{t.send.approveSend}</h2>
+            <h2 className="mb-2 text-sm font-semibold">{publishing ? t.send.approveSend : t.readiness.approve}</h2>
             <Button
               size="sm"
               disabled={!ready || approveMut.isPending}

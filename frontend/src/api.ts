@@ -12,6 +12,9 @@ export interface Workspace {
   // the sender's wire identity — server-side evidence for verification
   // preflights: outbox | resend | synthetic (loopback fake) | custom
   mail_transport?: "outbox" | "resend" | "synthetic" | "custom";
+  // KLOXUS_PUBLISHING (KLOX-122): the reader-facing surface (send,
+  // readers, public pages, paywall) is hidden unless the server says on
+  publishing?: boolean;
 }
 
 // One newsletter section as the builder edits it: id is the stable

@@ -1,5 +1,5 @@
 // KLOX-90 regression: on a fresh publication — zero confirmed sources,
-// zero issues — "Prepare next issue" used to launch a run that died on
+// zero issues — "Prepare next piece" used to launch a run that died on
 // "no items collected", and the Edições list was a bare "—". Prepare is
 // now gated on a confirmed source and the empty state carries real copy.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -82,13 +82,13 @@ describe("PublicationPage first-run state (KLOX-90)", () => {
     vi.mocked(api.sources).mockResolvedValue([]);
     renderPage();
 
-    const btn = await screen.findByRole("button", { name: "Prepare next issue" });
+    const btn = await screen.findByRole("button", { name: "Prepare next piece" });
     await waitFor(() => expect(btn).toBeDisabled());
     expect(await screen.findByRole("link", { name: "Open sources" })).toHaveAttribute(
       "href",
       "/publications/42/sources",
     );
-    expect(await screen.findByText("No issues yet — prepare the first one.")).toBeInTheDocument();
+    expect(await screen.findByText("No pieces yet — prepare the first one.")).toBeInTheDocument();
   });
 
   it("shows a skeleton, not the sources hint, while sources load (KLOX-126)", async () => {
@@ -103,7 +103,7 @@ describe("PublicationPage first-run state (KLOX-90)", () => {
     vi.mocked(api.sources).mockResolvedValue([source]);
     renderPage();
 
-    const btn = await screen.findByRole("button", { name: "Prepare next issue" });
+    const btn = await screen.findByRole("button", { name: "Prepare next piece" });
     await waitFor(() => expect(btn).toBeEnabled());
     expect(screen.queryByRole("link", { name: "Open sources" })).toBeNull();
   });

@@ -15,7 +15,7 @@ test.use({ locale: "pt-BR" });
 async function onboard(page: import("@playwright/test").Page) {
   await page.goto("/");
   await page
-    .getByRole("button", { name: /minha newsletter/ })
+    .getByRole("button", { name: /meu Radar/ })
     .first()
     .click();
   await page.waitForURL(/\/new/);
@@ -87,7 +87,7 @@ test("create flow: sample fields stay realistic and Voltar works", async ({ page
   await expect(page.getByLabel("Tema", { exact: true })).not.toHaveValue(/valdoriana/i);
 
   // Voltar leaves /new for the publications list — no dead controls
-  await page.getByRole("link", { name: "Voltar para Publicações" }).click();
+  await page.getByRole("link", { name: "Voltar para Radar" }).click();
   await page.waitForURL(/\/publications$/);
 });
 

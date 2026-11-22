@@ -614,6 +614,7 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 		"claimed":  owner != "", "owner_email": owner, "mail": mail,
 		"mail_transport": transport, "mail_webhook": mailWebhook,
 		"mail_stale_sent": staleSent,
+		"publishing": s.d.Cfg.PublishingEnabled,
 	})
 }
 

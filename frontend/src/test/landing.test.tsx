@@ -62,7 +62,7 @@ describe("Landing", () => {
 
   it("creates the anonymous workspace and lands on onboarding", async () => {
     renderApp();
-    const cta = await screen.findAllByRole("button", { name: /create your newsletter/i });
+    const cta = await screen.findAllByRole("button", { name: /create your Radar/i });
     fireEvent.click(cta[0]);
     await waitFor(() => expect(api.workspace).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("onboarding screen")).toBeInTheDocument();
@@ -77,7 +77,7 @@ describe("Landing", () => {
     expect(
       await screen.findByRole("heading", { name: /a pauta pronta/i }),
     ).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /criar minha newsletter/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /criar meu Radar/i }).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     expect(
       await screen.findByRole("heading", { name: /the research is ready/i }),
@@ -146,7 +146,7 @@ describe("Landing", () => {
     expect(within(menu!).getByRole("link", { name: /questions/i })).toBeInTheDocument();
     expect(within(menu!).getByRole("button", { name: /sign in/i })).toBeInTheDocument();
     expect(
-      within(menu!).getByRole("button", { name: /create your newsletter/i }),
+      within(menu!).getByRole("button", { name: /create your Radar/i }),
     ).toBeInTheDocument();
   });
 

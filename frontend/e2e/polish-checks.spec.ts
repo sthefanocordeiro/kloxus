@@ -230,12 +230,12 @@ async function onboardToBoard(page: Page): Promise<string> {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /A pauta pronta/ })).toBeVisible({ timeout: 15000 });
   await auditScreen(page, "landing");
-  await page.getByRole("button", { name: /Criar minha newsletter/ }).first().click();
+  await page.getByRole("button", { name: /Criar meu Radar/ }).first().click();
   await page.waitForURL(/\/new/);
   await expect(page.locator('input[value*="Futuro"]').first()).toBeVisible({ timeout: 15000 });
   await auditScreen(page, "onboard-step1");
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
-  await expect(page.getByText(/Sua edição terá \d+ pautas/)).toBeVisible();
+  await expect(page.getByText(/Sua peça terá \d+ pautas/)).toBeVisible();
   await auditScreen(page, "onboard-step2-sections");
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
   await page.waitForURL(/\/publications\/(\d+)\/sources/);
@@ -258,7 +258,7 @@ test.describe(`klox-68 checks ${WIDTH}px`, () => {
     await expect(page.locator("p.font-doc").first()).toBeVisible({ timeout: 120_000 });
     await auditScreen(page, "board");
 
-    const issueTab = page.getByRole("button", { name: /Esta edição/ });
+    const issueTab = page.getByRole("button", { name: /Esta peça/ });
     if (await issueTab.isVisible().catch(() => false)) await issueTab.click();
     await page.getByRole("button", { name: /Escrever eu mesmo/ }).click();
     await page.waitForTimeout(800);

@@ -113,6 +113,10 @@ say "GET /api/v1/sample ok"
 [ "$(req POST /api/v1/demo/new)" = "200" ] || die "workspace creation failed"
 WSID="$(jget workspace.id)"; [ -n "$WSID" ] || die "no workspace id returned"
 [ "$(req GET /api/v1/workspace)" = "200" ] || die "workspace fetch failed"
+# KLOXUS_PUBLISHING (KLOX-122): off by default — the reader-facing
+# surface (send, outbox, /p pages) must 404 and steps 11b/12/13 are
+# replaced by that negative check.
+PUBLISHING="$(jget publishing)"
 say "anonymous workspace $WSID created"
 
 # --- 4b. transport preflight — fail closed before mail/model-capable ops ---
@@ -326,6 +330,16 @@ say "commentary saved"
 [ "$(jget ready)" = "true" ] || die "issue not ready: $(jget checks)"
 [ "$(req POST "/api/v1/issues/$IID/approve")" = "200" ] || die "approve: $(cat "$RESP")"
 say "issue approved"
+if [ "$PUBLISHING" != "true" ]; then
+	# Publishing off: the reader-facing surface is hidden, not deleted.
+	for hidden in "POST /api/v1/issues/$IID/send" "GET /api/v1/issues/$IID/after" 		"GET /api/v1/publications/1/outbox" "GET /p/radar" "GET /api/v1/p/radar" "GET /unsub"; do
+		code="$(req "${hidden%% *}" "${hidden#* }" "$([ "${hidden%% *}" = POST ] && echo '{"audience":"readers","when":"now"}')")"
+		[ "$code" = "404" ] || die "publishing off: $hidden answered $code, want 404"
+	done
+	say "publishing off: send, outbox and /p pages all 404"
+	say "ALL CHECKS PASSED"
+	exit 0
+fi
 if [ "$MAILPOSTURE" = "live" ]; then
 	# Live-mail posture (KLOX-59): the real provider stays configured for
 	# magic links, so smoke exercises only the send paths that are safe on

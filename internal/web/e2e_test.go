@@ -489,7 +489,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenHosted: %v", err)
 	}
-	cfg := &config.Config{Mode: "demo", ModelTriage: "claude-haiku-5-5", ModelDraft: "claude-sonnet-5-5"}
+	cfg := &config.Config{PublishingEnabled: true, Mode: "demo", ModelTriage: "claude-haiku-5-5", ModelDraft: "claude-sonnet-5-5"}
 	srv := web.New(web.Deps{
 		WS: mgr, Cfg: cfg,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},

@@ -40,13 +40,13 @@ test.describe("klox-68 live landing (PT)", () => {
     }
     console.log("LIVE-BANNED:", JSON.stringify(hits));
     // §1 structure: header CTA, hero, three steps, FAQ, closing band, footer
-    await expect(page.getByRole("button", { name: /Criar minha newsletter/ }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /Criar meu Radar/ }).first()).toBeVisible();
     console.log("LIVE-HEADLINE:", (await page.locator("h1").first().innerText()).replace(/\n/g, " "));
     // no anonymous banner
     const banner = await page.getByText(/Este espaço é anônimo/i).count();
     console.log("LIVE-ANON-BANNER:", banner);
     // english leak check: common EN strings must not appear in PT chrome
-    const en = ["Create your newsletter", "How it works", "Questions", "Try it without signing up"];
+    const en = ["Create your Radar", "How it works", "Questions", "Try it without signing up"];
     const enHits = en.filter((s) => body.includes(s));
     console.log("LIVE-EN-LEAK:", JSON.stringify(enHits));
     // footer links exist

@@ -61,7 +61,8 @@ func testServer(t *testing.T, seedIt bool, opt func(*web.Deps)) (*web.Server, *s
 	ctx := context.Background()
 	base := t.TempDir()
 	cfg := &config.Config{
-		Mode: "demo", Port: 8080,
+		PublishingEnabled: true,
+		Mode:              "demo", Port: 8080,
 		OutDir:      filepath.Join(base, "out"),
 		ModelTriage: "claude-haiku-5-5", ModelDraft: "claude-sonnet-5-5", MaxDeepDives: 3,
 	}

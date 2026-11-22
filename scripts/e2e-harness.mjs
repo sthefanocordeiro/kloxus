@@ -63,6 +63,11 @@ export function appEnv(mode) {
     KLOXUS_NO_BROWSER: "1",
     KLOXUS_NO_DOTENV: "1",
     KLOXUS_LLM_MODE: "off",
+    // KLOX-122: the reader-facing surface is off in production. The
+    // legacy send/outbox/reader journeys still exercise it locally, so
+    // the local server turns it on unless E2E_PUBLISHING=off — which is
+    // how no-publishing.spec.ts runs against the shipped default.
+    KLOXUS_PUBLISHING: process.env.E2E_PUBLISHING === "off" ? "off" : "on",
     ...SCRUBBED,
   };
   if (mode === "fake-live") {

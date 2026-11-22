@@ -258,3 +258,19 @@ func TestSlugify(t *testing.T) {
 		}
 	}
 }
+
+func TestPublishingFlagDefaultsOff(t *testing.T) {
+	t.Setenv("KLOXUS_NO_DOTENV", "1")
+	t.Setenv("KLOXUS_PUBLISHING", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PublishingEnabled {
+		t.Fatal("publishing must default to off (KLOX-122)")
+	}
+	t.Setenv("KLOXUS_PUBLISHING", "on")
+	if cfg, _ = Load(); !cfg.PublishingEnabled {
+		t.Fatal("KLOXUS_PUBLISHING=on must enable publishing")
+	}
+}

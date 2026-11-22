@@ -62,9 +62,9 @@ type Config struct {
 	CiteChecksPerEdition int
 	LLMKillEnv           bool   // KLOXUS_LLM_KILL at boot; also checked live per call
 	AdminToken           string // bearer token for /api/v1/admin/*
-	MasterKey    string
-	ResendAPIKey string
-	FromAddress  string
+	MasterKey            string
+	ResendAPIKey         string
+	FromAddress          string
 	// FakeResendURL points the mail transport at a literal-loopback fake
 	// provider (scripts/fake-resend.mjs) — verification only. The sender
 	// carries a synthetic credential, follows no redirects and falls back
@@ -102,6 +102,13 @@ type Config struct {
 	// 'daily-journal' catalog row is seeded.
 	DailyJournalEnabled bool
 
+	// PublishingEnabled turns the reader-facing product back on:
+	// sending to readers, outbox, subscribe/readers, public /p pages,
+	// paywall and payments (KLOX-122, pivot to editor de pauta).
+	// KLOXUS_PUBLISHING=on re-enables; the default is off. Code and
+	// tables stay - this only hides the surface.
+	PublishingEnabled bool
+
 	// Ranking engine (KLOX-108). VoyageKey is the Fly secret
 	// VOYAGE_API_SECRET - never logged. Limits default to half the
 	// account's limits; caps are daily USD per model group.
@@ -135,32 +142,32 @@ func Load() (*Config, error) {
 		}
 	}
 	cfg := &Config{
-		Mode:            getenv("KLOXUS_MODE", "demo"),
-		Port:            getint("KLOXUS_PORT", 8080),
-		Bind:            getenv("KLOXUS_BIND", "127.0.0.1"),
-		DatabaseURL:     os.Getenv("DATABASE_URL"),
-		OutDir:          getenv("KLOXUS_OUT_DIR", "out"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		ModelTriage:     getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),
-		ModelDraft:      getenv("KLOXUS_MODEL_DRAFT", "claude-haiku-5-5"),
-		MaxDeepDives:    getint("KLOXUS_MAX_DEEP_DIVES", 3),
-		LLMMode:         getenv("KLOXUS_LLM_MODE", "auto"),
-		RunsPerDay:      getint("KLOXUS_RUNS_PER_DAY", 2),
-		TokensPerRun:    getint("KLOXUS_TOKENS_PER_RUN", 200000),
-		LLMRunCap:       getfloat("KLOXUS_LLM_RUN_CAP_USD", 0.25),
-		LLMDailyCap:     getfloat("KLOXUS_LLM_DAILY_CAP_USD", 1.00),
-		PaidActionsPerDay:    getint("KLOXUS_PAID_ACTIONS_PER_DAY", 5),
-		ReranksPerDay:        getint("KLOXUS_RERANKS_PER_DAY", 2),
-		CiteChecksPerEdition: getint("KLOXUS_CITECHECKS_PER_EDITION", 3),
-		LLMKillEnv:      os.Getenv("KLOXUS_LLM_KILL") != "",
-		AdminToken:      os.Getenv("KLOXUS_ADMIN_TOKEN"),
-		MasterKey:       os.Getenv("KLOXUS_MASTER_KEY"),
-		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
-		FromAddress:     os.Getenv("KLOXUS_FROM_ADDRESS"),
-		FakeResendURL:   os.Getenv("KLOXUS_FAKE_RESEND_URL"),
-		FirecrawlAPIKey: os.Getenv("FIRECRAWL_API_KEY"),
-		ScrapesPerDay:   getint("KLOXUS_SCRAPES_PER_DAY", 5),
-		AbacatePayKey:   os.Getenv("ABACATEPAY_API_KEY"),
+		Mode:                    getenv("KLOXUS_MODE", "demo"),
+		Port:                    getint("KLOXUS_PORT", 8080),
+		Bind:                    getenv("KLOXUS_BIND", "127.0.0.1"),
+		DatabaseURL:             os.Getenv("DATABASE_URL"),
+		OutDir:                  getenv("KLOXUS_OUT_DIR", "out"),
+		AnthropicAPIKey:         os.Getenv("ANTHROPIC_API_KEY"),
+		ModelTriage:             getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),
+		ModelDraft:              getenv("KLOXUS_MODEL_DRAFT", "claude-haiku-5-5"),
+		MaxDeepDives:            getint("KLOXUS_MAX_DEEP_DIVES", 3),
+		LLMMode:                 getenv("KLOXUS_LLM_MODE", "auto"),
+		RunsPerDay:              getint("KLOXUS_RUNS_PER_DAY", 2),
+		TokensPerRun:            getint("KLOXUS_TOKENS_PER_RUN", 200000),
+		LLMRunCap:               getfloat("KLOXUS_LLM_RUN_CAP_USD", 0.25),
+		LLMDailyCap:             getfloat("KLOXUS_LLM_DAILY_CAP_USD", 1.00),
+		PaidActionsPerDay:       getint("KLOXUS_PAID_ACTIONS_PER_DAY", 5),
+		ReranksPerDay:           getint("KLOXUS_RERANKS_PER_DAY", 2),
+		CiteChecksPerEdition:    getint("KLOXUS_CITECHECKS_PER_EDITION", 3),
+		LLMKillEnv:              os.Getenv("KLOXUS_LLM_KILL") != "",
+		AdminToken:              os.Getenv("KLOXUS_ADMIN_TOKEN"),
+		MasterKey:               os.Getenv("KLOXUS_MASTER_KEY"),
+		ResendAPIKey:            os.Getenv("RESEND_API_KEY"),
+		FromAddress:             os.Getenv("KLOXUS_FROM_ADDRESS"),
+		FakeResendURL:           os.Getenv("KLOXUS_FAKE_RESEND_URL"),
+		FirecrawlAPIKey:         os.Getenv("FIRECRAWL_API_KEY"),
+		ScrapesPerDay:           getint("KLOXUS_SCRAPES_PER_DAY", 5),
+		AbacatePayKey:           os.Getenv("ABACATEPAY_API_KEY"),
 		AbacatePayWebhookSecret: os.Getenv("ABACATEPAY_WEBHOOK_SECRET"),
 		VoyageKey:       os.Getenv("VOYAGE_API_SECRET"),
 		EmbedProvider:   getenv("KLOXUS_EMBED_PROVIDER", "voyage"),
@@ -218,6 +225,11 @@ func Load() (*Config, error) {
 	cfg.DailyJournalEnabled = false
 	if v := os.Getenv("KLOXUS_INGEST_DAILY_JOURNAL"); v != "" {
 		cfg.DailyJournalEnabled = v == "1" || v == "true" || v == "yes"
+	}
+	cfg.PublishingEnabled = false
+	switch strings.ToLower(os.Getenv("KLOXUS_PUBLISHING")) {
+	case "on", "1", "true", "yes":
+		cfg.PublishingEnabled = true
 	}
 	return cfg, nil
 }

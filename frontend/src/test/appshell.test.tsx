@@ -98,6 +98,7 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
       mode: "demo",
       hosted: false,
       llm_mode: "off",
+      publishing: true,
     });
     vi.mocked(api.publications).mockResolvedValue([pub]);
     vi.mocked(api.issue).mockResolvedValue(issue);
@@ -108,6 +109,7 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
     vi.mocked(api.publication).mockReturnValue(d.promise);
     renderAt("/publications/42/sources");
     await screen.findByText("pub screen");
+    await screen.findAllByRole("link", { name: "Readers" }); // workspace flag settled
 
     // pubQ is unresolved — the nav must already point at /publications/42
     expectNoDeadLinks();
@@ -123,7 +125,7 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
     // resolving pubQ only fills in data — the nav targets stay identical
     d.resolve({ publication: pub, latest_issue: issue });
     await waitFor(() => {
-      for (const a of screen.getAllByRole("link", { name: "Current issue" })) {
+      for (const a of screen.getAllByRole("link", { name: "Current piece" })) {
         expect(a).toHaveAttribute("href", "/issues/7");
       }
     });
@@ -152,7 +154,7 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
   });
 });
 
-// KLOX-90 regression: with no edition yet the "Current issue" link
+// KLOX-90 regression: with no edition yet the "Current piece" link
 // points at pubBase, and NavLink's prefix match lit it on every
 // publication sub-page (plus /publications, where it collided with
 // "Issues"). Highlight now follows chrome.section only.
@@ -164,6 +166,7 @@ describe("AppShell nav highlight without an edition (KLOX-90)", () => {
       mode: "demo",
       hosted: false,
       llm_mode: "off",
+      publishing: true,
     });
     vi.mocked(api.publications).mockResolvedValue([pub]);
     vi.mocked(api.publication).mockResolvedValue({ publication: pub }); // no latest_issue
@@ -176,23 +179,57 @@ describe("AppShell nav highlight without an edition (KLOX-90)", () => {
     }
   };
 
-  it("does not glow 'Current issue' on a publication sub-page", async () => {
+  it("does not glow 'Current piece' on a publication sub-page", async () => {
     renderAt("/publications/42/sources");
     await screen.findByText("pub screen");
     await waitFor(() => expect(api.publication).toHaveBeenCalled());
+    await screen.findAllByRole("link", { name: "Current piece" });
 
-    expectInactive("Current issue");
-    expectInactive("Issues");
+    expectInactive("Current piece");
+    expectInactive("Pieces");
     const sources = screen.getAllByRole("link", { name: "Sources" })[0];
     expect(sources.className).toContain("bg-teal-soft");
   });
 
-  it("glows only 'Issues' on /publications", async () => {
+  it("glows only 'Pieces' on /publications", async () => {
     renderAt("/publications");
     await screen.findByText("pubs screen");
+    await screen.findAllByRole("link", { name: "Current piece" });
 
-    expectInactive("Current issue");
-    const issues = screen.getAllByRole("link", { name: "Issues" })[0];
+    expectInactive("Current piece");
+    const issues = screen.getAllByRole("link", { name: "Pieces" })[0];
     expect(issues.className).toContain("bg-teal-soft");
+  });
+});
+
+// KLOX-122: with publishing off (the default) the sidebar is exactly
+// Today · Pieces · Radar · Settings — no readers, outbox or send.
+describe("AppShell nav with publishing off (KLOX-122)", () => {
+  beforeEach(() => {
+    vi.mocked(api.workspace).mockResolvedValue({
+      id: "w1",
+      label: "w",
+      mode: "demo",
+      hosted: false,
+      llm_mode: "off",
+      publishing: false,
+    });
+    vi.mocked(api.publications).mockResolvedValue([pub]);
+    vi.mocked(api.publication).mockResolvedValue({ publication: pub });
+  });
+
+  it("shows only Today, Pieces, Radar and Settings", async () => {
+    renderAt("/publications/42/sources");
+    await screen.findByText("pub screen");
+    const side = screen.getAllByRole("navigation", { name: "Radar" })[0];
+    expect(Array.from(side.querySelectorAll("a")).map((a) => a.textContent)).toEqual([
+      "Today",
+      "Pieces",
+      "Radar",
+      "Settings",
+    ]);
+    for (const a of screen.getAllByRole("link")) {
+      expect(a.getAttribute("href") ?? "").not.toMatch(/readers|outbox/);
+    }
   });
 });
