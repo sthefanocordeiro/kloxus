@@ -301,45 +301,43 @@ func TestCandidatesRejectTermsSurviveHiddenFilter(t *testing.T) {
 		return out
 	}
 
-	// Default view: the rejected-but-clean story stays (marked, at the
-	// bench tail); the rejected stories that are also foreign or
-	// off-topic are hidden — each counted exactly once, however many
-	// flags it owns.
+	// Default view (KLOX-121): every rejected story — skip-list or
+	// reject-term hit — is "fora do tema" and hidden, each counted
+	// exactly once however many flags it owns. Only the clean story stays.
 	def := get("")
-	if n := def["hidden_bench"].(float64); n != 2 {
-		t.Fatalf("hidden_bench = %v, want 2", n)
+	if n := def["hidden_bench"].(float64); n != 3 {
+		t.Fatalf("hidden_bench = %v, want 3", n)
 	}
-	if n := def["bench_total"].(float64); n != 2 {
-		t.Fatalf("default bench_total = %v, want 2", n)
+	if n := def["bench_total"].(float64); n != 1 {
+		t.Fatalf("default bench_total = %v, want 1", n)
 	}
 	m := byTitle(def)
-	if _, ok := m["Cripto despenca"]; ok {
-		t.Error("rejected + off-topic story leaked into the default bench")
-	}
-	if _, ok := m["Cripto boom nos EUA"]; ok {
-		t.Error("rejected + foreign story leaked into the default bench")
-	}
-	vis := m["Cripto e regulação"]
-	if vis == nil {
-		t.Fatal("rejected on-topic story must stay visible, not be swallowed")
-	}
-	if vis["rejected_editorial"] != true {
-		t.Errorf("visible rejected card lacks the marker: %v", vis["rejected_editorial"])
-	}
-	if vis["off_topic"] != nil || vis["foreign"] != nil {
-		t.Errorf("visible rejected card wrongly hidden-flagged: %v %v", vis["off_topic"], vis["foreign"])
+	for _, title := range []string{"Cripto e regulação", "Cripto despenca", "Cripto boom nos EUA"} {
+		if _, ok := m[title]; ok {
+			t.Errorf("rejected story %q leaked into the default bench", title)
+		}
 	}
 
-	// ?all=1: the two hidden rejected stories come back with every
+	// ?all=1: the hidden rejected stories come back with every
 	// marker they own — and hidden_bench does not move.
 	all := get("?all=1")
-	if n := all["hidden_bench"].(float64); n != 2 {
-		t.Fatalf("hidden_bench with all=1 = %v, want 2", n)
+	if n := all["hidden_bench"].(float64); n != 3 {
+		t.Fatalf("hidden_bench with all=1 = %v, want 3", n)
 	}
 	if n := all["bench_total"].(float64); n != 4 {
 		t.Fatalf("all=1 bench_total = %v, want 4", n)
 	}
 	am := byTitle(all)
+	vis := am["Cripto e regulação"]
+	if vis == nil {
+		t.Fatal("rejected on-topic story missing from ?all=1")
+	}
+	if vis["rejected_editorial"] != true {
+		t.Errorf("rejected card lacks the marker: %v", vis["rejected_editorial"])
+	}
+	if vis["off_topic"] != nil || vis["foreign"] != nil {
+		t.Errorf("rejected on-topic card wrongly flagged: %v %v", vis["off_topic"], vis["foreign"])
+	}
 	off := am["Cripto despenca"]
 	if off == nil {
 		t.Fatal("rejected + off-topic story missing from ?all=1")
