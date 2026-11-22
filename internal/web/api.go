@@ -24,6 +24,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
+	"github.com/sthefanocordeiro/kloxus/internal/opml"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
@@ -2735,4 +2736,85 @@ func (s *Server) editSupportedFor(r *http.Request, item *docItem, itemRef int64,
 		return false
 	}
 	return s.dossierSupports(r, d, itemRef, text)
+}
+
+// apiSourceImportOPML imports feeds from an OPML export (Feedly etc.).
+// Body: {"opml": "<xml>", "apply": false, "include": [urls]}. Without
+// apply it is a dry run: every feed is classified new | duplicate |
+// invalid. With apply the new ones (optionally limited to include) are
+// stored as rss sources. Duplicates are matched by scheme/www/trailing-
+// slash-insensitive URL against existing sources and within the file;
+// feeds sharing a domain with an existing source are flagged, not blocked.
+// Demo mode validates and stores but never fetches, like apiSourceAdd.
+func (s *Server) apiSourceImportOPML(w http.ResponseWriter, r *http.Request) {
+	pub, err := s.apiPub(r)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	var in struct {
+		OPML    string   `json:"opml"`
+		Apply   bool     `json:"apply"`
+		Include []string `json:"include"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, opml.MaxBytes*2)
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON (or exceeds 1 MB)")
+		return
+	}
+	feeds, err := opml.Parse(strings.NewReader(in.OPML))
+	if err != nil {
+		apiErr(w, 400, "invalid_opml", err.Error())
+		return
+	}
+	seen := map[string]bool{}
+	domains := map[string]bool{}
+	for _, src := range mustSources(r, pub.ID) {
+		seen[opml.Key(src.URL)] = true
+		domains[opml.Domain(src.URL)] = true
+	}
+	var only map[string]bool
+	if len(in.Include) > 0 {
+		only = map[string]bool{}
+		for _, u := range in.Include {
+			only[opml.Key(u)] = true
+		}
+	}
+	type row struct {
+		opml.Feed
+		Status     string `json:"status"` // new | duplicate | invalid | skipped
+		SameDomain bool   `json:"same_domain,omitempty"`
+		Imported   bool   `json:"imported,omitempty"`
+	}
+	rows := []row{}
+	counts := map[string]int{}
+	for _, f := range feeds {
+		rw := row{Feed: f}
+		key := opml.Key(f.URL)
+		switch {
+		case !opml.Valid(f.URL):
+			rw.Status = "invalid"
+		case seen[key]:
+			rw.Status = "duplicate"
+		case only != nil && !only[key]:
+			rw.Status = "skipped"
+		default:
+			rw.Status = "new"
+			rw.SameDomain = domains[opml.Domain(f.URL)]
+			seen[key] = true
+			if in.Apply {
+				if _, err := db(r).AddSource(r.Context(), pub.ID, "rss", f.URL, f.Name); err != nil {
+					apiDBErr(w, r, err, "source")
+					return
+				}
+				rw.Imported = true
+			}
+		}
+		counts[rw.Status]++
+		rows = append(rows, rw)
+	}
+	resp := map[string]any{"feeds": rows, "counts": counts, "applied": in.Apply}
+	if s.d.Cfg.Mode == "demo" {
+		resp["note"] = "Simulated in demo mode: sources are not fetched on the hosted demo."
+	}
+	apiJSON(w, 200, resp)
 }
