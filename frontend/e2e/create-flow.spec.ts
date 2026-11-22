@@ -239,3 +239,20 @@ test("an account with a newsletter never reaches the create flow", async ({ page
   await page.waitForURL(/\/publications\/\d+/, { timeout: 15000 });
   await expect(page.getByLabel("Cole um link")).toHaveCount(0);
 });
+
+// KLOX-113: Seções (step 2 after creation) had no way back to step 1
+test("onboarding round-trip 3→2→1→2→3 keeps what was filled", async ({ page }) => {
+  const id = await createViaAPI(page);
+  await page.goto(`/publications/${id}/sources`);
+  await page.getByRole("button", { name: "Voltar", exact: true }).click();
+  await page.waitForURL(/\/sections\?onboarding=1/);
+  await page.getByRole("button", { name: "Voltar", exact: true }).click();
+  await page.waitForURL(/\/settings\?onboarding=1/);
+  const name = page.getByLabel(/nome/i).first();
+  await expect(name).not.toHaveValue("");
+  await page.getByRole("button", { name: "Avançar", exact: true }).click();
+  await page.waitForURL(/\/sections\?onboarding=1/);
+  // 2→3 closes the round-trip
+  await page.getByRole("button", { name: "Avançar", exact: true }).click();
+  await page.waitForURL(/\/publications\/\d+\/sources/);
+});
