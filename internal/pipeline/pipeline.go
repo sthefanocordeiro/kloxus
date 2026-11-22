@@ -518,6 +518,11 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		s1 := r.rankStage1(ctx, pub, stories, detReasons, enrich)
 		r.rerankStage(ctx, pub, stories, &s1) // stage 2 (KLOX-110); silent on failure
 		detScores, detReasons = s1.Scores, s1.Reasons
+		hid := make([]bool, len(stories))
+		for i, h := range s1.Hidden {
+			hid[i] = h != ""
+		}
+		SummarizeTop(ctx, SummaryPool, stories, detScores, hid, enrich) // G4 (KLOX-111); fail-soft
 		lineupVec = &lineupVectors{Story: s1.StoryVecs, Section: s1.SectionVecs}
 		hiddenStory = make([]bool, len(stories))
 		for i, h := range s1.Hidden {

@@ -188,6 +188,8 @@ type StoryCard struct {
 	Language    string
 	Topics      []string
 	PublishedAt string // RFC3339; "" when no member parses a date
+
+	g4Summary, g4Kind string
 }
 
 // StoryCards batch-loads the card enrichment for the given stories in
@@ -203,10 +205,12 @@ func (db *DB) StoryCards(ctx context.Context, storyIDs []int64) (map[int64]*Stor
 	rows, err := db.QueryContext(ctx, `
 		SELECT si.story_id,
 		       e.ai_kind, e.summary_pt, e.language, e.topics_json,
-		       COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) AS ts
+		       COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) AS ts,
+		       g.summary, g.kind
 		FROM story_items si
 		JOIN items it ON it.id = si.item_id
 		LEFT JOIN item_enrichment e ON e.item_id = si.item_id
+		LEFT JOIN item_summaries g ON g.item_id = si.item_id
 		WHERE si.workspace_id = $1 AND si.story_id = ANY($2)
 		ORDER BY si.story_id, si.item_id`, db.ws, storyIDs)
 	if err != nil {
@@ -216,15 +220,23 @@ func (db *DB) StoryCards(ctx context.Context, storyIDs []int64) (map[int64]*Stor
 	newest := map[int64]time.Time{}
 	for rows.Next() {
 		var sid int64
-		var kind, summary, lang, topics sql.NullString
+		var kind, summary, lang, topics, gSummary, gKind sql.NullString
 		var ts sql.NullTime
-		if err := rows.Scan(&sid, &kind, &summary, &lang, &topics, &ts); err != nil {
+		if err := rows.Scan(&sid, &kind, &summary, &lang, &topics, &ts, &gSummary, &gKind); err != nil {
 			return nil, err
 		}
 		c := out[sid]
 		if c == nil {
 			c = &StoryCard{}
 			out[sid] = c
+		}
+		// G4 (KLOX-111) top-30 summaries: used only where the shared
+		// enrichment has nothing for this story.
+		if c.g4Kind == "" && gKind.Valid {
+			c.g4Kind = gKind.String
+		}
+		if c.g4Summary == "" && gSummary.Valid {
+			c.g4Summary = gSummary.String
 		}
 		if c.Kind == "" && kind.Valid {
 			c.Kind = kind.String
@@ -254,6 +266,14 @@ func (db *DB) StoryCards(ctx context.Context, storyIDs []int64) (map[int64]*Stor
 		if ts.Valid && ts.Time.After(newest[sid]) {
 			newest[sid] = ts.Time
 			c.PublishedAt = ts.Time.UTC().Format(time.RFC3339)
+		}
+	}
+	for _, c := range out {
+		if c.Summary == "" {
+			c.Summary = c.g4Summary
+		}
+		if c.Kind == "" {
+			c.Kind = c.g4Kind
 		}
 	}
 	return out, rows.Err()

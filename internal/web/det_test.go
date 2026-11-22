@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
 )
@@ -43,10 +45,23 @@ func TestDeterministicModeJourney(t *testing.T) {
 		t.Fatalf("workspace llm_mode = %v, want off", ws["llm_mode"])
 	}
 
+	// KLOX-111: the demo/fixture board must carry the top-30 summaries.
+	prev := pipeline.SummaryPool
+	pipeline.SummaryPool = testdb.Pool(t)
+	t.Cleanup(func() { pipeline.SummaryPool = prev })
 	issueID := runPhaseA(t, srv, db, pub.ID)
 	issueURL := "/api/v1/issues/" + fmt.Sprint(issueID)
 
 	cands := apiGet(t, srv, issueURL+"/candidates")
+	withSummary := 0
+	for _, c := range cands["candidates"].([]any) {
+		if m, _ := c.(map[string]any); m["summary"] != nil && m["summary"] != "" && m["kind"] != nil {
+			withSummary++
+		}
+	}
+	if withSummary == 0 {
+		t.Fatal("no candidate carries a G4 summary + kind")
+	}
 	if cands["llm_mode"] != "off" {
 		t.Fatalf("candidates llm_mode = %v, want off", cands["llm_mode"])
 	}

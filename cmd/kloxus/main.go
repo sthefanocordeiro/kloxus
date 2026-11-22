@@ -125,6 +125,9 @@ func openDB(wsName string) (*config.Config, *store.Pool, *store.DB, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// Top-30 card summaries (KLOX-111): deterministic, zero cost, independent
+	// of the ingest scheduler, so demo/fixture and headless runs get them too.
+	pipeline.SummaryPool = pool
 	if err := pool.EnsureWorkspace(context.Background(), wsName); err != nil {
 		pool.Close()
 		return nil, nil, nil, err
