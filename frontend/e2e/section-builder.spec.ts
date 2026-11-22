@@ -10,7 +10,7 @@ test("section builder onboarding, Seções screen and Configurações delete", a
 }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: /The research is done/ }),
+    page.getByRole("heading", { name: /The research is ready/ }),
   ).toBeVisible({ timeout: 15000 });
   await page
     .getByRole("button", { name: /Create your newsletter/ })

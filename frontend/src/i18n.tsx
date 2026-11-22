@@ -346,10 +346,25 @@ export const dict = {
       navDashboard: "Dashboard",
       cta: "Create your newsletter",
       starting: "Opening your session…",
-      headline: "The research is done. The writing is yours.",
+      eyebrow: "For people who publish every day",
+      headline: "The research is ready. The writing is yours.",
       subhead:
-        "For your post, your newsletter, your blog or your intranet.",
-      tryLine: "Try it without signing up.",
+        "Every day, the news that matters to your niche arrives organized, with sources and checkable facts. You pick the angle and write in your own voice, to publish where your audience is.",
+      waitlistLabel: "Your best email",
+      waitlistPlaceholder: "you@example.com",
+      waitlistCta: "Notify me when it launches",
+      waitlistSending: "Saving…",
+      waitlistDone: "You are on the list.",
+      waitlistDoneBody:
+        "When the editor opens, we will email you. Meanwhile, keep publishing your way.",
+      waitlistInvalid: "That email does not look right. Mind checking it?",
+      waitlistRateLimited: "Too many tries in a row. Wait a minute and try again.",
+      waitlistError: "Could not save it right now. Try again shortly.",
+      waitlistPrivacy:
+        "We only use your email to tell you about the launch. No spam, and you can leave anytime.",
+      waitlistSupport:
+        "No AI writing for you. Just the boring work of finding and checking what happened, done before you open the editor.",
+      alreadyCreator: "Already a creator? Sign in",
       shotAlt: "The Kloxus editor with a drafted issue and its sources",
       howTitle: "How it works",
       howSteps: [
@@ -915,10 +930,25 @@ export const dict = {
       navDashboard: "Ir para o painel",
       cta: "Criar minha newsletter",
       starting: "Abrindo sua sessão…",
+      eyebrow: "Para quem publica todo dia",
       headline: "A pauta pronta. A escrita é sua.",
       subhead:
-        "Para seu post, sua newsletter, seu blog ou sua intranet.",
-      tryLine: "Teste sem cadastro.",
+        "Todo dia, as notícias que importam pro seu nicho chegam organizadas, com fonte e fatos checáveis. Você escolhe o ângulo e escreve do seu jeito, na sua voz. Pra publicar onde sua audiência está.",
+      waitlistLabel: "Seu melhor e-mail",
+      waitlistPlaceholder: "voce@exemplo.com",
+      waitlistCta: "Avise-me quando lançar",
+      waitlistSending: "Salvando…",
+      waitlistDone: "Você está na lista.",
+      waitlistDoneBody:
+        "Quando o editor abrir, você recebe o aviso por e-mail. Enquanto isso, pode seguir publicando do seu jeito.",
+      waitlistInvalid: "Esse e-mail não parece certo. Dá uma conferida?",
+      waitlistRateLimited: "Muitas tentativas seguidas. Espera um minutinho e tenta de novo.",
+      waitlistError: "Não consegui salvar agora. Tenta de novo em instantes.",
+      waitlistPrivacy:
+        "Só usamos seu e-mail pra avisar do lançamento. Nada de spam, e você sai quando quiser.",
+      waitlistSupport:
+        "Sem IA escrevendo por você. Só o trabalho chato de achar e conferir o que aconteceu, feito antes de você abrir o editor.",
+      alreadyCreator: "Já sou criador? Entrar",
       shotAlt: "O editor do Kloxus com uma edição em rascunho e as fontes",
       howTitle: "Como funciona",
       howSteps: [
