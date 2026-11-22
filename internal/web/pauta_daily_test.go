@@ -257,7 +257,7 @@ func TestDailyPautaMail(t *testing.T) {
 	if !strings.Contains(msg.Text, "/claim?t=") {
 		t.Fatalf("mail has no sign-in link: %s", msg.Text)
 	}
-	if _, err := dbA.MailByIdemKey(ctx, "pauta/"+day); err != nil {
+	if _, err := dbA.MailByIdemKey(ctx, "pauta/"+dbA.Workspace()+"/"+day); err != nil {
 		t.Fatalf("ledger row: %v", err)
 	}
 	if row, _ := dbA.PautaDay(ctx, pubA, day); row == nil || row.EmailedAt == "" {
