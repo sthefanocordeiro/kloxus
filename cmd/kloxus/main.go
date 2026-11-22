@@ -320,6 +320,10 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		Pay: pay,
 	})
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
+	// The daily pauta sweep (KLOX-123 Block 2): builds each active
+	// radar's "pauta de hoje" at 06:30 America/Sao_Paulo and mails the
+	// "sua pauta de hoje está pronta" note to claimed radars at 07:00.
+	go srv.RunDailyPauta(context.Background(), pool, time.Minute)
 	// one pooled conn stays warm so the remote pooler never reaps
 	// every handle between requests (KLOX-47 p95 latency criteria)
 	go pool.KeepAlive(context.Background(), time.Minute)
