@@ -43,7 +43,7 @@ function renderStart() {
         <MemoryRouter initialEntries={["/start"]}>
           <Routes>
             <Route path="/start" element={<Start />} />
-            <Route path="/publications/:id" element={<div>today screen</div>} />
+            <Route path="/publications/:id/today" element={<div>today screen</div>} />
           </Routes>
         </MemoryRouter>
       </LangProvider>
