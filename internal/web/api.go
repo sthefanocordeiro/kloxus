@@ -2210,6 +2210,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "undo", "")
+		pipeline.RecordFeedback(ctx, db(r), iss.PublicationID, iid, store.FeedbackUndoReject)
 		// an undone rejection must leave the editorial guide too
 		if pub != nil {
 			guide = s.guideAfterRebuild(w, r, pub)
@@ -2221,6 +2222,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "approve", in.Reason)
+		pipeline.RecordFeedback(ctx, db(r), iss.PublicationID, iid, store.FeedbackAccept)
 	case "reject":
 		if strings.TrimSpace(in.Reason) == "" {
 			apiErr(w, 400, "reason_required",
@@ -2233,6 +2235,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "reject", in.Reason)
+		pipeline.RecordFeedback(ctx, db(r), iss.PublicationID, iid, store.FeedbackReject)
 		if pub != nil {
 			guide = s.guideAfterRebuild(w, r, pub)
 		}

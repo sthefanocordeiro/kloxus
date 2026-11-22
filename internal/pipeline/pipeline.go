@@ -495,6 +495,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	var detScores []float64
 	var detReasons []string
 	var hiddenStory []bool
+	var lineupVec *lineupVectors
 	var enrich map[int64]*store.ItemEnrichment
 	if r.Deterministic {
 		// The free ranking reads the shared enrichment when it exists
@@ -516,6 +517,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		s1 := r.rankStage1(ctx, pub, stories, detReasons, enrich)
 		r.rerankStage(ctx, pub, stories, &s1) // stage 2 (KLOX-110); silent on failure
 		detScores, detReasons = s1.Scores, s1.Reasons
+		lineupVec = &lineupVectors{Story: s1.StoryVecs, Section: s1.SectionVecs}
 		hiddenStory = make([]bool, len(stories))
 		for i, h := range s1.Hidden {
 			hiddenStory[i] = h != ""
@@ -586,7 +588,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	var picks []lineupPick
 	if r.Deterministic {
-		picks = pickLineupSkipping(stories, detScores, detReasons, pub, enrich, hiddenStory)
+		picks = pickLineupVec(stories, detScores, detReasons, pub, enrich, hiddenStory, lineupVec)
 		r.record(ctx, pub.ID, issueID, "storylist", "deterministic", start, llm.Response{})
 	} else {
 		var picked struct {
@@ -1713,6 +1715,9 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 	if err := r.DB.SetIssueItemStatus(ctx, old.ID, "alternative"); err != nil {
 		return nil, err
 	}
+	// a swap means the creator declined the old story: it is rejected
+	// feedback for the Rocchio profile (KLOX-112).
+	RecordFeedback(ctx, r.DB, pub.ID, old.ID, store.FeedbackReject)
 	return r.DB.GetIssueItem(ctx, newID)
 }
 

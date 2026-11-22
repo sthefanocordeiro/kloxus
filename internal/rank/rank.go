@@ -280,3 +280,74 @@ func IsEnglish(text string) bool {
 	}
 	return en >= 2 && float64(en) >= 1.5*float64(pt) && float64(en)/float64(len(toks)) >= 0.08
 }
+
+// AddToMean folds v into a running mean of n vectors and returns the new
+// mean (a plain, un-normalized average: incoherent feedback shrinks its
+// norm, which is the weight it deserves in the Rocchio sum). n is the
+// count before v. A nil/mismatched mean starts afresh from v.
+func AddToMean(mean []float32, n int, v []float32) []float32 {
+	if len(v) == 0 {
+		return mean
+	}
+	if n <= 0 || len(mean) != len(v) {
+		return append([]float32(nil), v...)
+	}
+	out := make([]float32, len(v))
+	for i := range v {
+		out[i] = float32((float64(mean[i])*float64(n) + float64(v[i])) / float64(n+1))
+	}
+	return out
+}
+
+// RemoveFromMean undoes AddToMean (an undone reject). n is the count
+// including v; the result is nil when it empties the set.
+func RemoveFromMean(mean []float32, n int, v []float32) []float32 {
+	if n <= 1 || len(mean) != len(v) || len(v) == 0 {
+		return nil
+	}
+	out := make([]float32, len(v))
+	for i := range v {
+		out[i] = float32((float64(mean[i])*float64(n) - float64(v[i])) / float64(n-1))
+	}
+	return out
+}
+
+// MMR weights (spec section 8): mmr = Lambda*score - (1-Lambda)*maxCos.
+const MMRLambda = 0.7
+
+// MMROrder returns candidate indices in greedy maximal-marginal-
+// relevance order: each pick maximizes 0.7*score - 0.3*max cos(story,
+// already picked). Candidates without a vector carry no redundancy
+// penalty. Ties break toward the lower index (the caller's order).
+// limit <= 0 orders everything.
+func MMROrder(scores []float64, vecs [][]float32, limit int) []int {
+	n := len(scores)
+	if limit <= 0 || limit > n {
+		limit = n
+	}
+	maxSim := make([]float64, n)
+	used := make([]bool, n)
+	out := make([]int, 0, limit)
+	for len(out) < limit {
+		best, bestV := -1, 0.0
+		for i := 0; i < n; i++ {
+			if used[i] {
+				continue
+			}
+			v := MMRLambda*scores[i] - (1-MMRLambda)*maxSim[i]
+			if best < 0 || v > bestV {
+				best, bestV = i, v
+			}
+		}
+		used[best] = true
+		out = append(out, best)
+		for i := 0; i < n; i++ {
+			if !used[i] && len(vecs) > i && len(vecs[best]) > 0 {
+				if c := Cos(vecs[i], vecs[best]); c > maxSim[i] {
+					maxSim[i] = c
+				}
+			}
+		}
+	}
+	return out
+}

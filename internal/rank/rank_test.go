@@ -222,3 +222,91 @@ func TestStage1Under300msFor500Stories(t *testing.T) {
 		t.Fatalf("stage 1 took %v for 500 stories (budget 300ms)", d)
 	}
 }
+
+func TestIncrementalMean(t *testing.T) {
+	a, b, c := []float32{1, 0}, []float32{0, 1}, []float32{1, 1}
+	m := AddToMean(nil, 0, a)
+	m = AddToMean(m, 1, b)
+	m = AddToMean(m, 2, c)
+	if math.Abs(float64(m[0])-2.0/3) > 1e-6 || math.Abs(float64(m[1])-2.0/3) > 1e-6 {
+		t.Fatalf("running mean = %v, want [2/3 2/3]", m)
+	}
+	back := RemoveFromMean(m, 3, c)
+	if math.Abs(float64(back[0])-0.5) > 1e-6 || math.Abs(float64(back[1])-0.5) > 1e-6 {
+		t.Fatalf("after undo = %v, want [0.5 0.5]", back)
+	}
+	if RemoveFromMean(a, 1, a) != nil {
+		t.Fatal("removing the only member must empty the mean")
+	}
+}
+
+// After 5 rejected crypto stories on a generic tech publication, crypto
+// stories drop out of the top 10 (spec section 9, Rocchio test).
+func TestRocchioFiveCryptoRejectsDropCrypto(t *testing.T) {
+	const dims = 16
+	rng := rand.New(rand.NewSource(11))
+	c := DefaultConfig()
+	// theme sits between general tech (0) and crypto (1): crypto ranks
+	// well before feedback.
+	theme := Mean([][]float32{axis(0, dims, 0.05, rng), axis(1, dims, 0.05, rng)}, 0)
+	type st struct {
+		crypto bool
+		v      []float32
+		age    float64
+	}
+	var all []st
+	for i := 0; i < 10; i++ {
+		all = append(all, st{false, axis(0, dims, 0.3, rng), float64(10 + i*3)})
+	}
+	for i := 0; i < 10; i++ {
+		all = append(all, st{true, axis(1, dims, 0.3, rng), float64(10 + i*3)})
+	}
+	top10Crypto := func(prof []float32) int {
+		idx := make([]int, len(all))
+		sc := make([]float64, len(all))
+		for i := range all {
+			idx[i] = i
+			sc[i] = c.Score(Profiles{Rocchio: prof}, Story{Vec: all[i].v, AgeHours: all[i].age, Outlets: 2}).Score
+		}
+		for i := range idx {
+			for j := i + 1; j < len(idx); j++ {
+				if sc[idx[j]] > sc[idx[i]] {
+					idx[i], idx[j] = idx[j], idx[i]
+				}
+			}
+		}
+		n := 0
+		for _, i := range idx[:10] {
+			if all[i].crypto {
+				n++
+			}
+		}
+		return n
+	}
+	before := top10Crypto(c.Profile(theme, nil, nil))
+	if before == 0 {
+		t.Fatal("setup: crypto must reach the top 10 before feedback")
+	}
+	var rej []float32
+	for i := 0; i < 5; i++ {
+		rej = AddToMean(rej, i, axis(1, dims, 0.3, rng))
+	}
+	// the profile must not hold a crypto vector near the top-10 cut
+	after := top10Crypto(c.Profile(theme, nil, rej))
+	if after != 0 {
+		t.Fatalf("crypto in top 10 after 5 rejects = %d (before %d), want 0", after, before)
+	}
+}
+
+func TestMMROrderSpreadsNearDuplicates(t *testing.T) {
+	a1, a2, b := []float32{1, 0}, []float32{0.99, 0.14}, []float32{0, 1}
+	scores := []float64{0.90, 0.89, 0.80}
+	got := MMROrder(scores, [][]float32{a1, a2, b}, 0)
+	if got[0] != 0 || got[1] != 2 || got[2] != 1 {
+		t.Fatalf("MMR order = %v, want [0 2 1] (near-duplicate pushed last)", got)
+	}
+	// without vectors it is plain score order
+	if g := MMROrder(scores, nil, 2); g[0] != 0 || g[1] != 1 {
+		t.Fatalf("no-vector order = %v", g)
+	}
+}
