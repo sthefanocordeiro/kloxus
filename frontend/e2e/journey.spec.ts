@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { benchCol, boardReady, issueCol, onboard } from "./onboard.ts";
+import { benchCol, boardReady, ensureCited, issueCol, onboard } from "./onboard.ts";
 import {
   claimIfSynthetic,
   fakeLive,
@@ -190,7 +190,7 @@ async function boardOps(page: Page, isPhone: boolean) {
     await expect(box).toBeVisible();
     await box.getByRole("textbox").fill(fill?.text ?? "Editor's reading of the sources.");
     if (fill) {
-      await box.getByRole("button", { name: new RegExp(`^\\[${fill.cite}\\] `) }).click();
+      await ensureCited(box, fill.cite);
       await box.getByRole("button", { name: "Add to story" }).click();
     } else {
       // no source excerpt to verify against — write the item as the

@@ -1,3 +1,4 @@
+import { ensureCited, ensureNotCited } from "./onboard.ts";
 import { expect, test, type Page } from "@playwright/test";
 import {
   claimIfSynthetic,
@@ -190,13 +191,12 @@ test("manual compose journey", async ({ page }) => {
   // "sourced" — and the same goes for a verbatim source paste.
   const firstRef = await itemRefOf();
   const firstSrc = supported.get(firstRef)!;
-  const firstChip = new RegExp(`^\\[${firstSrc.cite}\\] `);
   await emptySlot.first().click();
   await expect(box).toBeVisible();
   await box
     .getByRole("textbox")
     .fill("The Central Bank will end Pix in March 2027 and charge 9 reais per transfer.");
-  await box.getByRole("button", { name: firstChip }).click();
+  await ensureCited(box, firstSrc.cite);
   await box.getByRole("button", { name: "Add to story" }).click();
   await expect(page.getByText(/not supported by \[\d+\]/).first()).toBeVisible({ timeout: 15000 });
   // the flag carries Edit/Remove actions — removing resolves it
@@ -205,7 +205,7 @@ test("manual compose journey", async ({ page }) => {
   await expect(fabricated).toHaveCount(0);
   // verbatim first-sentence paste with its citation
   await box.getByRole("textbox").fill(verbatimPaste(firstSrc.excerpt));
-  await box.getByRole("button", { name: firstChip }).click();
+  await ensureCited(box, firstSrc.cite);
   await box.getByRole("button", { name: "Add to story" }).click();
   await expect(page.getByText("too close to the source").first()).toBeVisible({ timeout: 15000 });
   await page
@@ -233,7 +233,7 @@ test("manual compose journey", async ({ page }) => {
     await emptySlot.first().click();
     await expect(box).toBeVisible();
     await box.getByRole("textbox").fill(text);
-    await box.getByRole("button", { name: new RegExp(`^\\[${cite}\\] `) }).click();
+    await ensureCited(box, cite);
     await box.getByRole("button", { name: "Add to story" }).click();
     // the sentence lands in the document as a cited fact
     await expect(page.locator("[data-sid]")).toHaveCount(i + 1, { timeout: 15000 });
@@ -262,6 +262,8 @@ test("manual compose journey", async ({ page }) => {
   await box
     .getByRole("textbox")
     .fill("A claim nobody can trace back to a source.");
+  // soleSource (#91) pre-selects the lone chip; this flow needs it off
+  await ensureNotCited(box, firstSrc.cite);
   await box.getByRole("button", { name: "Add to story" }).click();
   const uncited = page.locator("[data-sid]").filter({ hasText: "nobody can trace" });
   await expect(uncited.getByText("sentence has no citation")).toBeVisible({ timeout: 15000 });
@@ -273,7 +275,7 @@ test("manual compose journey", async ({ page }) => {
   await page.getByRole("button", { name: "Review pending" }).first().click();
   await expect(uncited.getByRole("textbox")).toBeVisible({ timeout: 15000 });
   await uncited.getByRole("textbox").fill(firstSrc.text);
-  await uncited.getByRole("button", { name: firstChip }).click();
+  await ensureCited(uncited, firstSrc.cite);
   await uncited.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("sentence has no citation")).toHaveCount(0, { timeout: 15000 });
 
@@ -398,7 +400,7 @@ test("mobile 390px: Escrever tab bar stays pinned, heading controls ≥44px", as
   const box = page.locator('section[aria-label="Write this story"]');
   await expect(box).toBeVisible();
   await box.getByRole("textbox").fill(supportedSentence(srcExcerpt));
-  await box.getByRole("button", { name: new RegExp(`^\\[${srcRef}\\] `) }).click();
+  await ensureCited(box, srcRef);
   await box.getByRole("button", { name: "Add to story" }).click();
   await expect(page.locator("[data-sid]").first()).toBeVisible({ timeout: 15000 });
 

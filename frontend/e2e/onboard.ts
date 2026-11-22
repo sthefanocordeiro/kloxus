@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 // Shared onboarding helpers — every test walks its own anonymous
 // workspace (fresh browser context) through landing → /new → sources
@@ -50,4 +50,20 @@ export async function boardReady(page: Page, isPhone: boolean) {
   await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({
     timeout: process.env.E2E_BASE_URL ? 840_000 : 60_000,
   });
+}
+
+// Citation chips are pre-selected when an item has a single source (#91
+// soleSource), so a blind click would toggle the cite OFF. Make sure the
+// chip ends up pressed, whatever its starting state.
+export async function ensureCited(box: Locator, ref: number): Promise<void> {
+  const chip = box.getByRole("button", { name: new RegExp(`^\\[${ref}\\] `) });
+  if ((await chip.getAttribute("aria-pressed")) !== "true") await chip.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+}
+
+// Counterpart of ensureCited for flows that need the source switched off.
+export async function ensureNotCited(box: Locator, ref: number): Promise<void> {
+  const chip = box.getByRole("button", { name: new RegExp(`^\\[${ref}\\] `) });
+  if ((await chip.getAttribute("aria-pressed")) === "true") await chip.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "false");
 }
