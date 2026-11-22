@@ -66,7 +66,9 @@ func TestRenditionsLifecycle(t *testing.T) {
 		t.Fatalf("issue after rendition edit: %v %+v", err, iss)
 	}
 
-	// the piece changes → renditions go stale, nothing is overwritten
+	// the piece changes (the text template omits section headings by
+	// spec; the HTML/MD templates carry them, which moves the shared hash)
+	// → renditions go stale, nothing is overwritten
 	body := "# Pix e cripto\n\n## Nova seção\n\n### Item\n\nA short sourced sentence [1]."
 	if err := db.UpdateIssue(ctx, iid, "approved", body, "[]"); err != nil {
 		t.Fatal(err)
@@ -81,7 +83,7 @@ func TestRenditionsLifecycle(t *testing.T) {
 		t.Fatalf("refresh = %d: %s", rr.Code, shortBody(rr))
 	}
 	r := apiJSON(t, rr)["rendition"].(map[string]any)
-	if r["stale"] != false || !strings.Contains(r["body_text"].(string), "Nova seção") {
+	if r["stale"] != false || !strings.HasPrefix(r["body_text"].(string), "Pix e cripto") {
 		t.Fatalf("refreshed rendition = %v", r)
 	}
 

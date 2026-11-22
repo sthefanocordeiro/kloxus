@@ -55,6 +55,7 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
   if (pub) {
     const tail = pathname.split("/").pop() ?? "";
     const map: Record<string, [string, string]> = {
+      today: [t.nav.today, "today"],
       sources: [t.sources, "sources"],
       readers: [t.nav.readers, "readers"],
       sections: [t.nav.sections, "sections"],
@@ -116,7 +117,7 @@ export function AppShell() {
         { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },
       ]
     : [
-        { to: editionTo, label: t.nav.today, icon: Newspaper, section: "edition", end: true },
+        { to: `${pubBase}/today`, label: t.nav.today, icon: Newspaper, section: "today", end: true },
         { to: pubBase, label: t.nav.editions, icon: Layers, section: "editions", end: true },
         { to: `${pubBase}/sources`, label: t.nav.radar, icon: Rss, section: "radar" },
         { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },

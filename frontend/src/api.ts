@@ -507,6 +507,26 @@ export interface Rendition {
   stale: boolean;
 }
 
+export interface PieceRow {
+  id: number;
+  number: number;
+  status: "draft" | "reviewed" | "exported";
+}
+
+export interface TodayData {
+  cards: PautaCard[];
+  pieces: PieceRow[];
+  open_piece: number;
+  window_hours: number;
+}
+
+export interface TodayWrite {
+  issue_id: number;
+  created?: boolean;
+  add_block?: boolean;
+  section?: string;
+}
+
 export const api = {
   workspace: () => request<{ workspace: Workspace }>("GET", "/api/v1/workspace").then((r) => r.workspace ?? (r as unknown as Workspace)),
   publications: () => request<{ publications: Publication[] }>("GET", "/api/v1/publications").then((r) => r.publications),
@@ -705,6 +725,9 @@ export const api = {
   proposal: () => request<{ proposal: Proposal }>("GET", "/api/v1/proposal").then((r) => r.proposal),
   propose: (material: string) =>
     request<{ proposal: Proposal; scrape: ScrapeInfo }>("POST", "/api/v1/publications/propose", { material }),
+  today: (pubID: number | string) => request<TodayData>("GET", `/api/v1/publications/${pubID}/today`),
+  todayWrite: (pubID: number | string, storyID: number) =>
+    request<TodayWrite>("POST", `/api/v1/publications/${pubID}/today/write`, { story_id: storyID }),
   createRadar: (about: string, niches: string[]) =>
     request<{ publication: Publication; sources: SourceRow[] }>("POST", "/api/v1/radar", { about, niches }),
   calibration: (pubID: number | string) =>
