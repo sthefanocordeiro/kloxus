@@ -214,6 +214,7 @@ func (s *Server) apiCalibration(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "stories") {
 		return
 	}
+	dropPautaDay(r, db(r), pub.ID) // the deck was re-dealt — story ids changed
 	cards := run.Pauta(r.Context(), pub, stories, calibrationCards, pipeline.CalibrationWindow)
 	apiJSON(w, 200, map[string]any{"cards": pautaViews(cards), "window_hours": int(pipeline.CalibrationWindow / time.Hour)})
 }
@@ -234,6 +235,7 @@ func (s *Server) apiCalibrationAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	// feedback never fails the answer (no vectors → silent no-op)
 	_ = pipeline.RecordStoryFeedback(r.Context(), db(r), pub.ID, in.StoryID, in.Answer == "yes")
+	dropPautaDay(r, db(r), pub.ID) // the answer re-ranks today's pauta
 	apiJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -281,6 +283,7 @@ func (s *Server) apiSkipTopic(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, db(r).UpdatePublication(r.Context(), pub.ID, def), "radar") {
 		return
 	}
+	dropPautaDay(r, db(r), pub.ID) // a new reject term re-ranks today's pauta
 	fresh, err := db(r).GetPublication(r.Context(), fmt.Sprint(pub.ID))
 	if apiDBErr(w, r, err, "radar") {
 		return
