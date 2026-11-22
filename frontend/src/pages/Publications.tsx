@@ -31,7 +31,7 @@ export function Publications() {
           exists only as the empty-state call to action */}
       {pubs.data?.length === 0 && (
         <ShellPrimary>
-          <Link to="/new">
+          <Link to="/start">
             <Button size="sm">
               <Plus size={15} aria-hidden />
               {t.nav.newNewsletter}
@@ -43,7 +43,7 @@ export function Publications() {
       {pubs.data?.length === 0 && (
         <Card className="p-6 text-center">
           <p className="text-sm text-muted">{t.landing.subhead}</p>
-          <Link to="/new" className="mt-3 inline-block">
+          <Link to="/start" className="mt-3 inline-block">
             <Button>{t.landing.cta}</Button>
           </Link>
         </Card>

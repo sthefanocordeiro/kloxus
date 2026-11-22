@@ -41,6 +41,7 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
 
   // /new's crumb used to point at /new itself — a Voltar that went
   // nowhere (KLOX-79). Publicações is the real parent.
+  if (pathname === "/start") return { title: t.nav.creating, crumbs: [], section: "new" };
   if (pathname === "/new") return { title: t.nav.creating, crumbs: [{ label: t.publications, to: "/publications" }], section: "new" };
   if (pathname === "/publications") return { title: t.publications, crumbs: [], section: "editions" };
   if (issueM) {
@@ -187,7 +188,7 @@ export function AppShell() {
         </nav>
         {pubs.data?.length === 0 && (
           <div className="border-t border-line p-3">
-            <Link to="/new" className="flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium text-muted hover:bg-line/50 hover:text-ink">
+            <Link to="/start" className="flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium text-muted hover:bg-line/50 hover:text-ink">
               <Plus size={16} aria-hidden />
               {t.nav.newNewsletter}
             </Link>

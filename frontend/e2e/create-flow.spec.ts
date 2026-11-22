@@ -18,7 +18,8 @@ async function onboard(page: import("@playwright/test").Page) {
     .getByRole("button", { name: /meu Radar/ })
     .first()
     .click();
-  await page.waitForURL(/\/new/);
+  await page.waitForURL(/\/start/);
+  await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
   await expect(page.getByLabel("Linha editorial")).toBeVisible({ timeout: 15000 });
 }
 

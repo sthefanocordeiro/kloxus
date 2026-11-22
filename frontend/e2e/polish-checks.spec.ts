@@ -231,7 +231,8 @@ async function onboardToBoard(page: Page): Promise<string> {
   await expect(page.getByRole("heading", { name: /A pauta pronta/ })).toBeVisible({ timeout: 15000 });
   await auditScreen(page, "landing");
   await page.getByRole("button", { name: /Criar meu Radar/ }).first().click();
-  await page.waitForURL(/\/new/);
+  await page.waitForURL(/\/start/);
+  await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
   await expect(page.locator('input[value*="Futuro"]').first()).toBeVisible({ timeout: 15000 });
   await auditScreen(page, "onboard-step1");
   await page.getByRole("button", { name: "Avançar", exact: true }).click();

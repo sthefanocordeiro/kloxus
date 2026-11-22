@@ -19,7 +19,8 @@ test("section builder onboarding, Seções screen and Configurações delete", a
     .getByRole("button", { name: /Create your Radar/ })
     .first()
     .click();
-  await page.waitForURL(/\/new/);
+  await page.waitForURL(/\/start/);
+  await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
 
   // step 1: the proposal pre-fills the blocks
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({

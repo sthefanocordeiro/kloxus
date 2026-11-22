@@ -46,6 +46,7 @@ const router = createBrowserRouter([
       </div>
     ),
     children: [
+      { path: "/start", lazy: () => import("./pages/Start").then((x) => ({ Component: x.Start })) },
       { path: "/new", lazy: () => import("./pages/Create").then((m) => ({ Component: m.CreateNewsletter })) },
       { path: "/publications", lazy: () => import("./pages/Publications").then((m) => ({ Component: m.Publications })) },
       { path: "/publications/:id", lazy: () => import("./pages/PublicationPage").then((m) => ({ Component: m.PublicationPage })) },
