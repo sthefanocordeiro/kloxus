@@ -58,10 +58,12 @@ func (db *DB) MarkPautaDayEmailed(ctx context.Context, pubID int64, day string) 
 
 // ActiveWorkspaces lists workspace ids seen since the given
 // (TSUTC-shaped) cutoff — the "radars visited in the last 7 days" the
-// daily pauta serves.
+// daily pauta serves — most recently visited first, so a bounded sweep
+// reaches the radars people are actually looking at before the idle
+// backlog.
 func (p *Pool) ActiveWorkspaces(ctx context.Context, since string) ([]string, error) {
 	rows, err := p.db.QueryContext(ctx,
-		`SELECT id FROM workspaces WHERE last_seen_at >= $1 ORDER BY id`, since)
+		`SELECT id FROM workspaces WHERE last_seen_at >= $1 ORDER BY last_seen_at DESC, id`, since)
 	if err != nil {
 		return nil, err
 	}

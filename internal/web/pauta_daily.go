@@ -33,6 +33,10 @@ const (
 	pautaActiveWindow             = 7 * 24 * time.Hour
 	pautaMailLinkTTL              = 72 * time.Hour
 	pautaMailTop                  = 3
+	// pautaRadarBudget bounds one radar's build+mail inside the sweep:
+	// a live BuildStories takes seconds, so a stuck radar that eats the
+	// whole tick is pathological — cut it and let the next tick retry.
+	pautaRadarBudget = 45 * time.Second
 )
 
 // pautaLoc is the schedule's timezone. Brazil dropped DST in 2019, so
@@ -96,7 +100,13 @@ func (s *Server) DailyPautaTick(ctx context.Context, pool *store.Pool, now time.
 		slog.Warn("daily pauta: active workspaces failed", "err", err)
 		return
 	}
+	start := time.Now()
+	seen := 0
 	for _, wsID := range wss {
+		if ctx.Err() != nil {
+			break // sweep budget spent — the next tick resumes the tail
+		}
+		seen++
 		wdb := pool.For(wsID)
 		pubs, err := wdb.ListPublications(ctx)
 		if err != nil {
@@ -104,19 +114,24 @@ func (s *Server) DailyPautaTick(ctx context.Context, pool *store.Pool, now time.
 			continue
 		}
 		for _, pub := range pubs {
+			pctx, cancel := context.WithTimeout(ctx, pautaRadarBudget)
 			if buildDue {
-				if err := s.buildPautaDay(ctx, wdb, pub, day); err != nil {
+				if err := s.buildPautaDay(pctx, wdb, pub, day); err != nil {
 					slog.Warn("daily pauta: build failed", "ws", wsID, "pub", pub.ID, "err", err)
-					continue // no stored pauta — the mail below skips it
 				}
 			}
 			if mailDue {
-				if err := s.mailPautaDay(ctx, pool, wdb, pub, wsID, day); err != nil {
+				if err := s.mailPautaDay(pctx, pool, wdb, pub, wsID, day); err != nil {
 					slog.Warn("daily pauta: mail failed", "ws", wsID, "pub", pub.ID, "err", err)
 				}
 			}
+			cancel()
 		}
 	}
+	// The summary line is the sweep's heartbeat in hosted logs: how far
+	// it got before the tick budget ran out (seen < len(wss) means the
+	// tail waits for the next tick — recency order keeps that harmless).
+	slog.Info("daily pauta: sweep", "day", day, "workspaces", len(wss), "seen", seen, "took", time.Since(start).Round(time.Second))
 }
 
 // buildPautaDay stores the day's ranked pauta for one radar — a no-op
@@ -139,11 +154,16 @@ func (s *Server) buildPautaDay(ctx context.Context, wdb *store.DB, pub *store.Pu
 	if err != nil {
 		return err
 	}
-	cards, err := json.Marshal(pautaViews(run.Pauta(ctx, pub, stories, todayCards, todayWindow)))
+	views := pautaViews(run.Pauta(ctx, pub, stories, todayCards, todayWindow))
+	cards, err := json.Marshal(views)
 	if err != nil {
 		return err
 	}
-	return wdb.SavePautaDay(ctx, pub.ID, day, string(cards))
+	if err := wdb.SavePautaDay(ctx, pub.ID, day, string(cards)); err != nil {
+		return err
+	}
+	slog.Info("daily pauta: built", "ws", wdb.Workspace(), "pub", pub.ID, "day", day, "cards", len(views))
+	return nil
 }
 
 // mailPautaDay sends the one daily "pauta pronta" mail to a radar with
@@ -213,8 +233,11 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		Subject: subject,
 		Text:    md,
 		HTML:    delivery.RenderHTML(subject, md, base),
-		Kind:    "pauta",
-		IdemKey: "pauta/" + day,
+		Kind: "pauta",
+		// Provider idempotency is global per API key, not per
+		// workspace — scope the key or the second claimed radar of the
+		// day collides on a modified body and falls back to the outbox.
+		IdemKey: fmt.Sprintf("pauta/%s/%s", wsID, day),
 	}); err != nil {
 		return err
 	}
