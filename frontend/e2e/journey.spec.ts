@@ -190,7 +190,11 @@ async function boardOps(page: Page, isPhone: boolean) {
     await expect(box).toBeVisible();
     await box.getByRole("textbox").fill(fill?.text ?? "Editor's reading of the sources.");
     if (fill) {
-      await box.getByRole("button", { name: new RegExp(`^\\[${fill.cite}\\] `) }).click();
+      // a single-source pauta pre-selects its source (KLOX-124): only
+      // toggle the chip when it is not already pressed
+      const chip = box.getByRole("button", { name: new RegExp(`^\\[${fill.cite}\\] `) });
+      if ((await chip.getAttribute("aria-pressed")) !== "true") await chip.click();
+      await expect(chip).toHaveAttribute("aria-pressed", "true");
       await box.getByRole("button", { name: "Add to story" }).click();
     } else {
       // no source excerpt to verify against — write the item as the

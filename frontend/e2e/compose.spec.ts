@@ -233,7 +233,11 @@ test("manual compose journey", async ({ page }) => {
     await emptySlot.first().click();
     await expect(box).toBeVisible();
     await box.getByRole("textbox").fill(text);
-    await box.getByRole("button", { name: new RegExp(`^\\[${cite}\\] `) }).click();
+    // a single-source pauta pre-selects its source (KLOX-124): only toggle
+    // the chip when it is not already pressed
+    const chip = box.getByRole("button", { name: new RegExp(`^\\[${cite}\\] `) });
+    if ((await chip.getAttribute("aria-pressed")) !== "true") await chip.click();
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
     await box.getByRole("button", { name: "Add to story" }).click();
     // the sentence lands in the document as a cited fact
     await expect(page.locator("[data-sid]")).toHaveCount(i + 1, { timeout: 15000 });
@@ -262,6 +266,11 @@ test("manual compose journey", async ({ page }) => {
   await box
     .getByRole("textbox")
     .fill("A claim nobody can trace back to a source.");
+  // a single-source pauta pre-selects its source (KLOX-124): unpress it so
+  // the sentence really goes in uncited
+  for (const chip of await box.getByRole("button", { pressed: true }).all()) {
+    if (/^\[\d+\] /.test((await chip.textContent()) ?? "")) await chip.click();
+  }
   await box.getByRole("button", { name: "Add to story" }).click();
   const uncited = page.locator("[data-sid]").filter({ hasText: "nobody can trace" });
   await expect(uncited.getByText("sentence has no citation")).toBeVisible({ timeout: 15000 });
