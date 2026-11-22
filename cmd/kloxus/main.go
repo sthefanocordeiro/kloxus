@@ -125,6 +125,9 @@ func openDB(wsName string) (*config.Config, *store.Pool, *store.DB, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// Top-30 card summaries (KLOX-111): deterministic, zero cost, independent
+	// of the ingest scheduler, so demo/fixture and headless runs get them too.
+	pipeline.SummaryPool = pool
 	if err := pool.EnsureWorkspace(context.Background(), wsName); err != nil {
 		pool.Close()
 		return nil, nil, nil, err
@@ -334,7 +337,6 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		// (KLOX-67 §7.2). Under the paid-AI freeze the local rows are
 		// the classification suggestions see.
 		sem := &pipeline.SemanticSweep{Pool: pool}
-		pipeline.SummaryPool = pool // top-30 card summaries (KLOX-111)
 		var enr *pipeline.Enricher
 		if cfg.Mode != "demo" && !cfg.LLMOff() {
 			enr = &pipeline.Enricher{Pool: pool, LLM: provider, Model: cfg.ModelTriage}
