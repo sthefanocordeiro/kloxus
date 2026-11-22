@@ -300,3 +300,25 @@ func parseFeedDate(s string) (time.Time, bool) {
 	}
 	return time.Time{}, false
 }
+
+func TestTitleSameEvent(t *testing.T) {
+	same := [][2]string{
+		{"GTA 6 bate recorde de pré-venda", "Pré-venda de GTA 6 bate recorde histórico"},
+		{"Banco Central regulamenta Pix parcelado", "Pix parcelado é regulamentado pelo Banco Central"},
+	}
+	for _, c := range same {
+		if !TitleSameEvent(c[0], c[1]) {
+			t.Errorf("want same event: %q / %q", c[0], c[1])
+		}
+	}
+	diff := [][2]string{
+		{"GTA 6 bate recorde de pré-venda", "Banco Central regulamenta Pix parcelado"},
+		{"Nubank lança novo cartão de crédito", "Nubank anuncia lucro recorde no trimestre"},
+		{"", "Pix parcelado"},
+	}
+	for _, c := range diff {
+		if TitleSameEvent(c[0], c[1]) {
+			t.Errorf("want different: %q / %q", c[0], c[1])
+		}
+	}
+}
