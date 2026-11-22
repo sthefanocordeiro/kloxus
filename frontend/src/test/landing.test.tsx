@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { api, type Publication } from "../api";
+import { ApiRequestError, api, type Publication } from "../api";
 import { LangProvider } from "../i18n";
 import { Landing } from "../pages/Landing";
 import { PrivacyPage, TermsPage } from "../pages/Legal";
@@ -101,15 +101,15 @@ describe("Landing", () => {
     vi.mocked(api.waitlist).mockResolvedValue({ ok: true });
     renderApp();
     fireEvent.click(await screen.findByRole("button", { name: "PT" }));
-    const input = await screen.findByLabelText("Seu e-mail");
+    const input = await screen.findByLabelText("Seu melhor e-mail");
     fireEvent.change(input, { target: { value: "nao-e-email" } });
     fireEvent.click(screen.getByRole("button", { name: "Avise-me quando lançar" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/e-mail válido/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/não parece certo/i);
     expect(api.waitlist).not.toHaveBeenCalled();
 
     fireEvent.change(input, { target: { value: " ana@exemplo.com " } });
     fireEvent.click(screen.getByRole("button", { name: "Avise-me quando lançar" }));
-    expect(await screen.findByText("Você está na lista")).toBeInTheDocument();
+    expect(await screen.findByText("Você está na lista.")).toBeInTheDocument();
     expect(api.waitlist).toHaveBeenCalledWith("ana@exemplo.com", "landing");
     expect(screen.getByRole("button", { name: /já sou criador/i })).toBeInTheDocument();
   });
@@ -117,9 +117,19 @@ describe("Landing", () => {
   it("shows an error when the waitlist call fails", async () => {
     vi.mocked(api.waitlist).mockRejectedValue(new Error("boom"));
     renderApp();
-    fireEvent.change(await screen.findByLabelText("Your email"), { target: { value: "a@b.co" } });
+    fireEvent.change(await screen.findByLabelText("Your best email"), { target: { value: "a@b.co" } });
     fireEvent.click(screen.getByRole("button", { name: "Notify me when it launches" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/could not save/i);
+  });
+
+  it("shows the dedicated message when the waitlist is rate limited", async () => {
+    vi.mocked(api.waitlist).mockRejectedValue(
+      new ApiRequestError(429, { code: "rate_limited", message: "too many requests" }),
+    );
+    renderApp();
+    fireEvent.change(await screen.findByLabelText("Your best email"), { target: { value: "a@b.co" } });
+    fireEvent.click(screen.getByRole("button", { name: "Notify me when it launches" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/too many tries/i);
   });
 
   // KLOX-69: the hamburger covers the section links, entry and CTA at

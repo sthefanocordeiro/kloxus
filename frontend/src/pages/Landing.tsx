@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { BookOpen, ClipboardCopy, PenLine } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
-import { api } from "../api";
+import { ApiRequestError, api } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Button, Card } from "../ui";
@@ -29,6 +29,9 @@ export function Landing() {
       <section className="bg-teal text-paper">
         <div className="mx-auto grid max-w-6xl gap-10 px-4 py-14 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:py-20">
           <div>
+            <p className="mb-3 text-sm font-semibold uppercase tracking-wider text-paper/70">
+              {t.landing.eyebrow}
+            </p>
             <h1 className="font-doc text-3xl font-bold leading-tight md:text-5xl">
               {t.landing.headline}
             </h1>
@@ -234,6 +237,7 @@ function WaitlistForm() {
     return (
       <div role="status" className="mt-7 rounded-lg bg-paper/10 p-4">
         <p className="font-display text-lg font-bold">{t.landing.waitlistDone}</p>
+        <p className="mt-1 text-paper/80">{t.landing.waitlistDoneBody}</p>
       </div>
     );
   }
@@ -270,9 +274,15 @@ function WaitlistForm() {
       </div>
       {(invalid || join.isError) && (
         <p role="alert" className="mt-2 text-sm text-danger-soft">
-          {invalid ? t.landing.waitlistInvalid : t.landing.waitlistError}
+          {invalid
+            ? t.landing.waitlistInvalid
+            : join.error instanceof ApiRequestError && join.error.status === 429
+              ? t.landing.waitlistRateLimited
+              : t.landing.waitlistError}
         </p>
       )}
+      <p className="mt-3 text-sm text-paper/70">{t.landing.waitlistPrivacy}</p>
+      <p className="mt-2 text-sm text-paper/70">{t.landing.waitlistSupport}</p>
     </form>
   );
 }
