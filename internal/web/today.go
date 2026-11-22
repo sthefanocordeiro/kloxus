@@ -1,0 +1,178 @@
+package web
+
+// The Hoje screen (KLOX-123 slice 2, pivot Block 2): today's pauta for
+// the radar — stage-1 ranked, MMR-spread, zero model calls — plus the
+// pieces in progress and the "Escrever" entry that turns a story into a
+// Peça (or adds it to the open one). Training continues here through
+// the same Sim/Não answer endpoint the calibration uses.
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/store"
+)
+
+const (
+	todayCards = 12
+	// Hoje prefers the last 48 h like the calibration; older stories
+	// only fill the list when the radar is quiet.
+	todayWindow = pipeline.CalibrationWindow
+)
+
+// pieceStatus is the creator-facing state of a Peça. Export arrives
+// with Block 4; until then only rascunho and revisada exist, and a sent
+// legacy issue reads as exportada.
+func pieceStatus(status string) string {
+	switch status {
+	case "approved":
+		return "reviewed"
+	case "sent", "scheduled":
+		return "exported"
+	default:
+		return "draft"
+	}
+}
+
+type pieceView struct {
+	ID     int64  `json:"id"`
+	Number int    `json:"number"`
+	Status string `json:"status"` // draft | reviewed | exported
+}
+
+// openPiece is the newest Peça still being written, nil when none.
+func openPiece(issues []*store.Issue) *store.Issue {
+	for _, iss := range issues { // newest first
+		if pieceStatus(iss.Status) == "draft" {
+			return iss
+		}
+	}
+	return nil
+}
+
+// apiToday serves the day's pauta and the pieces in progress. The
+// stories are rebuilt from what the radar's sources hold, so the ids in
+// the cards are valid for the next "Escrever" until the next rebuild
+// (the client refetches on a 404).
+func (s *Server) apiToday(w http.ResponseWriter, r *http.Request) {
+	pub, err := db(r).GetPublication(r.Context(), r.PathValue("id"))
+	if apiDBErr(w, r, err, "radar") {
+		return
+	}
+	run := s.pautaRunner(r)
+	stories, err := run.BuildStories(r.Context(), pub)
+	if apiDBErr(w, r, err, "stories") {
+		return
+	}
+	cards := run.Pauta(r.Context(), pub, stories, todayCards, todayWindow)
+	issues, err := db(r).ListIssues(r.Context(), pub.ID)
+	if apiDBErr(w, r, err, "pieces") {
+		return
+	}
+	pieces := []pieceView{}
+	for _, iss := range issues {
+		pieces = append(pieces, pieceView{ID: iss.ID, Number: iss.Number, Status: pieceStatus(iss.Status)})
+	}
+	open := int64(0)
+	if o := openPiece(issues); o != nil {
+		open = o.ID
+	}
+	apiJSON(w, 200, map[string]any{
+		"cards": pautaViews(cards), "pieces": pieces, "open_piece": open,
+		"window_hours": int(todayWindow / time.Hour),
+	})
+}
+
+// apiTodayWrite is "Escrever": the story becomes a Peça. With no open
+// Peça a new one is created with the story as its first pauta and
+// composed into empty, source-cited slots (deterministic, no model).
+// With an open Peça the story joins it — directly while nothing is
+// written yet, through the editor's block insert once writing began
+// (the response says so with add_block).
+func (s *Server) apiTodayWrite(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	pub, err := db(r).GetPublication(ctx, r.PathValue("id"))
+	if apiDBErr(w, r, err, "radar") {
+		return
+	}
+	var in struct {
+		StoryID int64 `json:"story_id"`
+	}
+	if _, err := apiDecode(r, &in); err != nil || in.StoryID == 0 {
+		apiErr(w, 400, "validation", "story_id is required")
+		return
+	}
+	story, err := db(r).StoryWithItems(ctx, in.StoryID)
+	if err != nil || story.PublicationID != pub.ID {
+		// the deck was rebuilt since the cards were served
+		apiErr(w, 404, "not_found", "story not found — reload today's pauta")
+		return
+	}
+	issues, err := db(r).ListIssues(ctx, pub.ID)
+	if apiDBErr(w, r, err, "pieces") {
+		return
+	}
+	section := ""
+	iss := openPiece(issues)
+	created := false
+	if iss == nil {
+		number, err := db(r).NextIssueNumber(ctx, pub.ID)
+		if apiDBErr(w, r, err, "piece") {
+			return
+		}
+		id, err := db(r).CreateIssue(ctx, pub.ID, number,
+			fmt.Sprintf("%s — peça %d", pub.Name, number), "", pub.Sections)
+		if apiDBErr(w, r, err, "piece") {
+			return
+		}
+		if iss, err = db(r).GetIssue(ctx, id); apiDBErr(w, r, err, "piece") {
+			return
+		}
+		created = true
+	}
+	secs := issueSections(iss, pub)
+	if len(secs) == 0 {
+		apiErr(w, 409, "blocked", "the radar has no section to hold the pauta")
+		return
+	}
+	section = secs[0].Title
+
+	written := 0
+	if !created {
+		doc, err := buildIssueDocument(ctx, db(r), iss, pub)
+		if apiDBErr(w, r, err, "document") {
+			return
+		}
+		for _, sec := range doc.Sections {
+			for _, it := range sec.Items {
+				written += len(it.Sentences)
+			}
+		}
+	}
+	if written > 0 {
+		// writing began: the editor's block insert owns the placement
+		apiJSON(w, 200, map[string]any{"issue_id": iss.ID, "add_block": true, "section": section})
+		return
+	}
+
+	if old, err := db(r).IssueItemByStory(ctx, iss.ID, in.StoryID); err == nil {
+		if apiDBErr(w, r, db(r).SetIssueItemPlacement(ctx, old.ID, section, old.Position, "approved"), "item") {
+			return
+		}
+	} else if _, err := db(r).CreateIssueItem(ctx, store.IssueItem{
+		IssueID: iss.ID, StoryID: in.StoryID, Section: section,
+		Score: story.TriageScore, Reason: story.TriageReason,
+		Status: "approved", Origin: "manual", Position: nextPosition(r, iss.ID, section),
+	}); apiDBErr(w, r, err, "item") {
+		return
+	}
+	runner := &pipeline.Runner{DB: db(r)}
+	if _, err := runner.ComposeSkeleton(ctx, pubWithIssueSections(iss, pub), iss.ID); err != nil {
+		apiErr(w, 409, "blocked", err.Error())
+		return
+	}
+	db(r).RecordDecision(ctx, pub.ID, 0, "manual_compose", "pauta de hoje became a piece for manual writing")
+	apiJSON(w, 200, map[string]any{"issue_id": iss.ID, "created": created})
+}
