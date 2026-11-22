@@ -10,7 +10,7 @@ test("landing waitlist: invalid, then success; app entry stays", async ({ page }
   const input = page.getByLabel("Seu melhor e-mail");
   await input.fill("nao-e-email");
   await page.getByRole("button", { name: "Avise-me quando lançar" }).click();
-  await expect(page.getByRole("alert")).toContainText(/e-mail válido/);
+  await expect(page.getByRole("alert")).toContainText(/não parece certo/);
 
   await input.fill(`e2e-waitlist@example.com`);
   await page.getByRole("button", { name: "Avise-me quando lançar" }).click();
