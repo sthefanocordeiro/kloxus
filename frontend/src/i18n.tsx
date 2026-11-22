@@ -353,10 +353,10 @@ export const dict = {
       shotAlt: "The Kloxus editor with a drafted piece and its sources",
       howTitle: "How it works",
       howSteps: [
-        { title: "Choose your sources", body: "The sites and feeds you already read." },
+        { title: "Say what you cover", body: "Your topics and sources." },
         {
-          title: "Approve the lineup",
-          body: "Kloxus suggests this week's stories. You keep the ones that matter.",
+          title: "Pick today's story list",
+          body: "Kloxus picks what matters. You choose.",
         },
         { title: "Write and review", body: "With your sources beside you, in your own voice." },
       ],
@@ -395,6 +395,8 @@ export const dict = {
       sourcesStrip: "Works with the feeds you already read",
       mock: {
         docTitle: "The big one",
+        railTitle: "Today",
+        editorTitle: "Post editor",
         items: [
           "Regulator opens consultation on AI in hiring",
           "New handheld console surprises on battery life",
@@ -566,7 +568,7 @@ export const dict = {
     },
     templatePage: {
       title: "Radar template",
-      intro: "The default layout every new piece starts from: fixed blocks are copied in and each story block fills with that week's stories. Changes apply to pieces created after you save — the piece you are writing keeps its own copy.",
+      intro: "The default layout every new piece starts from. Changes apply to pieces created after you save.",
       sectionSlot: "Story",
       sectionHint: "This week's stories for the section land here when the piece is created.",
       linkLabelPh: "Link label",
@@ -586,7 +588,7 @@ export const dict = {
     dismiss: "Descartar",
     status: {
       "": "preparando",
-      reviewing: "decisões",
+      reviewing: "pauta",
       drafted: "rascunho",
       approved: "aprovada",
       scheduled: "agendada",
@@ -922,10 +924,10 @@ export const dict = {
       shotAlt: "O editor do Kloxus com uma peça em rascunho e as fontes",
       howTitle: "Como funciona",
       howSteps: [
-        { title: "Escolha suas fontes", body: "Os sites e feeds que você já lê." },
+        { title: "Diga do que você fala", body: "Seus temas e fontes." },
         {
-          title: "Aprove a pauta",
-          body: "O Kloxus sugere as notícias da semana. Você fica com as que importam.",
+          title: "Escolha a pauta do dia",
+          body: "O Kloxus separa o que vale. Você escolhe.",
         },
         { title: "Escreva e revise", body: "Com as fontes ao lado, no seu tom." },
       ],
@@ -964,6 +966,8 @@ export const dict = {
       sourcesStrip: "Funciona com os feeds que você já lê",
       mock: {
         docTitle: "O destaque",
+        railTitle: "Hoje",
+        editorTitle: "Editor de post",
         items: [
           "Regulador abre consulta sobre IA em contratações",
           "Novo console portátil surpreende na bateria",
@@ -1135,7 +1139,7 @@ export const dict = {
     },
     templatePage: {
       title: "Modelo do Radar",
-      intro: "O layout padrão com que toda nova peça começa: os blocos fixos são copiados e cada bloco de pauta recebe as histórias daquela semana. Mudanças valem para peças criadas depois de salvar — a peça que você está escrevendo guarda a própria cópia.",
+      intro: "O layout padrão de toda nova peça. Mudanças valem para peças criadas depois de salvar.",
       sectionSlot: "Pauta",
       sectionHint: "As histórias da semana desta seção entram aqui quando a peça é criada.",
       linkLabelPh: "Texto do link",

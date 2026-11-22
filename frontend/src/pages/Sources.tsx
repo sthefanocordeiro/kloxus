@@ -255,7 +255,7 @@ export function SourcesPage() {
               <Button
                 variant="outline"
                 disabled={confirm.isPending}
-                onClick={() => nav(`/publications/${id}/sections`)}
+                onClick={() => nav(`/publications/${id}/sections?onboarding=1`)}
               >
                 {t.nav.back}
               </Button>

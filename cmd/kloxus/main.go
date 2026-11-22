@@ -296,6 +296,9 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		if err != nil {
 			return err
 		}
+		if v, perr := strconv.Atoi(strings.TrimSpace(os.Getenv("KLOXUS_NEW_SESSIONS_PER_IP_HOUR"))); perr == nil {
+			wsm.SetCreateLimit(v)
+		}
 	} else {
 		wsm = workspace.OpenLocal(db, seed)
 	}

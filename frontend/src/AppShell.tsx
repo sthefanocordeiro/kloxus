@@ -263,20 +263,14 @@ export function AppShell() {
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           aria-label={t.publications}
         >
-          {(publishing
-            ? [
-                { to: editionTo, label: t.nav.edition, icon: Newspaper, active: chrome.section === "edition" },
-                { to: pubBase, label: t.nav.editions, icon: Layers, active: chrome.section === "editions" },
-                { to: `${pubBase}/readers`, label: t.nav.readers, icon: Users, active: chrome.section === "readers" },
-              ]
-            : items.map((it) => ({ to: it.to, label: it.label, icon: it.icon, active: section === it.section }))
-          ).map((tab) => (
+          {(publishing ? items.slice(0, 3) : items)
+            .map((tab) => (
             <Link
               key={tab.label}
               to={tab.to}
               className={cn(
                 "flex h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium",
-                tab.active ? "text-teal" : "text-muted",
+                section === tab.section ? "text-teal" : "text-muted",
               )}
             >
               <tab.icon size={20} aria-hidden />

@@ -72,6 +72,19 @@ type Manager struct {
 
 	createMu sync.Mutex
 	creates  map[string][]time.Time
+	// createLimit is the per-IP new-session cap per hour; 0 means the
+	// createsPerHour default.
+	createLimit int
+}
+
+// SetCreateLimit overrides the per-IP new-session cap per hour
+// (KLOXUS_NEW_SESSIONS_PER_IP_HOUR). Values <= 0 keep the current value.
+func (m *Manager) SetCreateLimit(n int) {
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+	if n > 0 {
+		m.createLimit = n
+	}
 }
 
 var idRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -275,7 +288,11 @@ func (m *Manager) allowCreate(ip string) bool {
 			keep = append(keep, t)
 		}
 	}
-	if len(keep) >= createsPerHour {
+	limit := createsPerHour
+	if m.createLimit > 0 {
+		limit = m.createLimit
+	}
+	if len(keep) >= limit {
 		m.creates[ip] = keep
 		return false
 	}

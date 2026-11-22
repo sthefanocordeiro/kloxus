@@ -117,3 +117,20 @@ func TestAllowCreateBounded(t *testing.T) {
 		t.Fatal("stale window still blocking")
 	}
 }
+
+func TestSetCreateLimit(t *testing.T) {
+	m := testMgr()
+	m.SetCreateLimit(3)
+	for i := 0; i < 3; i++ {
+		if !m.allowCreate("10.0.0.5") {
+			t.Fatalf("create %d rejected early", i)
+		}
+	}
+	if m.allowCreate("10.0.0.5") {
+		t.Fatal("custom limit not enforced")
+	}
+	m.SetCreateLimit(0)
+	if m.createLimit != 3 {
+		t.Fatal("non-positive limit must keep the current value")
+	}
+}
