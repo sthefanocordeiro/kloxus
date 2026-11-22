@@ -1,4 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
+import { publishingOff } from "./publishing.ts";
+
+// KLOX-122: the sidebar differs by flag — Hoje/Radar when publishing is off.
+const CURRENT = publishingOff ? "Hoje" : "Peça atual";
+const SOURCES = publishingOff ? "Radar" : "Fontes";
 
 // KLOX-90 (KLOX-84 audit P1): the first-run path a judge walks —
 // publication created, sources not yet confirmed, no edition yet.
@@ -49,14 +54,14 @@ test.describe("first-run path (KLOX-90)", () => {
     // pub home — "Peças" glows; "Peça atual" points at the same URL
     // but must not glow (no edition exists)
     await page.goto(`/publications/${pubID}`);
-    await expect(navLink(page, "Peça atual")).not.toHaveClass(/bg-teal-soft/);
+    await expect(navLink(page, CURRENT)).not.toHaveClass(/bg-teal-soft/);
     await expect(navLink(page, "Peças")).toHaveClass(/bg-teal-soft/);
 
     // sources sub-page — only "Fontes" glows
     await page.goto(`/publications/${pubID}/sources`);
-    await expect(navLink(page, "Peça atual")).not.toHaveClass(/bg-teal-soft/);
+    await expect(navLink(page, CURRENT)).not.toHaveClass(/bg-teal-soft/);
     await expect(navLink(page, "Peças")).not.toHaveClass(/bg-teal-soft/);
-    await expect(navLink(page, "Fontes")).toHaveClass(/bg-teal-soft/);
+    await expect(navLink(page, SOURCES)).toHaveClass(/bg-teal-soft/);
   });
 
   // KLOX-68: the board must survive a write-view round trip. The

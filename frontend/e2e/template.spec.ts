@@ -51,7 +51,7 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
   await page.getByPlaceholder("Write a note for readers…").fill("Bom dia — header note");
   await page.getByRole("button", { name: "Save template", exact: true }).click();
   await expect(
-    page.getByText("Template saved — new editions start from it."),
+    page.getByText("Template saved — new pieces start from it."),
   ).toBeVisible({ timeout: 15000 });
 
   // reload keeps the saved list — four rows now

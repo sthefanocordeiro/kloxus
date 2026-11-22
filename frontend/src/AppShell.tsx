@@ -263,7 +263,7 @@ export function AppShell() {
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           aria-label={t.publications}
         >
-          {(publishing ? items.slice(0, 3) : items)
+          {(publishing ? items.slice(0, 3) : items)
             .map((tab) => (
             <Link
               key={tab.label}

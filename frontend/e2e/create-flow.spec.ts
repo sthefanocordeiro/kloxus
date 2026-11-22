@@ -87,7 +87,7 @@ test("create flow: sample fields stay realistic and Voltar works", async ({ page
   await expect(page.getByLabel("Tema", { exact: true })).not.toHaveValue(/valdoriana/i);
 
   // Voltar leaves /new for the publications list — no dead controls
-  await page.getByRole("link", { name: "Voltar para Publicações" }).click();
+  await page.getByRole("link", { name: "Voltar para Radar" }).click();
   await page.waitForURL(/\/publications$/);
 });
 
