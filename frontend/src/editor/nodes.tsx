@@ -1,3 +1,4 @@
+import { hasNumberDateOrQuote } from "../lib/claims";
 import { useEffect, useRef, useState, type FC, type MouseEvent } from "react";
 import { mergeAttributes, Node } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
@@ -154,10 +155,12 @@ function SentenceView({ node }: NodeViewProps) {
       <Button size="sm" variant="outline" disabled={busy} onClick={openEdit}>
         <PenLine size={12} /> {t.doc.edit}
       </Button>
-      <Button size="sm" variant="outline" disabled={busy}
-        onClick={() => run(() => actions.interpret(a.sid, a.kind === "interpretation" ? undefined : text))}>
-        <Quote size={12} /> {t.doc.interpretation}
-      </Button>
+      {(interpretation || !hasNumberDateOrQuote(text)) && (
+        <Button size="sm" variant="outline" disabled={busy}
+          onClick={() => run(() => actions.interpret(a.sid, a.kind === "interpretation" ? undefined : text))}>
+          <Quote size={12} /> {t.doc.interpretation}
+        </Button>
+      )}
       <Button size="sm" variant="danger" disabled={busy} onClick={() => run(() => actions.removeSentence(a.sid))}>
         <Trash2 size={12} /> {t.doc.remove}
       </Button>
@@ -406,26 +409,27 @@ function ItemHeadingView({ node, editor }: NodeViewProps) {
               <Link2 size={13} />
             </button>
           )}
-          {a.flagged > 0 && !actions.readOnly && (
-            <Button
-              size="sm"
-              variant="danger"
-              disabled={busy}
-              contentEditable={false}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await actions.removeFlagged(a.ref);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              <Trash2 size={12} /> {t.doc.removeFlagged(a.flagged)}
-            </Button>
-          )}
         </span>
       </div>
+      {/* below the title, never beside it — no horizontal scroll at 1024px */}
+    {a.flagged > 0 && !actions.readOnly && (
+      <Button className="mt-1"
+        size="sm"
+        variant="danger"
+        disabled={busy}
+        contentEditable={false}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await actions.removeFlagged(a.ref);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Trash2 size={12} /> {t.doc.removeFlagged(a.flagged)}
+      </Button>
+    )}
       {/* a link-only pauta ships the link itself — never a "write it"
           affordance, never a citation prompt (KLOX-66 D2) */}
       {a.empty && !linkItem && !actions.readOnly && !composing && (

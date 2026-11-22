@@ -1473,7 +1473,22 @@ var citeLeadRe = regexp.MustCompile(`^(\[\d+\]\s*)+`)
 func SplitSentences(line string) []string {
 	var out []string
 	start := 0
+	// a quotation stays in one piece: splitting at a period inside
+	// "…" broke an inserted quote into unquoted fragments that then
+	// failed the copy rule's short-quote exception (KLOX-124)
+	quotes := quoteRe.FindAllStringIndex(line, -1)
 	for _, m := range sentEndRe.FindAllStringIndex(line, -1) {
+		inQuote := false
+		for _, q := range quotes {
+			// a period right before the closing mark still ends the quote
+			if m[0] > q[0] && m[0] < q[1]-1 && m[1] < q[1] {
+				inQuote = true
+				break
+			}
+		}
+		if inQuote {
+			continue
+		}
 		if m[0] <= start {
 			// Boundary already inside the emitted span (e.g. the ". "
 			// right after an attached citation): drop it.
