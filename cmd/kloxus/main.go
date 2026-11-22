@@ -334,6 +334,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		// (KLOX-67 §7.2). Under the paid-AI freeze the local rows are
 		// the classification suggestions see.
 		sem := &pipeline.SemanticSweep{Pool: pool}
+		pipeline.SummaryPool = pool // top-30 card summaries (KLOX-111)
 		var enr *pipeline.Enricher
 		if cfg.Mode != "demo" && !cfg.LLMOff() {
 			enr = &pipeline.Enricher{Pool: pool, LLM: provider, Model: cfg.ModelTriage}
