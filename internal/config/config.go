@@ -114,6 +114,10 @@ type Config struct {
 	VoyageRerankTPM int
 	EmbedDailyUSD   float64
 	RerankDailyUSD  float64
+	RerankProvider  string  // KLOXUS_RERANK_PROVIDER voyage|off (KLOX-110)
+	RerankModel     string  // KLOXUS_RERANK_MODEL
+	RerankK         int     // KLOXUS_RERANK_K shortlist size
+	RerankFloor     float64 // KLOXUS_RERANK_FLOOR; 0 disables the cut
 }
 
 // Load reads .env (if present, without overriding real env vars) then env.
@@ -167,6 +171,10 @@ func Load() (*Config, error) {
 		VoyageRerankTPM: getint("KLOXUS_VOYAGE_RERANK_TPM", 2000000),
 		EmbedDailyUSD:   getfloat("KLOXUS_EMBED_DAILY_USD", 0.05),
 		RerankDailyUSD:  getfloat("KLOXUS_RERANK_DAILY_USD", 0.10),
+		RerankProvider:  getenv("KLOXUS_RERANK_PROVIDER", "voyage"),
+		RerankModel:     getenv("KLOXUS_RERANK_MODEL", "rerank-2.5-lite"),
+		RerankK:         getint("KLOXUS_RERANK_K", 100),
+		RerankFloor:     getfloat("KLOXUS_RERANK_FLOOR", 0),
 		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
 		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
 		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),
