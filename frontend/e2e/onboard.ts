@@ -56,7 +56,14 @@ export async function boardReady(page: Page, isPhone: boolean) {
 // soleSource), so a blind click would toggle the cite OFF. Make sure the
 // chip ends up pressed, whatever its starting state.
 export async function ensureCited(box: Locator, ref: number): Promise<void> {
-  const chip = box.getByRole("button", { name: new RegExp(`^\[${ref}\] `) });
+  const chip = box.getByRole("button", { name: new RegExp(`^\\[${ref}\\] `) });
   if ((await chip.getAttribute("aria-pressed")) !== "true") await chip.click();
   await expect(chip).toHaveAttribute("aria-pressed", "true");
+}
+
+// Counterpart of ensureCited for flows that need the source switched off.
+export async function ensureNotCited(box: Locator, ref: number): Promise<void> {
+  const chip = box.getByRole("button", { name: new RegExp(`^\\[${ref}\\] `) });
+  if ((await chip.getAttribute("aria-pressed")) === "true") await chip.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "false");
 }
