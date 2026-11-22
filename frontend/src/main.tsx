@@ -50,6 +50,7 @@ const router = createBrowserRouter([
       { path: "/new", lazy: () => import("./pages/Create").then((m) => ({ Component: m.CreateNewsletter })) },
       { path: "/publications", lazy: () => import("./pages/Publications").then((m) => ({ Component: m.Publications })) },
       { path: "/publications/:id", lazy: () => import("./pages/PublicationPage").then((m) => ({ Component: m.PublicationPage })) },
+      { path: "/publications/:id/today", lazy: () => import("./pages/Today").then((m) => ({ Component: m.Today })) },
       { path: "/publications/:id/sources", lazy: () => import("./pages/Sources").then((m) => ({ Component: m.SourcesPage })) },
       { path: "/publications/:id/outbox", lazy: () => import("./pages/OutboxPage").then((m) => ({ Component: m.OutboxPage })) },
       { path: "/publications/:id/guide", lazy: () => import("./pages/GuidePage").then((m) => ({ Component: m.GuidePage })) },

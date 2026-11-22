@@ -30,7 +30,7 @@ export function Start() {
   const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
   const existing = pubs.data?.[0];
   useEffect(() => {
-    if (existing && pubID === null) nav(`/publications/${existing.id}`, { replace: true });
+    if (existing && pubID === null) nav(`/publications/${existing.id}/today`, { replace: true });
   }, [existing, pubID, nav]);
 
   const create = useMutation({
@@ -115,7 +115,7 @@ export function Start() {
       )}
 
       {phase === "sources" && pubID !== null && (
-        <SourcesStep pubID={pubID} s={s} sources={sources} onDone={() => nav(`/publications/${pubID}`, { replace: true })} />
+        <SourcesStep pubID={pubID} s={s} sources={sources} onDone={() => nav(`/publications/${pubID}/today`, { replace: true })} />
       )}
     </div>
   );
