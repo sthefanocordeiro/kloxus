@@ -65,6 +65,8 @@ func main() {
 		err = cmdCoverage(os.Args[2:])
 	case "embed-backfill":
 		err = cmdEmbedBackfill(os.Args[2:])
+	case "rerank-eval":
+		err = cmdRerankEval(os.Args[2:])
 	case "record":
 		err = cmdRecord(os.Args[2:])
 	case "llm-check":
