@@ -71,6 +71,14 @@ describe("ComposeBox", () => {
     await waitFor(() => expect(add).toHaveBeenCalledWith(3, "Uncited claim.", [], "fact"));
   });
 
+  it("a single-source pauta cites that source by default (KLOX-124)", async () => {
+    const add = vi.fn(async () => null);
+    renderBox({ addSentence: add }, item({ sources: [item().sources[0]] }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Typed freely." } });
+    fireEvent.click(screen.getByRole("button", { name: "Add to story" }));
+    await waitFor(() => expect(add).toHaveBeenCalledWith(3, "Typed freely.", [1], "fact"));
+  });
+
   it("stores an interpretation with no citations when 'my take' is on", async () => {
     const add = vi.fn(async () => null);
     renderBox({ addSentence: add });

@@ -110,6 +110,22 @@ export function CoverageCounter({ coverage, onFixNow }: { coverage: Coverage; on
 
 // --- readiness checklist ---
 
+// count === 1 labels — "1 pautas sem texto" read wrong (KLOX-124)
+const SINGULAR_FAIL: Record<string, Record<string, string>> = {
+  pt: {
+    pending_decisions: "pauta por decidir",
+    uncited_sentences: "frase que precisa de fonte",
+    flags_unresolved: "pendência de fonte por resolver",
+    empty_items: "pauta sem texto",
+  },
+  en: {
+    pending_decisions: "story still undecided",
+    uncited_sentences: "sentence that needs a source",
+    flags_unresolved: "sentence still needing a source",
+    empty_items: "story still empty",
+  },
+};
+
 export function ReadinessList({
   checks,
   onTarget,
@@ -127,6 +143,7 @@ export function ReadinessList({
   const labelFor = (c: Check): string => {
     const entry = (t.readiness.check as Record<string, { ok: string; fail: string }>)[c.code];
     let label = entry ? (c.ok ? entry.ok : entry.fail) : (c.message || c.code);
+    if (!c.ok && c.count === 1 && SINGULAR_FAIL[lang]?.[c.code]) label = SINGULAR_FAIL[lang][c.code];
     if (!c.ok && c.count && c.count > 0 && !/^\d/.test(label)) label = `${c.count} ${label}`;
     if (!c.ok && c.target?.kind === "section") label += ` — ${sectionTitle(lang, c.target.ref)}`;
     return label;
@@ -232,10 +249,14 @@ export function EvidencePane({
   // An inserted excerpt is a quotation, not a fact claim: keep it inside
   // quotes, attribute it to the outlet, and cap it at 25 words so the
   // draft's originality rule (10+ consecutive source words) accepts it.
-  const quotedExcerpt = (raw: string, name: string) => {
+  // "+ inserir" on a source drops the pauta's FACT from that source as an
+  // editable draft — no quotation marks, no outlet name (KLOX-124). With
+  // no extracted fact it falls back to the opening of the excerpt, plain.
+  const insertTextFor = (ref: number, raw: string) => {
+    const fact = [...(d?.facts ?? []), ...(d?.deep_facts ?? [])].find((f) => f.ref === ref);
+    if (fact) return fact.text;
     const words = raw.trim().split(/\s+/).filter(Boolean);
-    const clip = words.length > 25 ? words.slice(0, 25).join(" ") + "…" : words.join(" ");
-    return `“${clip}” — ${name}`;
+    return words.length > 25 ? words.slice(0, 25).join(" ") + "…" : words.join(" ");
   };
 
   // D2: a link-only pauta ships its story link with zero commentary —
@@ -348,7 +369,7 @@ export function EvidencePane({
                   type="button"
                   onClick={() =>
                     actions.composeFor(item.ref, {
-                      text: quotedExcerpt(evFor(s.ref) ?? s.excerpt, s.name),
+                      text: insertTextFor(s.ref, evFor(s.ref) ?? s.excerpt),
                       cite: s.ref, seq: s.ref,
                     })
                   }

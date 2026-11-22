@@ -158,6 +158,14 @@ describe("supporting rail (KLOX-96)", () => {
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
+  it("a source insert drops the fact plain — no quotes, no outlet name (KLOX-124)", () => {
+    const composeFor = vi.fn();
+    seededPane({ composeFor });
+    fireEvent.click(screen.getByRole("button", { name: /insert source \[1\] excerpt/ }));
+    const arg = composeFor.mock.calls[0][1];
+    expect(arg.text).not.toMatch(/[“”"—]/);
+  });
+
   it("walks pautas one at a time with prev/next", () => {
     const onGo = vi.fn();
     wrap(<EvidencePane item={item()} pos={{ index: 0, total: 3 }} onGo={onGo} />);

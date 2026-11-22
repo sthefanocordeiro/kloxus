@@ -44,7 +44,10 @@ export function ComposeBox({
   // the parked copy can't resurrect over newer input (KLOX-96)
   const [parked] = useState(() => actions.composeDraftTake(item.ref));
   const [draft, setDraft] = useState(parked?.text ?? "");
-  const [cites, setCites] = useState<number[]>(parked?.cites ?? []);
+  // a pauta with exactly one source cites it by default — any typed
+  // sentence is about that source (KLOX-124)
+  const soleSource = item.sources.length === 1 ? item.sources[0].ref : null;
+  const [cites, setCites] = useState<number[]>(parked?.cites ?? (soleSource !== null ? [soleSource] : []));
   const [myTake, setMyTake] = useState(parked?.myTake ?? false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -76,7 +79,7 @@ export function ComposeBox({
     setBusy(false);
     if (refusal === null) {
       setDraft("");
-      setCites([]);
+      setCites(soleSource !== null ? [soleSource] : []);
       setMyTake(false);
     } else {
       setErr(refusal);
