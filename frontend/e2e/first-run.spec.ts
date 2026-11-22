@@ -15,7 +15,8 @@ const SOURCES = publishingOff ? "Radar" : "Fontes";
 async function createdNoSources(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: /meu Radar/ }).first().click();
-  await page.waitForURL(/\/new/);
+  await page.waitForURL(/\/start/);
+  await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
   // onboarding lands on the sources screen — nothing confirmed yet
@@ -73,7 +74,8 @@ test.describe("first-run path (KLOX-90)", () => {
     test.setTimeout(240_000);
     await page.goto("/");
     await page.getByRole("button", { name: /meu Radar/ }).first().click();
-    await page.waitForURL(/\/new/);
+    await page.waitForURL(/\/start/);
+    await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
     await page.getByRole("button", { name: "Avançar", exact: true }).click();
     await page.getByRole("button", { name: "Avançar", exact: true }).click();
     await page.waitForURL(/\/publications\/(\d+)\/sources/);

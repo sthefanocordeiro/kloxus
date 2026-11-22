@@ -18,7 +18,8 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
     .getByRole("button", { name: /Create your Radar/ })
     .first()
     .click();
-  await page.waitForURL(/\/new/);
+  await page.waitForURL(/\/start/);
+  await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
 
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({
     timeout: 15000,

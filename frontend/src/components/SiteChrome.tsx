@@ -18,7 +18,7 @@ export function useSiteEntry() {
   const nav = useNavigate();
   const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications, retry: false });
   const start = useMutation({ mutationFn: api.workspace });
-  const create = () => start.mutate(undefined, { onSuccess: () => nav("/new") });
+  const create = () => start.mutate(undefined, { onSuccess: () => nav("/start") });
   const signIn = () => start.mutate(undefined, { onSuccess: () => nav("/publications") });
   return { returning: (pubs.data?.length ?? 0) > 0, start, create, signIn };
 }

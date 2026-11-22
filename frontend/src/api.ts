@@ -485,6 +485,19 @@ export interface SourceCatalog {
   offered: CatalogOffer[];
 }
 
+// Onboarding from zero (KLOX-123): the radar, the calibration deck and
+// the Sim/Não answers that train its ranking.
+export interface PautaCard {
+  story_id: number;
+  title: string;
+  outlet: string;
+  outlets: number;
+  summary: string;
+  topics: string[];
+  url: string;
+  age_hours: number | null;
+}
+
 export const api = {
   workspace: () => request<{ workspace: Workspace }>("GET", "/api/v1/workspace").then((r) => r.workspace ?? (r as unknown as Workspace)),
   publications: () => request<{ publications: Publication[] }>("GET", "/api/v1/publications").then((r) => r.publications),
@@ -669,6 +682,14 @@ export const api = {
   proposal: () => request<{ proposal: Proposal }>("GET", "/api/v1/proposal").then((r) => r.proposal),
   propose: (material: string) =>
     request<{ proposal: Proposal; scrape: ScrapeInfo }>("POST", "/api/v1/publications/propose", { material }),
+  createRadar: (about: string, niches: string[]) =>
+    request<{ publication: Publication; sources: SourceRow[] }>("POST", "/api/v1/radar", { about, niches }),
+  calibration: (pubID: number | string) =>
+    request<{ cards: PautaCard[]; window_hours: number }>("POST", `/api/v1/publications/${pubID}/calibration`).then((r) => r.cards),
+  calibrationAnswer: (pubID: number | string, storyID: number, answer: "yes" | "no") =>
+    request<{ ok: boolean }>("POST", `/api/v1/publications/${pubID}/calibration/answer`, { story_id: storyID, answer }),
+  skipTopic: (pubID: number | string, topic: string) =>
+    request<{ publication: Publication }>("POST", `/api/v1/publications/${pubID}/skip`, { topic }),
   createPublication: (p: Omit<Proposal, "sources">) =>
     request<{ publication: Publication }>("POST", "/api/v1/publications", p).then((r) => r.publication),
   updatePublication: (id: string | number, p: Partial<Omit<Proposal, "sources">>) =>

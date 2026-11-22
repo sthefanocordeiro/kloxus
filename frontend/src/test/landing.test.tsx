@@ -43,7 +43,7 @@ function renderApp() {
         <MemoryRouter initialEntries={["/"]}>
           <Routes>
             <Route path="/" element={<Landing />} />
-            <Route path="/new" element={<div>onboarding screen</div>} />
+            <Route path="/start" element={<div>onboarding screen</div>} />
             <Route path="/publications" element={<div>publications screen</div>} />
             <Route path="/termos" element={<TermsPage />} />
             <Route path="/privacidade" element={<PrivacyPage />} />
