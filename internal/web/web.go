@@ -66,6 +66,7 @@ type Server struct {
 	sampleOnce sync.Once
 	sampleV    *config.Publication
 	sampleErr  error
+	waitlistRL waitlistLimiter
 }
 
 type ctxKey int
@@ -118,6 +119,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("POST /api/v1/p/{slug}/checkout", s.apiPayCheckout)
 	m.HandleFunc("GET /api/v1/p/{slug}/pay/{ref}", s.apiPayStatus)
 	m.HandleFunc("GET /api/v1/sample", s.apiSample)
+	m.HandleFunc("POST /api/v1/waitlist", s.apiWaitlist) // public, no workspace (KLOX-127)
 	m.HandleFunc("GET /api/v1/proposal", s.apiProposal)
 	m.HandleFunc("POST /api/v1/publications", s.apiPublicationCreate)
 	m.HandleFunc("POST /api/v1/publications/propose", s.apiPropose)
@@ -257,7 +259,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Path == "/healthz" || r.URL.Path == "/robots.txt" ||
-		r.URL.Path == "/api/v1/sample" || strings.HasPrefix(r.URL.Path, "/sample/a") ||
+		r.URL.Path == "/api/v1/sample" || r.URL.Path == "/api/v1/waitlist" || strings.HasPrefix(r.URL.Path, "/sample/a") ||
 		strings.HasPrefix(r.URL.Path, "/m/") {
 		// /m/ serves uploaded composer media — email clients and
 		// anonymous reader-page visitors carry no workspace cookie and
