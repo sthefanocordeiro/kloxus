@@ -1,3 +1,4 @@
+import { ensureCited } from "./onboard.ts";
 import { expect, test, type Page } from "@playwright/test";
 import {
   claimIfSynthetic,
@@ -233,7 +234,7 @@ test("manual compose journey", async ({ page }) => {
     await emptySlot.first().click();
     await expect(box).toBeVisible();
     await box.getByRole("textbox").fill(text);
-    await box.getByRole("button", { name: new RegExp(`^\\[${cite}\\] `) }).click();
+    await ensureCited(box, cite);
     await box.getByRole("button", { name: "Add to story" }).click();
     // the sentence lands in the document as a cited fact
     await expect(page.locator("[data-sid]")).toHaveCount(i + 1, { timeout: 15000 });
@@ -398,7 +399,7 @@ test("mobile 390px: Escrever tab bar stays pinned, heading controls ≥44px", as
   const box = page.locator('section[aria-label="Write this story"]');
   await expect(box).toBeVisible();
   await box.getByRole("textbox").fill(supportedSentence(srcExcerpt));
-  await box.getByRole("button", { name: new RegExp(`^\\[${srcRef}\\] `) }).click();
+  await ensureCited(box, srcRef);
   await box.getByRole("button", { name: "Add to story" }).click();
   await expect(page.locator("[data-sid]").first()).toBeVisible({ timeout: 15000 });
 
