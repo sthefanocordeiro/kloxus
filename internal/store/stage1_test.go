@@ -157,7 +157,7 @@ func TestApplyFeedbackIncrementalMeans(t *testing.T) {
 		db.ws, pubID).Scan(&storyID); err != nil {
 		t.Skipf("stories insert shape differs: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO story_items (story_id, item_id) VALUES ($1,$2)`, storyID, itemID); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO story_items (workspace_id, story_id, item_id) VALUES ($1,$2,$3)`, db.ws, storyID, itemID); err != nil {
 		t.Fatal(err)
 	}
 	vec := make([]float32, 512)
