@@ -149,6 +149,10 @@ type stage1Result struct {
 	Reasons []string
 	Rel     []float64
 	Hidden  []string
+	// StoryVecs and SectionVecs feed the lineup's MMR and section fill
+	// (KLOX-112). Nil entries mean "no vector".
+	StoryVecs   [][]float32
+	SectionVecs map[int][]float32
 }
 
 // editorialPenalty keeps the KLOX-55/94/115 policy demotions on top of
@@ -234,6 +238,10 @@ func (r *Runner) rankStage1(ctx context.Context, pub *store.Publication, stories
 	out := stage1Result{
 		Scores: make([]float64, len(stories)), Reasons: make([]string, len(stories)),
 		Rel: make([]float64, len(stories)), Hidden: make([]string, len(stories)),
+		StoryVecs: storyVec,
+	}
+	if haveProfile {
+		out.SectionVecs = r.loadSectionVecs(ctx, pub, emb)
 	}
 	for i := range stories {
 		s := &stories[i]
@@ -279,4 +287,74 @@ func langSample(s *store.Story) string {
 		text += " " + body
 	}
 	return text
+}
+
+// sectionHash keys a section vector to its topic text and the model.
+func sectionHash(topic, model string) string {
+	h := sha256.Sum256([]byte(model + "|section|" + strings.TrimSpace(topic)))
+	return hex.EncodeToString(h[:])
+}
+
+// loadSectionVecs returns the topic vector of every section that has a
+// "que tipo de pauta entra aqui?" text, by section index. Stale or
+// missing vectors are re-embedded in one small query-kind call; any
+// failure just leaves those sections on the term-matching path.
+func (r *Runner) loadSectionVecs(ctx context.Context, pub *store.Publication, emb embed.Embedder) map[int][]float32 {
+	var idx []int
+	for i, sec := range pub.Sections {
+		if strings.TrimSpace(sec.Topic) != "" && sec.ID != "" {
+			idx = append(idx, i)
+		}
+	}
+	if len(idx) == 0 {
+		return nil
+	}
+	cached, err := r.DB.SectionProfiles(ctx, pub.ID)
+	if err != nil {
+		log.Printf("stage1: section profiles: %v", err)
+		return nil
+	}
+	out := map[int][]float32{}
+	var stale []int
+	for _, i := range idx {
+		sec := pub.Sections[i]
+		if c, ok := cached[sec.ID]; ok && c.TopicHash == sectionHash(sec.Topic, emb.Model()) && len(c.Vec) > 0 {
+			out[i] = c.Vec
+		} else {
+			stale = append(stale, i)
+		}
+	}
+	if len(stale) > 0 {
+		texts := make([]string, len(stale))
+		for k, i := range stale {
+			texts[k] = pub.Sections[i].Title + ". " + pub.Sections[i].Topic
+		}
+		vecs, eerr := emb.Embed(ctx, texts, embed.Query)
+		if eerr != nil || len(vecs) != len(texts) {
+			log.Printf("stage1: section embedding unavailable: %v", eerr)
+		} else {
+			for k, i := range stale {
+				out[i] = vecs[k]
+				sec := pub.Sections[i]
+				if serr := r.DB.SaveSectionProfile(ctx, pub.ID, sec.ID, vecs[k], sectionHash(sec.Topic, emb.Model())); serr != nil {
+					log.Printf("stage1: saving section profile: %v", serr)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// RecordFeedback folds an accept/reject/swap decision on an issue item
+// into the publication's Rocchio means (KLOX-112). It is best-effort -
+// feedback never fails the decision - and free: it only reads stored
+// vectors, no embedding call.
+func RecordFeedback(ctx context.Context, db *store.DB, pubID, issueItemID int64, kind string) {
+	emb := DefaultEmbedder
+	if emb == nil {
+		return
+	}
+	if err := db.FeedbackForItem(ctx, pubID, issueItemID, emb.Model(), kind); err != nil {
+		log.Printf("feedback: %v", err)
+	}
 }

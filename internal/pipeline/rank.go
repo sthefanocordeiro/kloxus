@@ -28,6 +28,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/sthefanocordeiro/kloxus/internal/rank"
+
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
@@ -901,6 +903,28 @@ func pickLineup(stories []store.Story, scores []float64, reasons []string, pub *
 // auto-slotted - a thin lineup beats an off-theme one. They stay on
 // the bench behind the board's filter.
 func pickLineupSkipping(stories []store.Story, scores []float64, reasons []string, pub *store.Publication, enrich map[int64]*store.ItemEnrichment, skip []bool) []lineupPick {
+	return pickLineupVec(stories, scores, reasons, pub, enrich, skip, nil)
+}
+
+// lineupVectors carries the stage-1 vectors the lineup reads (KLOX-112):
+// per-story vectors for MMR and per-section topic vectors (by section
+// index). Nil keeps the pure score/topic-term lineup.
+type lineupVectors struct {
+	Story   [][]float32
+	Section map[int][]float32
+}
+
+// sectionMinSim is the floor a story's cosine to a section vector must
+// clear to fill the slot: a section with a vector would rather stay
+// short than take an off-topic story (Regulação must not fill with
+// Final Cut Pro). Same scale as the stage-1 relevance floor.
+const sectionMinSim = 0.25
+
+// pickLineupVec is the lineup with MMR variety and section vectors
+// (spec section 8): global picks maximize 0.7*score - 0.3*max cos to
+// the stories already picked; a section with a vector takes the best
+// unpicked stories by section similarity.
+func pickLineupVec(stories []store.Story, scores []float64, reasons []string, pub *store.Publication, enrich map[int64]*store.ItemEnrichment, skip []bool, lv *lineupVectors) []lineupPick {
 	var sections []config.Section
 	var rejectTerms termSet
 	var skipAlts [][]string
@@ -938,6 +962,20 @@ func pickLineupSkipping(stories []store.Story, scores []float64, reasons []strin
 	placed := make([]bool, len(stories))
 	outlets := map[string]int{}
 	var picks []lineupPick
+	var pickedVecs [][]float32
+	// redundancy is the max cosine of a story to the lineup so far.
+	redundancy := func(idx int) float64 {
+		if lv == nil || idx >= len(lv.Story) || len(lv.Story[idx]) == 0 {
+			return 0
+		}
+		m := 0.0
+		for _, v := range pickedVecs {
+			if c := rank.Cos(lv.Story[idx], v); c > m {
+				m = c
+			}
+		}
+		return m
+	}
 	for pass := 0; pass < 2; pass++ {
 		for progress := true; progress; {
 			progress = false
@@ -954,7 +992,31 @@ func pickLineupSkipping(stories []store.Story, scores []float64, reasons []strin
 				}
 				pick := -1
 				topicHits := 0
-				if len(secTopics[si]) > 0 {
+				var secVec []float32
+				if lv != nil {
+					secVec = lv.Section[si]
+				}
+				if len(secVec) > 0 {
+					// section vector: best unpicked by section
+					// similarity (MMR-diversified), floor-gated.
+					bestV := 0.0
+					for _, idx := range order {
+						if !eligible(idx) || idx >= len(lv.Story) || len(lv.Story[idx]) == 0 {
+							continue
+						}
+						sim := rank.Cos(lv.Story[idx], secVec)
+						if sim < sectionMinSim {
+							continue
+						}
+						if v := rank.MMRLambda*sim - (1-rank.MMRLambda)*redundancy(idx); pick < 0 || v > bestV {
+							pick, bestV = idx, v
+						}
+					}
+					if pick >= 0 {
+						topicHits = 1
+					}
+				}
+				if pick < 0 && len(secTopics[si]) > 0 {
 					// aderência first: the story matching the most of
 					// this section's topic terms wins the slot; order
 					// (score desc, id asc) breaks the tie.
@@ -967,16 +1029,22 @@ func pickLineupSkipping(stories []store.Story, scores []float64, reasons []strin
 						}
 					}
 				}
-				if pick < 0 {
+				if pick < 0 && len(secVec) == 0 {
+					bestV := 0.0
 					for _, idx := range order {
-						if eligible(idx) {
-							pick = idx
-							break
+						if !eligible(idx) {
+							continue
+						}
+						if v := rank.MMRLambda*scores[idx]/stage1Scale - (1-rank.MMRLambda)*redundancy(idx); pick < 0 || v > bestV {
+							pick, bestV = idx, v
 						}
 					}
 				}
 				if pick < 0 {
 					continue
+				}
+				if lv != nil && pick < len(lv.Story) && len(lv.Story[pick]) > 0 {
+					pickedVecs = append(pickedVecs, lv.Story[pick])
 				}
 				placed[pick] = true
 				slots[si]--
