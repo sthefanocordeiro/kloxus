@@ -3556,7 +3556,7 @@ func (s *Server) approveCiteCheck(w http.ResponseWriter, r *http.Request, iss *s
 		for _, it := range sec.Items {
 			var srcs []map[string]any
 			for _, src := range it.Sources {
-				srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
+				srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL, "excerpt": src.Excerpt})
 			}
 			if len(srcs) > 0 {
 				items = append(items, map[string]any{"ref": it.Ref, "sources": srcs})
