@@ -498,6 +498,15 @@ export interface PautaCard {
   age_hours: number | null;
 }
 
+export type RenditionFormat = "linkedin" | "x" | "html" | "markdown";
+export interface Rendition {
+  id: number; issue_id: number; format: RenditionFormat;
+  body_text: string; body_html: string; body_md: string;
+  created_at: string; updated_at: string;
+  // the piece changed since this version was forked/refreshed
+  stale: boolean;
+}
+
 export interface PieceRow {
   id: number;
   number: number;
@@ -615,6 +624,20 @@ export const api = {
   uploadMedia: (issueID: number, body: { content_type: string; data_b64: string; name: string }) =>
     request<{ media: { id: number; url: string; content_type: string; bytes: number } }>(
       "POST", `/api/v1/issues/${issueID}/media`, body),
+  // renditions (KLOX-125): per-format forks of an approved piece
+  renditions: (issueID: number) =>
+    request<{ renditions: Rendition[]; stories: number }>("GET", `/api/v1/issues/${issueID}/renditions`),
+  renditionCreate: (issueID: number, format: RenditionFormat) =>
+    request<{ rendition: Rendition; stories: number }>("POST", `/api/v1/issues/${issueID}/renditions`, { format })
+      .then((r) => r.rendition),
+  renditionSave: (issueID: number, id: number, body: string) =>
+    request<{ rendition: Rendition }>("PUT", `/api/v1/issues/${issueID}/renditions/${id}`, { body })
+      .then((r) => r.rendition),
+  renditionRefresh: (issueID: number, id: number) =>
+    request<{ rendition: Rendition }>("POST", `/api/v1/issues/${issueID}/renditions/${id}/refresh`, {})
+      .then((r) => r.rendition),
+  renditionDelete: (issueID: number, id: number) =>
+    request<void>("DELETE", `/api/v1/issues/${issueID}/renditions/${id}`),
   // standard-message library (KLOX-66 D3): reusable author text
   messages: (pubID: number) =>
     request<{ messages: StdMessage[] }>("GET", `/api/v1/publications/${pubID}/messages`).then((r) => r.messages),

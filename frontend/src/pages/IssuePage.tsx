@@ -26,6 +26,7 @@ import { Badge, Button } from "../ui";
 import { KDialog, KPopover, KPopoverClose } from "../ui-overlays";
 import { ClaimEmail } from "../components/ClaimEmail";
 import { StepCounter } from "../components/StepCounter";
+import { DestinationStep } from "../components/Destinations";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
 import { BlockedCard, BoardSkeleton, BuildBoard, StepRail } from "./Board";
 import { NotFound } from "./ErrorPage";
@@ -694,6 +695,7 @@ export function IssuePage() {
         <ReviewStep
           issue={issue}
           issueID={issueID}
+          doc={doc}
           checks={readinessQ.data?.checks ?? []}
           onTarget={(c) => { setStep("escrever"); onCheckTarget(c); }}
           onChanged={() => invalidate()}
@@ -1402,10 +1404,11 @@ function PublishingReviewActions({ issue, onDone, onToast, onEdit }: {
 // A post-approval edit banner shows at the page level until the issue
 // is approved again.
 function ReviewStep({
-  issue, issueID, checks, onTarget, onChanged,
+  issue, issueID, doc, checks, onTarget, onChanged,
 }: {
   issue: IssueSummary;
   issueID: number;
+  doc: IssueDocument;
   checks: Check[];
   onTarget: (c: Check) => void;
   onChanged: () => void;
@@ -1418,6 +1421,16 @@ function ReviewStep({
     onSuccess: onChanged,
   });
   const validated = issue.status === "approved" || issue.status === "scheduled" || issue.status === "sent";
+  if (validated && !publishing) {
+    // pivot (KLOX-125): once the review is concluded the piece goes to
+    // destinations — per-format renditions, never a send
+    return (
+      <DestinationStep
+        issueID={issueID}
+        stories={doc.sections.flatMap((sec) => sec.items.map((it) => ({ headline: it.headline })))}
+      />
+    );
+  }
   if (validated) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
