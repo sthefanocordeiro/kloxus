@@ -1132,14 +1132,12 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		Refs string
 		Text string
 	}
-	type cSrc struct {
-		Ref     int
-		URL     string
-		Excerpt string
-	}
 	type cItem struct {
 		Ref     int
-		Sources []cSrc
+		Sources []struct {
+			Ref int
+			URL string
+		}
 	}
 	cs := []cSent{}
 	ci := []cItem{}
@@ -1150,13 +1148,10 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		}
 		c := cItem{Ref: e.ref}
 		for _, s := range d.Sources {
-			src := cSrc{Ref: s.Ref, URL: s.URL}
-			// the stored dossier ref is the 1-based index into the
-			// item's sources, so the excerpt is the same article's text
-			if s.Ref >= 1 && s.Ref <= len(e.sources) {
-				src.Excerpt = truncate(e.sources[s.Ref-1].ContentText, 1200)
-			}
-			c.Sources = append(c.Sources, src)
+			c.Sources = append(c.Sources, struct {
+				Ref int
+				URL string
+			}{s.Ref, s.URL})
 		}
 		ci = append(ci, c)
 	}

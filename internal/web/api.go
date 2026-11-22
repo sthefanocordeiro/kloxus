@@ -3580,7 +3580,7 @@ func (s *Server) approveCiteCheck(w http.ResponseWriter, r *http.Request, iss *s
 	if len(sents) == 0 {
 		return false
 	}
-	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
+	user, err := pipeline.RenderPrompt("citecheck_approve", map[string]any{
 		"Publication": pub.Name, "Sentences": sents, "Items": items,
 	})
 	if err != nil {
@@ -4598,7 +4598,7 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docCo
 	for _, src := range d.Sources {
 		srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
 	}
-	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
+	user, err := pipeline.RenderPrompt("citecheck_approve", map[string]any{
 		"Publication": "",
 		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
 		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
