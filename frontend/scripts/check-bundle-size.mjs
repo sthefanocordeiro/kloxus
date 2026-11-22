@@ -1,13 +1,13 @@
 // Asserts the "/" landing payload stays under budget (KLOX-16): the
 // JS and CSS referenced by the built index.html must gzip to under
-// 150 KiB combined. Lazy route chunks load on demand and are not
+// 152 KiB combined. Lazy route chunks load on demand and are not
 // measured.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
-const BUDGET = 150 * 1024;
+const BUDGET = 152 * 1024; // 150 → 152 KiB for the KLOX-127 waitlist form (~0.7 KiB gz)
 const dist = join(dirname(fileURLToPath(import.meta.url)), "../../internal/web/appdist");
 const html = readFileSync(join(dist, "index.html"), "utf8");
 
@@ -32,6 +32,6 @@ for (const ref of refs) {
 const kib = (n) => (n / 1024).toFixed(1) + " KiB";
 console.log(`bundle-size: landing payload ${kib(total)} gzip (budget ${kib(BUDGET)})`);
 if (total > BUDGET) {
-  console.error("bundle-size: FAIL — landing payload exceeds the 150 KiB gzip budget");
+  console.error("bundle-size: FAIL — landing payload exceeds the 152 KiB gzip budget");
   process.exit(1);
 }

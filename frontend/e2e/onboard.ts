@@ -13,7 +13,7 @@ export const benchCol = (page: Page) => page.locator('section[aria-label="Sugges
 export async function onboard(page: Page) {
   await page.goto("/");
   // the landing renders the hero headline before any workspace exists
-  await expect(page.getByRole("heading", { name: /The research is done/ })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("heading", { name: /The research is ready/ })).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Create your newsletter/ }).first().click();
   await page.waitForURL(/\/new/);
 

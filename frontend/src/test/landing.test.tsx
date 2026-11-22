@@ -15,6 +15,7 @@ vi.mock("../api", async (importOriginal) => {
       ...mod.api,
       workspace: vi.fn(),
       publications: vi.fn(),
+      waitlist: vi.fn(),
     },
   };
 });
@@ -70,7 +71,7 @@ describe("Landing", () => {
   it("switches the page between EN and pt-BR", async () => {
     renderApp();
     expect(
-      await screen.findByRole("heading", { name: /the research is done/i }),
+      await screen.findByRole("heading", { name: /the research is ready/i }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "PT" }));
     expect(
@@ -79,13 +80,13 @@ describe("Landing", () => {
     expect(screen.getAllByRole("button", { name: /criar minha newsletter/i }).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     expect(
-      await screen.findByRole("heading", { name: /the research is done/i }),
+      await screen.findByRole("heading", { name: /the research is ready/i }),
     ).toBeInTheDocument();
   });
 
   it("offers the dashboard to a returning visitor and sign-in to a new one", async () => {
     renderApp();
-    expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect((await screen.findAllByRole("button", { name: /sign in/i })).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: /dashboard/i })).not.toBeInTheDocument();
 
     vi.mocked(api.publications).mockResolvedValue([pub]);
@@ -93,6 +94,32 @@ describe("Landing", () => {
     expect(await screen.findByRole("link", { name: /dashboard/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: /dashboard/i }));
     expect(await screen.findByText("publications screen")).toBeInTheDocument();
+  });
+
+  // KLOX-127: the hero captures a waitlist email; the app stays reachable.
+  it("joins the waitlist from the hero and shows the success state", async () => {
+    vi.mocked(api.waitlist).mockResolvedValue({ ok: true });
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "PT" }));
+    const input = await screen.findByLabelText("Seu e-mail");
+    fireEvent.change(input, { target: { value: "nao-e-email" } });
+    fireEvent.click(screen.getByRole("button", { name: "Avise-me quando lançar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/e-mail válido/i);
+    expect(api.waitlist).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: " ana@exemplo.com " } });
+    fireEvent.click(screen.getByRole("button", { name: "Avise-me quando lançar" }));
+    expect(await screen.findByText("Você está na lista")).toBeInTheDocument();
+    expect(api.waitlist).toHaveBeenCalledWith("ana@exemplo.com", "landing");
+    expect(screen.getByRole("button", { name: /já sou criador/i })).toBeInTheDocument();
+  });
+
+  it("shows an error when the waitlist call fails", async () => {
+    vi.mocked(api.waitlist).mockRejectedValue(new Error("boom"));
+    renderApp();
+    fireEvent.change(await screen.findByLabelText("Your email"), { target: { value: "a@b.co" } });
+    fireEvent.click(screen.getByRole("button", { name: "Notify me when it launches" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not save/i);
   });
 
   // KLOX-69: the hamburger covers the section links, entry and CTA at

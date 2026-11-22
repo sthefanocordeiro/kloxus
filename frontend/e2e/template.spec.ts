@@ -9,7 +9,7 @@ import { expect, test } from "@playwright/test";
 test("newsletter template: defaults, edit and save", async ({ page }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: /The research is done/ }),
+    page.getByRole("heading", { name: /The research is ready/ }),
   ).toBeVisible({ timeout: 15000 });
   await page
     .getByRole("button", { name: /Create your newsletter/ })
