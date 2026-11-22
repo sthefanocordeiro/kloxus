@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
-import { ArrowLeft, BookOpen, ClipboardCheck, Eye, Send, Wrench } from "lucide-react";
-import { api, ApiRequestError, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
-import { docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
-import { Commentary, DocActionsCtx, insideCommentary, IssueDoc, ItemHeading, SectionHeading, Sentence, type DocActions } from "../editor/nodes";
+import { BookOpen, CalendarClock, ChevronDown, ClipboardCheck, Download, ExternalLink, Eye, ListChecks, Pencil, Plus, Send, Trash2 } from "lucide-react";
+import { api, ApiRequestError, type Candidate, type Check, type IssueDocument, type IssueSummary, type RemovedSentence } from "../api";
+import { blockTextMd, docToTiptap, nextPendingSentence, readyFromChecks } from "../docModel";
+import { writableRefs, writingProgress } from "../editor/writeProgress";
+import { BlockAdd, BlockDivider, BlockEmbed, BlockHeading, BlockImage, BlockLink, BlockText, Commentary, DocActionsCtx, FIX_SENTENCE_EVENT, insideEditable, IssueDoc, ItemHeading, SectionHeading, Sentence, type ComposeDraft, type ComposeInsert, type DocActions } from "../editor/nodes";
 import { useT } from "../i18n";
+import { useComposer } from "../editor/composerStrings";
 import { cn } from "../lib/cn";
-import { errText } from "../lib/errors";
+import { errText, runErrText } from "../lib/errors";
 import { fmtDate } from "../lib/fmt";
 
 // datetime-local inputs work in local time without a zone; the API gets
@@ -19,33 +21,42 @@ function localInput(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-import { Badge, Button, KDialog, KPopover } from "../ui";
+import { Badge, Button } from "../ui";
+import { KDialog, KPopover, KPopoverClose } from "../ui-overlays";
+import { ClaimEmail } from "../components/ClaimEmail";
+import { StepCounter } from "../components/StepCounter";
 import { CoverageCounter, EvidencePane, PautasPane, PreviewPane, ReadinessList, scrollInPane } from "../components/Panes";
-import { BoardSkeleton, BuildBoard, StepRail } from "./Board";
+import { BlockedCard, BoardSkeleton, BuildBoard, StepRail } from "./Board";
+import { NotFound } from "./ErrorPage";
+import { useWrite } from "../editor/writeStrings";
 
 // scroll the editor pane to a sentence/item element and flash it —
-// constrained to the pane so other panes don't move
-function flashEl(docEl: HTMLElement | null, sel: string) {
+// constrained to the pane so other panes don't move. Returns the
+// element so callers can open its fix affordance too (KLOX-52).
+function flashEl(docEl: HTMLElement | null, sel: string): HTMLElement | null {
   const el = docEl?.querySelector<HTMLElement>(sel);
-  if (!el || !docEl) return;
+  if (!el || !docEl) return null;
   scrollInPane(docEl, el);
   el.classList.remove("flash");
   void el.offsetWidth;
   el.classList.add("flash");
+  return el;
 }
 
-// statuses before the draft exists — the build board owns them
-const BOARD_STATUSES = new Set(["draft", "reviewing", ""]);
+// statuses before the draft exists — the build board owns them; a
+// 'blocked' issue keeps whatever the interrupted run produced.
+const BOARD_STATUSES = new Set(["draft", "reviewing", "blocked", ""]);
 
 export function IssuePage() {
   const { id } = useParams();
   const issueID = Number(id);
   const { t } = useT();
+  const w = useWrite();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const runID = params.get("run");
   const [runDone, setRunDone] = useState(!runID);
-  const [runSummary, setRunSummary] = useState<string | null>(null);
+  const [runBlocked, setRunBlocked] = useState<string | null>(null);
   const issueQ = useQuery({ queryKey: ["issue", issueID], queryFn: () => api.issue(issueID) });
   const itemsQ = useQuery({ queryKey: ["items", issueID], queryFn: () => api.issueItems(issueID) });
   const docQ = useQuery({ queryKey: ["document", issueID], queryFn: () => api.document(issueID) });
@@ -62,9 +73,9 @@ export function IssuePage() {
     if (doc) versionRef.current = doc.version;
   }, [doc]);
 
-  const [toast, setToast] = useState<{ text: string; undo?: RemovedSentence } | null>(null);
+  const [toast, setToast] = useState<{ text: string; undo?: RemovedSentence[] } | null>(null);
   const toastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showToast = useCallback((text: string, undo?: RemovedSentence) => {
+  const showToast = useCallback((text: string, undo?: RemovedSentence[]) => {
     setToast({ text, undo });
     if (toastRef.current) clearTimeout(toastRef.current);
     toastRef.current = setTimeout(() => setToast(null), 8000);
@@ -92,19 +103,37 @@ export function IssuePage() {
     qc.invalidateQueries({ queryKey: ["document", issueID] });
     qc.invalidateQueries({ queryKey: ["readiness", issueID] });
     qc.invalidateQueries({ queryKey: ["issue", issueID] });
+    // the pauta list badges read item statuses — a swap creates a NEW
+    // issue_item the stale list lacks, which read as "a decidir"
+    // against the fresh document (KLOX-100 flicker)
+    qc.invalidateQueries({ queryKey: ["items", issueID] });
+    // a send can change the confirmed-reader count the dialog shows
+    // (a test send confirms the claimed owner as a reader)
+    qc.invalidateQueries({ queryKey: ["reader"] });
   }, [qc, issueID]);
 
   // evidence pane selection
   const [sel, setSel] = useState<{ ref: number; issueItemId: number; citeRef?: number; sid?: string } | null>(null);
-  const [rightTab, setRightTab] = useState<"evidence" | "preview">("evidence");
-  const [mobileTab, setMobileTab] = useState<"list" | "doc" | "side">("doc");
+  // the Escrever surface is two columns (KLOX-96): the document — the
+  // real writing surface — and one supporting rail holding the pauta
+  // list, the selected pauta's facts/sources, and the preview
+  const [railTab, setRailTab] = useState<"pautas" | "evidence" | "preview">("evidence");
+  const [mobileTab, setMobileTab] = useState<"doc" | "rail">("doc");
+  // the in-document composer: which item's is open plus the last
+  // fact/excerpt prefill — page-owned so node-view remounts don't lose it
+  const [composeRef, setComposeRef] = useState<number | null>(null);
+  const [composeInsert, setComposeInsert] = useState<{ ref: number; insert: ComposeInsert | null; seq: number } | null>(null);
+  const composeSeq = useRef(0);
+  // parked composer inputs, ref→draft — a ref, not state: keystrokes
+  // write here without re-rendering the whole document (KLOX-96)
+  const composeDrafts = useRef(new Map<number, ComposeDraft>());
   const editorWrapRef = useRef<HTMLDivElement>(null);
   const [saved, setSaved] = useState<"" | "saving" | "saved">("");
 
   const undoRemove = useCallback(
-    async (removed: RemovedSentence) => {
+    async (removed: RemovedSentence[]) => {
       try {
-        const r = await api.restoreSentence(issueID, removed, versionRef.current);
+        const r = await api.restoreSentences(issueID, removed[0].ref, removed, versionRef.current);
         versionRef.current = r.version;
         setToast(null);
         invalidate();
@@ -121,8 +150,38 @@ export function IssuePage() {
       showEvidence: (ref, opts) => {
         const item = findItem(doc ?? null, ref);
         setSel({ ref, issueItemId: item?.issue_item_id ?? 0, citeRef: opts?.citeRef, sid: opts?.sid });
-        setRightTab("evidence");
-        if (window.innerWidth < 768) setMobileTab("side");
+        setRailTab("evidence");
+        if (window.innerWidth < 768) setMobileTab("rail");
+      },
+      composeFor: (ref, insert) => {
+        setComposeRef(ref);
+        if (insert) {
+          composeSeq.current += 1;
+          setComposeInsert({ ref, insert, seq: composeSeq.current });
+        }
+        // on phone the surface is the doc tab — bring it forward before
+        // flashing the pauta the composer opened under
+        if (window.innerWidth < 768) setMobileTab("doc");
+        setTimeout(() => {
+          flashEl(editorWrapRef.current, `[data-item-ref="${ref}"]`);
+        }, 60);
+      },
+      composeClose: (ref) => setComposeRef((r) => (r === ref ? null : r)),
+      composeRef,
+      composeInsert,
+      consumeInsert: (ref) =>
+        setComposeInsert((c) => (c && c.ref === ref ? null : c)),
+      composeDraftTake: (ref) => {
+        const d = composeDrafts.current.get(ref) ?? null;
+        composeDrafts.current.delete(ref);
+        return d;
+      },
+      composeDraftSave: (ref, d) => {
+        if (!d.text.trim() && d.cites.length === 0 && !d.myTake) {
+          composeDrafts.current.delete(ref);
+        } else {
+          composeDrafts.current.set(ref, d);
+        }
       },
       editSentence: async (sid, text, citations) => {
         try {
@@ -154,16 +213,140 @@ export function IssuePage() {
           const r = await api.removeSentence(issueID, sid, versionRef.current);
           versionRef.current = r.version;
           invalidate();
-          showToast(t.doc.removed, r.removed);
+          showToast(t.doc.removed, r.removed ? [r.removed] : undefined);
           return true;
         } catch (e) {
           resync(e);
           return false;
         }
       },
+      removeFlagged: async (itemRef) => {
+        try {
+          const r = await api.removeFlagged(issueID, itemRef, versionRef.current);
+          versionRef.current = r.version;
+          invalidate();
+          showToast(t.doc.removedFlagged(r.removed?.length ?? 0), r.removed);
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      // manual compose: append editor text to an item — same refusal
+      // contract as editSentence (null ok, reason string to show inline)
+      addSentence: async (itemRef, text, citations, kind) => {
+        try {
+          const r = await api.composeSentence(issueID, itemRef, text, citations, kind, versionRef.current);
+          versionRef.current = r.version;
+          invalidate();
+          return null;
+        } catch (e) {
+          if (e instanceof ApiRequestError && e.document) {
+            qc.setQueryData(["document", issueID], e.document);
+          }
+          return errText(t, e);
+        }
+      },
+      // --- composer blocks (KLOX-66): every op answers with the fresh
+      // document — swap it into the cache and keep its version
+      moveBlock: async (section, index, dir) => {
+        // a move past the section's edge is a no-op — sending it anyway
+        // answered 400 validation and showed an unexplained error toast
+        const sec = doc?.sections.find((s) => s.title === section);
+        const n = sec?.blocks?.length ?? sec?.items?.length ?? 0;
+        const to = index + dir;
+        if (to < 0 || to >= n) return true;
+        try {
+          await flushRef.current();
+          const r = await api.blockMove(issueID, section, index, to, versionRef.current);
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      removeBlock: async (section, index) => {
+        try {
+          await flushRef.current();
+          const r = await api.blockRemove(issueID, section, index, versionRef.current);
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          showToast(t.doc.removed);
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      updateBlock: async (section, index, text, url) => {
+        try {
+          await flushRef.current();
+          const r = await api.blockUpdate(issueID, { section, index, text, url, version: versionRef.current });
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return null;
+        } catch (e) {
+          if (e instanceof ApiRequestError && e.document) {
+            qc.setQueryData(["document", issueID], e.document);
+          }
+          return errText(t, e);
+        }
+      },
+      insertBlock: async (section, kind, position, text, url) => {
+        try {
+          await flushRef.current();
+          const r = await api.blockInsert(issueID, { section, kind, text, url, position, version: versionRef.current });
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return null;
+        } catch (e) {
+          if (e instanceof ApiRequestError && e.document) {
+            qc.setQueryData(["document", issueID], e.document);
+          }
+          return errText(t, e);
+        }
+      },
+      openInsert: (section, index, kind) => setInsertDlg({ section, index, kind }),
+      uploadImage: async (dataB64, contentType, name) => {
+        try {
+          const r = await api.uploadMedia(issueID, { content_type: contentType, data_b64: dataB64, name });
+          return r.media.url;
+        } catch {
+          return null;
+        }
+      },
+      toggleLinkOnly: async (ref, linkOnly) => {
+        try {
+          await flushRef.current();
+          const r = await api.itemLinkOnly(issueID, ref, linkOnly, versionRef.current);
+          versionRef.current = r.document.version;
+          qc.setQueryData(["document", issueID], r.document);
+          invalidate();
+          return true;
+        } catch (e) {
+          resync(e);
+          return false;
+        }
+      },
+      pickPauta: (section, position) => setPautaPick({ section, position }),
     }),
-    [doc, issueID, invalidate, resync, qc, showToast, t],
+    [doc, issueID, invalidate, resync, qc, showToast, t, composeRef, composeInsert],
   );
+
+  // the "+ Pauta" affordance opens a picker over the bench — stories
+  // already in the edition (or rejected) never appear (KLOX-66)
+  const [pautaPick, setPautaPick] = useState<{ section: string; position?: number } | null>(null);
+  // the image / embed / standard-message insert dialogs the gap menu
+  // opens — the page owns them like the pauta picker (KLOX-66 D3)
+  const [insertDlg, setInsertDlg] = useState<
+    { section: string; index: number; kind: "image" | "embed" | "message" } | null
+  >(null);
 
   // --- commentary autosave: watch editor updates, diff commentary
   // nodes against what the server last saw, PUT debounced.
@@ -172,27 +355,61 @@ export function IssuePage() {
   // same base state, each writes only its own key → lost update). ---
   const savedCommentary = useRef<Map<string, string>>(new Map());
   const dirtyCommentary = useRef<Map<string, string>>(new Map());
+  // same pattern for rich-text blocks: `sec:index` → markdown baseline
+  // and dirty value, PUT through the block update endpoint (D3)
+  const savedText = useRef<Map<string, string>>(new Map());
+  const dirtyText = useRef<Map<string, string>>(new Map());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draining = useRef(false);
+  // the DocActions memo is created before the drain machinery — calls
+  // go through this ref, wired to flushSaves once it exists
+  const flushRef = useRef<() => Promise<void>>(async () => {});
   const drainSaves = useCallback(async () => {
     if (draining.current) return;
     draining.current = true;
     try {
       for (;;) {
-        const next = dirtyCommentary.current.entries().next();
-        if (next.done) return;
-        const [section, text] = next.value;
-        dirtyCommentary.current.delete(section);
+        const nextC = dirtyCommentary.current.entries().next();
+        const nextT = nextC.done ? dirtyText.current.entries().next() : null;
+        if (nextC.done && (!nextT || nextT.done)) return;
+        const isText = nextC.done;
+        const [key, text] = (isText ? nextT!.value : nextC.value) as [string, string];
+        if (isText) dirtyText.current.delete(key);
+        else dirtyCommentary.current.delete(key);
         try {
           setSaved("saving");
-          const r = await api.commentary(issueID, section, text, versionRef.current);
-          versionRef.current = r.version;
-          savedCommentary.current.set(section, text);
+          if (isText) {
+            const [section, idx] = key.split(":");
+            const r = await api.blockUpdate(issueID, {
+              section, index: Number(idx), text, version: versionRef.current,
+            });
+            versionRef.current = r.document.version;
+            savedText.current.set(key, text);
+          } else {
+            const r = await api.commentary(issueID, key, text, versionRef.current);
+            versionRef.current = r.version;
+            savedCommentary.current.set(key, text);
+          }
           setSaved("saved");
           qc.invalidateQueries({ queryKey: ["readiness", issueID] });
         } catch (e) {
+          // re-queue so a later drain retries instead of dropping the
+          // typed text — a conflict carries the fresh document, so once
+          // resync lands the new version the retry can save it. A
+          // deterministic 4xx (validation, not_found) can never succeed
+          // — drop it instead of re-toasting on every later drain and
+          // spinning flush-and-mutate ops forever.
+          const permanent =
+            e instanceof ApiRequestError && e.status >= 400 && e.status < 500 && !e.document;
+          if (!permanent) {
+            if (isText) dirtyText.current.set(key, text);
+            else dirtyCommentary.current.set(key, text);
+          }
           setSaved("");
           resync(e);
+          if (e instanceof ApiRequestError && e.document) {
+            setTimeout(() => drainSaves(), 1000);
+          }
           return;
         }
       }
@@ -207,6 +424,20 @@ export function IssuePage() {
       drainSaves();
     }, 900);
   }, [drainSaves]);
+  // structural actions (block insert/move/delete, item edits) must see
+  // typed-but-unsaved text already persisted, so they flush the queue
+  // first instead of racing the debounce
+  const flushSaves = useCallback(async () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    for (;;) {
+      await drainSaves();
+      if (!dirtyCommentary.current.size && !dirtyText.current.size) return;
+    }
+  }, [drainSaves]);
+  flushRef.current = flushSaves;
 
   const editor = useEditor(
     {
@@ -214,12 +445,24 @@ export function IssuePage() {
         // no editable heading node, no gap cursor at atom boundaries and
         // a top-level schema that admits only the issue's real nodes —
         // free paragraphs simply cannot be created in this editor
-        StarterKit.configure({ heading: false, gapcursor: false, document: false }),
+        // StarterKit registers bold/italic/link already — link clicks
+        // must not navigate inside the editor
+        StarterKit.configure({
+          heading: false, gapcursor: false, document: false,
+          link: { openOnClick: false },
+        }),
         IssueDoc,
         Sentence,
         Commentary,
         ItemHeading,
         SectionHeading,
+        BlockHeading,
+        BlockDivider,
+        BlockLink,
+        BlockImage,
+        BlockEmbed,
+        BlockText,
+        BlockAdd,
       ],
       content: doc ? docToTiptap(doc) : { type: "doc", content: [] },
       editable: false, // enabled by the effect below once the document loads
@@ -228,24 +471,34 @@ export function IssuePage() {
         // the schema already forbids free paragraphs; these guards make
         // it airtight — a click landing on a boundary between atoms, or
         // a stray selection, can never turn a keystroke into text outside
-        // a commentary block
+        // an editable region (commentary or a rich-text block)
         handleTextInput: (view, from) =>
-          !insideCommentary(view.state.doc.resolve(from)),
+          !insideEditable(view.state.doc.resolve(from)),
         handleKeyDown: (view, event) =>
           ["Enter", "Backspace", "Delete"].includes(event.key) &&
-          !insideCommentary(view.state.selection.$from),
+          !insideEditable(view.state.selection.$from),
         handlePaste: (view) =>
-          !insideCommentary(view.state.selection.$from),
+          !insideEditable(view.state.selection.$from),
       },
       onUpdate: ({ editor: ed }) => {
         let dirty = false;
         ed.state.doc.descendants((n) => {
-          if (n.type.name !== "commentary") return true;
-          const section = String(n.attrs.section);
-          const text = n.textContent;
-          if (savedCommentary.current.get(section) === text) return true;
-          dirtyCommentary.current.set(section, text);
-          dirty = true;
+          if (n.type.name === "commentary") {
+            const section = String(n.attrs.section);
+            const text = n.textContent;
+            if (savedCommentary.current.get(section) === text) return true;
+            dirtyCommentary.current.set(section, text);
+            dirty = true;
+            return true;
+          }
+          if (n.type.name === "blockText") {
+            const key = `${n.attrs.section}:${n.attrs.index}`;
+            const md = blockTextMd(n.toJSON() as Parameters<typeof blockTextMd>[0]);
+            if (savedText.current.get(key) === md) return true;
+            dirtyText.current.set(key, md);
+            dirty = true;
+            return true;
+          }
           return true;
         });
         if (dirty) scheduleDrain();
@@ -259,6 +512,17 @@ export function IssuePage() {
     if (!editor || !doc) return;
     savedCommentary.current = new Map(doc.sections.map((s) => [s.title, s.commentary.text]));
     dirtyCommentary.current.clear();
+    // rich-text baselines keyed `sec:index` — the same identity the
+    // block update endpoint consumes
+    savedText.current = new Map(
+      doc.sections.flatMap((s) =>
+        (s.blocks ?? [])
+          .map((b, i) => [b, i] as const)
+          .filter(([b]) => b.kind === "text")
+          .map(([b, i]) => [`${s.title}:${i}`, b.text ?? ""]),
+      ),
+    );
+    dirtyText.current.clear();
     editor.commands.setContent(docToTiptap(doc));
     // setContent leaves a selection spanning the whole fresh document — a
     // keystroke arriving before a click's selection sync would replace the
@@ -282,9 +546,14 @@ export function IssuePage() {
   }, [editor]);
 
   const goToSentence = useCallback(
-    (selStr: string) => {
+    (selStr: string, opts?: { fix?: boolean; click?: boolean }) => {
       if (window.innerWidth < 768) setMobileTab("doc");
-      setTimeout(() => flashEl(editorWrapRef.current, selStr), 60);
+      setTimeout(() => {
+        const el = flashEl(editorWrapRef.current, selStr);
+        if (!el) return;
+        if (opts?.fix) el.dispatchEvent(new CustomEvent(FIX_SENTENCE_EVENT));
+        else if (opts?.click) el.click();
+      }, 60);
     },
     [setMobileTab],
   );
@@ -292,7 +561,15 @@ export function IssuePage() {
   const fixNow = () => {
     if (!doc) return;
     const sid = nextPendingSentence(doc);
-    if (sid) goToSentence(`[data-sid="${sid}"]`);
+    if (sid) {
+      goToSentence(`[data-sid="${sid}"]`, { fix: true });
+      return;
+    }
+    // nothing sentence-shaped is pending — point at the first failing
+    // check's own affordance (an empty item's compose box, a missing
+    // commentary) instead of a dead-end flash (KLOX-56)
+    const check = readinessQ.data?.checks.find((c) => !c.ok && c.target);
+    if (check) onCheckTarget(check);
   };
 
   const onCheckTarget = (c: Check) => {
@@ -300,96 +577,126 @@ export function IssuePage() {
       fixNow();
       return;
     }
-    if (c.target.kind === "sentence") goToSentence(`[data-sid="${c.target.ref}"]`);
-    else if (c.target.kind === "item") goToSentence(`[data-item-ref="${c.target.ref}"]`);
-    else if (c.target.kind === "section") goToSentence(`[data-commentary="${c.target.ref}"]`);
-    else if (c.target.kind === "issue") {
-      // open story decisions live in the list pane
-      if (window.innerWidth < 768) setMobileTab("list");
+    if (c.target.kind === "sentence") goToSentence(`[data-sid="${c.target.ref}"]`, { fix: true });
+    else if (c.target.kind === "item") {
+      // the fix surface for an unwritten item is its in-document
+      // composer — open it under the heading; wide screens pair it with
+      // the item's facts in the rail (KLOX-96)
+      actions.composeFor(Number(c.target.ref));
+      if (window.innerWidth >= 768) actions.showEvidence(Number(c.target.ref));
+    } else if (c.target.kind === "section") {
+      // the commentary card is the affordance — a click focuses it
+      goToSentence(`[data-commentary="${c.target.ref}"]`, { click: true });
+    } else if (c.target.kind === "issue") {
+      // open story decisions live in the pauta list
+      if (window.innerWidth < 768) {
+        setMobileTab("rail");
+        setRailTab("pautas");
+      }
     }
   };
 
   if (issueQ.isLoading || !issueQ.data) {
+    // a missing issue settles as a 404 — show "not found", never an
+    // endless loader (KLOX-49)
+    if (issueQ.error instanceof ApiRequestError && issueQ.error.status === 404) {
+      return <NotFound />;
+    }
+    if (issueQ.isError && !issueQ.isLoading) {
+      return <p className="p-6 text-sm text-danger">{errText(t, issueQ.error)}</p>;
+    }
     return <p className="p-6 text-sm text-muted">…</p>;
   }
   const issue = issueQ.data;
+
+  // Edition steps (KLOX-66): Pautas → Escrever → Revisar e enviar. The
+  // counter navigates between visited steps; the board owns step 1
+  // until the edition exists (board statuses), writing owns step 2,
+  // review owns step 3 — a step can always be revisited.
+  const boardPhase = BOARD_STATUSES.has(issue.status);
+  const stepParam = params.get("step");
+  const step = boardPhase ? "pautas"
+    : stepParam === "pautas" || stepParam === "revisar" || stepParam === "escrever" ? stepParam
+    : issue.status === "drafted" ? "escrever" : "revisar";
+  const setStep = (s: string) =>
+    setParams((p) => { p.set("step", s); return p; }, { replace: true });
+  const stepNum = step === "pautas" ? 1 : step === "escrever" ? 2 : 3;
+  // validated = approved or past it: the edition is final on this
+  // screen, so the checklist and the empty-coverage badge go away
+  // (KLOX-80). A post-approval edit drops the status back to drafted,
+  // which reinstates the pendency affordances.
+  const validated = issue.status === "approved" || issue.status === "scheduled" || issue.status === "sent";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* top bar */}
       <header className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2.5">
-        <Link to={`/publications/${issue.publication_id}`} className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink">
-          <ArrowLeft size={13} /> {t.back}
-        </Link>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">
-            #{issue.number} · {issue.subject}
-          </p>
+        {/* the edition title lives in the shell chrome (Edição N over
+            the newsletter crumb) — repeating it here stacked the same
+            line twice (KLOX-100) */}
+        <StepCounter
+          steps={t.board.steps}
+          current={stepNum}
+          onStep={(i) => setStep(["pautas", "escrever", "revisar"][i])}
+          // while the board owns the edition a later step has nothing
+          // to show; once it exists every step is one click away
+          // (KLOX-100)
+          navAhead={!boardPhase}
+          className="w-full shrink-0 sm:w-96"
+        />
+        {/* chrome convention: header/action clusters sit right-aligned —
+            ml-auto keeps the whole group on the right edge even when it
+            wraps to its own line (owner note on KLOX-80) */}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
+          {saved && (
+            <span className="rounded-full bg-teal-soft px-2 py-0.5 text-[11px] text-teal">
+              {saved === "saving" ? t.commentary.saving : t.commentary.saved}
+            </span>
+          )}
+          {!BOARD_STATUSES.has(issue.status) && doc && !(validated && doc.coverage.total === 0) && (
+            <span className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+              <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />
+            </span>
+          )}
+          {issue.status === "approved" && (
+            // the action cluster lives in the header so it never scrolls
+            // out of reach, whatever the step body renders (KLOX-80)
+            <ReviewActions
+              issue={issue}
+              onDone={() => invalidate()}
+              onToast={showToast}
+              onEdit={step === "escrever" ? undefined : () => setStep("escrever")}
+            />
+          )}
+          {readinessQ.data && !BOARD_STATUSES.has(issue.status) && issue.status !== "sent" && (
+            <ApproveBar
+              issue={issue}
+              checks={readinessQ.data.checks}
+              coverage={doc?.coverage ?? readinessQ.data.coverage}
+              onTarget={onCheckTarget}
+              onApproved={() => invalidate()}
+            />
+          )}
+          {issue.status === "scheduled" && <HoldBar issue={issue} onDone={() => invalidate()} />}
+          {issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
         </div>
-        <ol className="flex items-center gap-1 text-[11px]" aria-label={(t.status as Record<string, string>)[issue.status]}>
-          {t.board.steps.map((label, i) => {
-            const step =
-              issue.status === "drafted" ? 2
-              : issue.status === "approved" || issue.status === "sent" || issue.status === "scheduled" ? 3
-              : 1;
-            return (
-              <li key={label} className="flex items-center gap-1">
-                {i > 0 && <span className="mx-0.5 text-muted/40">·</span>}
-                <span
-                  className={cn(
-                    "inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px]",
-                    i + 1 < step ? "bg-teal-soft text-teal" : i + 1 === step ? "bg-ink text-paper" : "bg-line text-muted",
-                  )}
-                >
-                  {i + 1}
-                </span>
-                <span className={i + 1 === step ? "font-semibold text-ink" : i + 1 < step ? "text-teal" : "text-muted"}>
-                  {label}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-        <span className="flex-1" />
-        {saved && (
-          <span className="rounded-full bg-teal-soft px-2 py-0.5 text-[11px] text-teal">
-            {saved === "saving" ? t.commentary.saving : t.commentary.saved}
-          </span>
-        )}
-        {!BOARD_STATUSES.has(issue.status) && doc && (
-          <CoverageCounter coverage={doc.coverage} onFixNow={fixNow} />
-        )}
-        {issue.status === "approved" && (
-          <KPopover
-            trigger={
-              <Button size="sm" variant="danger">
-                <Send size={12} /> {t.send.action}
-              </Button>
-            }
-          >
-            {issue.receipt && (
-              <p className="mb-2 text-xs text-muted">
-                {t.receipt.by} {issue.receipt.approver} · {t.receipt.version}{" "}
-                {issue.receipt.document_version.slice(0, 8)}
-              </p>
-            )}
-            <SendRow issue={issue} onDone={() => invalidate()} onToast={showToast} />
-          </KPopover>
-        )}
-        {readinessQ.data && !BOARD_STATUSES.has(issue.status) && issue.status !== "sent" && (
-          <ApproveBar
-            issue={issue}
-            checks={readinessQ.data.checks}
-            coverage={doc?.coverage ?? readinessQ.data.coverage}
-            onTarget={onCheckTarget}
-            onApproved={() => invalidate()}
-          />
-        )}
-        {issue.status === "scheduled" && <HoldBar issue={issue} onDone={() => invalidate()} />}
-        {issue.status === "sent" && <Badge tone="ink">{t.send.sent}</Badge>}
       </header>
 
-      {BOARD_STATUSES.has(issue.status) ? (
+      {issue.edited_after_approval && (
+        <div className="border-b border-warn/40 bg-warn-soft/60 px-4 py-2 text-xs text-warn">
+          {t.review.editedAfterApproval}
+        </div>
+      )}
+
+      {step === "revisar" && doc ? (
+        <ReviewStep
+          issue={issue}
+          issueID={issueID}
+          checks={readinessQ.data?.checks ?? []}
+          onTarget={(c) => { setStep("escrever"); onCheckTarget(c); }}
+          onChanged={() => invalidate()}
+        />
+      ) : step === "pautas" || boardPhase ? (
         runID && !runDone ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="mx-auto w-full max-w-md p-6">
@@ -397,23 +704,14 @@ export function IssuePage() {
               <StepRail
                 runID={runID}
                 steps={["collect", "dedupe", "triage", "storylist", "dossier", "deepdive"]}
-                onDone={(run, events) => {
-                  const bits: string[] = [];
-                  const labels = t.run.counts as Record<string, string | ((n: number) => string)>;
-                  for (const key of ["items_read", "duplicates_merged", "ranked", "selected"]) {
-                    const ev = [...events].reverse().find((e) => e.counts && key in e.counts);
-                    if (ev?.counts) {
-                      const lbl = labels[key] ?? key;
-                      bits.push(`${ev.counts[key]} ${typeof lbl === "function" ? lbl(ev.counts[key]) : lbl}`);
-                    }
-                  }
-                  if (bits.length) setRunSummary(bits.join(" · "));
+                onDone={(run) => {
                   setRunDone(true);
                   setParams((p) => { p.delete("run"); return p; }, { replace: true });
                   qc.invalidateQueries({ queryKey: ["candidates", issueID] });
                   qc.invalidateQueries({ queryKey: ["issue", issueID] });
                   if (run.no_new_items) showToast(t.run.noNewItems);
-                  if (run.error) showToast(run.error);
+                  if (run.blocked || run.sample) setRunBlocked(run.error ?? null);
+                  else if (run.error) showToast(runErrText(t, run.error));
                 }}
               />
             </div>
@@ -421,112 +719,205 @@ export function IssuePage() {
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
-            {runSummary && <p className="border-b border-line px-4 py-1.5 text-xs text-muted">{runSummary}</p>}
-            <BuildBoard issue={issue} onDrafted={() => invalidate()} />
+            {runBlocked && (
+              <div className="relative border-b border-line">
+                <button
+                  className="absolute right-3 top-3 z-10 text-xs text-muted hover:text-ink"
+                  onClick={() => setRunBlocked(null)}
+                  aria-label={t.dismiss}
+                >
+                  ✕
+                </button>
+                <BlockedCard message={runBlocked} />
+              </div>
+            )}
+            <BuildBoard key={issue.id} issue={issue} onDrafted={() => invalidate()} />
           </div>
         )
       ) : (
         doc && (
           <>
-            {/* all three panes stay mounted — visibility toggles per
-                breakpoint so the editor is never double-mounted */}
-            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-              <aside
-                className={cn(
-                  "min-h-0 shrink-0 overflow-y-auto border-line md:w-64 md:flex-none md:border-r",
-                  mobileTab === "list" ? "block flex-1" : "hidden md:block",
-                )}
-              >
-                <PautasPane
-                  doc={doc}
-                  items={itemsQ.data?.items}
-                  selectedRef={sel?.ref ?? null}
-                  onSelect={(ref, iid) => actions.showEvidence(ref, { issueItemId: iid })}
-                />
-              </aside>
-              <main
-                ref={editorWrapRef}
-                className={cn(
-                  "min-h-0 min-w-0 flex-1 overflow-y-auto",
-                  mobileTab === "doc" ? "block" : "hidden md:block",
-                )}
-              >
-                <DocActionsCtx.Provider value={actions}>
-                  <EditorContent editor={editor} />
-                </DocActionsCtx.Provider>
-              </main>
-              <aside
-                className={cn(
-                  "min-h-0 shrink-0 flex-col border-line md:flex md:w-80 md:flex-none md:border-l",
-                  mobileTab === "side" ? "flex flex-1" : "hidden",
-                )}
-              >
-                <div className="flex border-b border-line text-xs">
-                  {(["evidence", "preview"] as const).map((tb) => (
-                    <button
-                      key={tb}
-                      onClick={() => setRightTab(tb)}
-                      className={cn(
-                        "flex-1 px-3 py-2 font-medium",
-                        rightTab === tb ? "border-b-2 border-teal text-ink" : "text-muted",
-                      )}
-                    >
-                      {tb === "evidence" ? t.evidence.title : t.preview.title}
-                    </button>
-                  ))}
-                </div>
-                <div className="min-h-0 flex-1">
-                  {rightTab === "evidence" ? (
-                    <EvidencePane
-                      item={sel ? findItem(doc, sel.ref) : null}
-                      citeRef={sel?.citeRef}
-                      sid={sel?.sid}
-                    />
-                  ) : (
-                    <PreviewPane issueID={issueID} />
+            {/* two panes stay mounted — visibility toggles per breakpoint
+                so the editor is never double-mounted (KLOX-96: the old
+                left/right columns merged into one supporting rail) */}
+            <DocActionsCtx.Provider value={actions}>
+              <div className="flex min-h-0 flex-1 flex-col pb-16 md:flex-row md:pb-0">
+                <main
+                  ref={editorWrapRef}
+                  className={cn(
+                    "min-h-0 min-w-0 flex-1 overflow-y-auto",
+                    mobileTab === "doc" ? "block" : "hidden md:block",
                   )}
-                </div>
-              </aside>
-            </div>
+                >
+                  {(() => {
+                    const p = writingProgress(doc);
+                    return p.total > 0 ? (
+                      <div className="sticky top-0 z-10 border-b border-line bg-paper px-4 py-2 backdrop-blur">
+                        <div className="flex items-center gap-3">
+                          <span className="shrink-0 text-xs font-medium text-muted">
+                            {w.writing(p.done, p.total)}
+                          </span>
+                          <div
+                            role="progressbar"
+                            aria-label={w.writing(p.done, p.total)}
+                            aria-valuemin={0}
+                            aria-valuemax={p.total}
+                            aria-valuenow={p.done}
+                            className="h-1.5 min-w-0 flex-1 rounded-full bg-line/60"
+                          >
+                            <div
+                              className="h-full rounded-full bg-teal"
+                              style={{ width: `${Math.round((p.done / p.total) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
+                  <EditorContent editor={editor} />
+                </main>
+                <aside
+                  className={cn(
+                    "min-h-0 shrink-0 flex-col border-line md:flex md:w-80 md:flex-none md:border-l",
+                    mobileTab === "rail" ? "flex flex-1" : "hidden",
+                  )}
+                >
+                  <div className="flex border-b border-line text-xs">
+                    {(
+                      [
+                        ["pautas", t.pautas],
+                        ["evidence", t.evidence.title],
+                        ["preview", t.preview.title],
+                      ] as const
+                    ).map(([tb, label]) => (
+                      <button
+                        key={tb}
+                        onClick={() => setRailTab(tb)}
+                        className={cn(
+                          "inline-flex min-h-11 flex-1 items-center justify-center truncate px-2 font-medium md:min-h-10",
+                          railTab === tb ? "border-b-2 border-teal text-ink" : "text-muted",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="min-h-0 flex-1">
+                    {railTab === "pautas" ? (
+                      <PautasPane
+                        doc={doc}
+                        items={itemsQ.data?.items}
+                        selectedRef={sel?.ref ?? null}
+                        onSelect={(ref, iid) => {
+                          actions.showEvidence(ref, { issueItemId: iid });
+                          // one-pauta focus (KLOX-96): the list drives the
+                          // document — on phone the rail keeps the facts
+                          if (window.innerWidth >= 768) {
+                            goToSentence(`[data-item-ref="${ref}"]`);
+                          }
+                        }}
+                      />
+                    ) : railTab === "evidence" ? (
+                      <EvidencePane
+                        item={sel ? findItem(doc, sel.ref) : null}
+                        citeRef={sel?.citeRef}
+                        sid={sel?.sid}
+                        linkOnly={!!sel && findItemFormat(doc, sel.ref) === "links"}
+                        pos={(() => {
+                          const refs = writableRefs(doc);
+                          const idx = sel ? refs.indexOf(sel.ref) : -1;
+                          return idx >= 0 ? { index: idx, total: refs.length } : undefined;
+                        })()}
+                        onGo={(dir) => {
+                          const refs = writableRefs(doc);
+                          const idx = sel ? refs.indexOf(sel.ref) : -1;
+                          const next = refs[idx + dir];
+                          if (idx >= 0 && next !== undefined) {
+                            actions.showEvidence(next, { issueItemId: findItem(doc, next)?.issue_item_id });
+                            if (window.innerWidth >= 768) {
+                              goToSentence(`[data-item-ref="${next}"]`);
+                            }
+                          }
+                        }}
+                      />
+                    ) : (
+                      <PreviewPane issueID={issueID} />
+                    )}
+                  </div>
+                </aside>
+              </div>
+            </DocActionsCtx.Provider>
 
-            {/* phone tab bar — bottom, per spec */}
-            <nav className="flex border-t border-line text-xs md:hidden">
+            {/* phone tab bar — fixed just above the global bottom nav
+                (3.5rem bar + home-indicator inset) so it never scrolls
+                out of reach mid-document; pb-16 on the panes above
+                keeps the last content line clear of it (KLOX-89) */}
+            <nav
+              aria-label={t.nav.issueTabs}
+              className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-40 flex border-t border-line bg-paper-raised text-xs md:hidden"
+            >
               {(
                 [
-                  ["list", <BookOpen key="i" size={15} />, t.pautas],
+                  ["pautas", <ListChecks key="i" size={15} />, t.pautas],
                   ["doc", <ClipboardCheck key="i" size={15} />, t.issue],
-                  ["side", <Eye key="i" size={15} />, rightTab === "evidence" ? t.evidence.title : t.preview.title],
+                  ["evidence", <BookOpen key="i" size={15} />, t.evidence.title],
+                  ["preview", <Eye key="i" size={15} />, t.preview.title],
                 ] as const
               ).map(([k, icon, label]) => (
                 <button
                   key={k}
-                  onClick={() => setMobileTab(k)}
-                  aria-pressed={mobileTab === k}
+                  onClick={() => {
+                    if (k === "doc") setMobileTab("doc");
+                    else {
+                      setRailTab(k);
+                      setMobileTab("rail");
+                    }
+                  }}
+                  aria-pressed={k === "doc" ? mobileTab === "doc" : mobileTab === "rail" && railTab === k}
                   className={cn(
-                    "flex flex-1 flex-col items-center gap-0.5 py-2",
-                    mobileTab === k ? "text-teal" : "text-muted",
+                    "flex min-h-11 flex-1 flex-col items-center gap-0.5 py-2",
+                    (k === "doc" ? mobileTab === "doc" : mobileTab === "rail" && railTab === k)
+                      ? "text-teal"
+                      : "text-muted",
                   )}
                 >
                   {icon}
                   {label}
                 </button>
               ))}
-              <button
-                onClick={() => {
-                  setRightTab(rightTab === "evidence" ? "preview" : "evidence");
-                  setMobileTab("side");
-                }}
-                className="flex flex-1 flex-col items-center gap-0.5 py-2 text-muted"
-              >
-                <Wrench size={15} />
-                {rightTab === "evidence" ? t.preview.title : t.evidence.title}
-              </button>
             </nav>
           </>
         )
       )}
 
-      {(issue.status === "sent" || issue.status === "scheduled") && <AfterSend issue={issue} />}
+      {pautaPick && (
+        <PautaPicker
+          issueID={issueID}
+          section={pautaPick.section}
+          position={pautaPick.position}
+          version={versionRef.current}
+          onPicked={(d) => {
+            versionRef.current = d.version;
+            qc.setQueryData(["document", issueID], d);
+            setPautaPick(null);
+            invalidate();
+          }}
+          onError={(e) => resync(e)}
+          onClose={() => setPautaPick(null)}
+        />
+      )}
+      {insertDlg && (
+        <InsertBlockDialog
+          pubID={issue.publication_id}
+          dlg={insertDlg}
+          onInsert={(kind, text, url) => actions.insertBlock(insertDlg.section, kind, insertDlg.index, text, url)}
+          onUploaded={actions.uploadImage}
+          onDone={() => { setInsertDlg(null); }}
+        />
+      )}
+      {(issue.status === "sent" || issue.status === "scheduled" || !!issue.test_sent_at) && (
+        <AfterSend issue={issue} onToast={showToast} />
+      )}
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink px-4 py-2 text-xs text-paper shadow-lg">
           {toast.text}
@@ -536,7 +927,7 @@ export function IssuePage() {
             </button>
           )}
           {toast.undo && (
-            <button className="text-muted" aria-label="dismiss" onClick={() => setToast(null)}>
+            <button className="text-muted" aria-label={t.dismiss} onClick={() => setToast(null)}>
               ✕
             </button>
           )}
@@ -548,6 +939,12 @@ export function IssuePage() {
 
 function findItem(doc: IssueDocument | null, ref: number) {
   return doc?.sections.flatMap((s) => s.items ?? []).find((i) => i.ref === ref) ?? null;
+}
+
+// findItemFormat returns the format of the section holding item ref —
+// links-format sections are link-only (KLOX-65/D2).
+function findItemFormat(doc: IssueDocument | null, ref: number): string | undefined {
+  return doc?.sections.find((s) => (s.items ?? []).some((i) => i.ref === ref))?.format;
 }
 
 // --- approve popover + dialog ---
@@ -580,6 +977,8 @@ function ApproveBar({
     queryFn: () => api.reader(issue.publication_id),
     enabled: audience === "readers",
   });
+  const wsQ = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
+  const liveUnclaimed = wsQ.data?.mail === "live" && !wsQ.data?.claimed;
   const pub = pubQ.data?.publication;
   const atOK = when !== "schedule" || new Date(at).getTime() > Date.now();
   // the dialog approves first, then sends per the chosen audience —
@@ -602,7 +1001,7 @@ function ApproveBar({
     <>
       <KPopover
         trigger={
-          <Button size="sm" variant={ready ? "teal" : "outline"}>
+          <Button size="sm" variant={ready ? "primary" : "outline"}>
             {issue.status === "approved" ? `${t.readiness.approvedAt}` : t.readiness.approve}
             {issue.status === "approved" && issue.receipt && (
               <span className="text-[10px] opacity-80">#{issue.receipt.number}</span>
@@ -610,15 +1009,15 @@ function ApproveBar({
           </Button>
         }
       >
-        <ReadinessList checks={checks} coverage={coverage} onTarget={onTarget} />
+        <ReadinessList checks={checks} onTarget={onTarget} />
         {ready && issue.status !== "approved" && (
-          <Button className="mt-3 w-full" variant="teal" size="sm" onClick={() => setConfirm(true)}>
+          <Button className="mt-3 w-full" size="sm" onClick={() => setConfirm(true)}>
             {t.readiness.approve}
           </Button>
         )}
-        {issue.status === "approved" && issue.receipt && (
+        {issue.status === "approved" && issue.receipt?.approver && (
           <div className="mt-3 border-t border-line pt-2 text-xs text-muted">
-            {t.receipt.by} {issue.receipt.approver} · {t.receipt.version} {issue.receipt.document_version.slice(0, 8)}
+            {t.receipt.by} {issue.receipt.approver}
           </div>
         )}
       </KPopover>
@@ -664,11 +1063,13 @@ function ApproveBar({
             )}
           </fieldset>
         )}
-        <dl className="mb-4 space-y-1 border-t border-line pt-3 text-xs text-muted">
-          <div className="flex justify-between">
-            <dt>{t.send.version}</dt>
-            <dd className="font-mono">{(issue.document_version ?? "").slice(0, 8)}</dd>
+        {audience === "readers" && liveUnclaimed && (
+          <div className="mb-3">
+            <p className="mb-1 text-xs text-danger">{t.claim.hint}</p>
+            <ClaimEmail />
           </div>
+        )}
+        <dl className="mb-4 space-y-1 border-t border-line pt-3 text-xs text-muted">
           {coverage && (
             <div className="flex justify-between">
               <dt>{t.send.sourced}</dt>
@@ -680,12 +1081,18 @@ function ApproveBar({
           {audience === "readers" && (
             <div className="flex justify-between">
               <dt>{t.send.recipients}</dt>
-              <dd>{readerQ.data ? t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0) : "…"}</dd>
+              <dd>
+                {readerQ.data
+                  ? wsQ.data?.mail === "live"
+                    ? t.send.readerCount(readerQ.data.confirmed ?? 0, readerQ.data.subscribers ?? 0)
+                    : t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0)
+                  : "…"}
+              </dd>
             </div>
           )}
           <div className="flex justify-between">
             <dt>{t.send.sender}</dt>
-            <dd>{pub?.name} &lt;{pub?.slug}@kloxus.demo&gt;</dd>
+            <dd>{pub?.name}</dd>
           </div>
         </dl>
         <div className="flex justify-end gap-2">
@@ -693,7 +1100,7 @@ function ApproveBar({
             {t.doc.cancel}
           </Button>
           <Button
-            variant={audience === "readers" ? "danger" : "teal"}
+            variant={audience === "readers" ? "danger" : "primary"}
             disabled={flow.isPending || !atOK}
             onClick={() => flow.mutate()}
           >
@@ -706,64 +1113,173 @@ function ApproveBar({
   );
 }
 
-function SendRow({ issue, onDone, onToast }: {
-  issue: IssueSummary; onDone: () => void; onToast: (text: string) => void;
+// exportIssuePDF is the honest PDF path (KLOX-80): the approved HTML
+// export prints from a hidden frame and the browser's Save-as-PDF
+// produces the file — no dead-end menu item, no new dependency.
+async function exportIssuePDF(issueID: number) {
+  const res = await fetch(`/api/v1/issues/${issueID}/export?fmt=html`);
+  if (!res.ok) throw new Error(`export ${res.status}`);
+  const html = await res.text();
+  const f = document.createElement("iframe");
+  f.setAttribute("aria-hidden", "true");
+  f.style.cssText =
+    "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none";
+  f.srcdoc = html;
+  const done = () => f.remove();
+  f.onload = () => {
+    const w = f.contentWindow;
+    if (!w) return done();
+    w.addEventListener("afterprint", done);
+    setTimeout(done, 60_000);
+    w.focus();
+    w.print();
+  };
+  document.body.appendChild(f);
+}
+
+// ReviewActions is the approved edition's header cluster (KLOX-80):
+// edit, test send, send now, schedule, export and reader preview as
+// first-class buttons that never scroll out of reach — instead of an
+// action row buried at the bottom of the review column. Sends keep
+// the same confirm dialog, and the live-mail claim gate rides along
+// inside it.
+function ReviewActions({ issue, onDone, onToast, onEdit }: {
+  issue: IssueSummary;
+  onDone: () => void;
+  onToast: (text: string) => void;
+  onEdit?: () => void;
 }) {
   const { t } = useT();
+  const [dlg, setDlg] = useState<null | "now" | "schedule">(null);
   const [at, setAt] = useState(() => localInput(new Date(Date.now() + 24 * 3600e3)));
-  const [confirmSend, setConfirmSend] = useState<null | { when: "now" | "schedule" }>(null);
   const atOK = new Date(at).getTime() > Date.now();
   const pubQ = useQuery({
     queryKey: ["publication", issue.publication_id],
     queryFn: () => api.publication(issue.publication_id),
   });
+  const wsQ = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
   const readerQ = useQuery({
     queryKey: ["reader", issue.publication_id],
     queryFn: () => api.reader(issue.publication_id),
   });
+  // the reader page only exists once a test send stamps test_sent_at
+  // (api.after 409s before that) — the link enables exactly when the
+  // page is real, so the button never dead-ends
+  const publicQ = useQuery({
+    queryKey: ["after", issue.id],
+    queryFn: () => api.after(issue.id),
+    enabled: !!issue.test_sent_at,
+    retry: false,
+  });
+  const unclaimed = wsQ.data?.mail === "live" && !wsQ.data?.claimed;
   const sendMut = useMutation({
     mutationFn: ({ aud, when }: { aud: "test" | "readers"; when: "now" | "schedule" }) =>
       api.send(issue.id, aud, when, undefined,
         when === "schedule" ? new Date(at).toISOString() : undefined),
     onSuccess: (r, { aud }) => {
-      setConfirmSend(null);
+      setDlg(null);
       // a test send lands in the outbox — say where it went
-      if (r.to?.length) onToast(aud === "test" ? t.send.testSentTo(r.to.join(", ")) : t.send.sentTo(r.to.join(", ")));
+      if (r.fallback) onToast(t.send.fallbackNote);
+      else if (r.to?.length) onToast(aud === "test" ? t.send.testSentTo(r.to.join(", ")) : t.send.sentTo(r.to.join(", ")));
+      if (r.refused?.length) onToast(t.send.refusedNote(r.refused.length));
+      if (r.warnings?.length) onToast(r.warnings[0]);
       onDone();
     },
   });
   const pub = pubQ.data?.publication;
+  const recipients = readerQ.data
+    ? wsQ.data?.mail === "live"
+      ? t.send.readerCount(readerQ.data.confirmed ?? 0, readerQ.data.subscribers ?? 0)
+      : t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0)
+    : "…";
+  const publicURL = publicQ.data?.public_url;
+  const exportURL = (fmt: string) => `/api/v1/issues/${issue.id}/export?fmt=${fmt}`;
+  const menuItem =
+    "flex w-full items-center gap-2 rounded-[var(--radius-btn)] px-2 py-1.5 text-left text-sm text-ink hover:bg-surface disabled:opacity-50";
+  // One primary action per audit P1-7 (KLOX-101): Enviar green and
+  // right-aligned; test send, schedule, export and the reader preview
+  // live in the actions menu so the cluster never wraps into rows.
   return (
-    <div className="mt-2 space-y-2">
-      <div className="flex gap-2">
-        <Button size="sm" variant="outline" disabled={sendMut.isPending} onClick={() => sendMut.mutate({ aud: "test", when: "now" })}>
-          <Send size={12} /> {t.send.test}
+    <span className="flex flex-wrap items-center justify-end gap-1.5">
+      {onEdit && (
+        <Button size="sm" variant="ghost" onClick={onEdit}>
+          <Pencil size={12} /> {t.review.edit}
         </Button>
-        <Button size="sm" variant="danger" disabled={sendMut.isPending} onClick={() => setConfirmSend({ when: "now" })}>
-          {t.send.readers}
-        </Button>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          type="datetime-local"
-          aria-label={t.send.at}
-          className="rounded border border-line bg-paper px-2 py-1 text-xs text-ink"
-          min={localInput(new Date())}
-          value={at}
-          onChange={(e) => setAt(e.target.value)}
-        />
-        <Button
-          size="sm" variant="ghost"
-          disabled={sendMut.isPending || !atOK}
-          onClick={() => setConfirmSend({ when: "schedule" })}
-        >
-          {t.send.schedule}
-        </Button>
-        {!atOK && <span className="text-[11px] text-danger">{t.send.pickTime}</span>}
-      </div>
-      {sendMut.error && <p className="text-xs text-danger">{errText(t, sendMut.error)}</p>}
+      )}
+      <KPopover
+        trigger={
+          <Button size="sm" variant="outline">
+            {t.review.actions} <ChevronDown size={11} />
+          </Button>
+        }
+      >
+        <KPopoverClose asChild>
+          <button
+            type="button" className={menuItem} disabled={sendMut.isPending}
+            onClick={() => sendMut.mutate({ aud: "test", when: "now" })}
+          >
+            <Send size={13} /> {t.send.test}
+          </button>
+        </KPopoverClose>
+        <KPopoverClose asChild>
+          <button
+            type="button" className={menuItem} disabled={sendMut.isPending}
+            onClick={() => setDlg("schedule")}
+          >
+            <CalendarClock size={13} /> {t.review.scheduleSend}
+          </button>
+        </KPopoverClose>
+        {publicURL ? (
+          <KPopoverClose asChild>
+            <a href={publicURL} target="_blank" rel="noreferrer" className={menuItem}>
+              <ExternalLink size={13} /> {t.preview.title}
+            </a>
+          </KPopoverClose>
+        ) : (
+          <button type="button" className={menuItem} disabled title={t.review.previewHint}>
+            <Eye size={13} /> {t.preview.title}
+          </button>
+        )}
+        <p className="mb-0.5 mt-2 border-t border-line px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+          {t.review.export}
+        </p>
+        <KPopoverClose asChild>
+          <a className={menuItem} href={exportURL("html")} download>
+            <Download size={13} /> HTML
+          </a>
+        </KPopoverClose>
+        <KPopoverClose asChild>
+          <a className={menuItem} href={exportURL("markdown")} download>
+            <Download size={13} /> Markdown
+          </a>
+        </KPopoverClose>
+        <KPopoverClose asChild>
+          <button
+            type="button"
+            className={menuItem}
+            onClick={() => void exportIssuePDF(issue.id).catch(() => onToast(t.review.exportFailed))}
+          >
+            <Download size={13} /> PDF
+          </button>
+        </KPopoverClose>
+        <p className="mt-1 px-2 text-[11px] text-muted">{t.review.pdfHint}</p>
+      </KPopover>
+      <Button size="sm" disabled={sendMut.isPending} onClick={() => setDlg("now")}>
+        {t.send.action}
+      </Button>
+      {sendMut.error && <span className="text-xs text-danger">{errText(t, sendMut.error)}</span>}
 
-      <KDialog open={confirmSend !== null} onOpenChange={(o) => !o && setConfirmSend(null)} title={t.send.confirmSend}>
+      <KDialog
+        open={dlg !== null}
+        onOpenChange={(o) => !o && setDlg(null)}
+        title={dlg === "schedule" ? t.review.scheduleSend : t.send.confirmSend}
+      >
+        {unclaimed && (
+          <div className="mb-3">
+            <p className="mb-1 text-xs text-muted">{t.claim.hint}</p>
+            <ClaimEmail />
+          </div>
+        )}
         <dl className="mb-4 space-y-1 text-sm">
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.subject}</dt>
@@ -771,31 +1287,346 @@ function SendRow({ issue, onDone, onToast }: {
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.recipients}</dt>
-            <dd>{readerQ.data ? t.send.readerCount(readerQ.data.readers ?? 0, readerQ.data.subscribers ?? 0) : "…"}</dd>
+            <dd>{recipients}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-muted">{t.send.sender}</dt>
-            <dd>{pub?.name} &lt;{pub?.slug}@kloxus.demo&gt;</dd>
+            <dd>{pub?.name}</dd>
           </div>
-          {confirmSend?.when === "schedule" && (
-            <div className="flex justify-between gap-4">
-              <dt className="text-muted">{t.send.at}</dt>
-              <dd>{new Date(at).toLocaleString()}</dd>
-            </div>
-          )}
         </dl>
+        {dlg === "schedule" && (
+          <label className="mb-4 flex items-center gap-2 text-xs text-muted">
+            {t.send.at}
+            <input
+              type="datetime-local"
+              aria-label={t.send.at}
+              className="rounded border border-line bg-paper px-2 py-1 text-xs text-ink"
+              min={localInput(new Date())}
+              value={at}
+              onChange={(e) => setAt(e.target.value)}
+            />
+            {!atOK && <span className="text-[11px] text-danger">{t.send.pickTime}</span>}
+          </label>
+        )}
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setConfirmSend(null)}>{t.doc.cancel}</Button>
+          <Button variant="ghost" onClick={() => setDlg(null)}>{t.doc.cancel}</Button>
           <Button
             variant="danger"
-            disabled={sendMut.isPending}
-            onClick={() => sendMut.mutate({ aud: "readers", when: confirmSend!.when })}
+            disabled={sendMut.isPending || (dlg === "schedule" && !atOK)}
+            onClick={() => sendMut.mutate({ aud: "readers", when: dlg! })}
           >
-            {confirmSend?.when === "schedule" ? t.send.schedule : t.send.now}
+            {dlg === "schedule" ? t.send.schedule : t.send.now}
           </Button>
         </div>
       </KDialog>
+    </span>
+  );
+}
+
+// ReviewStep is the "Revisar e enviar" screen (KLOX-66, redesigned in
+// KLOX-80): before approval the checklist and its linked pendencies
+// sit beside the preview with the approve action under them; once the
+// edition is validated (approved, scheduled or sent) the checklist is
+// redundant — the middle column holds only the validated edition with
+// its preview variables and every action lives in the header cluster.
+// A post-approval edit banner shows at the page level until the issue
+// is approved again.
+function ReviewStep({
+  issue, issueID, checks, onTarget, onChanged,
+}: {
+  issue: IssueSummary;
+  issueID: number;
+  checks: Check[];
+  onTarget: (c: Check) => void;
+  onChanged: () => void;
+}) {
+  const { t } = useT();
+  const ready = checks.length > 0 && checks.every((c) => c.ok);
+  const approveMut = useMutation({
+    mutationFn: () => api.approve(issueID),
+    onSuccess: onChanged,
+  });
+  const validated = issue.status === "approved" || issue.status === "scheduled" || issue.status === "sent";
+  if (validated) {
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl p-4">
+          <section className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+            <PreviewPane issueID={issueID} />
+          </section>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto grid w-full max-w-5xl gap-4 p-4 md:grid-cols-2">
+        <section className="space-y-3">
+          <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+            <h2 className="mb-2 text-sm font-semibold">{t.readiness.title}</h2>
+            <ReadinessList checks={checks} onTarget={onTarget} heading={false} />
+          </div>
+          <div className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+            <h2 className="mb-2 text-sm font-semibold">{t.send.approveSend}</h2>
+            <Button
+              size="sm"
+              disabled={!ready || approveMut.isPending}
+              title={ready ? undefined : t.readiness.blockedHint}
+              onClick={() => approveMut.mutate()}
+            >
+              {t.readiness.approve}
+            </Button>
+            {approveMut.error && <p className="mt-2 text-xs text-danger">{errText(t, approveMut.error)}</p>}
+          </div>
+        </section>
+        <section className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-4">
+          <PreviewPane issueID={issueID} />
+        </section>
+      </div>
     </div>
+  );
+}
+
+// PautaPicker lists bench candidates for "+ Pauta" — stories in the
+// edition and rejected ones never appear as suggestions. `position`
+// is the gap the picker opened from (append when undefined).
+function PautaPicker({
+  issueID, section, position, version, onPicked, onError, onClose,
+}: {
+  issueID: number;
+  section: string;
+  position?: number;
+  version: string;
+  onPicked: (d: IssueDocument) => void;
+  onError: (e: unknown) => void;
+  onClose: () => void;
+}) {
+  const { t } = useT();
+  const b = useComposer();
+  const [q, setQ] = useState("");
+  const candsQ = useQuery({
+    queryKey: ["candidates", issueID],
+    queryFn: () => api.candidates(issueID),
+  });
+  const pick = useMutation({
+    mutationFn: (c: Candidate) =>
+      api.blockInsert(issueID, { section, kind: "item", story_id: c.story_id, position, version }),
+    onSuccess: (r) => onPicked(r.document),
+    onError: onError,
+  });
+  const bench = (candsQ.data?.candidates ?? []).filter(
+    (c) => !c.in_issue && c.available && (!q || c.title.toLowerCase().includes(q.toLowerCase())),
+  );
+  return (
+    <KDialog open onOpenChange={(o) => !o && onClose()} title={b.pautaTitle(section)}>
+      <input
+        autoFocus
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={b.pautaSearch}
+        className="mb-3 w-full rounded-[var(--radius-input)] border border-line bg-paper px-3 py-2 text-sm"
+      />
+      <div className="max-h-72 space-y-1 overflow-y-auto">
+        {candsQ.isLoading && <p className="text-sm text-muted">…</p>}
+        {!candsQ.isLoading && bench.length === 0 && (
+          <p className="text-sm text-muted">{b.pautaEmpty}</p>
+        )}
+        {bench.map((c) => (
+          <button
+            key={c.story_id}
+            type="button"
+            disabled={pick.isPending}
+            onClick={() => pick.mutate(c)}
+            className="flex w-full items-start justify-between gap-2 rounded-[var(--radius-btn)] px-2 py-1.5 text-left hover:bg-surface disabled:opacity-50"
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{c.title}</span>
+              <span className="text-xs text-muted">{c.outlets.join(" · ")}</span>
+            </span>
+            <span className="shrink-0 text-teal"><Plus size={14} /></span>
+          </button>
+        ))}
+      </div>
+      {!!pick.error && <p className="mt-2 text-xs text-danger">{errText(t, pick.error)}</p>}
+    </KDialog>
+  );
+}
+
+// InsertBlockDialog is the page-owned half of the gap menu's image /
+// embed / standard-message entries (KLOX-66 D3): the node views open
+// it via `openInsert`, it gathers the payload and delegates the real
+// insert — and its version/conflict handling — to `insertBlock`.
+function InsertBlockDialog({
+  pubID, dlg, onInsert, onUploaded, onDone,
+}: {
+  pubID: number;
+  dlg: { section: string; index: number; kind: "image" | "embed" | "message" };
+  onInsert: (kind: "image" | "embed" | "text", text: string, url?: string) => Promise<string | null>;
+  onUploaded: (dataB64: string, contentType: string, name: string) => Promise<string | null>;
+  onDone: () => void;
+}) {
+  const { t } = useT();
+  const b = useComposer();
+  const qc = useQueryClient();
+  const [url, setUrl] = useState("");
+  const [alt, setAlt] = useState("");
+  const [html, setHtml] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const msgsQ = useQuery({
+    queryKey: ["messages", pubID],
+    queryFn: () => api.messages(pubID),
+    enabled: dlg.kind === "message",
+  });
+  const saveMsg = useMutation({
+    mutationFn: (body: { name: string; body: string }) => api.messageCreate(pubID, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["messages", pubID] }),
+  });
+  const delMsg = useMutation({
+    mutationFn: (mid: number) => api.messageDelete(pubID, mid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["messages", pubID] }),
+  });
+  const [newName, setNewName] = useState("");
+  const [newBody, setNewBody] = useState("");
+  const [newOpen, setNewOpen] = useState(false);
+
+  const insert = async (kind: "image" | "embed" | "text", text: string, u?: string) => {
+    setBusy(true);
+    const refused = await onInsert(kind, text, u);
+    setBusy(false);
+    if (refused === null) onDone();
+    else setErr(refused);
+  };
+  const onFile = async (f: File | undefined) => {
+    if (!f) return;
+    setBusy(true);
+    const buf = await f.arrayBuffer();
+    let bin = "";
+    new Uint8Array(buf).forEach((b) => (bin += String.fromCharCode(b)));
+    const res = await onUploaded(btoa(bin), f.type || "image/png", f.name);
+    setBusy(false);
+    if (res) setUrl(res);
+    else setErr(b.uploadErr);
+  };
+  const title =
+    dlg.kind === "image" ? b.imageTitle : dlg.kind === "embed" ? b.embedTitle : b.msgTitle;
+  return (
+    <KDialog open onOpenChange={(o) => !o && onDone()} title={title}>
+      {dlg.kind === "image" && (
+        <div className="space-y-2">
+          <div className="flex gap-1">
+            <input
+              autoFocus
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder={b.imageUrlPh}
+              className="min-w-0 flex-1 rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1.5 text-sm"
+            />
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
+              {b.upload}
+            </Button>
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" className="hidden"
+              onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ""; }} />
+          </div>
+          <input
+            value={alt}
+            onChange={(e) => setAlt(e.target.value)}
+            placeholder={b.altPh}
+            className="w-full rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1.5 text-sm"
+          />
+          {err && <p className="text-xs text-danger" role="alert">{err}</p>}
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={onDone}>{t.doc.cancel}</Button>
+            <Button size="sm" disabled={busy || !url.trim()} onClick={() => void insert("image", alt, url.trim())}>
+              {b.insert}
+            </Button>
+          </div>
+        </div>
+      )}
+      {dlg.kind === "embed" && (
+        <div className="space-y-2">
+          <textarea
+            autoFocus
+            value={html}
+            onChange={(e) => setHtml(e.target.value)}
+            rows={7}
+            placeholder={b.embedPh}
+            className="w-full resize-y rounded-[var(--radius-input)] border border-line bg-paper p-2 font-mono text-xs leading-5"
+          />
+          <p className="text-[11px] text-muted">{b.embedHint}</p>
+          {err && <p className="text-xs text-danger" role="alert">{err}</p>}
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={onDone}>{t.doc.cancel}</Button>
+            <Button size="sm" disabled={busy || !html.trim()} onClick={() => void insert("embed", html)}>
+              {b.insert}
+            </Button>
+          </div>
+        </div>
+      )}
+      {dlg.kind === "message" && (
+        <div className="space-y-2">
+          <div className="max-h-64 space-y-1 overflow-y-auto">
+            {msgsQ.isLoading && <p className="text-sm text-muted">…</p>}
+            {!msgsQ.isLoading && !(msgsQ.data ?? []).length && !newOpen && (
+              <p className="text-sm text-muted">{b.msgEmpty}</p>
+            )}
+            {(msgsQ.data ?? []).map((m) => (
+              <div key={m.id} className="group flex items-start gap-2 rounded-[var(--radius-btn)] px-2 py-1.5 hover:bg-surface">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void insert("text", m.body)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <span className="block text-sm font-medium">{m.name}</span>
+                  <span className="block truncate text-xs text-muted">{m.body}</span>
+                </button>
+                <button type="button" aria-label={b.msgDelete}
+                  className="rounded p-1 text-muted opacity-0 hover:text-danger group-hover:opacity-100"
+                  onClick={() => delMsg.mutate(m.id)}>
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+          {!newOpen ? (
+            <button type="button"
+              className="inline-flex items-center gap-1 text-xs text-teal hover:underline"
+              onClick={() => setNewOpen(true)}>
+              <Plus size={12} /> {b.msgNew}
+            </button>
+          ) : (
+            <div className="space-y-1.5 rounded-[var(--radius-card)] border border-line bg-paper-raised p-2">
+              <input
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder={b.msgNamePh}
+                className="w-full rounded-[var(--radius-input)] border border-line bg-paper px-2 py-1 text-xs"
+              />
+              <textarea
+                value={newBody}
+                onChange={(e) => setNewBody(e.target.value)}
+                rows={4}
+                placeholder={b.msgBodyPh}
+                className="w-full resize-y rounded-[var(--radius-input)] border border-line bg-paper p-2 font-doc text-sm"
+              />
+              <div className="flex gap-2">
+                <Button size="sm" disabled={saveMsg.isPending || !newName.trim() || !newBody.trim()}
+                  onClick={() => saveMsg.mutate({ name: newName.trim(), body: newBody }, {
+                    onSuccess: () => { setNewName(""); setNewBody(""); setNewOpen(false); },
+                  })}>
+                  {t.doc.save}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setNewOpen(false)}>{t.doc.cancel}</Button>
+              </div>
+            </div>
+          )}
+          {err && <p className="text-xs text-danger" role="alert">{err}</p>}
+        </div>
+      )}
+    </KDialog>
   );
 }
 
@@ -832,7 +1663,7 @@ function HoldBar({ issue, onDone }: { issue: IssueSummary; onDone: () => void })
 
 // AfterSend is the "after sending" surface: public link, downloads, the
 // receipt, what the guide learned and the way to the next issue.
-function AfterSend({ issue }: { issue: IssueSummary }) {
+function AfterSend({ issue, onToast }: { issue: IssueSummary; onToast: (text: string) => void }) {
   const { t, lang } = useT();
   const nav = useNavigate();
   const afterQ = useQuery({ queryKey: ["after", issue.id], queryFn: () => api.after(issue.id) });
@@ -848,13 +1679,18 @@ function AfterSend({ issue }: { issue: IssueSummary }) {
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs">
           {r && (
             <span className="text-muted">
-              {t.receipt.by} {r.approver} · {fmtDate(r.approved_at, lang, true)} · {t.receipt.version}{" "}
-              {r.document_version.slice(0, 8)}
+              {r.approver ? `${t.receipt.by} ${r.approver} · ` : ""}
+              {fmtDate(r.approved_at, lang, true)}
             </span>
           )}
           {issue.status === "scheduled" && issue.scheduled_at && (
             <span className="font-semibold text-ink">
               {t.send.scheduledFor} {fmtDate(issue.scheduled_at, lang, true)}
+            </span>
+          )}
+          {issue.test_sent_at && issue.status !== "sent" && (
+            <span className="text-muted">
+              {t.after.testSent} · {fmtDate(issue.test_sent_at, lang, true)}
             </span>
           )}
           {a && (
@@ -868,10 +1704,17 @@ function AfterSend({ issue }: { issue: IssueSummary }) {
               <a className="text-ink underline" href={a.export_html}>HTML</a>
               {" · "}
               <a className="text-ink underline" href={a.export_md}>Markdown</a>
+              {" · "}
+              <button
+                type="button"
+                className="text-ink underline"
+                onClick={() => void exportIssuePDF(issue.id).catch(() => onToast(t.review.exportFailed))}
+              >
+                PDF
+              </button>
             </span>
           )}
-          <span className="flex-1" />
-          <Button size="sm" variant="teal" disabled={next.isPending} onClick={() => next.mutate()}>
+          <Button size="sm" variant="outline" className="ml-auto" disabled={next.isPending} onClick={() => next.mutate()}>
             {t.after.next}
           </Button>
         </div>
