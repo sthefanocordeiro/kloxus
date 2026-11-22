@@ -136,9 +136,11 @@ func TestEvalFixtures(t *testing.T) {
 			rows[r.Strategy] = r
 		}
 		// Spec section 9 absolute floors bind the synthetic harness
-		// fixture. On recorded (real) fixtures they are reported, not
-		// failed: the recording found stage 1 under them on the real
-		// corpus (D63) - a stage-1 quality finding, not a reranker one.
+		// fixture only. Owner amendment (2026-11-22, KLOX-110, D63): on
+		// recorded (real) fixtures the acceptance criterion is the relative
+		// one - (c) >= (b) and a nDCG@10 lift >= 0.05 - because the real
+		// catalog has too few on-topic stories (source coverage, not the
+		// algorithm). The absolute misses are still logged as BELOW SPEC.
 		floor := func(ok bool, format string, a ...any) {
 			if ok {
 				return
