@@ -133,6 +133,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/publications/{id}/sources/catalog", s.apiSourceCatalog)
 	m.HandleFunc("GET /api/v1/publications/{id}/sources/preview", s.apiSourcePreview)
 	m.HandleFunc("POST /api/v1/publications/{id}/sources/confirm", s.apiSourceConfirm)
+	m.HandleFunc("POST /api/v1/publications/{id}/sources/import-opml", s.apiSourceImportOPML)
 	m.HandleFunc("POST /api/v1/publications/{id}/sources/{sid}/watch", s.apiSourceWatch)
 	m.HandleFunc("POST /api/v1/publications/{id}/sources/{sid}/check", s.apiSourceCheck)
 	m.HandleFunc("POST /api/v1/publications/{id}/runs", s.apiRunStart)

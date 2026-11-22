@@ -216,6 +216,17 @@ which offered sources are added (the sources screen sends the checked
 URLs); no body accepts them all. The client then starts the first run
 itself.
 
+### `POST /api/v1/publications/{id}/sources/import-opml`
+Imports feeds from an OPML export (Feedly, Inoreader…).
+`{"opml": "<xml>", "apply": false, "include": ["…url…"]}` → `200`
+`{"feeds": [{"name","url","site_url","category","status","same_domain","imported"}], "counts": {…}, "applied": bool}`.
+Without `apply` it is a dry run. `status` is `new | duplicate | invalid |
+skipped`; duplicates match existing sources and earlier feeds in the file
+ignoring scheme, `www.`, tracking params and trailing slash. `same_domain`
+flags a new feed whose domain already has a source (informational).
+`include` limits which new feeds are stored. Demo mode never fetches.
+Malformed/empty OPML → `invalid_opml`.
+
 ### `DELETE /api/v1/publications/{id}/sources/{sid}`
 Removes a source — collected items go with it (stories and past issues
 keep their own rows).
