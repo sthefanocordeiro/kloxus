@@ -26,13 +26,16 @@ type ItemEnrichment struct {
 
 // excludedEnrichmentKinds are the non-editorial kinds (§7.2) that never
 // become suggestions: buying guides, entertainment, sport, almanac and
-// advertorial content.
+// advertorial content, plus tutorials and product reviews (KLOX-158).
+// Keep in sync with the SQL kind lists in pipeline.go.
 var excludedEnrichmentKinds = map[string]bool{
 	"lista":          true, // lista/guia de compra
 	"publieditorial": true,
 	"entretenimento": true,
 	"esporte":        true,
 	"efemeride":      true,
+	"tutorial":       true, // skipped by default (KLOX-158)
+	"review":         true, // product review — skipped by default (KLOX-158)
 }
 
 // Excluded reports whether the enrichment rules this item out of every
