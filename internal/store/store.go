@@ -290,9 +290,12 @@ type Publication struct {
 	// RejectTerms: creator-declared themes the aderência ranking
 	// demotes and the auto-lineup never slots (KLOX-94).
 	RejectTerms  string
-	Tone         string
-	Frequency    string
-	Sections     []config.Section
+	// Editorias: the editorial desks the creator picked (KLOX-163) —
+	// comma-separated keys persisted in publications.editorias.
+	Editorias  []string
+	Tone       string
+	Frequency  string
+	Sections   []config.Section
 	Paywall      config.Paywall
 	AIDisclosure string
 	Custom       bool
@@ -317,11 +320,16 @@ type TemplateBlock struct {
 
 func (db *DB) scanPublication(row *sql.Row) (*Publication, error) {
 	var p Publication
-	var sections, paywall, template string
+	var sections, paywall, template, editorias string
 	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Language, &p.Topic, &p.Audience,
-		&p.EditorialLine, &p.RejectTerms, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template)
+		&p.EditorialLine, &p.RejectTerms, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template, &editorias)
 	if err != nil {
 		return nil, err
+	}
+	for _, e := range strings.Split(editorias, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			p.Editorias = append(p.Editorias, e)
+		}
 	}
 	if err := json.Unmarshal([]byte(sections), &p.Sections); err != nil {
 		return nil, fmt.Errorf("decoding sections for %q: %w", p.Slug, err)
@@ -336,7 +344,7 @@ func (db *DB) scanPublication(row *sql.Row) (*Publication, error) {
 	return &p, nil
 }
 
-const publicationCols = `id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure, custom, template_json`
+const publicationCols = `id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure, custom, template_json, editorias`
 
 // GetPublication resolves a publication by numeric id or slug.
 func (db *DB) GetPublication(ctx context.Context, ref string) (*Publication, error) {
@@ -403,11 +411,12 @@ func (db *DB) CreatePublication(ctx context.Context, p *config.Publication) (int
 	}
 	var id int64
 	err := db.QueryRowContext(ctx, `INSERT INTO publications
-		(workspace_id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure, custom)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,TRUE)
+		(workspace_id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure, custom, editorias)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,TRUE,$14)
 		RETURNING id`,
 		db.ws, slug, p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine, p.RejectTerms,
-		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure).Scan(&id)
+		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure,
+		strings.Join(p.Editorias, ",")).Scan(&id)
 	return id, err
 }
 
@@ -487,11 +496,12 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 		return 0, err
 	}
 	err = db.QueryRowContext(ctx, `INSERT INTO publications
-		(workspace_id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		(workspace_id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure, editorias)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING id`,
 		db.ws, p.Slug, p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine, p.RejectTerms,
-		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure).Scan(&id)
+		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure,
+		strings.Join(p.Editorias, ",")).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -600,10 +610,10 @@ func (db *DB) UpdatePublication(ctx context.Context, id int64, p *config.Publica
 	paywall, _ := json.Marshal(p.Paywall)
 	res, err := db.ExecContext(ctx, `UPDATE publications SET
 		name=$1, topic=$2, audience=$3, editorial_line=$4, reject_terms=$5, tone=$6, frequency=$7,
-		sections_json=$8, paywall_json=$9, ai_disclosure=$10
-		WHERE workspace_id = $11 AND id = $12`,
+		sections_json=$8, paywall_json=$9, ai_disclosure=$10, editorias=$11
+		WHERE workspace_id = $12 AND id = $13`,
 		p.Name, p.Topic, p.Audience, p.EditorialLine, p.RejectTerms, p.Tone, p.Frequency,
-		string(sections), string(paywall), p.AIDisclosure, db.ws, id)
+		string(sections), string(paywall), p.AIDisclosure, strings.Join(p.Editorias, ","), db.ws, id)
 	if err != nil {
 		return err
 	}

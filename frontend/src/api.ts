@@ -49,6 +49,34 @@ export interface Publication {
   ai_disclosure: string;
   sections: NewsletterSection[];
   paywall: { enabled: boolean; paid_sections: string[]; price: string };
+  // editorias are the radar's selected editorial desks (KLOX-163)
+  editorias?: string[];
+}
+
+// Editoria is one editorial desk in the catalog taxonomy: the sources
+// it reads, whether the radar selected it, and whether it feeds the
+// radar today (at least one picked source). KLOX-163.
+export interface Editoria {
+  key: string;
+  label: string;
+  selected: boolean;
+  active: boolean;
+  sources: EditoriaSource[];
+}
+
+export interface EditoriaSource {
+  slug: string;
+  name: string;
+  url: string;
+  available: boolean;
+  picked: boolean;
+  source_id?: number;
+  suspended?: boolean;
+}
+
+export interface EditoriaList {
+  editorias: Editoria[];
+  custom: { source_id: number; name: string; url: string }[];
 }
 
 export interface IssueSummary {
@@ -753,6 +781,12 @@ export const api = {
     request<{ sources: SourceRow[] }>("POST", `/api/v1/publications/${pubID}/sources/confirm`, { include }).then((r) => r.sources),
   sourceDelete: (pubID: number | string, sid: number) =>
     request<{ ok: boolean }>("DELETE", `/api/v1/publications/${pubID}/sources/${sid}`),
+  editorias: (pubID: number | string) =>
+    request<EditoriaList>("GET", `/api/v1/publications/${pubID}/editorias`),
+  editoriaAdd: (pubID: number | string, key: string) =>
+    request<EditoriaList & { publication: Publication }>("POST", `/api/v1/publications/${pubID}/editorias`, { key }),
+  editoriaRemove: (pubID: number | string, key: string) =>
+    request<EditoriaList & { publication: Publication }>("DELETE", `/api/v1/publications/${pubID}/editorias/${key}`),
   guide: (pubID: number | string) =>
     request<{ guide: { version: number; content: string } }>("GET", `/api/v1/publications/${pubID}/guide`).then((r) => r.guide),
   guideSave: (pubID: number | string, content: string) =>

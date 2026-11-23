@@ -12,6 +12,7 @@ const pt = {
   niches: {
     fintech: "Fintech", cripto: "Cripto", regulacao: "Regulação financeira", ia: "IA",
     startups: "Startups", tecnologia: "Tecnologia", mercado: "Mercado",
+    politica: "Política", carreira: "Carreira e RH", geral: "Notícias gerais",
   } as Record<string, string>,
   next: "Continuar",
   creating: "Criando seu radar…",
@@ -49,6 +50,7 @@ const en: typeof pt = {
   niches: {
     fintech: "Fintech", cripto: "Crypto", regulacao: "Financial regulation", ia: "AI",
     startups: "Startups", tecnologia: "Technology", mercado: "Markets",
+    politica: "Politics", carreira: "Careers & HR", geral: "General news",
   },
   next: "Continue",
   creating: "Creating your radar…",
@@ -78,7 +80,10 @@ const en: typeof pt = {
 
 export type StartStrings = typeof pt;
 
-export const NICHE_KEYS = ["fintech", "cripto", "regulacao", "ia", "startups", "tecnologia", "mercado"];
+export const NICHE_KEYS = [
+  "fintech", "cripto", "regulacao", "ia", "startups", "tecnologia", "mercado",
+  "politica", "carreira", "geral",
+];
 
 export function useStart(): StartStrings {
   const { lang } = useT();

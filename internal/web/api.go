@@ -315,6 +315,8 @@ type apiPublication struct {
 	AIDisclosure  string       `json:"ai_disclosure"`
 	Sections      []apiSection `json:"sections"`
 	Paywall       apiPaywall   `json:"paywall"`
+	// Editorias are the radar's selected editorial desks (KLOX-163).
+	Editorias []string `json:"editorias"`
 }
 
 type apiSection struct {
@@ -359,6 +361,10 @@ func publicationView(p *store.Publication) apiPublication {
 	}
 	if v.Paywall.PaidSections == nil {
 		v.Paywall.PaidSections = []string{}
+	}
+	v.Editorias = p.Editorias
+	if v.Editorias == nil {
+		v.Editorias = []string{}
 	}
 	return v
 }
@@ -1138,6 +1144,7 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 		AIDisclosure: in.AIDisclosure,
 		Sections:     config.NormalizeSections(pub.Sections, pub.Paywall.PaidSections),
 		Paywall:      pub.Paywall,
+		Editorias:    pub.Editorias,
 	}
 	// every block the request leaves out keeps the stored value — the
 	// builder's sections-only save must not wipe the identity fields

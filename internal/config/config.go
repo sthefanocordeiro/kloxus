@@ -448,6 +448,10 @@ type Publication struct {
 	// comma-separated terms the aderência ranking demotes and the
 	// auto-lineup never slots (KLOX-94).
 	RejectTerms string `yaml:"reject_terms" json:"reject_terms"`
+	// Editorias records the editorial desks the creator picked for
+	// this radar (KLOX-163) — the auditable selection behind the
+	// fontes screen. Removal unpicks the desk's catalog sources.
+	Editorias []string `yaml:"editorias" json:"editorias"`
 }
 
 // ParsePublication decodes and validates a publication YAML document.

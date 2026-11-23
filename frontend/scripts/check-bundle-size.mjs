@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
-const BUDGET = 152 * 1024; // 150 → 152 KiB for the KLOX-127 waitlist form (~0.7 KiB gz)
+const BUDGET = 153 * 1024; // 150 → 152 KiB for the KLOX-127 waitlist form (~0.7 KiB gz); 152 → 153 KiB for the KLOX-163 editorias strings (~0.4 KiB gz)
 const dist = join(dirname(fileURLToPath(import.meta.url)), "../../internal/web/appdist");
 const html = readFileSync(join(dist, "index.html"), "utf8");
 

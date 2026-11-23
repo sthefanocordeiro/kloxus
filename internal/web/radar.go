@@ -21,25 +21,74 @@ const (
 	aboutMaxRunes    = 280
 )
 
-// nicheSources maps an onboarding niche chip to catalog slugs. The
-// catalog is what the global scheduler ingests (D29) — the person only
-// unchecks from this list; their own sources stay in settings.
-var nicheSources = map[string][]string{
-	"fintech":    {"exame", "startups", "mobiletime", "tecnoblog", "techcrunch"},
-	"cripto":     {"exame", "tecnoblog", "techcrunch"},
-	"regulacao":  {"exame", "tecnoblog", "mobiletime"},
-	"ia":         {"techcrunch", "wired", "ars-technica", "the-verge", "tecnoblog"},
-	"startups":   {"startups", "techcrunch", "exame"},
-	"tecnologia": {"tecnoblog", "canaltech", "olhar-digital", "tecmundo", "meiobit", "the-verge", "ars-technica"},
-	"mercado":    {"exame", "startups", "techcrunch", "valor"},
+// editorias are the catalog's editorial desks — the unit the creator
+// audits and manages on the Fontes screen (KLOX-163). Each desk lists
+// the catalog slugs that serve it; one source may serve more than one
+// desk (a general portal covers politics as well as general news), and
+// slugs that are hold/blocked today stay in the map so the taxonomy is
+// stable — only fetchable entries are offered or attached. The desk
+// keys double as the onboarding niche chips, and the selection is
+// persisted per radar on publications.editorias.
+var editorias = []struct {
+	key   string
+	label string   // folded into the radar's topic when the desk is selected
+	slugs []string // catalog sources the desk reads
+}{
+	{"tecnologia", "tecnologia", []string{"tecnoblog", "olhar-digital", "meiobit", "macmagazine",
+		"canaltech", "tecmundo", "techcrunch", "wired", "the-verge", "ars-technica", "gizmodo-br"}},
+	{"startups", "startups", []string{"startups", "techcrunch", "exame"}},
+	{"fintech", "fintech", []string{"finsiders", "infomoney", "tecnoblog", "startups",
+		"exame", "mobiletime", "techcrunch"}},
+	{"cripto", "cripto", []string{"tecnoblog", "techcrunch", "exame"}},
+	{"regulacao", "regulação financeira", []string{"camara-noticias", "poder360",
+		"agencia-brasil-economia", "exame", "tecnoblog", "mobiletime"}},
+	{"ia", "inteligência artificial", []string{"tecnoblog", "techcrunch", "wired", "ars-technica", "the-verge"}},
+	{"mercado", "mercado", []string{"infomoney", "seu-dinheiro", "money-times", "valor",
+		"poder360", "agencia-brasil-economia", "startups", "exame", "techcrunch"}},
+	{"politica", "política", []string{"agencia-brasil-politica", "camara-noticias", "poder360",
+		"g1", "folha", "cnn-brasil", "metropoles"}},
+	{"carreira", "carreira e RH", []string{"mundo-rh", "rh-portal"}},
+	{"geral", "notícias gerais", []string{"g1", "folha", "cnn-brasil", "metropoles"}},
 }
 
 // defaultNicheSources is what a person who picked no chip gets.
-var defaultNicheSources = []string{"tecnoblog", "canaltech", "exame", "techcrunch"}
+var defaultNicheSources = []string{"tecnoblog", "g1", "folha"}
 
-var nicheLabels = map[string]string{
-	"fintech": "fintech", "cripto": "cripto", "regulacao": "regulação financeira",
-	"ia": "inteligência artificial", "startups": "startups", "tecnologia": "tecnologia", "mercado": "mercado",
+func editoriaIndex(key string) int {
+	for i, e := range editorias {
+		if e.key == key {
+			return i
+		}
+	}
+	return -1
+}
+
+func editoriaLabel(key string) string {
+	if i := editoriaIndex(key); i >= 0 {
+		return editorias[i].label
+	}
+	return ""
+}
+
+// editoriaSlugs returns the catalog slugs a desk reads.
+func editoriaSlugs(key string) []string {
+	if i := editoriaIndex(key); i >= 0 {
+		return editorias[i].slugs
+	}
+	return nil
+}
+
+// editoriasOf lists every desk a catalog slug serves.
+func editoriasOf(slug string) map[string]bool {
+	out := map[string]bool{}
+	for _, e := range editorias {
+		for _, s := range e.slugs {
+			if s == slug {
+				out[e.key] = true
+			}
+		}
+	}
+	return out
 }
 
 // radarName is a short display name from the free text.
@@ -66,7 +115,7 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 	about := strings.Join(strings.Fields(in.About), " ")
 	var niches []string
 	for _, n := range in.Niches {
-		if _, ok := nicheSources[n]; ok {
+		if editoriaIndex(n) >= 0 {
 			niches = append(niches, n)
 		}
 	}
@@ -92,11 +141,11 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 	// chosen niches
 	topic := about
 	for _, n := range niches {
-		if !strings.Contains(strings.ToLower(topic), nicheLabels[n]) {
+		if !strings.Contains(strings.ToLower(topic), editoriaLabel(n)) {
 			if topic != "" {
 				topic += ", "
 			}
-			topic += nicheLabels[n]
+			topic += editoriaLabel(n)
 		}
 	}
 	name := radarName(topic)
@@ -105,7 +154,7 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	def := &config.Publication{
 		Name: name, Topic: topic, Language: "pt", Frequency: "weekly",
-		Tone: "neutral", AIDisclosure: "none",
+		Tone: "neutral", AIDisclosure: "none", Editorias: niches,
 		Sections: config.NormalizeSections([]config.Section{
 			{Title: "Pauta", Format: config.SectionNews, Items: 8, Commentary: "optional", Access: config.AccessAll},
 		}, nil),
@@ -146,7 +195,7 @@ func (s *Server) attachNicheSources(r *http.Request, pub *store.Publication, nic
 	}
 	want := map[string]bool{}
 	for _, n := range niches {
-		for _, slug := range nicheSources[n] {
+		for _, slug := range editoriaSlugs(n) {
 			want[slug] = true
 		}
 	}
@@ -270,12 +319,8 @@ func (s *Server) apiSkipTopic(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	def := &config.Publication{
-		Name: pub.Name, Topic: pub.Topic, Audience: pub.Audience, EditorialLine: pub.EditorialLine,
-		RejectTerms: strings.Join(append(terms, topic), ", "), Tone: pub.Tone, Language: pub.Language,
-		Slug: pub.Slug, Frequency: pub.Frequency, AIDisclosure: pub.AIDisclosure,
-		Sections: config.NormalizeSections(pub.Sections, pub.Paywall.PaidSections), Paywall: pub.Paywall,
-	}
+	def := pubDef(pub)
+	def.RejectTerms = strings.Join(append(terms, topic), ", ")
 	if err := def.Validate(); err != nil {
 		apiErr(w, 400, "validation", err.Error())
 		return

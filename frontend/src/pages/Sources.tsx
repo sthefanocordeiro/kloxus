@@ -67,6 +67,21 @@ export function SourcesPage() {
     mutationFn: (sid: number) => api.sourceDelete(id!, sid),
     onSuccess: refresh,
   });
+
+  // KLOX-163: the full desk list — every editoria in the catalog
+  // taxonomy with its pick state, auditable, with add/remove. A
+  // removal also unpicks the desk's sources, so it lands on the same
+  // queries as a single-source change.
+  const desks = useQuery({ queryKey: ["editorias", id], queryFn: () => api.editorias(id!) });
+  const deskMut = useMutation({
+    mutationFn: (v: { key: string; on: boolean }) =>
+      v.on ? api.editoriaRemove(id!, v.key) : api.editoriaAdd(id!, v.key),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["editorias", id] });
+      qc.invalidateQueries({ queryKey: ["publication", id] });
+      refresh();
+    },
+  });
   const checked = (u: string) => sel[u] !== false;
   // the catalog only lists sources not yet added — the belt-and-
   // suspenders filter also drops an offered row the moment a source
@@ -159,6 +174,63 @@ export function SourcesPage() {
           {saveAd.error && <p className="mt-2 text-xs text-danger">{errText(t, saveAd.error)}</p>}
         </Card>
       )}
+
+      {/* KLOX-163: every desk in the taxonomy — the auditable list the
+          owner asked for, not only the sources this cycle happened to
+          show. Picked sources render darker so the desk's real feed is
+          visible at a glance. */}
+      {desks.data && (
+        <Card className="mt-4 p-4">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.sourcesPage.editoriasTitle}</h2>
+          <p className="mt-1 text-xs text-muted">{t.sourcesPage.editoriasHint}</p>
+          <ul className="mt-2 divide-y divide-line">
+            {desks.data.editorias.map((e) => {
+              const on = e.active || e.selected;
+              return (
+                <li key={e.key} className="flex items-start gap-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-2 text-sm font-medium">
+                      {t.sourcesPage.editoriaLabels[e.key] ?? e.label}
+                      {e.active && <Badge tone="teal">{t.sourcesPage.editoriaActive}</Badge>}
+                      {!e.active && e.selected && <Badge>{t.sourcesPage.editoriaSelected}</Badge>}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted">
+                      {e.sources.length === 0
+                        ? t.sourcesPage.editoriaEmpty
+                        : e.sources.map((s, i) => (
+                            <span key={s.slug} className={s.picked ? "font-medium text-ink" : undefined}>
+                              {i > 0 && " · "}
+                              {s.name}
+                              {s.suspended ? ` (${t.sourcesPage.suspendedBadge})` : ""}
+                            </span>
+                          ))}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline" size="sm" disabled={deskMut.isPending}
+                    onClick={() => deskMut.mutate({ key: e.key, on })}
+                  >
+                    {on ? t.sourcesPage.editoriaRemove : t.sourcesPage.editoriaAdd}
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+          {desks.data.custom.length > 0 && (
+            <>
+              <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">
+                {t.sourcesPage.editoriaCustomTitle}
+              </h3>
+              <ul className="mt-1 text-xs text-muted">
+                {desks.data.custom.map((s) => (
+                  <li key={s.source_id} className="truncate py-0.5">{s.name || s.url}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Card>
+      )}
+      {deskMut.error && <p className="mt-2 text-xs text-danger">{errText(t, deskMut.error)}</p>}
 
       {loading && <p className="mt-6 text-sm text-muted">{t.sourcesPage.loading}</p>}
 
