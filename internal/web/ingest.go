@@ -56,7 +56,7 @@ func (s *Server) realCatalogPreview(w http.ResponseWriter, r *http.Request, rawU
 		return false
 	}
 	if !pickable(cs) {
-		apiErr(w, 400, "source_policy", cs.Name+" is "+cs.Policy+" — it is never fetched ("+cs.Note+")")
+		apiErr(w, 400, "source_policy", notPickableMsg(cs))
 		return true
 	}
 	items, _ := s.d.Pool.CatalogItemsPreview(r.Context(), cs.ID, 3)
@@ -88,8 +88,7 @@ func (s *Server) realSourceAdd(w http.ResponseWriter, r *http.Request, pub *stor
 		return
 	}
 	if !pickable(cs) {
-		apiErr(w, 400, "source_policy",
-			cs.Name+" is "+cs.Policy+" ("+cs.Note+") — it is never fetched")
+		apiErr(w, 400, "source_policy", notPickableMsg(cs))
 		return
 	}
 	id, err := db(r).AddCatalogSource(r.Context(), pub.ID, cs)
@@ -187,4 +186,12 @@ func (s *Server) apiAdminIngestion(w http.ResponseWriter, r *http.Request) {
 // source such as TabNews must not reappear in onboarding).
 func pickable(cs *store.CatalogSource) bool {
 	return cs.Enabled && (cs.Policy == "launch" || cs.Policy == "signal")
+}
+
+// notPickableMsg explains why a catalog source cannot be picked.
+func notPickableMsg(cs *store.CatalogSource) string {
+	if !cs.Enabled {
+		return cs.Name + " is disabled (" + cs.Note + ") — it is never fetched"
+	}
+	return cs.Name + " is " + cs.Policy + " (" + cs.Note + ") — it is never fetched"
 }
