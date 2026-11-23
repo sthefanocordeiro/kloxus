@@ -2,7 +2,10 @@ package store
 
 // The daily pauta (KLOX-123): one stored row per radar per São Paulo
 // day — the cards the Hoje screen serves plus the 07:00 mail marker.
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // PautaDay is one radar's stored pauta for a day.
 type PautaDay struct {
@@ -77,4 +80,18 @@ func (p *Pool) ActiveWorkspaces(ctx context.Context, since string) ([]string, er
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// ClaimPautaMail reserves the day's one pauta mail for a recipient
+// across every workspace they own. True means this caller owns the
+// send; false means another radar already mailed (or claimed) it.
+func (p *Pool) ClaimPautaMail(ctx context.Context, email, day string) (bool, error) {
+	res, err := p.db.ExecContext(ctx, `
+		INSERT INTO pauta_mail_days (email, day) VALUES ($1,$2)
+		ON CONFLICT DO NOTHING`, strings.ToLower(strings.TrimSpace(email)), day)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
