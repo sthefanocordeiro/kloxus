@@ -279,13 +279,17 @@ say "items filled"
 # The first document fetch and the first sentence mutation are timed:
 # the KLOX-47 bound fails the smoke above 1.5 s (sentence mutations used
 # to take ~9 s on the hosted app — the N+1 document build).
+# The timing bounds apply once per smoke run (first fetch, first removal):
+# approve retries re-enter this loop and must not re-assert latency.
+FETCH_TIMED=""; REMOVE_TIMED=""
 strip_flags() {
 	for i in $(seq 1 300); do
-		if [ "$i" = "1" ] && [ "$ROUND" = "1" ]; then
+		if [ "$i" = "1" ] && [ -z "$FETCH_TIMED" ]; then
 			# reqms must run outside $(...) — a subshell would discard the
 			# HTTP_CODE/HTTP_TIME it sets for assert_fast
 			reqms GET "/api/v1/issues/$IID/document" >/dev/null
 			[ "$HTTP_CODE" = "200" ] || die "document fetch failed"
+			FETCH_TIMED=1
 			assert_fast "document fetch"
 		else
 			[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
@@ -301,9 +305,10 @@ strip_flags() {
 			console.log("");' "$RESP")"
 		[ -z "$SIDVER" ] && break
 		SID="${SIDVER%%|*}"; VER="${SIDVER##*|}"
-		if [ "$i" = "1" ] && [ "$ROUND" = "1" ]; then
+		if [ -z "$REMOVE_TIMED" ]; then
 			reqms DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}" >/dev/null
 			[ "$HTTP_CODE" = "200" ] || die "sentence remove $SID: $(cat "$RESP")"
+			REMOVE_TIMED=1
 			assert_fast "sentence remove"
 		else
 			[ "$(req DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}")" = "200" ] \

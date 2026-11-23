@@ -4594,15 +4594,7 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docCo
 		ID      int    `json:"id"`
 		Verdict string `json:"verdict"`
 	}
-	srcs := []map[string]any{}
-	for _, src := range d.Sources {
-		srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
-	}
-	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
-		"Publication": "",
-		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
-		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
-	})
+	user, err := editCitecheckPrompt(d, itemRef, text)
 	if err == nil && d.Origin != "manual" && !s.d.Cfg.LLMOff() {
 		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
 			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
@@ -4613,6 +4605,22 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docCo
 		}
 	}
 	return true
+}
+
+// editCitecheckPrompt renders the citecheck prompt for one edited
+// sentence. The template reads capitalized fields (.ID, .Ref, .URL …),
+// so the data keys must match its casing — lowercase keys render as
+// "<no value>" and the model would judge a blank prompt (KLOX-153).
+func editCitecheckPrompt(d *pipeline.Dossier, itemRef int64, text string) (string, error) {
+	srcs := []map[string]any{}
+	for _, src := range d.Sources {
+		srcs = append(srcs, map[string]any{"Ref": src.Ref, "URL": src.URL})
+	}
+	return pipeline.RenderPrompt("citecheck", map[string]any{
+		"Publication": "",
+		"Sentences":   []map[string]any{{"ID": 1, "Item": itemRef, "Refs": "", "Text": text}},
+		"Items":       []map[string]any{{"Ref": itemRef, "Sources": srcs}},
+	})
 }
 
 // sourceURL returns the URL of a source owned by the publication in the
