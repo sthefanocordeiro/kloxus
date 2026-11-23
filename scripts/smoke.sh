@@ -313,12 +313,15 @@ strip_flags() {
 }
 # Removals can re-empty an item (under llm auto the draft sentences are
 # real and citecheck flags them), so fill and strip until stable.
-for ROUND in 1 2 3 4 5; do
-	fill_items
-	strip_flags
-	[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
-	[ "$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).document;let n=0;for(const s of d.sections)for(const it of s.items)if(!it.sentences.length)n++;console.log(n)' "$RESP")" = "0" ] && break
-done
+resolve_flags() {
+	for ROUND in 1 2 3 4 5; do
+		fill_items
+		strip_flags
+		[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
+		[ "$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).document;let n=0;for(const s of d.sections)for(const it of s.items)if(!it.sentences.length)n++;console.log(n)' "$RESP")" = "0" ] && break
+	done
+}
+resolve_flags
 say "flags resolved"
 
 # --- 10. required commentary ----------------------------------------------
@@ -340,7 +343,21 @@ say "commentary saved"
 # --- 11. readiness → approve → send ----------------------------------------
 [ "$(req GET "/api/v1/issues/$IID/readiness")" = "200" ] || die "readiness failed"
 [ "$(jget ready)" = "true" ] || die "issue not ready: $(jget checks)"
-[ "$(req POST "/api/v1/issues/$IID/approve")" = "200" ] || die "approve: $(cat "$RESP")"
+# Under llm auto the approve-time citecheck (KLOX-67 §7.5) reads the real
+# source text and may block with unsupported_claim, saving the flags on
+# the issue. Resolve them the way an editor would (remove the flagged
+# sentences, refill emptied items) and retry; the gate is not bypassed.
+# The per-edition citecheck cap bounds how often the model can re-block.
+for ATTEMPT in 1 2 3 4; do
+	code="$(req POST "/api/v1/issues/$IID/approve")"
+	[ "$code" = "200" ] && break
+	[ "$ATTEMPT" = "4" ] && die "approve: $(cat "$RESP")"
+	[ "$(jget error.code)" = "blocked" ] || die "approve: $(cat "$RESP")"
+	say "approve blocked by citecheck (attempt $ATTEMPT) — resolving flagged sentences"
+	resolve_flags
+	[ "$(req GET "/api/v1/issues/$IID/readiness")" = "200" ] || die "readiness failed"
+	[ "$(jget ready)" = "true" ] || die "issue not ready after approve block: $(jget checks)"
+done
 say "issue approved"
 if [ "$PUBLISHING" != "true" ]; then
 	# Publishing off: the reader-facing surface is hidden, not deleted.
