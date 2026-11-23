@@ -28,8 +28,8 @@ var nicheSources = map[string][]string{
 	"fintech":    {"exame", "startups", "mobiletime", "tecnoblog", "techcrunch"},
 	"cripto":     {"exame", "tecnoblog", "techcrunch", "hacker-news"},
 	"regulacao":  {"exame", "tecnoblog", "mobiletime"},
-	"ia":         {"techcrunch", "wired", "ars-technica", "the-verge", "tecnoblog", "tabnews"},
-	"startups":   {"startups", "techcrunch", "exame", "tabnews"},
+	"ia":         {"techcrunch", "wired", "ars-technica", "the-verge", "tecnoblog"},
+	"startups":   {"startups", "techcrunch", "exame"},
 	"tecnologia": {"tecnoblog", "canaltech", "olhar-digital", "tecmundo", "meiobit", "the-verge", "ars-technica"},
 	"mercado":    {"exame", "startups", "techcrunch"},
 }

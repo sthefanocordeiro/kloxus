@@ -152,7 +152,6 @@ export function Landing() {
 const SOURCES = [
   "Tecnoblog",
   "Olhar Digital",
-  "TabNews",
   "MacMagazine",
   "Meio Bit",
   "Startups.com.br",
