@@ -83,6 +83,7 @@ func (s *Server) saveMediaUpload(w http.ResponseWriter, r *http.Request, pubID i
 		apiErr(w, 400, "validation", "file content does not match its declared type")
 		return
 	}
+	data = stripImageMetadata(in.ContentType, data)
 	tok := make([]byte, 8)
 	rand.Read(tok)
 	token := hex.EncodeToString(tok)

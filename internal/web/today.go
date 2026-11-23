@@ -7,6 +7,7 @@ package web
 // the same Sim/Não answer endpoint the calibration uses.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -52,21 +53,38 @@ func openPiece(issues []*store.Issue) *store.Issue {
 	return nil
 }
 
-// apiToday serves the day's pauta and the pieces in progress. The
-// stories are rebuilt from what the radar's sources hold, so the ids in
-// the cards are valid for the next "Escrever" until the next rebuild
-// (the client refetches on a 404).
+// apiToday serves the day's pauta and the pieces in progress. When the
+// daily sweep stored today's pauta (06:30 America/Sao_Paulo) the cards
+// come from that snapshot; otherwise the stories are rebuilt from what
+// the radar's sources hold — and that first live build becomes the
+// day's snapshot, so repeat GETs are stable and fast and the sweep
+// counts the radar as done. Interactions that change the ranking drop
+// the row and the next GET snapshots again (the client still refetches
+// on a 404 for ids dealt before a rebuild).
 func (s *Server) apiToday(w http.ResponseWriter, r *http.Request) {
-	pub, err := db(r).GetPublication(r.Context(), r.PathValue("id"))
+	ctx := r.Context()
+	pub, err := db(r).GetPublication(ctx, r.PathValue("id"))
 	if apiDBErr(w, r, err, "radar") {
 		return
 	}
-	run := s.pautaRunner(r)
-	stories, err := run.BuildStories(r.Context(), pub)
-	if apiDBErr(w, r, err, "stories") {
-		return
+	var views []pautaCardView
+	if row, err := db(r).PautaDay(ctx, pub.ID, pautaDayOf(time.Now())); err == nil {
+		views = []pautaCardView{}
+		if err := json.Unmarshal([]byte(row.CardsJSON), &views); err != nil {
+			views = nil // corrupt snapshot — rebuild live
+		}
 	}
-	cards := run.Pauta(r.Context(), pub, stories, todayCards, todayWindow)
+	if views == nil {
+		run := s.pautaRunner(r)
+		stories, err := run.BuildStories(ctx, pub)
+		if apiDBErr(w, r, err, "stories") {
+			return
+		}
+		views = pautaViews(run.Pauta(ctx, pub, stories, todayCards, todayWindow))
+		if cards, err := json.Marshal(views); err == nil {
+			_ = db(r).SavePautaDay(ctx, pub.ID, pautaDayOf(time.Now()), string(cards))
+		}
+	}
 	issues, err := db(r).ListIssues(r.Context(), pub.ID)
 	if apiDBErr(w, r, err, "pieces") {
 		return
@@ -80,7 +98,7 @@ func (s *Server) apiToday(w http.ResponseWriter, r *http.Request) {
 		open = o.ID
 	}
 	apiJSON(w, 200, map[string]any{
-		"cards": pautaViews(cards), "pieces": pieces, "open_piece": open,
+		"cards": views, "pieces": pieces, "open_piece": open,
 		"window_hours": int(todayWindow / time.Hour),
 	})
 }
@@ -110,6 +128,7 @@ func (s *Server) apiTodayWrite(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 404, "not_found", "story not found — reload today's pauta")
 		return
 	}
+	dropPautaDay(r, db(r), pub.ID) // a story left today's pauta
 	issues, err := db(r).ListIssues(ctx, pub.ID)
 	if apiDBErr(w, r, err, "pieces") {
 		return
