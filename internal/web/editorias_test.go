@@ -176,20 +176,39 @@ func TestEditoriasManage(t *testing.T) {
 		t.Fatalf("carreira after remove = %v", car)
 	}
 
+	// select startups too, so the shared "startups" slug is claimed by
+	// a desk that stays on — every startups slug is also in fintech's
+	// set, so without this selection nothing would shield it
+	rr = pautaServe(t, srv, "POST", base+"/editorias", cookie, map[string]any{"key": "startups"})
+	if rr.Code != 200 {
+		t.Fatalf("add startups = %d %s", rr.Code, rr.Body.String())
+	}
+	if st := editoriaOf(t, apiJSON(t, rr)["editorias"].([]any), "startups"); st["selected"] != true {
+		t.Fatalf("startups after add = %v", st)
+	}
+
 	// remove fintech: finsiders goes; tecnoblog is shared with desks
 	// that have no pick outside fintech — it goes too; startups survives
-	// under the startups desk (picked there and outside fintech)
+	// under the still-selected startups desk
 	rr = pautaServe(t, srv, "DELETE", base+"/editorias/fintech", cookie, nil)
 	if rr.Code != 200 {
 		t.Fatalf("remove fintech = %d %s", rr.Code, rr.Body.String())
 	}
 	body = apiJSON(t, rr)
 	fin = editoriaOf(t, body["editorias"].([]any), "fintech")
-	if fin["active"] == true || fin["selected"] == true {
+	// selected must clear; active stays true on purpose — the shielded
+	// startups/techcrunch/exame picks are in fintech's slug list too,
+	// and the audit shows the real feed, not only the choice
+	if fin["selected"] == true || fin["active"] != true {
 		t.Fatalf("fintech after remove = %v", fin)
 	}
-	// the shared startups pick keeps startups desk on — its row must
-	// still show active, which shields nothing else under fintech
+	for _, slug := range []string{"finsiders", "infomoney", "tecnoblog"} {
+		if src := sourceOf(t, fin, slug); src["picked"] == true {
+			t.Fatalf("fintech source %q still picked after remove: %v", slug, src)
+		}
+	}
+	// the selected startups desk keeps its slugs — its row must still
+	// show active, which shields nothing outside its own set
 	if st := editoriaOf(t, body["editorias"].([]any), "startups"); st["active"] != true {
 		t.Fatalf("startups after fintech remove = %v", st)
 	}

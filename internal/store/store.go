@@ -367,10 +367,15 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 	var out []*Publication
 	for rows.Next() {
 		var p Publication
-		var sections, paywall, template string
+		var sections, paywall, template, editorias string
 		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Language, &p.Topic, &p.Audience,
-			&p.EditorialLine, &p.RejectTerms, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template); err != nil {
+			&p.EditorialLine, &p.RejectTerms, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template, &editorias); err != nil {
 			return nil, err
+		}
+		for _, e := range strings.Split(editorias, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				p.Editorias = append(p.Editorias, e)
+			}
 		}
 		json.Unmarshal([]byte(sections), &p.Sections)
 		json.Unmarshal([]byte(paywall), &p.Paywall)
