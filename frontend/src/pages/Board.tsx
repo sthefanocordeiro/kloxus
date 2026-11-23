@@ -731,15 +731,17 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
                   .replace("{page}", String(benchPageClamped + 1))
                   .replace("{pages}", String(benchPageCount))}
               </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={benchPageClamped >= benchPageCount - 1}
-                onClick={() => setBenchPage(benchPageClamped + 1)}
-              >
-                {t.board.benchNext}
-              </Button>
-              {serverHasMore && (
+              {!(serverHasMore && benchPageClamped >= benchPageCount - 1) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={benchPageClamped >= benchPageCount - 1}
+                  onClick={() => setBenchPage(benchPageClamped + 1)}
+                >
+                  {t.board.benchNext}
+                </Button>
+              )}
+              {serverHasMore && benchPageClamped >= benchPageCount - 1 && (
                 <Button variant="outline" size="sm" disabled={loadingMore} onClick={loadMoreBench}>
                   {loadingMore ? t.board.benchLoading : t.board.benchLoadMore}
                 </Button>
