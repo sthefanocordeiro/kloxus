@@ -5,6 +5,7 @@ import {
   fakeLive,
   fakeRequests,
   neverRealMail,
+  OWNER_EMAIL,
   preflight,
   workspaceInfo,
 } from "./mail.ts";
@@ -424,56 +425,29 @@ async function sendToReaders(page: Page) {
     );
   const firstDialog = await readersDialog();
   if (synthetic) {
-    // Live rules with zero confirmed readers is an intended terminal
-    // state (D33): delivery "none" — nothing leaves the app, the issue
-    // stays approved, the response carries a warning and the API text
-    // lands as a toast — the after-sending surface must not render.
-    const [noneResp] = await Promise.all([
-      sendPost(),
-      firstDialog.getByRole("button", { name: "Send now" }).click(),
-    ]);
-    const noneBody = await noneResp.json();
-    expect(noneBody.delivery).toBe("none");
-    expect(noneBody.issue.status).toBe("approved");
-    expect(Array.isArray(noneBody.warnings) && noneBody.warnings.length > 0).toBe(true);
-    await expect(page.getByText(/nothing was delivered/i).first()).toBeVisible({ timeout: 15000 });
-    // A "none" delivery must not mint a sent surface: the only
-    // after-sending chrome allowed is the earlier test send's marker —
-    // sendTestKeepsEditable already stamped test_sent_at, so the
-    // reader-page link it unlocked keeps rendering here.
-    await expect(page.getByText(/Test send recorded/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
-    // A test send goes to the claimed owner — and confirms them as a
-    // reader, so the resend has a deliverable recipient. Success means
-    // a real synthetic-provider receipt, never a fallback or a mix.
+    // Claim-gated world (KLOX-161): the workspace was claimed in
+    // onboard and the earlier test send already confirmed the owner as
+    // a reader (sendIssueLive UpsertReader + MarkReaderConfirmed), so
+    // the zero-reader terminal (delivery "none") is unreachable here —
+    // the dialog opens on "1 reader" and the send delivers to the
+    // claimed address through the synthetic provider. Success means a
+    // real provider receipt, never a fallback or a mix.
+    await expect(firstDialog.getByText(/1 reader/)).toBeVisible();
     const before = (await fakeRequests(page)).count;
-    const [testResp] = await Promise.all([
-      sendPost(),
-      (async () => {
-        await openActions(page);
-        await page.getByRole("button", { name: "Send a test" }).click();
-      })(),
-    ]);
-    const testBody = await testResp.json();
-    expect(testBody.delivery).toBe("resend");
-    expect(testBody.sent).toBe(1);
-    expect(testBody.to).toEqual(["smoke@kloxus.dev"]);
-    expect(testBody.issue.status).toBe("approved");
-    await expect(page.getByText(/^Test sent to /).first()).toBeVisible({ timeout: 15000 });
-    const afterTest = await fakeRequests(page);
-    expect(afterTest.count - before).toBe(1);
-    const testReq = afterTest.requests.at(-1)!;
-    expect(testReq.to).toEqual(["smoke@kloxus.dev"]);
-    expect(testReq.auth).toBe("Bearer re_local_verify_synthetic");
-    const again = await readersDialog();
-    await expect(again.getByText(/1 reader/)).toBeVisible();
     const [readersResp] = await Promise.all([
       sendPost(),
-      again.getByRole("button", { name: "Send now" }).click(),
+      firstDialog.getByRole("button", { name: "Send now" }).click(),
     ]);
     const readersBody = await readersResp.json();
     expect(readersBody.delivery).toBe("resend");
     expect(readersBody.sent).toBe(1);
+    expect(readersBody.to).toEqual([OWNER_EMAIL]);
+    expect(readersBody.issue.status).toBe("sent");
+    const afterAll = await fakeRequests(page);
+    expect(afterAll.count - before).toBe(1);
+    const req = afterAll.requests.at(-1)!;
+    expect(req.to).toEqual([OWNER_EMAIL]);
+    expect(req.auth).toBe("Bearer re_local_verify_synthetic");
     // the delivery ledger records the send as provider-sent
     const mail = await (
       await page.request.get(`/api/v1/outbox/${readersBody.outbox_email_id}`)
@@ -481,9 +455,6 @@ async function sendToReaders(page: Page) {
     expect(mail.email.provider).toBe("resend");
     expect(mail.email.status).toBe("sent");
     expect(mail.email.provider_id).toMatch(/^re_local_/);
-    const afterAll = await fakeRequests(page);
-    expect(afterAll.count - afterTest.count).toBe(1);
-    expect(afterAll.requests.at(-1)!.to).toEqual(["smoke@kloxus.dev"]);
   } else {
     // outbox transport: the send records to the ledger and the issue
     // turns sent.

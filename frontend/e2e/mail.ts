@@ -74,6 +74,10 @@ export async function claimIfSynthetic(page: Page) {
   expect(confirmed.status()).toBe(200);
 }
 
+// The address claimOwner verifies — test sends and reader sends to a
+// claimed workspace deliver to it (KLOX-161).
+export const OWNER_EMAIL = "owner@example.com";
+
 // claimOwner confirms the workspace owner's email by magic link —
 // creating a Radar requires it (KLOX-161). Outbox mode returns the link
 // in the claim response; the synthetic loopback mails it to the ledger.
@@ -83,7 +87,7 @@ export async function claimOwner(page: Page) {
   neverRealMail(ws);
   if (ws.claimed) return;
   const claim = await page.request.post("/api/v1/workspace/claim", {
-    data: { email: "owner@example.com" },
+    data: { email: OWNER_EMAIL },
   });
   expect(claim.ok()).toBeTruthy();
   const body = (await claim.json()) as { claim_url?: string; outbox_email_id?: number };

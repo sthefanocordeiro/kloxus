@@ -5,6 +5,7 @@ import {
   fakeLive,
   fakeRequests,
   neverRealMail,
+  OWNER_EMAIL,
   preflight,
   workspaceInfo,
   claimOwner,
@@ -309,10 +310,10 @@ test("manual compose journey", async ({ page }) => {
     // synthetic-live: the fake provider must have accepted the message —
     // "Resend failed" or a fallback is a failure here, not a success
     expect(sendBody.delivery).toBe("resend");
-    expect(sendBody.to).toEqual(["smoke@kloxus.dev"]);
+    expect(sendBody.to).toEqual([OWNER_EMAIL]);
     const reqs = await fakeRequests(page);
     const last = reqs.requests.at(-1)!;
-    expect(last.to).toEqual(["smoke@kloxus.dev"]);
+    expect(last.to).toEqual([OWNER_EMAIL]);
     expect(last.auth).toBe("Bearer re_local_verify_synthetic");
     expect(last.text).toContain(firstWritten);
     expect(last.text).toMatch(/\/a\/\d+/); // the citation link survives to the wire
