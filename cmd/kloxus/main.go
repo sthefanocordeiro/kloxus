@@ -67,6 +67,8 @@ func main() {
 		err = cmdEmbedBackfill(os.Args[2:])
 	case "rerank-eval":
 		err = cmdRerankEval(os.Args[2:])
+	case "admin":
+		err = cmdAdmin(os.Args[2:])
 	case "record":
 		err = cmdRecord(os.Args[2:])
 	case "llm-check":
@@ -101,6 +103,7 @@ usage:
   kloxus coverage [--pages n] [--base url] [--out file]
                                               Daily Journal niche-coverage report (KLOX-93)
   kloxus embed-backfill [--days n]            embed the last n days of items with Voyage (refuses above USD 0.10)
+  kloxus admin workspaces list [--json]       read-only workspace inventory + old/new-model classification (KLOX-155)
   kloxus record --publication <ref> [--dir d]    regenerate LLM fixtures (real mode)
   kloxus record --live --def <yaml> [--dump-feeds d] [--sample-out d] [--dir d]
                                               record one real issue (feeds + LLM + sample export)
