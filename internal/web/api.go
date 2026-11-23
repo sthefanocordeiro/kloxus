@@ -2311,8 +2311,10 @@ type apiCheck struct {
 	Target  *apiTarget `json:"target,omitempty"`
 }
 
-// readinessChecks builds the checklist: every pauta decided, every
-// factual sentence sourced, no flags, required commentary written.
+// readinessChecks builds the checklist (KLOX-157): a post is the list of
+// stories the author picked, so review only asks that every factual
+// sentence is sourced, nothing is flagged and no picked story is still
+// empty. Undecided candidates, open slots and commentary never block.
 func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.Publication, doc *issueDocument) []apiCheck {
 	checks := []apiCheck{}
 	if iss.Status == "sent" || iss.Status == "scheduled" {
@@ -2322,14 +2324,6 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	if doc == nil {
 		doc, _ = buildIssueDocument(r.Context(), db(r), iss, pub)
 	}
-
-	pending := doc.dctx.pending
-	c := apiCheck{Code: "pending_decisions", OK: pending == 0, Count: pending,
-		Message: fmt.Sprintf("%d %s still open", pending, plural(pending, "story decision", "story decisions"))}
-	if !c.OK {
-		c.Target = &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}
-	}
-	checks = append(checks, c)
 
 	uncited, firstUncited := 0, ""
 	for _, sec := range doc.Sections {
@@ -2354,7 +2348,7 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 			}
 		}
 	}
-	c = apiCheck{Code: "uncited_sentences", OK: uncited == 0, Count: uncited,
+	c := apiCheck{Code: "uncited_sentences", OK: uncited == 0, Count: uncited,
 		Message: fmt.Sprintf("%d %s without a citation", uncited, plural(uncited, "sentence", "sentences"))}
 	if !c.OK {
 		c.Target = &apiTarget{Kind: "sentence", Ref: firstUncited}
@@ -2417,23 +2411,6 @@ func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.P
 	}
 	checks = append(checks, c)
 
-	missing := []string{}
-	// doc.pub carries the edition's own section snapshot — required
-	// commentary is checked against what the run configured, not what
-	// the builder says today (KLOX-65)
-	if doc != nil && doc.pub != nil {
-		for _, sc := range doc.pub.Sections {
-			if sc.Commentary == "required" && strings.TrimSpace(iss.Commentary[sc.Title]) == "" {
-				missing = append(missing, sc.Title)
-				checks = append(checks, apiCheck{Code: "commentary_required", OK: false,
-					Message: fmt.Sprintf("commentary required in %q", sc.Title),
-					Target:  &apiTarget{Kind: "section", Ref: sc.Title}})
-			}
-		}
-	}
-	if len(missing) == 0 {
-		checks = append(checks, apiCheck{Code: "commentary_required", OK: true})
-	}
 	return checks
 }
 
@@ -2470,26 +2447,17 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	// the build board owns the lineup now: every section the edition
-	// was configured with needs at least one item before drafting —
-	// the snapshot, not the builder's current state (KLOX-65)
+	// a post is the stories the author picked — no section slots (KLOX-157)
 	lineup, _ := db(r).IssueItems(r.Context(), iss.ID)
-	filled := map[string]int{}
+	picked := 0
 	for _, ii := range lineup {
 		if ii.Status == "pending" || ii.Status == "approved" {
-			filled[ii.Section]++
+			picked++
 		}
 	}
-	var reasons []apiReason
-	for _, sec := range issueSections(iss, pub) {
-		if filled[sec.Title] == 0 {
-			reasons = append(reasons, apiReason{Code: "section_empty",
-				Message: fmt.Sprintf("section %q has no stories", sec.Title),
-				Target:  &apiTarget{Kind: "section", Ref: sec.Title}})
-		}
-	}
-	if len(reasons) > 0 {
-		apiErr(w, 409, "blocked", fmt.Sprintf("%d %s still empty — fill each one before drafting", len(reasons), plural(len(reasons), "section", "sections")), reasons...)
+	if picked == 0 {
+		apiErr(w, 409, "blocked", "pick at least one story before drafting",
+			apiReason{Code: "no_stories", Message: "the post has no stories"})
 		return
 	}
 	for _, ii := range lineup {
@@ -2604,25 +2572,17 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 409, "not_empty", "this issue already has written content — compose is only for empty issues")
 		return
 	}
-	// same lineup gate as drafting: every section the edition was
-	// configured with needs a story (snapshot, not builder — KLOX-65)
+	// same gate as drafting: at least one picked story (KLOX-157)
 	lineup, _ := db(r).IssueItems(r.Context(), iss.ID)
-	filled := map[string]int{}
+	picked := 0
 	for _, ii := range lineup {
 		if ii.Status == "pending" || ii.Status == "approved" {
-			filled[ii.Section]++
+			picked++
 		}
 	}
-	var reasons []apiReason
-	for _, sec := range issueSections(iss, pub) {
-		if filled[sec.Title] == 0 {
-			reasons = append(reasons, apiReason{Code: "section_empty",
-				Message: fmt.Sprintf("section %q has no stories", sec.Title),
-				Target:  &apiTarget{Kind: "section", Ref: sec.Title}})
-		}
-	}
-	if len(reasons) > 0 {
-		apiErr(w, 409, "blocked", fmt.Sprintf("%d %s still empty — fill each one before composing", len(reasons), plural(len(reasons), "section", "sections")), reasons...)
+	if picked == 0 {
+		apiErr(w, 409, "blocked", "pick at least one story before composing",
+			apiReason{Code: "no_stories", Message: "the post has no stories"})
 		return
 	}
 	ctx := r.Context()

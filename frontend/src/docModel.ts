@@ -112,6 +112,9 @@ export function blockTextMd(node: { content?: { content?: { type: string; text?:
     .join("\n");
 }
 
+// POST_SECTION_TITLE mirrors config.PostSectionTitle on the server.
+export const POST_SECTION_TITLE = "Notícias";
+
 // docToTiptap converts the issue document into the Tiptap tree: section
 // headings, one commentary node per section, item headings, and one
 // sentence node per stored sentence. Attrs carry the API-facing data
@@ -131,7 +134,9 @@ export function docToTiptap(doc: IssueDocument): Record<string, unknown> {
     content.push({ type: "blockAdd", attrs: { section: sec, index } });
   };
   for (const sec of doc.sections ?? []) {
-    if (sec.title) {
+    // a Post is one flat list of stories: its single internal section
+    // ("Notícias", KLOX-157) never prints a heading
+    if (sec.title && sec.title !== POST_SECTION_TITLE) {
       content.push({
         type: "sectionHeading",
         attrs: { title: sec.title },

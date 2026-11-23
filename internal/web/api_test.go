@@ -327,14 +327,14 @@ func TestAPIJourney(t *testing.T) {
 	// --- readiness gates approve ---
 	rd := apiGet(t, srv, issueURL+"/readiness")
 	if rd["ready"].(bool) {
-		t.Fatal("issue with flags + missing commentary reports ready")
+		t.Fatal("issue with flags reports ready")
 	}
 	rr = apiCall(t, srv, "POST", issueURL+"/approve", nil)
 	if c := apiErrCode(t, rr); c != "blocked" {
 		t.Fatalf("approve with blockers: code = %q", c)
 	}
 	rs := apiReasons(t, rr)
-	var hasFlagReason, hasCommReason bool
+	var hasFlagReason bool
 	for _, r := range rs {
 		switch r["code"] {
 		case "flags_unresolved":
@@ -342,11 +342,12 @@ func TestAPIJourney(t *testing.T) {
 			if tgt, ok := r["target"].(map[string]any); !ok || tgt["ref"] == "" {
 				t.Errorf("flags reason lacks a sentence pointer: %v", r)
 			}
-		case "commentary_required":
-			hasCommReason = true
+		case "commentary_required", "pending_decisions":
+			// KLOX-157: a post never blocks on commentary or open decisions
+			t.Errorf("review must not gate on %v", r["code"])
 		}
 	}
-	if !hasFlagReason || !hasCommReason {
+	if !hasFlagReason {
 		t.Fatalf("blocked reasons incomplete: %v", rs)
 	}
 
@@ -746,7 +747,7 @@ outer0:
 
 // TestAPIDraftLineupGate: the untouched AI suggestion drafts straight
 // away (pending items are the lineup), but a lineup that leaves a
-// section empty is blocked with per-section reasons.
+// story is blocked (no slots per section — KLOX-157).
 func TestAPIDraftLineupGate(t *testing.T) {
 	srv, db, pub, _ := demoServer(t)
 	ctx := context.Background()
@@ -759,10 +760,10 @@ func TestAPIDraftLineupGate(t *testing.T) {
 	}
 	rr := apiCall(t, srv, "POST", issueURL+"/draft", nil)
 	if c := apiErrCode(t, rr); c != "blocked" {
-		t.Fatalf("draft with empty sections: code = %q", c)
+		t.Fatalf("draft with no stories: code = %q", c)
 	}
 	rs := apiReasons(t, rr)
-	if len(rs) == 0 || rs[0]["code"] != "section_empty" {
+	if len(rs) == 0 || rs[0]["code"] != "no_stories" {
 		t.Fatalf("blocked reasons = %v", rs)
 	}
 	_ = ctx

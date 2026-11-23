@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"html"
 	"strings"
+
+	"github.com/sthefanocordeiro/kloxus/internal/config"
 )
 
 // Rendition formats.
@@ -75,7 +77,7 @@ func buildRenditionDoc(doc *issueDocument) *rdDoc {
 		return n
 	}
 	for _, sec := range doc.Sections {
-		if t := strings.TrimSpace(sec.Title); t != "" {
+		if t := strings.TrimSpace(sec.Title); t != "" && t != config.PostSectionTitle {
 			out.Blocks = append(out.Blocks, rdBlock{Kind: "heading", Level: 2, Text: t})
 		}
 		if t := strings.TrimSpace(sec.Commentary.Text); t != "" {

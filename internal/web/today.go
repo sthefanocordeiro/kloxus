@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
@@ -142,7 +143,7 @@ func (s *Server) apiTodayWrite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		id, err := db(r).CreateIssue(ctx, pub.ID, number,
-			fmt.Sprintf("%s — peça %d", pub.Name, number), "", pub.Sections)
+			fmt.Sprintf("%s — peça %d", pub.Name, number), "", config.PostSections())
 		if apiDBErr(w, r, err, "piece") {
 			return
 		}

@@ -522,3 +522,19 @@ func slugify(s string) string {
 	}
 	return strings.TrimRight(b.String(), "-")
 }
+
+// PostSectionTitle names the single section a Post lives in (KLOX-157):
+// a post is the ordered list of stories the author picked, with no
+// template, no slots and no required commentary. The title is internal
+// plumbing — exports and the editor never print it.
+const PostSectionTitle = "Notícias"
+
+// PostSections is the one-section snapshot every new Post is created
+// with. Capacity is generous because the author, not a template,
+// decides how many stories the post holds.
+func PostSections() []Section {
+	return []Section{{
+		ID: "post", Title: PostSectionTitle, Format: SectionNews,
+		Items: 50, Commentary: "none", Access: AccessAll,
+	}}
+}
