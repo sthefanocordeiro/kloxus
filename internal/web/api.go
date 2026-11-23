@@ -3556,10 +3556,10 @@ func (s *Server) approveCiteCheck(w http.ResponseWriter, r *http.Request, iss *s
 		for _, it := range sec.Items {
 			var srcs []map[string]any
 			for _, src := range it.Sources {
-				srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL, "excerpt": src.Excerpt})
+				srcs = append(srcs, map[string]any{"Ref": src.Ref, "URL": src.URL, "Excerpt": src.Excerpt})
 			}
 			if len(srcs) > 0 {
-				items = append(items, map[string]any{"ref": it.Ref, "sources": srcs})
+				items = append(items, map[string]any{"Ref": it.Ref, "Sources": srcs})
 			}
 			for _, sn := range it.Sentences {
 				if sn.Kind != "fact" || len(sn.Citations) == 0 {
@@ -4598,7 +4598,7 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docCo
 	for _, src := range d.Sources {
 		srcs = append(srcs, map[string]any{"ref": src.Ref, "url": src.URL})
 	}
-	user, err := pipeline.RenderPrompt("citecheck_approve", map[string]any{
+	user, err := pipeline.RenderPrompt("citecheck", map[string]any{
 		"Publication": "",
 		"Sentences":   []map[string]any{{"id": 1, "item": itemRef, "refs": "", "text": text}},
 		"Items":       []map[string]any{{"ref": itemRef, "sources": srcs}},
