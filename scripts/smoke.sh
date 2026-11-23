@@ -241,33 +241,35 @@ wait_run "$DRID" "draft"
 # same compose endpoint the "Write this item" box calls — or the
 # editor's own take when the item has no usable excerpt. A demo fixture
 # draft already has sentences, so the loop exits on the first document.
-for i in $(seq 1 40); do
-	[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
-	REF="$(node -e '
-		const fs = require("fs");
-		const d = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).document;
-		for (const s of d.sections)
-			for (const it of s.items) {
-				if (it.sentences.length) continue;
-				const src = (it.sources || []).find(x => x.excerpt);
-				let body = null;
-				if (src) {
-					const text = (src.excerpt.match(/[\p{L}\p{N}]+/gu) || [])
-						.filter(w => w.length >= 4).filter((_, i) => i % 3 === 0)
-						.slice(0, 6).join(" ") + ".";
-					if (text.length > 1) body = { text, citations: [src.ref] };
+fill_items() {
+	for i in $(seq 1 40); do
+		[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
+		REF="$(node -e '
+			const fs = require("fs");
+			const d = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).document;
+			for (const s of d.sections)
+				for (const it of s.items) {
+					if (it.sentences.length) continue;
+					const src = (it.sources || []).find(x => x.excerpt);
+					let body = null;
+					if (src) {
+						const text = (src.excerpt.match(/[\p{L}\p{N}]+/gu) || [])
+							.filter(w => w.length >= 4).filter((_, i) => i % 3 === 0)
+							.slice(0, 6).join(" ") + ".";
+						if (text.length > 1) body = { text, citations: [src.ref] };
+					}
+					if (!body) body = { text: "Editorial reading of the sources.", kind: "interpretation" };
+					body.version = d.version;
+					fs.writeFileSync(process.argv[2], JSON.stringify(body));
+					console.log(it.ref);
+					process.exit(0);
 				}
-				if (!body) body = { text: "Editorial reading of the sources.", kind: "interpretation" };
-				body.version = d.version;
-				fs.writeFileSync(process.argv[2], JSON.stringify(body));
-				console.log(it.ref);
-				process.exit(0);
-			}
-		console.log("");' "$RESP" "$REQBODY")"
-	[ -z "$REF" ] && break
-	[ "$(reqf POST "/api/v1/issues/$IID/items/$REF/compose" "$REQBODY")" = "200" ] \
-		|| die "compose item $REF: $(cat "$RESP")"
-done
+			console.log("");' "$RESP" "$REQBODY")"
+		[ -z "$REF" ] && break
+		[ "$(reqf POST "/api/v1/issues/$IID/items/$REF/compose" "$REQBODY")" = "200" ] \
+			|| die "compose item $REF: $(cat "$RESP")"
+	done
+}
 say "items filled"
 
 # --- 9. resolve every flagged or uncited sentence --------------------------
@@ -277,36 +279,49 @@ say "items filled"
 # The first document fetch and the first sentence mutation are timed:
 # the KLOX-47 bound fails the smoke above 1.5 s (sentence mutations used
 # to take ~9 s on the hosted app — the N+1 document build).
-for i in $(seq 1 300); do
-	if [ "$i" = "1" ]; then
-		# reqms must run outside $(...) — a subshell would discard the
-		# HTTP_CODE/HTTP_TIME it sets for assert_fast
-		reqms GET "/api/v1/issues/$IID/document" >/dev/null
-		[ "$HTTP_CODE" = "200" ] || die "document fetch failed"
-		assert_fast "document fetch"
-	else
+strip_flags() {
+	for i in $(seq 1 300); do
+		if [ "$i" = "1" ] && [ "$ROUND" = "1" ]; then
+			# reqms must run outside $(...) — a subshell would discard the
+			# HTTP_CODE/HTTP_TIME it sets for assert_fast
+			reqms GET "/api/v1/issues/$IID/document" >/dev/null
+			[ "$HTTP_CODE" = "200" ] || die "document fetch failed"
+			assert_fast "document fetch"
+		else
+			[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
+		fi
+		SIDVER="$(node -e '
+			const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).document;
+			for (const s of d.sections)
+				for (const it of s.items)
+					for (const sn of it.sentences)
+						if (sn.flag || (sn.kind === "fact" && !(sn.citations && sn.citations.length))) {
+							console.log(sn.id + "|" + d.version); process.exit(0);
+						}
+			console.log("");' "$RESP")"
+		[ -z "$SIDVER" ] && break
+		SID="${SIDVER%%|*}"; VER="${SIDVER##*|}"
+		if [ "$i" = "1" ] && [ "$ROUND" = "1" ]; then
+			reqms DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}" >/dev/null
+			[ "$HTTP_CODE" = "200" ] || die "sentence remove $SID: $(cat "$RESP")"
+			assert_fast "sentence remove"
+		else
+			[ "$(req DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}")" = "200" ] \
+				|| die "sentence remove $SID: $(cat "$RESP")"
+		fi
+	done
+}
+# Removals can re-empty an item (under llm auto the draft sentences are
+# real and citecheck flags them), so fill and strip until stable.
+resolve_flags() {
+	for ROUND in 1 2 3 4 5; do
+		fill_items
+		strip_flags
 		[ "$(req GET "/api/v1/issues/$IID/document")" = "200" ] || die "document fetch failed"
-	fi
-	SIDVER="$(node -e '
-		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).document;
-		for (const s of d.sections)
-			for (const it of s.items)
-				for (const sn of it.sentences)
-					if (sn.flag || (sn.kind === "fact" && !(sn.citations && sn.citations.length))) {
-						console.log(sn.id + "|" + d.version); process.exit(0);
-					}
-		console.log("");' "$RESP")"
-	[ -z "$SIDVER" ] && break
-	SID="${SIDVER%%|*}"; VER="${SIDVER##*|}"
-	if [ "$i" = "1" ]; then
-		reqms DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}" >/dev/null
-		[ "$HTTP_CODE" = "200" ] || die "sentence remove $SID: $(cat "$RESP")"
-		assert_fast "sentence remove"
-	else
-		[ "$(req DELETE "/api/v1/issues/$IID/sentences/$SID" "{\"version\":\"$VER\"}")" = "200" ] \
-			|| die "sentence remove $SID: $(cat "$RESP")"
-	fi
-done
+		[ "$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).document;let n=0;for(const s of d.sections)for(const it of s.items)if(!it.sentences.length)n++;console.log(n)' "$RESP")" = "0" ] && break
+	done
+}
+resolve_flags
 say "flags resolved"
 
 # --- 10. required commentary ----------------------------------------------
@@ -328,7 +343,21 @@ say "commentary saved"
 # --- 11. readiness → approve → send ----------------------------------------
 [ "$(req GET "/api/v1/issues/$IID/readiness")" = "200" ] || die "readiness failed"
 [ "$(jget ready)" = "true" ] || die "issue not ready: $(jget checks)"
-[ "$(req POST "/api/v1/issues/$IID/approve")" = "200" ] || die "approve: $(cat "$RESP")"
+# Under llm auto the approve-time citecheck (KLOX-67 §7.5) reads the real
+# source text and may block with unsupported_claim, saving the flags on
+# the issue. Resolve them the way an editor would (remove the flagged
+# sentences, refill emptied items) and retry; the gate is not bypassed.
+# The per-edition citecheck cap bounds how often the model can re-block.
+for ATTEMPT in 1 2 3 4; do
+	code="$(req POST "/api/v1/issues/$IID/approve")"
+	[ "$code" = "200" ] && break
+	[ "$ATTEMPT" = "4" ] && die "approve: $(cat "$RESP")"
+	[ "$(jget error.code)" = "blocked" ] || die "approve: $(cat "$RESP")"
+	say "approve blocked by citecheck (attempt $ATTEMPT) — resolving flagged sentences"
+	resolve_flags
+	[ "$(req GET "/api/v1/issues/$IID/readiness")" = "200" ] || die "readiness failed"
+	[ "$(jget ready)" = "true" ] || die "issue not ready after approve block: $(jget checks)"
+done
 say "issue approved"
 if [ "$PUBLISHING" != "true" ]; then
 	# Publishing off: the reader-facing surface is hidden, not deleted.
