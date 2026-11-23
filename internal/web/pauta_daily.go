@@ -189,6 +189,13 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		// sweep never re-checks this radar today.
 		return wdb.MarkPautaDayEmailed(ctx, pub.ID, day)
 	}
+	// One mail per recipient per day: an owner with several claimed
+	// radars (or workspaces) gets a single note, not one per radar.
+	if ok, err := pool.ClaimPautaMail(ctx, owner, day); err != nil {
+		return err
+	} else if !ok {
+		return wdb.MarkPautaDayEmailed(ctx, pub.ID, day)
+	}
 
 	var cards []pautaCardView
 	_ = json.Unmarshal([]byte(row.CardsJSON), &cards)
@@ -233,7 +240,7 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		Subject: subject,
 		Text:    md,
 		HTML:    delivery.RenderHTML(subject, md, base),
-		Kind: "pauta",
+		Kind:    "pauta",
 		// Provider idempotency is global per API key, not per
 		// workspace — scope the key or the second claimed radar of the
 		// day collides on a modified body and falls back to the outbox.

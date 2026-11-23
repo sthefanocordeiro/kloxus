@@ -302,3 +302,32 @@ func mustPubID(t *testing.T, db *store.DB) int64 {
 	}
 	return pubs[0].ID
 }
+
+// TestDailyPautaMailOncePerRecipient (KLOX-154): one owner with several
+// claimed radars gets a single mail per day, not one per workspace.
+func TestDailyPautaMailOncePerRecipient(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+	owner := fmt.Sprintf("dup-%d@hackbrazil.dev", time.Now().UnixNano())
+	for i := 0; i < 3; i++ {
+		cookie, db := pautaVisitor(t, mgr)
+		pautaRadar(t, srv, cookie)
+		if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
+			t.Fatalf("claim: %v", err)
+		}
+	}
+	srv.DailyPautaTick(ctx, pool, spAt(2026, 11, 24, 7, 5))
+	srv.DailyPautaTick(ctx, pool, spAt(2026, 11, 24, 7, 6))
+	n := 0
+	for _, m := range fake.messages() {
+		for _, to := range m.To {
+			if to == owner {
+				n++
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("mails to one owner across 3 radars = %d, want 1", n)
+	}
+}
