@@ -6,6 +6,7 @@ import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Button, Card, SkeletonLine } from "../ui";
 import { StepCounter } from "../components/StepCounter";
+import { ClaimEmail } from "../components/ClaimEmail";
 import { NICHE_KEYS, useStart, type StartStrings } from "./startStrings";
 
 type Phase = "about" | "calibrate" | "done";
@@ -34,6 +35,17 @@ export function Start() {
     if (existing && pubID === null) nav(`/publications/${existing.id}/today`, { replace: true });
   }, [existing, pubID, nav]);
 
+  // KLOX-161: the creator's email, confirmed by magic link, comes before
+  // the radar is saved. The link may be opened in another tab or the
+  // inbox, so the gate keeps asking the server until the claim lands.
+  const ws = useQuery({
+    queryKey: ["workspace"],
+    queryFn: api.workspace,
+    retry: false,
+    refetchInterval: (q) => (q.state.data && !q.state.data.claimed ? 3000 : false),
+  });
+  const claimed = ws.data?.claimed === true;
+
   const create = useMutation({
     mutationFn: () => api.createRadar(name.trim(), about.trim(), niches),
     onSuccess: (res) => {
@@ -60,7 +72,17 @@ export function Start() {
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
       <StepCounter steps={s.step} current={stepIdx} />
 
-      {phase === "about" && (
+      {phase === "about" && ws.data && !claimed && (
+        <>
+          <h1 className="mt-4 font-display text-2xl font-bold">{s.gateTitle}</h1>
+          <p className="mt-1 text-sm text-muted">{s.gateHint}</p>
+          <Card className="mt-6 p-5" data-testid="email-gate">
+            <ClaimEmail />
+          </Card>
+        </>
+      )}
+
+      {phase === "about" && (claimed || ws.isError) && (
         <>
           <h1 className="mt-4 font-display text-2xl font-bold">{s.aboutTitle}</h1>
           <p className="mt-1 text-sm text-muted">{s.aboutHint}</p>

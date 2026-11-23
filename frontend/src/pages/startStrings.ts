@@ -4,6 +4,8 @@ import { useT } from "../i18n";
 // steps — Criar Radar, Dar match, Pronto!). Only /start imports this
 // module, so it stays out of the landing chunk (KLOX-16 budget).
 const pt = {
+  gateTitle: "Confirme seu e-mail para criar o radar",
+  gateHint: "Enviamos um link mágico — sem senha. É também assim que você entra na lista do convite do lançamento.",
   step: ["Criar Radar", "Dar match", "Pronto!"],
   aboutTitle: "Criar seu Radar",
   aboutHint: "Dê um nome e liste os temas. As fontes são escolhidas automaticamente.",
@@ -46,6 +48,8 @@ const pt = {
 };
 
 const en: typeof pt = {
+  gateTitle: "Confirm your email to create your radar",
+  gateHint: "We send a magic link — no password. It is also how you get on the launch invitation list.",
   step: ["Create Radar", "Match", "Done!"],
   aboutTitle: "Create your Radar",
   aboutHint: "Give it a name and list the topics. Sources are picked for you.",

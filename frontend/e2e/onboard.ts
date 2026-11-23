@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { claimOwner } from "./mail.ts";
 
 // Shared onboarding helpers — every test walks its own anonymous
 // workspace (fresh browser context) through landing → /new → sources
@@ -16,6 +17,7 @@ export async function onboard(page: Page) {
   await expect(page.getByRole("heading", { name: /The research is ready/ })).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Create your Radar/ }).first().click();
   await page.waitForURL(/\/start/);
+  await claimOwner(page);
   await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
 
   // the sample proposal pre-fills the five editable blocks

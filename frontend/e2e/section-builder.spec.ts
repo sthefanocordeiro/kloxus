@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { claimOwner } from "./mail.ts";
 import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
 
 test.skip(publishingOff, PUBLISHING_SKIP_REASON);
@@ -20,6 +21,7 @@ test("section builder onboarding, Seções screen and Configurações delete", a
     .first()
     .click();
   await page.waitForURL(/\/start/);
+  await claimOwner(page);
   await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
 
   // step 1: the proposal pre-fills the blocks

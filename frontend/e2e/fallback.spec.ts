@@ -55,6 +55,7 @@ async function waitRun(page: Page, rid: number) {
 // choreography smoke.sh uses, minus the browser.
 async function approvedIssue(page: Page): Promise<number> {
   await apiPost(page, "/api/v1/demo/new");
+  await claimSynthetic(page); // creating a radar needs the claimed owner (KLOX-161)
   const proposal = (await apiGet(page, "/api/v1/proposal")).proposal;
   const pub = await apiPost(
     page,
@@ -171,8 +172,7 @@ async function claimSynthetic(page: Page) {
 
 test("provider failure falls back to the outbox — and recovery sends", async ({ page }) => {
   test.skip(!fakeLive, "fake-live mode only");
-  const iid = await approvedIssue(page);
-  await claimSynthetic(page);
+  const iid = await approvedIssue(page); // already claimed
 
   // intentional failure: the provider must not count as success — the
   // message lands in the ledger as fallback and the issue stays

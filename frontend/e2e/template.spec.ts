@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { claimOwner } from "./mail.ts";
 import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
 
 test.skip(publishingOff, PUBLISHING_SKIP_REASON);
@@ -19,6 +20,7 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
     .first()
     .click();
   await page.waitForURL(/\/start/);
+  await claimOwner(page);
   await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
 
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({

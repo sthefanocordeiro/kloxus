@@ -60,6 +60,9 @@ func radarName(about string) string {
 // fala?" and pre-selects its sources by niche. One radar per account,
 // like the publication create it wraps.
 func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireClaimed(w, r) {
+		return
+	}
 	var in struct {
 		Name   string   `json:"name"`   // the radar's display name (D4)
 		About  string   `json:"about"`  // the topics, free text separated by commas

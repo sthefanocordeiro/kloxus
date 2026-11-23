@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { api, type PautaCard, type Publication, type SourceRow } from "../api";
+import { api, type PautaCard, type Publication, type SourceRow, type Workspace } from "../api";
 import { LangProvider } from "../i18n";
 import { Start } from "../pages/Start";
 
@@ -19,6 +19,8 @@ vi.mock("../api", async (importOriginal) => {
     api: {
       ...mod.api,
       publications: vi.fn(),
+      workspace: vi.fn(),
+      claim: vi.fn(),
       createRadar: vi.fn(),
       calibration: vi.fn(),
       calibrationAnswer: vi.fn(),
@@ -29,6 +31,8 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 
+const ws = (claimed: boolean) =>
+  ({ id: "w1", label: "w1", mode: "demo", hosted: true, llm_mode: "off", claimed } as Workspace);
 const pub = { id: 7, name: "Radar: fintech", topic: "fintech" } as Publication;
 const src = (id: number, name: string) => ({ id, name } as SourceRow);
 const card = (id: number, topics: string[]): PautaCard => ({
@@ -57,6 +61,7 @@ describe("onboarding from zero (KLOX-123)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.publications).mockResolvedValue([]);
+    vi.mocked(api.workspace).mockResolvedValue(ws(true));
     vi.mocked(api.createRadar).mockResolvedValue({ publication: pub, sources: [src(1, "Exame"), src(2, "Tecnoblog")] });
     vi.mocked(api.calibration).mockResolvedValue([
       card(1, ["games"]), card(2, ["games"]), card(3, ["fintech"]),
@@ -72,6 +77,23 @@ describe("onboarding from zero (KLOX-123)", () => {
     renderStart();
     expect(await screen.findByText("today screen")).toBeVisible();
   });
+
+  // KLOX-161: the email, confirmed by magic link, comes before the radar
+  it("asks for the email first and shows the topic form once the claim lands", async () => {
+    vi.mocked(api.workspace).mockResolvedValue(ws(false));
+    vi.mocked(api.claim).mockResolvedValue({ sent: true, email: "ana@exemplo.com", claim_url: "/claim?t=x" });
+    renderStart();
+    expect(await screen.findByTestId("email-gate")).toBeVisible();
+    expect(screen.queryByLabelText("Radar name")).toBeNull();
+    fireEvent.change(screen.getByLabelText("you@example.com"), { target: { value: "ana@exemplo.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save with your email" }));
+    await waitFor(() => expect(api.claim).toHaveBeenCalledWith("ana@exemplo.com", "en"));
+
+    // the link is opened (here: elsewhere) — the next poll sees the claim
+    vi.mocked(api.workspace).mockResolvedValue(ws(true));
+    expect(await screen.findByLabelText("Radar name", {}, { timeout: 6000 })).toBeVisible();
+    expect(screen.queryByTestId("email-gate")).toBeNull();
+  }, 15000);
 
   it("needs a name and topics before continuing; editorias are optional", async () => {
     renderStart();

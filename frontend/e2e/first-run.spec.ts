@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { claimOwner } from "./mail.ts";
 import { publishingOff } from "./publishing.ts";
 
 // KLOX-122: the sidebar differs by flag — Hoje/Radar when publishing is off.
@@ -16,6 +17,7 @@ async function createdNoSources(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: /meu Radar/ }).first().click();
   await page.waitForURL(/\/start/);
+  await claimOwner(page);
   await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
@@ -75,6 +77,7 @@ test.describe("first-run path (KLOX-90)", () => {
     await page.goto("/");
     await page.getByRole("button", { name: /meu Radar/ }).first().click();
     await page.waitForURL(/\/start/);
+    await claimOwner(page);
     await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
     await page.getByRole("button", { name: "Avançar", exact: true }).click();
     await page.getByRole("button", { name: "Avançar", exact: true }).click();

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { claimOwner } from "./mail.ts";
 
 // KLOX-68 §10 automated checks — runs against every screen at 1440 and
 // 390 in PT and reports: banned words in rendered text, touch-target
@@ -232,6 +233,7 @@ async function onboardToBoard(page: Page): Promise<string> {
   await auditScreen(page, "landing");
   await page.getByRole("button", { name: /Criar meu Radar/ }).first().click();
   await page.waitForURL(/\/start/);
+  await claimOwner(page);
   await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
   await expect(page.locator('input[value*="Futuro"]').first()).toBeVisible({ timeout: 15000 });
   await auditScreen(page, "onboard-step1");

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { preflight } from "./mail.ts";
+import { preflight, claimOwner } from "./mail.ts";
 import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
 
 test.skip(publishingOff, PUBLISHING_SKIP_REASON);
@@ -29,6 +29,7 @@ async function onboard(page: Page) {
   await expect(page.getByRole("heading", { name: /The research is ready/ })).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Create your Radar/ }).first().click();
   await page.waitForURL(/\/start/);
+  await claimOwner(page);
   await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Next", exact: true }).click();

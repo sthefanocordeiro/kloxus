@@ -266,6 +266,7 @@ export const dict = {
       blocked: "Blocked — fix the open items first",
       bad_json: "The request was not valid JSON",
       unclaimed_workspace: "Save with your email before sending — the send asks for it",
+      email_required: "Confirm your email with the magic link before creating your Radar",
       send_refused: "The send was refused — check the daily caps",
       catalog_only: "Sources are picked from the catalog — pasted URLs are not fetched",
       source_policy: "That source's rules don't allow it here",
@@ -350,18 +351,8 @@ export const dict = {
       headline: "The research is ready. The writing is yours.",
       subhead:
         "Every day, the news that matters to your niche arrives organized, with sources and checkable facts. You pick the angle and write in your own voice, to publish where your audience is.",
-      waitlistLabel: "Your best email",
-      waitlistPlaceholder: "you@example.com",
-      waitlistCta: "Notify me when it launches",
-      waitlistSending: "Saving…",
-      waitlistDone: "You are on the list.",
-      waitlistDoneBody:
-        "When the editor opens, we will email you. Meanwhile, keep publishing your way.",
-      waitlistInvalid: "That email does not look right. Mind checking it?",
-      waitlistRateLimited: "Too many tries in a row. Wait a minute and try again.",
-      waitlistError: "Could not save it right now. Try again shortly.",
-      waitlistPrivacy:
-        "We only use your email to tell you about the launch. No spam, and you can leave anytime.",
+      emailNote:
+        "You confirm your email by magic link as you create your Radar — that is also how you get the launch invitation.",
       waitlistSupport:
         "No AI writing for you. Just the boring work of finding and checking what happened, done before you open the editor.",
       alreadyCreator: "Already a creator? Sign in",
@@ -852,6 +843,7 @@ export const dict = {
       blocked: "Bloqueado — resolva as pendências primeiro",
       bad_json: "O pedido não era JSON válido",
       unclaimed_workspace: "Salve com seu e-mail antes de enviar",
+      email_required: "Confirme seu e-mail pelo link mágico antes de criar o Radar",
       send_refused: "O envio foi recusado — confira os limites diários",
       catalog_only: "As fontes vêm do catálogo — links colados não são coletados",
       source_policy: "As regras dessa fonte não permitem usá-la aqui",
@@ -936,18 +928,8 @@ export const dict = {
       headline: "A pauta pronta. A escrita é sua.",
       subhead:
         "Todo dia, as notícias que importam pro seu nicho chegam organizadas, com fonte e fatos checáveis. Você escolhe o ângulo e escreve do seu jeito, na sua voz. Pra publicar onde sua audiência está.",
-      waitlistLabel: "Seu melhor e-mail",
-      waitlistPlaceholder: "voce@exemplo.com",
-      waitlistCta: "Avise-me quando lançar",
-      waitlistSending: "Salvando…",
-      waitlistDone: "Você está na lista.",
-      waitlistDoneBody:
-        "Quando o editor abrir, você recebe o aviso por e-mail. Enquanto isso, pode seguir publicando do seu jeito.",
-      waitlistInvalid: "Esse e-mail não parece certo. Dá uma conferida?",
-      waitlistRateLimited: "Muitas tentativas seguidas. Espera um minutinho e tenta de novo.",
-      waitlistError: "Não consegui salvar agora. Tenta de novo em instantes.",
-      waitlistPrivacy:
-        "Só usamos seu e-mail pra avisar do lançamento. Nada de spam, e você sai quando quiser.",
+      emailNote:
+        "Você confirma seu e-mail por link mágico ao criar o Radar — é também assim que recebe o convite do lançamento.",
       waitlistSupport:
         "Sem IA escrevendo por você. Só o trabalho chato de achar e conferir o que aconteceu, feito antes de você abrir o editor.",
       alreadyCreator: "Já sou criador? Entrar",

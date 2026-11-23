@@ -5,8 +5,10 @@ import {
   fakeLive,
   fakeRequests,
   neverRealMail,
+  OWNER_EMAIL,
   preflight,
   workspaceInfo,
+  claimOwner,
 } from "./mail.ts";
 import { PUBLISHING_SKIP_REASON, publishingOff } from "./publishing.ts";
 
@@ -55,6 +57,7 @@ async function onboard(page: Page) {
   await expect(page.getByRole("heading", { name: /The research is ready/ })).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: /Create your Radar/ }).first().click();
   await page.waitForURL(/\/start/);
+  await claimOwner(page);
   await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Next", exact: true }).click();
@@ -307,10 +310,10 @@ test("manual compose journey", async ({ page }) => {
     // synthetic-live: the fake provider must have accepted the message —
     // "Resend failed" or a fallback is a failure here, not a success
     expect(sendBody.delivery).toBe("resend");
-    expect(sendBody.to).toEqual(["smoke@kloxus.dev"]);
+    expect(sendBody.to).toEqual([OWNER_EMAIL]);
     const reqs = await fakeRequests(page);
     const last = reqs.requests.at(-1)!;
-    expect(last.to).toEqual(["smoke@kloxus.dev"]);
+    expect(last.to).toEqual([OWNER_EMAIL]);
     expect(last.auth).toBe("Bearer re_local_verify_synthetic");
     expect(last.text).toContain(firstWritten);
     expect(last.text).toMatch(/\/a\/\d+/); // the citation link survives to the wire

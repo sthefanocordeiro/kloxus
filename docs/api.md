@@ -83,6 +83,13 @@ new address.
 `outbox_fallback` (the provider failed; the mail is a ledger copy).
 A send refused by the daily caps answers `sent:false` + `refused`.
 
+**Radar creation needs the claim (KLOX-161).** `POST /api/v1/radar` and
+`POST /api/v1/publications` answer `403 email_required` until the
+workspace is claimed. Confirming the magic link also registers the
+address once in the pre-launch `waitlist` table (`source = "claim"`) —
+the launch-invitation list now fills from people who actually entered
+the product. The landing page no longer collects emails.
+
 ### `GET /claim?t={token}` → `POST /claim?t={token}` — not JSON
 The emailed link is two-step so mail-scanner prefetches can't spend it:
 `GET` only validates the token and renders a confirm page (`400` page

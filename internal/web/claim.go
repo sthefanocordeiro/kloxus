@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -238,6 +239,12 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal error", 500)
 			return
 		}
+		// A confirmed owner is someone who really entered the product:
+		// register them for the launch invitation (KLOX-161). Idempotent;
+		// a failure here must not undo the claim.
+		if err := pool.AddWaitlist(r.Context(), email, "claim"); err != nil {
+			slog.Warn("launch invite registration failed", "err", err, "rid", reqIDFromCtx(r.Context()))
+		}
 	} else if l := s.d.WS.Local(); l != nil {
 		em, err := l.DB.ConsumeMagicLink(r.Context(), hash, now)
 		if err != nil {
@@ -411,4 +418,17 @@ func (s *Server) unsubOneClick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// requireClaimed gates Radar creation on a confirmed owner email
+// (KLOX-161): the address is the account's identity and the launch
+// invitation's recipient. It writes the refusal and reports false when
+// the workspace has not been claimed through a magic link.
+func (s *Server) requireClaimed(w http.ResponseWriter, r *http.Request) bool {
+	if s.workspaceOwner(r.Context(), db(r)) != "" {
+		return true
+	}
+	apiErr(w, http.StatusForbidden, "email_required",
+		"confirm your email with the magic link before creating a Radar")
+	return false
 }
