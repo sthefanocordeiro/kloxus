@@ -74,6 +74,7 @@ type Manager struct {
 	lru     *list.List // *cacheEntry, front = most recent
 	entries map[string]*list.Element
 
+	inviteMu sync.Mutex
 	createMu sync.Mutex
 	creates  map[string][]time.Time
 }

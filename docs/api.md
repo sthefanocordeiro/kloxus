@@ -93,7 +93,21 @@ workspace-free, so every citation opens an original inside the demo.
 `{"material": "https://… or pasted text"}` — turns pasted material into a
 proposal. Demo mode: `422 live_only` (only the sample is offered).
 
+### Owner e-mail (magic link) — prerequisite for creating a Radar
+- `GET /api/v1/auth/owner` → `{"email", "confirmed", "launch_invite"}`.
+- `POST /api/v1/auth/magic` `{"email"}` → `200 {"sent": true, "demo": true,
+  "outbox_email_id", "magic_link"}`. Invalid address → `validation`. Demo mode
+  has no real mailer: the message lands in the workspace outbox and the link is
+  returned. Other modes → `501 email_not_configured` until a mailer exists.
+  The link is single-use and valid 30 minutes.
+- `GET /api/v1/auth/verify?n=…&tok=…` — spends the link: confirms the e-mail,
+  marks the owner for the launch invitation (hosted: also appended once to
+  `<data dir>/launch_invites.tsv`), binds the browser to the issuing workspace
+  and redirects to `/new?login=ok` (`/new?login=invalid` when spent/expired).
+  A demo reset keeps the confirmed owner.
+
 ### `POST /api/v1/publications` → `201`
+Requires a confirmed owner e-mail — otherwise `403 email_required`.
 Creates a publication from the (possibly edited) proposal blocks.
 `{"name": "…", "topic": "…", "audience": "…", "editorial_line": "…",
   "tone": "…", "language": "pt-BR", "frequency": "weekly",

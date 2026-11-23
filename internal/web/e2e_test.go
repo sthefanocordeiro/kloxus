@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -625,5 +627,72 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "Exclusivo para assinantes") {
 		t.Error("unsubscribed reader should see the teaser")
+	}
+}
+
+// TestOwnerMagicLinkHosted: the owner's magic link confirms the workspace
+// it was issued for even when opened in another browser, binds that
+// browser to it, and registers the address once for the launch invite.
+func TestOwnerMagicLinkHosted(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	seed := func(ctx context.Context, sdb *store.DB) error { return nil }
+	mgr, err := workspace.OpenHosted(ctx, dir, []byte("test-secret-key-32-bytes-padded-ok!"), seed)
+	if err != nil {
+		t.Fatalf("OpenHosted: %v", err)
+	}
+	t.Cleanup(mgr.Close)
+	cfg := &config.Config{Mode: "demo", ModelTriage: "claude-haiku-5-5", ModelDraft: "claude-sonnet-5-5"}
+	srv := web.New(web.Deps{
+		WS: mgr, Cfg: cfg, Fetcher: sources.FixtureFetcher{FS: examples.FS},
+		LLM: llm.Replay{FS: examples.FS, Dir: "fixtures/llm"}, Monitor: sources.FakeMonitor{}, Seed: seed,
+	})
+	do := func(method, path, cookie, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if cookie != "" {
+			req.Header.Set("Cookie", cookie)
+		}
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+
+	rr := do("POST", "/api/v1/auth/magic", "", `{"email":"dono@example.com"}`)
+	if rr.Code != 200 {
+		t.Fatalf("magic = %d: %s", rr.Code, rr.Body.String())
+	}
+	cookieA := strings.SplitN(rr.Header().Get("Set-Cookie"), ";", 2)[0]
+	var out struct {
+		Link string `json:"magic_link"`
+	}
+	json.Unmarshal(rr.Body.Bytes(), &out)
+	u, _ := url.Parse(out.Link)
+
+	// browser B (no cookie) opens the link
+	rr = do("GET", u.RequestURI(), "", "")
+	if rr.Header().Get("Location") != "/new?login=ok" {
+		t.Fatalf("verify from B = %d %q", rr.Code, rr.Header().Get("Location"))
+	}
+	cookies := rr.Header().Values("Set-Cookie") // the last one wins in the browser
+	cookieB := strings.SplitN(cookies[len(cookies)-1], ";", 2)[0]
+	if cookieB != cookieA {
+		t.Fatalf("browser B was not bound to the issuing workspace: %q vs %q", cookieB, cookieA)
+	}
+	if o := apiJSON(t, do("GET", "/api/v1/auth/owner", cookieB, "")); o["confirmed"] != true {
+		t.Fatalf("owner not confirmed: %v", o)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "launch_invites.tsv"))
+	if err != nil || !strings.HasPrefix(string(raw), "dono@example.com\t") {
+		t.Fatalf("launch invite list = %q, %v", raw, err)
+	}
+	// a second confirmation of the same address does not duplicate it
+	rr = do("POST", "/api/v1/auth/magic", cookieB, `{"email":"dono@example.com"}`)
+	json.Unmarshal(rr.Body.Bytes(), &out)
+	u, _ = url.Parse(out.Link)
+	do("GET", u.RequestURI(), cookieB, "")
+	raw, _ = os.ReadFile(filepath.Join(dir, "launch_invites.tsv"))
+	if n := strings.Count(string(raw), "dono@example.com"); n != 1 {
+		t.Fatalf("launch list has %d entries for one address", n)
 	}
 }

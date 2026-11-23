@@ -314,6 +314,8 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   return data as T;
 }
 
+export type Owner = { email: string; confirmed: boolean; launch_invite: boolean };
+
 export const api = {
   workspace: () => request<{ workspace: Workspace }>("GET", "/api/v1/workspace").then((r) => r.workspace ?? (r as unknown as Workspace)),
   publications: () => request<{ publications: Publication[] }>("GET", "/api/v1/publications").then((r) => r.publications),
@@ -390,6 +392,10 @@ export const api = {
   proposal: () => request<{ proposal: Proposal }>("GET", "/api/v1/proposal").then((r) => r.proposal),
   propose: (material: string) =>
     request<{ proposal: Proposal }>("POST", "/api/v1/publications/propose", { material }).then((r) => r.proposal),
+  owner: () => request<Owner>("GET", "/api/v1/auth/owner"),
+  sendMagicLink: (email: string) =>
+    request<{ sent: boolean; demo: boolean; magic_link: string; outbox_email_id: number }>(
+      "POST", "/api/v1/auth/magic", { email }),
   createPublication: (p: Omit<Proposal, "sources">) =>
     request<{ publication: Publication }>("POST", "/api/v1/publications", p).then((r) => r.publication),
   sources: (pubID: number | string) =>

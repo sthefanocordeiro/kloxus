@@ -19,6 +19,19 @@ async function onboard(page: Page) {
   await page.getByRole("link", { name: /Create your newsletter/ }).click();
   await page.waitForURL(/\/new/);
 
+  // the owner's e-mail comes first: a magic link (demo: shown inline).
+  // A demo reset keeps the confirmed identity, so the gate may be done.
+  const emailInput = page.getByLabel("Your e-mail");
+  const confirmedNote = page.getByText(/E-mail confirmed/);
+  await expect(emailInput.or(confirmedNote)).toBeVisible({ timeout: 15000 });
+  if (await emailInput.isVisible()) {
+    await emailInput.fill("dono@example.com");
+    await page.getByRole("button", { name: "Send magic link" }).click();
+    await page.getByRole("link", { name: "Open the magic link" }).click();
+    await page.waitForURL(/\/new\?login=ok/);
+  }
+  await expect(confirmedNote).toBeVisible({ timeout: 15000 });
+
   // the sample proposal pre-fills the five editable blocks
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Create newsletter", exact: true }).click();

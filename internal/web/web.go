@@ -207,6 +207,9 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/outbox/{id}", s.apiOutboxEmail)
 	m.HandleFunc("POST /api/v1/demo/reset", s.apiDemoReset)
 	m.HandleFunc("POST /api/v1/demo/new", s.apiDemoNew)
+	m.HandleFunc("GET /api/v1/auth/owner", s.apiOwner)
+	m.HandleFunc("POST /api/v1/auth/magic", s.apiOwnerMagic)
+	m.HandleFunc("GET /api/v1/auth/verify", s.apiOwnerVerify)
 	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
 		m.HandleFunc(method+" /api/v1/", s.apiNotFound)
 	}

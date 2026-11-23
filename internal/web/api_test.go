@@ -983,6 +983,38 @@ func TestAPIOnboarding(t *testing.T) {
 		t.Fatalf("propose = %q, want live_only", code)
 	}
 
+	// creating a Radar needs the owner's e-mail confirmed by magic link
+	if code := apiErrCode(t, apiCall(t, srv, "POST", "/api/v1/publications", map[string]any{"name": "x"})); code != "email_required" {
+		t.Fatalf("create before confirming e-mail = %q, want email_required", code)
+	}
+	if code := apiErrCode(t, apiCall(t, srv, "POST", "/api/v1/auth/magic", map[string]any{"email": "not-an-email"})); code != "validation" {
+		t.Fatalf("bad e-mail = %q, want validation", code)
+	}
+	rr = apiCall(t, srv, "POST", "/api/v1/auth/magic", map[string]any{"email": "Dono@Example.com"})
+	if rr.Code != 200 {
+		t.Fatalf("magic link = %d: %s", rr.Code, rr.Body.String())
+	}
+	link, _ := apiJSON(t, rr)["magic_link"].(string)
+	u, err := url.Parse(link)
+	if err != nil || u.Path != "/api/v1/auth/verify" {
+		t.Fatalf("magic link = %q", link)
+	}
+	if o := apiGet(t, srv, "/api/v1/auth/owner"); o["confirmed"] != false {
+		t.Fatalf("owner confirmed before clicking the link: %v", o)
+	}
+	if rr = apiCall(t, srv, "GET", "/api/v1/auth/verify?n=bogus", nil); rr.Header().Get("Location") != "/new?login=invalid" {
+		t.Fatalf("bogus link = %d %q", rr.Code, rr.Header().Get("Location"))
+	}
+	if rr = apiCall(t, srv, "GET", u.RequestURI(), nil); rr.Header().Get("Location") != "/new?login=ok" {
+		t.Fatalf("verify = %d %q", rr.Code, rr.Header().Get("Location"))
+	}
+	if rr = apiCall(t, srv, "GET", u.RequestURI(), nil); rr.Header().Get("Location") != "/new?login=invalid" {
+		t.Fatalf("link reuse = %q, want invalid", rr.Header().Get("Location"))
+	}
+	if o := apiGet(t, srv, "/api/v1/auth/owner"); o["confirmed"] != true || o["email"] != "dono@example.com" || o["launch_invite"] != true {
+		t.Fatalf("owner after verify = %v", o)
+	}
+
 	// create — the blocks become a custom publication
 	body := map[string]any{
 		"name": prop["name"], "topic": prop["topic"], "audience": prop["audience"],

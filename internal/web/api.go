@@ -746,6 +746,13 @@ func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
 		return
 	}
+	// A Radar needs its owner's e-mail, confirmed through a magic link.
+	if o, err := db(r).OwnerIdentity(r.Context()); apiDBErr(w, r, err, "owner") {
+		return
+	} else if !o.Confirmed {
+		apiErr(w, http.StatusForbidden, "email_required", "confirm your e-mail with the magic link before creating a Radar")
+		return
+	}
 	def := &config.Publication{
 		Name: in.Name, Topic: in.Topic, Audience: in.Audience,
 		EditorialLine: in.EditorialLine, Tone: in.Tone,
