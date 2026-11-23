@@ -728,8 +728,8 @@ export const api = {
   today: (pubID: number | string) => request<TodayData>("GET", `/api/v1/publications/${pubID}/today`),
   todayWrite: (pubID: number | string, storyID: number) =>
     request<TodayWrite>("POST", `/api/v1/publications/${pubID}/today/write`, { story_id: storyID }),
-  createRadar: (about: string, niches: string[]) =>
-    request<{ publication: Publication; sources: SourceRow[] }>("POST", "/api/v1/radar", { about, niches }),
+  createRadar: (name: string, topics: string, niches: string[]) =>
+    request<{ publication: Publication; sources: SourceRow[] }>("POST", "/api/v1/radar", { name, about: topics, niches }),
   calibration: (pubID: number | string) =>
     request<{ cards: PautaCard[]; window_hours: number }>("POST", `/api/v1/publications/${pubID}/calibration`).then((r) => r.cards),
   calibrationAnswer: (pubID: number | string, storyID: number, answer: "yes" | "no") =>

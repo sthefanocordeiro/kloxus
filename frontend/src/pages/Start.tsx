@@ -1,29 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { api, ApiRequestError, type PautaCard, type SourceRow } from "../api";
+import { Link, useNavigate } from "react-router-dom";
+import { api, ApiRequestError, type PautaCard } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Button, Card, SkeletonLine } from "../ui";
 import { StepCounter } from "../components/StepCounter";
 import { NICHE_KEYS, useStart, type StartStrings } from "./startStrings";
 
-type Phase = "about" | "calibrate" | "sources";
+type Phase = "about" | "calibrate" | "done";
 
-// /start — onboarding from zero (KLOX-123, pivot Block 2): one sentence
-// creates the radar, eight real stories calibrate it with Sim/Não, and
-// the sources arrive pre-selected by niche. No account is needed and no
-// model is called anywhere in this flow.
+// /start — onboarding in three steps (KLOX-123, KLOX-159 / D3-D4):
+// Criar Radar (name + topics + optional editorias), Dar match (eight real
+// stories, Sim/Não) and Pronto! → Criar primeiro post. Sources are picked
+// automatically from the topics. No account is needed and no model is
+// called anywhere in this flow.
 export function Start() {
   const { t } = useT();
   const s = useStart();
   const nav = useNavigate();
   const qc = useQueryClient();
   const [phase, setPhase] = useState<Phase>("about");
+  const [name, setName] = useState("");
   const [about, setAbout] = useState("");
   const [niches, setNiches] = useState<string[]>([]);
   const [pubID, setPubID] = useState<number | null>(null);
-  const [sources, setSources] = useState<SourceRow[]>([]);
 
   // one radar per account: a visitor who already has one never sees the
   // form — they go to it
@@ -34,10 +35,9 @@ export function Start() {
   }, [existing, pubID, nav]);
 
   const create = useMutation({
-    mutationFn: () => api.createRadar(about.trim(), niches),
+    mutationFn: () => api.createRadar(name.trim(), about.trim(), niches),
     onSuccess: (res) => {
       setPubID(res.publication.id);
-      setSources(res.sources);
       qc.invalidateQueries({ queryKey: ["publications"] });
       setPhase("calibrate");
     },
@@ -55,7 +55,7 @@ export function Start() {
   }
 
   const stepIdx = phase === "about" ? 1 : phase === "calibrate" ? 2 : 3;
-  const canGo = about.trim() !== "" || niches.length > 0;
+  const canGo = name.trim() !== "" && about.trim() !== "";
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
       <StepCounter steps={s.step} current={stepIdx} />
@@ -65,7 +65,19 @@ export function Start() {
           <h1 className="mt-4 font-display text-2xl font-bold">{s.aboutTitle}</h1>
           <p className="mt-1 text-sm text-muted">{s.aboutHint}</p>
           <Card className="mt-6 p-5">
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted" htmlFor="about">
+            <label className="text-xs font-semibold uppercase tracking-wide text-muted" htmlFor="radar-name">
+              {s.nameLabel}
+            </label>
+            <input
+              id="radar-name"
+              value={name}
+              maxLength={60}
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+              placeholder={s.namePlaceholder}
+              className="mt-2 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+            />
+            <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-muted" htmlFor="about">
               {s.aboutLabel}
             </label>
             <textarea
@@ -73,7 +85,6 @@ export function Start() {
               value={about}
               maxLength={280}
               rows={3}
-              autoFocus
               onChange={(e) => setAbout(e.target.value)}
               placeholder={s.aboutPlaceholder}
               className="mt-2 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
@@ -111,11 +122,11 @@ export function Start() {
       )}
 
       {phase === "calibrate" && pubID !== null && (
-        <Calibrate pubID={pubID} s={s} onDone={() => setPhase("sources")} />
+        <Calibrate pubID={pubID} s={s} onDone={() => setPhase("done")} />
       )}
 
-      {phase === "sources" && pubID !== null && (
-        <SourcesStep pubID={pubID} s={s} sources={sources} onDone={() => nav(`/publications/${pubID}/today`, { replace: true })} />
+      {phase === "done" && pubID !== null && (
+        <Done pubID={pubID} s={s} name={name.trim()} topics={about.trim()} />
       )}
     </div>
   );
@@ -258,46 +269,55 @@ function Calibrate({ pubID, s, onDone }: { pubID: number; s: StartStrings; onDon
   );
 }
 
-// Sources are pre-selected by niche; the person can only uncheck here.
-function SourcesStep({
-  pubID, s, sources, onDone,
-}: { pubID: number; s: StartStrings; sources: SourceRow[]; onDone: () => void }) {
-  const [removed, setRemoved] = useState<Set<number>>(new Set());
-  const remove = useMutation({
-    mutationFn: (id: number) => api.sourceDelete(pubID, id),
-    onSuccess: (_r, id) => setRemoved((p) => new Set(p).add(id)),
+// Step 3: the Radar is ready. "Criar primeiro post" writes the top story
+// of today's pauta and opens the editor; the link goes to Hoje.
+function Done({ pubID, s, name, topics }: { pubID: number; s: StartStrings; name: string; topics: string }) {
+  const { t } = useT();
+  const nav = useNavigate();
+  const today = useQuery({ queryKey: ["onboarding-today", pubID], queryFn: () => api.today(pubID) });
+  const cards = today.data?.cards ?? [];
+  const first = useMutation({
+    mutationFn: async () => {
+      const c = cards[0];
+      const res = await api.todayWrite(pubID, c.story_id);
+      if (res.add_block) {
+        const doc = await api.document(res.issue_id);
+        await api.blockInsert(res.issue_id, {
+          section: res.section ?? "", kind: "item", story_id: c.story_id, version: doc.version,
+        });
+      }
+      return res.issue_id;
+    },
+    onSuccess: (issueID) => nav(`/issues/${issueID}`, { replace: true }),
   });
-  const kept = sources.filter((x) => !removed.has(x.id)).length;
+  const todayPath = `/publications/${pubID}/today`;
   return (
     <>
-      <h1 className="mt-4 font-display text-2xl font-bold">{s.sourcesTitle}</h1>
-      <p className="mt-1 text-sm text-muted">{s.sourcesHint}</p>
+      <h1 className="mt-4 font-display text-2xl font-bold">{s.doneTitle}</h1>
+      <p className="mt-1 text-sm text-muted">{s.doneHint}</p>
       <Card className="mt-6 p-5">
-        {sources.length === 0 && <p className="text-sm text-muted">{s.noSources}</p>}
-        <ul className="divide-y divide-line">
-          {sources.map((src) => {
-            const gone = removed.has(src.id);
-            return (
-              <li key={src.id} className="flex items-center gap-3 py-2">
-                <input
-                  id={`src-${src.id}`}
-                  type="checkbox"
-                  checked={!gone}
-                  disabled={gone || remove.isPending}
-                  onChange={() => remove.mutate(src.id)}
-                  className="h-4 w-4"
-                />
-                <label htmlFor={`src-${src.id}`} className={"flex-1 text-sm " + (gone ? "text-muted line-through" : "")}>
-                  {src.name}
-                </label>
-                {gone && <span className="text-xs text-muted">{s.removed}</span>}
-              </li>
-            );
-          })}
-        </ul>
-        <div className="mt-5 flex justify-end">
-          <Button disabled={kept === 0 && sources.length > 0} onClick={onDone}>
-            {s.finish}
+        <dl className="grid gap-3 text-sm">
+          <div>
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{s.doneRadar}</dt>
+            <dd className="mt-0.5 font-medium">{name}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{s.doneTopics}</dt>
+            <dd className="mt-0.5 flex flex-wrap gap-2">
+              {topics.split(",").map((x) => x.trim()).filter(Boolean).map((x) => (
+                <span key={x} className="rounded-full border border-line px-3 py-0.5">{x}</span>
+              ))}
+            </dd>
+          </div>
+        </dl>
+        <p className="mt-4 text-sm" aria-live="polite">
+          {today.isPending ? "…" : cards.length > 0 ? fill(s.doneMatches, { n: cards.length }) : s.doneNone}
+        </p>
+        {first.error && <p className="mt-3 text-xs text-danger" role="alert">{errText(t, first.error)}</p>}
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <Link to={todayPath} replace className="text-sm underline hover:text-ink">{s.seeToday}</Link>
+          <Button disabled={cards.length === 0 || first.isPending} onClick={() => first.mutate()}>
+            {first.isPending ? s.opening : s.firstPost}
           </Button>
         </div>
       </Card>
