@@ -23,7 +23,8 @@ vi.mock("../api", async (importOriginal) => {
       calibration: vi.fn(),
       calibrationAnswer: vi.fn(),
       skipTopic: vi.fn(),
-      sourceDelete: vi.fn(),
+      today: vi.fn(),
+      todayWrite: vi.fn(),
     },
   };
 });
@@ -44,6 +45,7 @@ function renderStart() {
           <Routes>
             <Route path="/start" element={<Start />} />
             <Route path="/publications/:id/today" element={<div>today screen</div>} />
+            <Route path="/issues/:id" element={<div>editor screen</div>} />
           </Routes>
         </MemoryRouter>
       </LangProvider>
@@ -61,7 +63,8 @@ describe("onboarding from zero (KLOX-123)", () => {
     ]);
     vi.mocked(api.calibrationAnswer).mockResolvedValue({ ok: true });
     vi.mocked(api.skipTopic).mockResolvedValue({ publication: pub });
-    vi.mocked(api.sourceDelete).mockResolvedValue({ ok: true });
+    vi.mocked(api.today).mockResolvedValue({ cards: [card(3, ["fintech"])], pieces: [], open_piece: 0, window_hours: 48 });
+    vi.mocked(api.todayWrite).mockResolvedValue({ issue_id: 55, created: true });
   });
 
   it("redirects an account that already has a radar", async () => {
@@ -70,28 +73,29 @@ describe("onboarding from zero (KLOX-123)", () => {
     expect(await screen.findByText("today screen")).toBeVisible();
   });
 
-  it("needs a topic or a niche before continuing", async () => {
+  it("needs a name and topics before continuing; editorias are optional", async () => {
     renderStart();
     const next = await screen.findByRole("button", { name: "Continue" });
     expect(next).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Fintech" }));
+    fireEvent.change(screen.getByLabelText("Radar name"), { target: { value: "Fintech para bancários" } });
+    expect(next).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Topics (comma separated)"), { target: { value: "Pix, Drex" } });
     expect(next).toBeEnabled();
   });
 
-  it("creates the radar, calibrates with ←/→, offers to hide a twice-refused topic, then unchecks a source", async () => {
+  it("creates the radar, matches with ←/→, offers to hide a twice-refused topic, then lands on Done and writes the first post", async () => {
     renderStart();
-    fireEvent.change(await screen.findByLabelText("Your topic"), { target: { value: "fintech e Pix" } });
+    fireEvent.change(await screen.findByLabelText("Radar name"), { target: { value: "Meu Radar" } });
+    fireEvent.change(screen.getByLabelText("Topics (comma separated)"), { target: { value: "fintech, Pix" } });
     fireEvent.click(screen.getByRole("button", { name: "Fintech" }));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await waitFor(() => expect(api.createRadar).toHaveBeenCalledWith("fintech e Pix", ["fintech"]));
+    await waitFor(() => expect(api.createRadar).toHaveBeenCalledWith("Meu Radar", "fintech, Pix", ["fintech"]));
 
-    // card 1 → "No" by key
     expect(await screen.findByText("Story 1")).toBeVisible();
     fireEvent.keyDown(window, { key: "ArrowLeft" });
     await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, 1, "no"));
     expect(screen.queryByRole("alertdialog")).toBeNull();
 
-    // card 2 → second "No" on "games" asks to hide it
     expect(await screen.findByText("Story 2")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /No/ }));
     const ask = await screen.findByRole("alertdialog");
@@ -99,29 +103,29 @@ describe("onboarding from zero (KLOX-123)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Hide" }));
     await waitFor(() => expect(api.skipTopic).toHaveBeenCalledWith(7, "games"));
 
-    // card 3 → "Yes" by key ends the deck and opens sources
     expect(await screen.findByText("Story 3")).toBeVisible();
     fireEvent.keyDown(window, { key: "ArrowRight" });
     await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, 3, "yes"));
-    expect(await screen.findByRole("heading", { name: "Sources" })).toBeVisible();
 
-    const exame = screen.getByLabelText("Exame");
-    expect(exame).toBeChecked();
-    fireEvent.click(exame);
-    await waitFor(() => expect(api.sourceDelete).toHaveBeenCalledWith(7, 1));
-    await waitFor(() => expect(screen.getByLabelText("Exame")).toBeDisabled());
-
-    fireEvent.click(screen.getByRole("button", { name: "See today's pauta" }));
-    expect(await screen.findByText("today screen")).toBeVisible();
+    // step 3: Done
+    expect(await screen.findByRole("heading", { name: "Done!" })).toBeVisible();
+    expect(screen.getByText("Meu Radar")).toBeVisible();
+    expect(await screen.findByText("1 stories match your Radar today.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Create first post" }));
+    await waitFor(() => expect(api.todayWrite).toHaveBeenCalledWith(7, 3));
+    expect(await screen.findByText("editor screen")).toBeVisible();
   });
 
-  it("lets the visitor skip calibration", async () => {
+  it("lets the visitor skip matching and open today's pauta from Done", async () => {
     renderStart();
-    fireEvent.click(await screen.findByRole("button", { name: "Startups" }));
+    fireEvent.change(await screen.findByLabelText("Radar name"), { target: { value: "R" } });
+    fireEvent.change(screen.getByLabelText("Topics (comma separated)"), { target: { value: "startups" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByText("Story 1");
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
-    expect(await screen.findByRole("heading", { name: "Sources" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Done!" })).toBeVisible();
     expect(api.calibrationAnswer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("link", { name: "See today's pauta" }));
+    expect(await screen.findByText("today screen")).toBeVisible();
   });
 });

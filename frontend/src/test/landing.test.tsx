@@ -150,6 +150,17 @@ describe("Landing", () => {
     ).toBeInTheDocument();
   });
 
+  // KLOX-159 / P0-3: the menu CTA closes the menu (unmounting itself) —
+  // the navigation to onboarding must still happen.
+  it("opens onboarding from the mobile menu's Create your Radar", async () => {
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: /menu/i }));
+    const menu = document.getElementById("site-menu")!;
+    fireEvent.click(within(menu).getByRole("button", { name: /create your Radar/i }));
+    await waitFor(() => expect(api.workspace).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("onboarding screen")).toBeInTheDocument();
+  });
+
   // KLOX-70: footer legal links resolve to real pages, in the design
   // system, with no dead ends (the contact mailto is the only link out).
   it("links Terms and Privacy to real pages and renders them", async () => {

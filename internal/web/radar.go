@@ -19,6 +19,7 @@ import (
 const (
 	calibrationCards = 8
 	aboutMaxRunes    = 280
+	nameMaxRunes     = 60
 )
 
 // nicheSources maps an onboarding niche chip to catalog slugs. The
@@ -32,6 +33,9 @@ var nicheSources = map[string][]string{
 	"startups":   {"startups", "techcrunch", "exame"},
 	"tecnologia": {"tecnoblog", "canaltech", "olhar-digital", "tecmundo", "meiobit", "the-verge", "ars-technica"},
 	"mercado":    {"exame", "startups", "techcrunch", "valor"},
+	"economia":   {"exame", "valor"},
+	"negocios":   {"exame", "valor", "startups"},
+	"carreira":   {"exame", "valor"},
 }
 
 // defaultNicheSources is what a person who picked no chip gets.
@@ -40,6 +44,7 @@ var defaultNicheSources = []string{"tecnoblog", "canaltech", "exame", "techcrunc
 var nicheLabels = map[string]string{
 	"fintech": "fintech", "cripto": "cripto", "regulacao": "regulação financeira",
 	"ia": "inteligência artificial", "startups": "startups", "tecnologia": "tecnologia", "mercado": "mercado",
+	"economia": "economia", "negocios": "negócios", "carreira": "carreira",
 }
 
 // radarName is a short display name from the free text.
@@ -56,14 +61,25 @@ func radarName(about string) string {
 // like the publication create it wraps.
 func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		About  string   `json:"about"`
-		Niches []string `json:"niches"`
+		Name   string   `json:"name"`   // the radar's display name (D4)
+		About  string   `json:"about"`  // the topics, free text separated by commas
+		Topics string   `json:"topics"` // alias of about
+		Niches []string `json:"niches"` // optional editorias
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
 		return
 	}
+	if in.About == "" {
+		in.About = in.Topics
+	}
 	about := strings.Join(strings.Fields(in.About), " ")
+	radarLabel := strings.Join(strings.Fields(in.Name), " ")
+	if utf8.RuneCountInString(radarLabel) > nameMaxRunes {
+		apiErr(w, 400, "validation", "that name is too long",
+			apiReason{Code: "name_long", Message: "keep the name under 60 characters"})
+		return
+	}
 	var niches []string
 	for _, n := range in.Niches {
 		if _, ok := nicheSources[n]; ok {
@@ -102,6 +118,9 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 	name := radarName(topic)
 	if about != "" {
 		name = radarName(about)
+	}
+	if radarLabel != "" {
+		name = radarLabel
 	}
 	def := &config.Publication{
 		Name: name, Topic: topic, Language: "pt", Frequency: "weekly",
