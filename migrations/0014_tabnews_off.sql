@@ -12,3 +12,12 @@ UPDATE source_catalog
  WHERE slug = 'tabnews';
 DELETE FROM sources
  WHERE catalog_id = (SELECT id FROM source_catalog WHERE slug = 'tabnews');
+
+-- Same owner decision (2026-11-23): Hacker News is an aggregator/forum,
+-- also out. Same soft treatment as TabNews.
+UPDATE source_catalog
+   SET enabled = FALSE,
+       note = 'Aggregator/forum — outside the news-portal positioning (owner decision, KLOX-152). Disabled, history kept.'
+ WHERE slug = 'hacker-news';
+DELETE FROM sources
+ WHERE catalog_id = (SELECT id FROM source_catalog WHERE slug = 'hacker-news');

@@ -38,6 +38,19 @@ func TestCatalogSeeded(t *testing.T) {
 			t.Fatalf("catalog missing %s", slug)
 		}
 	}
+	// KLOX-152: forums/aggregators are off, BR portals are signal-only
+	for _, slug := range []string{"tabnews", "hacker-news"} {
+		c, err := pool.CatalogEntry(ctx, slug)
+		if err != nil || c.Fetchable() {
+			t.Fatalf("%s must exist but not be fetchable: %+v err=%v", slug, c, err)
+		}
+	}
+	for _, slug := range []string{"g1", "folha", "valor", "cnn-brasil", "metropoles"} {
+		c, err := pool.CatalogEntry(ctx, slug)
+		if err != nil || c.Policy != "signal" || c.BodyMode != "links" || !c.Fetchable() {
+			t.Fatalf("%s should be a fetchable links-only signal: %+v err=%v", slug, c, err)
+		}
+	}
 	// the fetch gate: only launch/signal may be requested
 	c, err := pool.CatalogEntry(ctx, "canaltech")
 	if err != nil {
