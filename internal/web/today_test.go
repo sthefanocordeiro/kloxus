@@ -59,7 +59,7 @@ func TestTodayAndWrite(t *testing.T) {
 	// KLOX-157: a post is the picked stories — one internal section, and
 	// review never asks for decisions or required commentary
 	issueURL := "/api/v1/issues/" + fmt.Sprint(int64(w1["issue_id"].(float64)))
-	doc := apiGet(t, srv, issueURL+"/document")
+	doc := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
 	if secs, _ := doc["sections"].([]any); len(secs) != 1 || secs[0].(map[string]any)["title"] != "Notícias" {
 		t.Fatalf("post sections = %v", doc["sections"])
 	}
