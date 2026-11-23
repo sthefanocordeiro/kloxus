@@ -91,3 +91,26 @@ func TestRadarOnboarding(t *testing.T) {
 		t.Fatalf("reject_terms = %q, want games", rt)
 	}
 }
+
+// TestRadarRequiresClaimedEmail (KLOX-161): both create paths refuse an
+// unclaimed workspace with email_required; once the owner confirms the
+// magic link the same request succeeds.
+func TestRadarRequiresClaimedEmail(t *testing.T) {
+	srv, db, _, _ := testServer(t, false, nil)
+
+	for _, path := range []string{"/api/v1/radar", "/api/v1/publications"} {
+		rr := apiCall(t, srv, "POST", path, map[string]any{"about": "fintech"})
+		if rr.Code != 403 || apiErrCode(t, rr) != "email_required" {
+			t.Fatalf("%s unclaimed = %d %s, want 403 email_required", path, rr.Code, shortBody(rr))
+		}
+	}
+	if n := len(apiGet(t, srv, "/api/v1/publications")["publications"].([]any)); n != 0 {
+		t.Fatalf("a refused create left %d publications", n)
+	}
+
+	claimWorkspace(t, srv, db, "dono@example.com")
+	rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{"about": "fintech"})
+	if rr.Code != 201 {
+		t.Fatalf("radar after claim = %d %s", rr.Code, shortBody(rr))
+	}
+}

@@ -1,10 +1,7 @@
-import { useState, type FormEvent } from "react";
 import { BookOpen, ClipboardCopy, PenLine } from "lucide-react";
-import { useMutation } from "@tanstack/react-query";
-import { ApiRequestError, api } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
-import { Button, Card } from "../ui";
+import { Card } from "../ui";
 import { SiteCta, SiteFooter, SiteHeader, useSiteEntry } from "../components/SiteChrome";
 
 // The landing page (KLOX-61 §1, reworked per owner review KLOX-69):
@@ -36,7 +33,11 @@ export function Landing() {
               {t.landing.headline}
             </h1>
             <p className="mt-4 max-w-xl text-lg text-paper/80">{t.landing.subhead}</p>
-            <WaitlistForm />
+            <div className="mt-7">
+              <SiteCta size="lg" entry={entry} />
+            </div>
+            <p className="mt-3 max-w-xl text-sm text-paper/70">{t.landing.emailNote}</p>
+            <p className="mt-2 max-w-xl text-sm text-paper/70">{t.landing.waitlistSupport}</p>
             <p className="mt-5 text-sm">
               <button
                 type="button"
@@ -220,68 +221,5 @@ function HeroMock() {
         </div>
       </div>
     </div>
-  );
-}
-
-// Pre-launch waitlist capture (KLOX-127). One field, one submit; the
-// server answers the same for new and known addresses, so success is
-// just "you are on the list".
-function WaitlistForm() {
-  const { t } = useT();
-  const [email, setEmail] = useState("");
-  const [invalid, setInvalid] = useState(false);
-  const join = useMutation({ mutationFn: (e: string) => api.waitlist(e, "landing") });
-
-  if (join.isSuccess) {
-    return (
-      <div role="status" className="mt-7 rounded-lg bg-paper/10 p-4">
-        <p className="font-display text-lg font-bold">{t.landing.waitlistDone}</p>
-        <p className="mt-1 text-paper/80">{t.landing.waitlistDoneBody}</p>
-      </div>
-    );
-  }
-  const submit = (ev: FormEvent) => {
-    ev.preventDefault();
-    const v = email.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    join.mutate(v);
-  };
-  return (
-    <form onSubmit={submit} noValidate className="mt-7 max-w-xl">
-      <label htmlFor="waitlist-email" className="sr-only">
-        {t.landing.waitlistLabel}
-      </label>
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <input
-          id="waitlist-email"
-          type="email"
-          inputMode="email"
-          autoComplete="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder={t.landing.waitlistPlaceholder}
-          aria-invalid={invalid}
-          className="h-12 w-full rounded-[var(--radius-btn)] border border-line bg-paper px-4 text-base text-ink placeholder:text-muted"
-        />
-        <Button type="submit" size="lg" variant="accent" disabled={join.isPending} className="shrink-0">
-          {join.isPending ? t.landing.waitlistSending : t.landing.waitlistCta}
-        </Button>
-      </div>
-      {(invalid || join.isError) && (
-        <p role="alert" className="mt-2 text-sm text-danger-soft">
-          {invalid
-            ? t.landing.waitlistInvalid
-            : join.error instanceof ApiRequestError && join.error.status === 429
-              ? t.landing.waitlistRateLimited
-              : t.landing.waitlistError}
-        </p>
-      )}
-      <p className="mt-3 text-sm text-paper/70">{t.landing.waitlistPrivacy}</p>
-      <p className="mt-2 text-sm text-paper/70">{t.landing.waitlistSupport}</p>
-    </form>
   );
 }

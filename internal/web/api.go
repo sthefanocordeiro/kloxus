@@ -977,6 +977,9 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 // (possibly edited) proposal blocks. Sources are added separately on the
 // sources screen.
 func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireClaimed(w, r) {
+		return
+	}
 	var in struct {
 		Name          string           `json:"name"`
 		Topic         string           `json:"topic"`

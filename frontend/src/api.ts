@@ -719,9 +719,6 @@ export const api = {
       "GET", `/api/v1/issues/${issueID}/preview?reader=${reader}&surface=${surface}`,
     ),
   sample: () => request<Sample>("GET", "/api/v1/sample"),
-  // Public pre-launch waitlist (KLOX-127) — no workspace needed.
-  waitlist: (email: string, source = "landing") =>
-    request<{ ok: boolean }>("POST", "/api/v1/waitlist", { email, source }),
   proposal: () => request<{ proposal: Proposal }>("GET", "/api/v1/proposal").then((r) => r.proposal),
   propose: (material: string) =>
     request<{ proposal: Proposal; scrape: ScrapeInfo }>("POST", "/api/v1/publications/propose", { material }),

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { workspaceInfo } from "./mail.ts";
+import { workspaceInfo, claimOwner } from "./mail.ts";
 
 // KLOX-79: the create-newsletter flow guards its entry — an account
 // that already has a newsletter never sees the form (redirected to its
@@ -19,6 +19,7 @@ async function onboard(page: import("@playwright/test").Page) {
     .first()
     .click();
   await page.waitForURL(/\/start/);
+  await claimOwner(page);
   await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
   await expect(page.getByLabel("Linha editorial")).toBeVisible({ timeout: 15000 });
 }
@@ -196,6 +197,7 @@ test("mobile 390px: the shell Voltar shows on Seções and leads back", async ({
 });
 
 async function createViaAPI(page: import("@playwright/test").Page) {
+  await claimOwner(page);
   const proposal = (await (await page.request.get("/api/v1/proposal")).json()).proposal;
   const res = await page.request.post("/api/v1/publications", {
     data: {

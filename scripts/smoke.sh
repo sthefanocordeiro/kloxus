@@ -197,6 +197,23 @@ code="$(req GET /api/v1/admin/ingestion)"
 case "$code" in 403|404) ;; *) die "unguarded admin surface: GET /api/v1/admin/ingestion -> $code" ;; esac
 say "admin surface guarded"
 
+# --- 4e. claim the owner email (KLOX-161) ---------------------------------
+# Creating a Radar requires a claimed workspace. Outbox targets return the
+# magic link in the claim response (nothing is mailed), so the smoke claims
+# with it. A live-mail target would mail the claim for real AND leave the
+# workspace claimed, which the transport preflight above forbids — fail
+# closed with the reason instead of a confusing 403 at create time.
+if [ "$MAILPOSTURE" != "outbox" ]; then
+	die "live-mail target: Radar creation needs a claimed owner and the claim would send a real email — run the smoke against an outbox-mode target (KLOX-161)"
+fi
+[ "$(req POST /api/v1/workspace/claim '{"email":"smoke@kloxus.dev"}')" = "200" ] || die "claim start: $(cat "$RESP")"
+CLAIMPATH="$(jget claim_url | sed -E 's#^https?://[^/]+##')"
+[ -n "$CLAIMPATH" ] || die "outbox claim returned no claim_url: $(cat "$RESP")"
+[ "$(req GET "$CLAIMPATH")" = "200" ] || die "claim page: $(cat "$RESP")"
+code="$(req POST "$CLAIMPATH")"
+case "$code" in 200|303) ;; *) die "claim confirm answered $code" ;; esac
+say "owner claimed through the outbox magic link"
+
 # --- 5. onboard: create publication from the sample proposal -------------
 [ "$(req GET /api/v1/proposal)" = "200" ] || die "proposal fetch failed"
 node -e '

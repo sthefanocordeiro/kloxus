@@ -110,6 +110,9 @@ func pautaVisitor(t *testing.T, mgr *workspace.Manager) (string, *store.DB) {
 		t.Fatal("expected a new workspace cookie")
 	}
 	t.Cleanup(func() { mgr.CloseWorkspace(ws.ID) })
+	if err := ws.DB.ClaimWorkspace(req.Context(), "owner@example.com"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
 	return strings.SplitN(set, ";", 2)[0], ws.DB
 }
 

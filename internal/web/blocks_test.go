@@ -241,7 +241,10 @@ func TestBlockPautaInsert(t *testing.T) {
 // cannot create another — the API answers 409 one_newsletter and the
 // existing publication stays untouched.
 func TestOneNewsletterGuard(t *testing.T) {
-	srv, _, pub, _ := demoServer(t)
+	srv, db, pub, _ := demoServer(t)
+	if err := db.ClaimWorkspace(context.Background(), "owner@example.com"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
 	// a fully valid create body — anything less fails validation
 	// before the guard runs, which would prove nothing about it
 	rr := apiCall(t, srv, "POST", "/api/v1/publications", map[string]any{

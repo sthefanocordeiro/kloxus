@@ -4,6 +4,8 @@ import { useT } from "../i18n";
 // module, so it stays out of the landing chunk (KLOX-16 budget).
 const pt = {
   step: ["Seu tema", "Calibrar", "Fontes"],
+  gateTitle: "Confirme seu e-mail para criar o radar",
+  gateHint: "Enviamos um link mágico — sem senha. É também assim que você entra na lista do convite do lançamento.",
   aboutTitle: "Sobre o que você fala?",
   aboutHint: "Uma frase basta. A gente monta seu radar e busca a pauta de hoje.",
   aboutPlaceholder: "fintech, Pix e regulação para quem trabalha em banco",
@@ -41,6 +43,8 @@ const pt = {
 
 const en: typeof pt = {
   step: ["Your topic", "Calibrate", "Sources"],
+  gateTitle: "Confirm your email to create your radar",
+  gateHint: "We send a magic link — no password. It is also how you get on the launch invitation list.",
   aboutTitle: "What do you cover?",
   aboutHint: "One sentence is enough. We build your radar and fetch today's pauta.",
   aboutPlaceholder: "fintech, Pix and regulation for people who work in banking",

@@ -50,6 +50,11 @@ func demoServerOpt(t *testing.T, opt func(*web.Deps)) (*web.Server, *store.DB, *
 func emptyServer(t *testing.T) (*web.Server, *store.DB) {
 	t.Helper()
 	srv, db, _, _ := testServer(t, false, nil)
+	// creating a Radar needs a claimed owner email (KLOX-161); the
+	// gate itself is covered by TestRadarRequiresClaimedEmail
+	if err := db.ClaimWorkspace(context.Background(), "owner@example.com"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
 	return srv, db
 }
 
