@@ -355,7 +355,7 @@ function Drop({
 function LangSwitch({ lang, setLang, className }: { lang: Lang; setLang: (l: Lang) => void; className?: string }) {
   return (
     <div className={cn("flex items-center gap-1 text-xs", className)}>
-      {(["en", "pt"] as Lang[]).map((l) => (
+      {(["pt", "en"] as Lang[]).map((l) => (
         <button
           key={l}
           onClick={() => setLang(l)}

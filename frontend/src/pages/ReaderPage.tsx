@@ -23,7 +23,7 @@ export function ReaderShell() {
         <div className="mx-auto flex h-12 max-w-2xl items-center gap-4 px-4">
           <span className="font-doc text-lg font-semibold tracking-tight">{brand ?? t.appName}</span>
           <div className="ml-auto flex items-center gap-1 text-xs">
-            {(["en", "pt"] as Lang[]).map((l) => (
+            {(["pt", "en"] as Lang[]).map((l) => (
               <button
                 key={l}
                 onClick={() => setLang(l)}
