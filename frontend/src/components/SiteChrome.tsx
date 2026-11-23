@@ -82,7 +82,11 @@ function LangToggle() {
 
 export function SiteHeader() {
   const { t } = useT();
-  const { returning, start, signIn } = useSiteEntry();
+  // one entry for the whole header: the menu's CTA unmounts the moment it
+  // closes the menu, and a mutation owned by an unmounted component never
+  // runs its onSuccess navigation (P0-3).
+  const siteEntry = useSiteEntry();
+  const { returning, start, signIn } = siteEntry;
   const [open, setOpen] = useState(false);
   const { pathname } = useLocation();
   const hash = (id: string) => (pathname === "/" ? `#${id}` : `/#${id}`);
@@ -120,7 +124,7 @@ export function SiteHeader() {
         <div className="ml-auto flex items-center gap-2">
           <LangToggle />
           <span className="hidden md:inline-flex">{entry}</span>
-          <SiteCta size="sm" className="hidden md:inline-flex" />
+          <SiteCta size="sm" className="hidden md:inline-flex" entry={siteEntry} />
           <button
             className="flex h-11 w-11 items-center justify-center rounded-[var(--radius-btn)] text-ink hover:bg-surface md:hidden"
             aria-expanded={open}
@@ -170,7 +174,7 @@ export function SiteHeader() {
               </button>
             )}
           </nav>
-          <SiteCta size="md" className="mt-3 w-full" onClick={() => setOpen(false)} />
+          <SiteCta size="md" className="mt-3 w-full" entry={siteEntry} onClick={() => setOpen(false)} />
         </div>
       )}
     </header>

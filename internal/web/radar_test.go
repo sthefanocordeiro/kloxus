@@ -19,7 +19,7 @@ func TestRadarOnboarding(t *testing.T) {
 	}
 
 	rr = apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{
-		"about": "fintech, Pix e regulação", "niches": []string{"fintech", "bogus"},
+		"name": "Fintech para bancários", "about": "fintech, Pix e regulação", "niches": []string{"fintech", "bogus"},
 	})
 	if rr.Code != 201 {
 		t.Fatalf("create radar = %d %s", rr.Code, rr.Body.String())
@@ -27,6 +27,10 @@ func TestRadarOnboarding(t *testing.T) {
 	body := apiJSON(t, rr)
 	pub := body["publication"].(map[string]any)
 	id := fmt.Sprint(int64(pub["id"].(float64)))
+	// D4: the radar's name is its own field, not the topics text
+	if name, _ := pub["name"].(string); name != "Fintech para bancários" {
+		t.Fatalf("name = %q", name)
+	}
 	if topic, _ := pub["topic"].(string); !strings.Contains(topic, "Pix") {
 		t.Fatalf("topic = %q", topic)
 	}
@@ -112,5 +116,13 @@ func TestRadarRequiresClaimedEmail(t *testing.T) {
 	rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{"about": "fintech"})
 	if rr.Code != 201 {
 		t.Fatalf("radar after claim = %d %s", rr.Code, shortBody(rr))
+	}
+}
+
+func TestRadarNameTooLong(t *testing.T) {
+	srv, _ := emptyServer(t)
+	rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{"name": strings.Repeat("x", 61), "about": "pix"})
+	if rr.Code != 400 || apiErrCode(t, rr) != "validation" {
+		t.Fatalf("long name = %d", rr.Code)
 	}
 }
