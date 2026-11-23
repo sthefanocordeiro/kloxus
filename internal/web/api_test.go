@@ -1205,7 +1205,11 @@ func TestAPIOnboarding(t *testing.T) {
 // screen relies on: a body that carries only the section list must not
 // require — or wipe — the identity blocks (KLOX-65).
 func TestAPIPublicationUpdatePartial(t *testing.T) {
-	srv, _, pub, _ := demoServer(t)
+	srv, db, pub, _ := demoServer(t)
+	// re-creating a publication below needs a claimed owner (KLOX-161)
+	if err := db.ClaimWorkspace(context.Background(), "owner@example.com"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
 	base := "/api/v1/publications/" + fmt.Sprint(pub.ID)
 	before := apiGet(t, srv, base)["publication"].(map[string]any)
 
