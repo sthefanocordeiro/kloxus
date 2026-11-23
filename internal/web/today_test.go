@@ -56,6 +56,21 @@ func TestTodayAndWrite(t *testing.T) {
 		t.Fatalf("second write opened another piece: %v vs %v", w2, w1)
 	}
 
+	// KLOX-157: a post is the picked stories — one internal section, and
+	// review never asks for decisions or required commentary
+	issueURL := "/api/v1/issues/" + fmt.Sprint(int64(w1["issue_id"].(float64)))
+	doc := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	if secs, _ := doc["sections"].([]any); len(secs) != 1 || secs[0].(map[string]any)["title"] != "Notícias" {
+		t.Fatalf("post sections = %v", doc["sections"])
+	}
+	rd := apiGet(t, srv, issueURL+"/readiness")
+	for _, c := range rd["checks"].([]any) {
+		switch c.(map[string]any)["code"] {
+		case "pending_decisions", "commentary_required":
+			t.Fatalf("legacy check on a post: %v", c)
+		}
+	}
+
 	rr = apiCall(t, srv, "POST", "/api/v1/publications/"+id+"/today/write", map[string]any{"story_id": 999999})
 	if rr.Code != 404 {
 		t.Fatalf("unknown story = %d", rr.Code)
