@@ -25,7 +25,7 @@ func (s *Server) apiRealCatalog(w http.ResponseWriter, r *http.Request, pub *sto
 	offered := []map[string]any{}
 	for i := range cat {
 		cs := &cat[i]
-		if cs.Policy != "launch" && cs.Policy != "signal" {
+		if !pickable(cs) {
 			// hold/blocked are never fetched — and never listed as
 			// user-facing source options (KLOX-45).
 			continue
@@ -55,7 +55,7 @@ func (s *Server) realCatalogPreview(w http.ResponseWriter, r *http.Request, rawU
 	if err != nil || cs == nil {
 		return false
 	}
-	if cs.Policy != "launch" && cs.Policy != "signal" {
+	if !pickable(cs) {
 		apiErr(w, 400, "source_policy", cs.Name+" is "+cs.Policy+" — it is never fetched ("+cs.Note+")")
 		return true
 	}
@@ -87,7 +87,7 @@ func (s *Server) realSourceAdd(w http.ResponseWriter, r *http.Request, pub *stor
 			"that source is not in the catalog — anonymous workspaces pick from the listed sources")
 		return
 	}
-	if cs.Policy != "launch" && cs.Policy != "signal" {
+	if !pickable(cs) {
 		apiErr(w, 400, "source_policy",
 			cs.Name+" is "+cs.Policy+" ("+cs.Note+") — it is never fetched")
 		return
@@ -125,7 +125,7 @@ func (s *Server) realSourceConfirm(w http.ResponseWriter, r *http.Request, pub *
 	}
 	for i := range cat {
 		cs := &cat[i]
-		if cs.Policy != "launch" && cs.Policy != "signal" {
+		if !pickable(cs) {
 			continue
 		}
 		if existing[cs.URL] || (decoded && len(want) > 0 && !want[cs.URL] && !want[cs.Slug]) {
@@ -180,4 +180,11 @@ func (s *Server) apiAdminIngestion(w http.ResponseWriter, r *http.Request) {
 		out = append(out, v)
 	}
 	apiJSON(w, 200, map[string]any{"sources": out})
+}
+
+// pickable reports whether a catalog source may be offered to or picked by
+// a workspace: launch/signal policy and not disabled (KLOX-152 — a disabled
+// source such as TabNews must not reappear in onboarding).
+func pickable(cs *store.CatalogSource) bool {
+	return cs.Enabled && (cs.Policy == "launch" || cs.Policy == "signal")
 }

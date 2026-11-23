@@ -161,7 +161,7 @@ func (s *Server) attachNicheSources(r *http.Request, pub *store.Publication, nic
 	}
 	for i := range cat {
 		cs := &cat[i]
-		if !want[cs.Slug] || (cs.Policy != "launch" && cs.Policy != "signal") {
+		if !want[cs.Slug] || !pickable(cs) {
 			continue
 		}
 		db(r).AddCatalogSource(r.Context(), pub.ID, cs)
