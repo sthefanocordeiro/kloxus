@@ -96,7 +96,9 @@ The emailed link is two-step so mail-scanner prefetches can't spend it:
 when the link is invalid, spent or expired); the page's explicit `POST`
 spends it — must still be unexpired and unused. The workspace becomes
 owned by the link's email and the browser that confirmed is signed in
-via the workspace cookie — whichever browser that is. Redirects to `/`.
+via the workspace cookie — whichever browser that is. Redirects to
+`/start` ("Criar seu Radar"), which forwards to the existing Radar when
+the owner already has one.
 
 Emailed links are built on `KLOXUS_PUBLIC_URL` when configured, not the
 request host — the app may answer on throwaway verification hosts, but
