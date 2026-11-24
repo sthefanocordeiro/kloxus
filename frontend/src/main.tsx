@@ -53,6 +53,12 @@ const router = createBrowserRouter([
       { path: "/publications/:id/today", lazy: () => import("./pages/Today").then((m) => ({ Component: m.Today })) },
       { path: "/publications/:id/sources", lazy: () => import("./pages/Sources").then((m) => ({ Component: m.SourcesPage })) },
       { path: "/publications/:id/settings", lazy: () => import("./pages/SettingsPage").then((m) => ({ Component: m.SettingsPage })) },
+<<<<<<< HEAD
+=======
+      { path: "/publications/:id/template", lazy: () => import("./pages/TemplatePage").then((m) => ({ Component: m.TemplatePage })) },
+      { path: "/pauta/:id", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaPage })) },
+      { path: "/pauta/:id/export", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaExport })) },
+>>>>>>> origin/main
       { path: "/issues/:id", lazy: () => import("./pages/IssuePage").then((m) => ({ Component: m.IssuePage })) },
       { path: "/runs/:runID", lazy: () => import("./pages/Board").then((m) => ({ Component: m.RunLanding })) },
       { path: "*", element: <NotFound /> },

@@ -291,27 +291,12 @@ function Calibrate({ pubID, s, onDone }: { pubID: number; s: StartStrings; onDon
   );
 }
 
-// Step 3: the Radar is ready. "Criar primeiro post" writes the top story
-// of today's pauta and opens the editor; the link goes to Hoje.
+// Step 3: the Radar is ready. "Criar primeiro post" opens the list of
+// today's news to tick (KLOX-168); the link goes to the same place.
 function Done({ pubID, s, name, topics }: { pubID: number; s: StartStrings; name: string; topics: string }) {
-  const { t } = useT();
   const nav = useNavigate();
   const today = useQuery({ queryKey: ["onboarding-today", pubID], queryFn: () => api.today(pubID) });
   const cards = today.data?.cards ?? [];
-  const first = useMutation({
-    mutationFn: async () => {
-      const c = cards[0];
-      const res = await api.todayWrite(pubID, c.story_id);
-      if (res.add_block) {
-        const doc = await api.document(res.issue_id);
-        await api.blockInsert(res.issue_id, {
-          section: res.section ?? "", kind: "item", story_id: c.story_id, version: doc.version,
-        });
-      }
-      return res.issue_id;
-    },
-    onSuccess: (issueID) => nav(`/issues/${issueID}`, { replace: true }),
-  });
   const todayPath = `/publications/${pubID}/today`;
   return (
     <>
@@ -335,11 +320,10 @@ function Done({ pubID, s, name, topics }: { pubID: number; s: StartStrings; name
         <p className="mt-4 text-sm" aria-live="polite">
           {today.isPending ? "…" : cards.length > 0 ? fill(s.doneMatches, { n: cards.length }) : s.doneNone}
         </p>
-        {first.error && <p className="mt-3 text-xs text-danger" role="alert">{errText(t, first.error)}</p>}
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
           <Link to={todayPath} replace className="text-sm underline hover:text-ink">{s.seeToday}</Link>
-          <Button disabled={cards.length === 0 || first.isPending} onClick={() => first.mutate()}>
-            {first.isPending ? s.opening : s.firstPost}
+          <Button disabled={cards.length === 0} onClick={() => nav(todayPath, { replace: true })}>
+            {s.firstPost}
           </Button>
         </div>
       </Card>
