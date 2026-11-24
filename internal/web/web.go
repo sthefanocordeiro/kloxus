@@ -7,6 +7,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"html"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -301,9 +305,39 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mux.ServeHTTP(w, r)
 		return
 	}
+	if s.noWorkspaceRoute(r) {
+		// These routes never touch the visitor's session — a pageview
+		// is not a session (KLOX-193). The session is born on the first
+		// call that actually needs one: /api/v1/workspace when the
+		// visitor clicks "Criar meu Radar" or lands on /start.
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead &&
+			strings.HasPrefix(r.URL.Path, "/api/v1/") {
+			if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+				apiErr(w, http.StatusUnsupportedMediaType, "unsupported_media_type",
+					"mutating /api/v1 routes need Content-Type: application/json")
+				return
+			}
+		}
+		s.mux.ServeHTTP(w, r)
+		return
+	}
 	ws, err := s.d.WS.Resolve(w, r)
 	if err != nil {
-		apiErr(w, http.StatusTooManyRequests, "rate_limited", err.Error())
+		var rl *workspace.RateLimitedError
+		if errors.As(err, &rl) {
+			s.rateLimited(w, r, rl)
+			return
+		}
+		// A failed mint is a 500, not a 429 — lumping store errors into
+		// the rate-limit surface is how a dead pool once looked like a
+		// busy address (KLOX-193).
+		slog.Error("workspace resolve failed", "err", err, "path", r.URL.Path, "rid", rid)
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			apiErr(w, http.StatusInternalServerError, "internal", "internal error")
+		} else {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), ctxWS, ws))
@@ -322,6 +356,60 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// noWorkspaceRoute reports the routes that never touch the visitor's
+// session: the SPA catch-all (the landing, /termos, every client page —
+// a mint per pageview is what saturated the create limit, KLOX-193) and
+// the reader endpoints that resolve the publication's workspace from
+// their own sealed ?tok (publicWDB). The mux's registered pattern is
+// the check — a match is a real route, never a prefix coincidence, and
+// unregistered GET paths still land on the catch-all's SPA 404.
+func (s *Server) noWorkspaceRoute(r *http.Request) bool {
+	_, pattern := s.mux.Handler(r)
+	switch pattern {
+	case "GET /", "GET /app", "GET /app/",
+		"GET /api/v1/p/{slug}", "GET /api/v1/p/{slug}/{num}",
+		"GET /api/v1/p/{slug}/pay/{ref}", "GET /api/v1/unsub",
+		"POST /api/v1/p/{slug}/subscribe", "POST /api/v1/p/{slug}/checkout",
+		"GET /api/v1/", "POST /api/v1/", "PUT /api/v1/",
+		"PATCH /api/v1/", "DELETE /api/v1/":
+		return true
+	}
+	return false
+}
+
+// rateLimited answers a refused session mint: Retry-After always —
+// the JSON envelope under /api/ (the client contract pinned with
+// KLOX-194) and a friendly page elsewhere; a bare JSON blob on a page
+// is how the site read as "broken" to visitors (KLOX-193).
+func (s *Server) rateLimited(w http.ResponseWriter, r *http.Request, rl *workspace.RateLimitedError) {
+	secs := int((rl.RetryAfter + time.Second - 1) / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		apiErr(w, http.StatusTooManyRequests, "rate_limited", rl.Error())
+		return
+	}
+	lang := r.Header.Get("Accept-Language")
+	title, body, again := "Too many people joining from here",
+		"A lot of sessions just started from this address. Give it a few minutes and try again.",
+		"Try again"
+	if ptLang(lang) {
+		title, body, again = "Muita gente entrando ao mesmo tempo daqui",
+			"Tente de novo em alguns minutos.",
+			"Tentar de novo"
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusTooManyRequests)
+	fmt.Fprintf(w, claimShell(lang, `<h1 style="font-size:1.5rem;line-height:1.25;margin:0 0 .75rem">%s</h1>`+
+		`<p style="margin:0 0 1.5rem;color:#111814">%s</p>`+
+		`<a href="%s" style="display:inline-block;font-weight:600;padding:.7em 1.5em;border-radius:.6rem;`+
+		`background:#0e3b2e;color:#fff;text-decoration:none">%s</a>`),
+		html.EscapeString(title), html.EscapeString(body),
+		html.EscapeString(r.URL.RequestURI()), html.EscapeString(again))
 }
 
 // isPublishingPath reports the routes that only exist while publishing

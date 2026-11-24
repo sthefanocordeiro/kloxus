@@ -39,6 +39,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/payments"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
 
 // --- error envelope ---
@@ -4164,24 +4165,30 @@ func (s *Server) tokQ(r *http.Request) string {
 
 // apiPublicIssue serves the reader-facing issue page data: the gated or
 // full body depending on the reader's subscription (magic-link key or a
-// forced free preview), with no editor-only fields.
+// forced free preview), with no editor-only fields. The route is public
+// — the sealed workspace token resolves the publication's workspace and
+// no visitor session is minted (KLOX-193).
 func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
-	r = s.withWS(r)
-	rawPub, loadErr := db(r).GetPublication(r.Context(), r.PathValue("slug"))
+	wdb := s.publicWDB(r)
+	if wdb == nil {
+		apiErr(w, 404, "not_found", "publication not found")
+		return
+	}
+	rawPub, loadErr := wdb.GetPublication(r.Context(), r.PathValue("slug"))
 	pub, err := s.canonicalPub(rawPub, loadErr)
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
 	var iss *store.Issue
 	if r.PathValue("num") == "latest" {
-		iss, err = db(r).LatestPublicIssue(r.Context(), pub.ID)
+		iss, err = wdb.LatestPublicIssue(r.Context(), pub.ID)
 	} else {
 		num, nerr := strconv.Atoi(r.PathValue("num"))
 		if nerr != nil {
 			apiErr(w, 404, "not_found", "issue not found")
 			return
 		}
-		iss, err = db(r).IssueByNumber(r.Context(), pub.ID, num)
+		iss, err = wdb.IssueByNumber(r.Context(), pub.ID, num)
 	}
 	if apiDBErr(w, r, err, "issue") {
 		return
@@ -4191,21 +4198,21 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	rid, _ := db(r).UpsertReader(ctx, pub.ID, demoReaderEmail, demoReaderName)
-	active, _ := db(r).HasActiveSubscription(ctx, rid)
+	rid, _ := wdb.UpsertReader(ctx, pub.ID, demoReaderEmail, demoReaderName)
+	active, _ := wdb.HasActiveSubscription(ctx, rid)
 	key := r.URL.Query().Get("key")
 	keyValid := false
 	if key != "" {
 		// The token is the bearer credential a paying reader's magic
 		// link carries (KLOX-13) — any active subscriber's token
 		// unlocks, not only the demo reader's.
-		if _, err := db(r).ReaderByMagicToken(ctx, pub.ID, key); err == nil {
+		if _, err := wdb.ReaderByMagicToken(ctx, pub.ID, key); err == nil {
 			keyValid = true
 		}
 	}
 	forceFree := r.URL.Query().Get("view") == "free"
 	unlocked := (active || keyValid) && !forceFree
-	aiUsed, _ := db(r).IssueUsedAI(ctx, iss.ID)
+	aiUsed, _ := wdb.IssueUsedAI(ctx, iss.ID)
 	md := delivery.ReaderBody(iss, pub, s.publicBase(r), aiUsed)
 	if !unlocked {
 		md = gateSections(md, paidSectionTitles(iss, pub), pub.Language)
@@ -4232,15 +4239,20 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 // editions archive (the same sent/scheduled/test-sent visibility the
 // issue page enforces) and the paywall summary the subscribe CTA sells.
 // Reading an edition stays on /p/{slug}/{num}, where the existing
-// paywall gating applies per access rules.
+// paywall gating applies per access rules. The route is public —
+// publicWDB resolves the sealed token's workspace (KLOX-193).
 func (s *Server) apiPublicNewsletter(w http.ResponseWriter, r *http.Request) {
-	r = s.withWS(r)
-	rawPub, loadErr := db(r).GetPublication(r.Context(), r.PathValue("slug"))
+	wdb := s.publicWDB(r)
+	if wdb == nil {
+		apiErr(w, 404, "not_found", "publication not found")
+		return
+	}
+	rawPub, loadErr := wdb.GetPublication(r.Context(), r.PathValue("slug"))
 	pub, err := s.canonicalPub(rawPub, loadErr)
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	issues, err := db(r).PublicIssues(r.Context(), pub.ID, 50)
+	issues, err := wdb.PublicIssues(r.Context(), pub.ID, 50)
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
@@ -4305,8 +4317,12 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 // signed link every issue email carries. The React unsubscribe page calls
 // it once with the link's parameters.
 func (s *Server) apiUnsub(w http.ResponseWriter, r *http.Request) {
-	r = s.withWS(r)
-	pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), r.URL.Query().Get("pub")))
+	wdb := s.publicWDB(r)
+	if wdb == nil {
+		apiErr(w, 403, "validation", "invalid unsubscribe link")
+		return
+	}
+	pub, err := s.canonicalPub(wdb.GetPublication(r.Context(), r.URL.Query().Get("pub")))
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
@@ -4316,7 +4332,7 @@ func (s *Server) apiUnsub(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 403, "validation", "invalid unsubscribe link")
 		return
 	}
-	if apiDBErr(w, r, db(r).UnsubscribeReader(r.Context(), rid), "reader") {
+	if apiDBErr(w, r, wdb.UnsubscribeReader(r.Context(), rid), "reader") {
 		return
 	}
 	apiJSON(w, 200, map[string]any{"unsubscribed": true})
@@ -4436,7 +4452,12 @@ func (s *Server) apiDemoReset(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiDemoNew(w http.ResponseWriter, r *http.Request) {
 	ws, err := s.d.WS.New(w, r)
 	if err != nil {
-		apiErr(w, 429, "rate_limited", err.Error())
+		var rl *workspace.RateLimitedError
+		if errors.As(err, &rl) {
+			s.rateLimited(w, r, rl)
+		} else {
+			apiErr(w, 500, "internal", "internal error")
+		}
 		return
 	}
 	apiJSON(w, 200, map[string]any{"workspace": map[string]any{"id": ws.ID, "label": ws.Label}})
