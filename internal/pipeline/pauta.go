@@ -165,9 +165,10 @@ func (r *Runner) Pauta(ctx context.Context, pub *store.Publication, stories []st
 	if len(pool) < n {
 		pool = append(append([]cand{}, fresh...), older...)
 	}
-	// keep the MMR pool bounded: the best 60 are plenty to pick 8 from
-	if len(pool) > 60 {
-		pool = pool[:60]
+	// keep the MMR pool bounded — wide enough that the per-outlet cap
+	// below still finds other outlets when one feed dominates the top
+	if len(pool) > 150 {
+		pool = pool[:150]
 	}
 	scores := make([]float64, len(pool))
 	vecs := make([][]float32, len(pool))
@@ -177,14 +178,48 @@ func (r *Runner) Pauta(ctx context.Context, pub *store.Publication, stories []st
 			vecs[i] = s1.StoryVecs[c.idx]
 		}
 	}
-	var out []PautaCard
-	for _, oi := range rank.MMROrder(scores, vecs, n) {
+	var ordered []PautaCard
+	for _, oi := range rank.MMROrder(scores, vecs, 0) {
 		c := pool[oi]
-		s := &stories[c.idx]
-		out = append(out, pautaCard(s, enrich, c.age, c.rank))
+		ordered = append(ordered, pautaCard(&stories[c.idx], enrich, c.age, c.rank))
+	}
+	return capPerOutlet(ordered, n)
+}
+
+// capPerOutlet takes n cards from the ranked list with at most
+// MaxPerOutlet of one outlet inside the first DiversityWindow slots
+// (KLOX-169): one prolific feed must not fill the pauta. Capped cards
+// only fill the deck when no other outlet has anything left.
+func capPerOutlet(ordered []PautaCard, n int) []PautaCard {
+	var out, spill []PautaCard
+	perOutlet := map[string]int{}
+	for _, card := range ordered {
+		if len(out) >= n {
+			break
+		}
+		key := strings.ToLower(strings.TrimSpace(card.Outlet))
+		if len(out) < DiversityWindow && key != "" && perOutlet[key] >= MaxPerOutlet {
+			spill = append(spill, card)
+			continue
+		}
+		perOutlet[key]++
+		out = append(out, card)
+	}
+	for _, card := range spill {
+		if len(out) >= n {
+			break
+		}
+		out = append(out, card)
 	}
 	return out
 }
+
+// MaxPerOutlet caps how many of one outlet's stories may sit among the
+// first DiversityWindow cards of a pauta.
+const (
+	MaxPerOutlet    = 3
+	DiversityWindow = 10
+)
 
 func pautaCard(s *store.Story, enrich map[int64]*store.ItemEnrichment, age, score float64) PautaCard {
 	card := PautaCard{StoryID: s.ID, Title: s.Title, Outlets: len(s.Outlets()), AgeHours: age, Score: score, Topics: []string{}}
