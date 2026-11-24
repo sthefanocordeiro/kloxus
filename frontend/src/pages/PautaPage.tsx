@@ -26,9 +26,10 @@ export function IssueRedirect() {
 }
 
 // /pauta/:id — Escrever (KLOX-168): the ticked news in the chosen order,
-// one free-text box under each title (autosaved), an optional opening.
-// No sentences, citations or checks — the only gate is a heads-up about
-// news left without text.
+// an optional opening, and a "Comentar" button under each news that opens
+// its single optional comment space (KLOX-162, autosaved). No sentences,
+// citations or checks — the only gate is a heads-up about news left
+// without text.
 export function PautaPage() {
   const { id } = useParams();
   const issueID = Number(id);
@@ -44,6 +45,7 @@ export function PautaPage() {
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [adding, setAdding] = useState(false);
+  const [openComments, setOpenComments] = useState<Set<number>>(new Set());
   const latest = useRef({ opening, entries });
   latest.current = { opening, entries };
   const dirty = useRef(false);
@@ -164,14 +166,26 @@ export function PautaPage() {
                   <Button size="icon" variant="ghost" aria-label={`${s.remove}: ${e.title}`} onClick={() => edit((p) => p.filter((x) => x.story_id !== e.story_id))}><X size={16} /></Button>
                 </div>
               </div>
-              <textarea
-                className="mt-3 w-full rounded border border-line bg-paper p-3 text-sm"
-                rows={4}
-                aria-label={`${s.text}: ${e.title}`}
-                placeholder={s.textHint}
-                value={e.text}
-                onChange={(ev) => edit((p) => p.map((x) => (x.story_id === e.story_id ? { ...x, text: ev.target.value } : x)))}
-              />
+              {openComments.has(e.story_id) || e.text !== "" ? (
+                <textarea
+                  className="mt-3 w-full rounded border border-line bg-paper p-3 text-sm"
+                  rows={4}
+                  aria-label={`${s.text}: ${e.title}`}
+                  placeholder={s.textHint}
+                  value={e.text}
+                  onChange={(ev) => edit((p) => p.map((x) => (x.story_id === e.story_id ? { ...x, text: ev.target.value } : x)))}
+                />
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3"
+                  aria-label={`${s.comment}: ${e.title}`}
+                  onClick={() => setOpenComments((p) => new Set(p).add(e.story_id))}
+                >
+                  {s.comment}
+                </Button>
+              )}
             </Card>
           </li>
         ))}

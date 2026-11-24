@@ -82,6 +82,19 @@ describe("Hoje (KLOX-123)", () => {
     expect(api.pautaCreate).toHaveBeenCalledWith("7", [2, 1]);
   });
 
+  // KLOX-162: "Write" on a card marks it in this choose step
+  it("marks the card from its Write button and builds the pauta", async () => {
+    vi.mocked(api.pautaCreate).mockResolvedValue({ issue_id: 55 });
+    renderToday();
+    await screen.findByText("Story 1");
+    fireEvent.click(screen.getByRole("button", { name: "Write: Story 1" }));
+    expect(screen.getByText("1 story selected")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Write: Story 1" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Build pauta →" }));
+    expect(await screen.findByText("pauta screen")).toBeVisible();
+    expect(api.pautaCreate).toHaveBeenCalledWith("7", [1]);
+  });
+
   it("lists pieces in progress with their status", async () => {
     vi.mocked(api.today).mockResolvedValue(data({
       pieces: [{ id: 3, number: 2, status: "reviewed" }, { id: 2, number: 1, status: "draft" }],
