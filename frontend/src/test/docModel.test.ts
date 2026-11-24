@@ -9,6 +9,7 @@ import {
   readyFromChecks,
   sectionNeedsCommentary,
 } from "../docModel";
+import { writableRefs, writingProgress } from "../editor/writeProgress";
 
 const doc = (over: Partial<IssueDocument> = {}): IssueDocument => ({
   issue_id: 1,
@@ -99,7 +100,12 @@ describe("docToTiptap", () => {
   it("emits one sentence node per stored sentence, commentary last", () => {
     const tiptap = docToTiptap(doc()) as { content: { type: string }[] };
     const types = tiptap.content.map((n) => n.type);
-    expect(types).toEqual(["sectionHeading", "itemHeading", "sentence", "sentence", "commentary"]);
+    // a blockAdd gap sits before every block and after the last — the
+    // insert-anywhere affordance (KLOX-66); commentary still ends the
+    // section
+    expect(types).toEqual([
+      "sectionHeading", "blockAdd", "itemHeading", "sentence", "sentence", "blockAdd", "commentary",
+    ]);
   });
 
   it("keeps headings out of editable content — titles live in attrs", () => {
@@ -122,8 +128,91 @@ describe("docToTiptap", () => {
     expect(s?.attrs?.sid).toBe("1.a");
     expect(s?.attrs?.citations).toEqual([1]);
   });
+
+  it("stamps section/index/count on every composer block", () => {
+    const d = doc();
+    d.sections[0].blocks = [
+      { kind: "item", ref: 1 },
+      { kind: "heading", text: "Note" },
+      { kind: "text", text: "hello" },
+    ];
+    const tiptap = docToTiptap(d) as {
+      content: { type: string; attrs?: Record<string, unknown> }[];
+    };
+    // the hover toolbar needs the section's block count to disable
+    // move-up on the first block and move-down on the last (KLOX-72)
+    expect(
+      tiptap.content.find((n) => n.type === "blockHeading")?.attrs,
+    ).toMatchObject({ section: "Lead", index: 1, count: 3 });
+    expect(
+      tiptap.content.find((n) => n.type === "blockText")?.attrs,
+    ).toMatchObject({ section: "Lead", index: 2, count: 3 });
+  });
+
+  it("marks links-section items link-only — the empty slot asks for no text", () => {
+    const d = doc();
+    d.sections.push({
+      title: "Quick links",
+      format: "links",
+      commentary: { mode: "none", text: "" },
+      items: [{ ref: 9, issue_item_id: 90, headline: "Just a link", sentences: [], sources: [] }],
+    });
+    const tiptap = docToTiptap(d) as {
+      content: { type: string; attrs?: Record<string, unknown> }[];
+    };
+    const heads = tiptap.content.filter((n) => n.type === "itemHeading");
+    const link = heads.find((n) => n.attrs?.ref === 9);
+    const story = heads.find((n) => n.attrs?.ref === 1);
+    expect(link?.attrs?.linkOnly).toBe(true);
+    expect(link?.attrs?.empty).toBe(true);
+    expect(story?.attrs?.linkOnly).toBe(false);
+  });
 });
 
 // keep Coverage import used
 const _cov: Coverage = { ok: 0, cited: 0, total: 0, flagged: 0 };
 void _cov;
+
+// KLOX-96: the "Escrevendo N de M" counter and the one-pauta walker both
+// count only pautas that ask for written text — link-only items and
+// links-format sections ship the link itself (KLOX-65/D2).
+describe("writing progress (KLOX-96)", () => {
+  const withLinks = () => {
+    const d = doc();
+    d.sections[0].items.push({
+      ref: 2,
+      issue_item_id: 20,
+      headline: "Empty story",
+      sentences: [],
+      sources: [],
+    });
+    d.sections[0].items.push({
+      ref: 3,
+      issue_item_id: 30,
+      headline: "Link-toggled",
+      sentences: [],
+      sources: [],
+      link_only: true,
+    });
+    d.sections.push({
+      title: "Quick links",
+      format: "links",
+      commentary: { mode: "none", text: "" },
+      items: [{ ref: 9, issue_item_id: 90, headline: "Just a link", sentences: [], sources: [] }],
+    });
+    return d;
+  };
+
+  it("counts writable items only, in edition order", () => {
+    expect(writableRefs(withLinks())).toEqual([1, 2]);
+  });
+
+  it("a writable item counts as done once it carries any sentence", () => {
+    expect(writingProgress(withLinks())).toEqual({ done: 1, total: 2 });
+  });
+
+  it("is zero over an empty edition", () => {
+    expect(writingProgress(doc({ sections: [] }))).toEqual({ done: 0, total: 0 });
+    expect(writableRefs(doc({ sections: [] }))).toEqual([]);
+  });
+});
