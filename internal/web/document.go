@@ -70,9 +70,15 @@ type docItem struct {
 	Ref         int           `json:"ref"`
 	IssueItemID int64         `json:"issue_item_id"`
 	Headline    string        `json:"headline"`
-	Sentences   []docSentence `json:"sentences"`
-	Sources     []docSource   `json:"sources"`
-	Flags       []docItemFlag `json:"flags,omitempty"` // flags not matched to a sentence
+	// Text is the item's written text as a single field: the stored
+	// fact lines verbatim — punctuation, line breaks and emojis kept —
+	// with only the [n] citation markers removed (KLOX-181). The
+	// sentence-split model loses the period at every '. ' boundary;
+	// pauta entries and exports read Text instead.
+	Text      string        `json:"text"`
+	Sentences []docSentence `json:"sentences"`
+	Sources   []docSource   `json:"sources"`
+	Flags     []docItemFlag `json:"flags,omitempty"` // flags not matched to a sentence
 	// AIDraft marks the pauta whose body arrived AI-written (KLOX-67);
 	// the composer shows the AI marker until the author's first edit.
 	AIDraft bool `json:"ai_draft,omitempty"`
@@ -198,6 +204,28 @@ func citationRefs(raw string) []int {
 		out = append(out, n)
 	}
 	return out
+}
+
+// docTextCiteRe removes the citation markers a stored fact line
+// carries, including the space they were attached with.
+var docTextCiteRe = regexp.MustCompile(`\s*\[\d+\]`)
+
+// joinItemText builds the item's single text field from its stored
+// fact lines: [n] markers out, the author's line breaks (including
+// blank-line paragraph breaks) preserved, only the padding around the
+// block trimmed.
+func joinItemText(lines []string) string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, strings.TrimSpace(docTextCiteRe.ReplaceAllString(l, "")))
+	}
+	for len(out) > 0 && out[0] == "" {
+		out = out[1:]
+	}
+	for len(out) > 0 && out[len(out)-1] == "" {
+		out = out[:len(out)-1]
+	}
+	return strings.Join(out, "\n")
 }
 
 // interpretationText unwraps a stored interpretation block
@@ -455,6 +483,7 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 
 	var sec *docSection
 	var item *docItem
+	var textLines []string // stored fact lines of the running item
 	usedIDs := map[string]int{}
 	// liveFlags counts the stored flags that still describe the
 	// document: a flag keyed to a sentence is live while that sentence
@@ -468,6 +497,8 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			return
 		}
 		item.spanEnd = end
+		item.Text = joinItemText(textLines)
+		textLines = nil
 		uncited := 0
 		for _, sn := range item.Sentences {
 			if sn.Kind == "fact" && len(sn.Citations) == 0 {
@@ -697,12 +728,17 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			continue
 		}
 		switch {
-		case t == "", strings.HasPrefix(t, "#"), strings.HasPrefix(t, "**"),
+		case t == "":
+			// the author's own line breaks: invisible to the
+			// sentence parser, preserved in the item's text
+			textLines = append(textLines, "")
+		case strings.HasPrefix(t, "#"), strings.HasPrefix(t, "**"),
 			strings.HasPrefix(t, "-"), strings.HasPrefix(t, "_"):
 			// headings, source lists, emphasis-only lines
 		case strings.HasPrefix(t, "> "):
 			addSentence(t, "interpretation")
 		default:
+			textLines = append(textLines, t)
 			for _, piece := range pipeline.SplitSentences(t) {
 				piece = strings.TrimSpace(piece)
 				if !strings.ContainsFunc(piece, unicode.IsLetter) {

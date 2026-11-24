@@ -48,7 +48,9 @@ var pautaCiteRe = regexp.MustCompile(`\[(\d+)\]`)
 
 // pautaLines turns the author's free text into body lines: one per text
 // line, with leading markdown markers and citation-looking brackets
-// defused so the parser reads plain sentences.
+// defused so the parser reads plain sentences. Blank lines stay — they
+// are the author's paragraph breaks and the document's text field reads
+// them back verbatim; only the padding around the text is dropped.
 func pautaLines(text string) []string {
 	var out []string
 	for _, ln := range strings.Split(strings.ReplaceAll(text, "\r", ""), "\n") {
@@ -56,9 +58,13 @@ func pautaLines(text string) []string {
 		ln = strings.ReplaceAll(ln, "<klox-embed", "")
 		ln = pautaCiteRe.ReplaceAllString(ln, "($1)")
 		ln = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(ln), "#>-*+ \t"))
-		if ln != "" {
-			out = append(out, ln)
-		}
+		out = append(out, ln)
+	}
+	for len(out) > 0 && out[0] == "" {
+		out = out[1:]
+	}
+	for len(out) > 0 && out[len(out)-1] == "" {
+		out = out[:len(out)-1]
 	}
 	return out
 }
@@ -173,7 +179,9 @@ func (s *Server) savePauta(ctx context.Context, d *store.DB, iss *store.Issue, p
 			cite = " [1]"
 		}
 		for k := range lines {
-			lines[k] += cite
+			if lines[k] != "" {
+				lines[k] += cite
+			}
 		}
 		marker := fmt.Sprintf("<!-- item %d -->\n\n", di.Ref)
 		body = strings.Replace(body, marker, marker+strings.Join(lines, "\n")+"\n\n", 1)
@@ -222,11 +230,7 @@ func (s *Server) pautaView(ctx context.Context, d *store.DB, iss *store.Issue, p
 			if len(it.Sources) > 0 {
 				v.URL, v.Outlet, v.Date = it.Sources[0].URL, it.Sources[0].Name, it.Sources[0].Date
 			}
-			var lines []string
-			for _, sn := range it.Sentences {
-				lines = append(lines, sn.Text)
-			}
-			v.Text = strings.Join(lines, "\n")
+			v.Text = it.Text
 			entries = append(entries, v)
 		}
 	}
