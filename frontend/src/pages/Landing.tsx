@@ -150,6 +150,9 @@ export function Landing() {
 
 // The "Fontes reais" credibility strip (KLOX-69): real outlet names,
 // same in both locales — proper nouns need no translation.
+// The mock ticks the first two stories and writes about them.
+const PICKED = [0, 1];
+
 const SOURCES = [
   "Tecnoblog",
   "Olhar Digital",
@@ -187,11 +190,16 @@ function HeroMock() {
           </p>
           <ul className="mt-2 grid gap-2">
             {m.items.map((title, i) => (
-              <li key={i} className="rounded-lg border border-line bg-paper p-2.5">
+              <li key={i} className="flex items-start gap-2 rounded-lg border border-line bg-paper p-2.5">
+                <input
+                  type="checkbox"
+                  checked={PICKED.includes(i)}
+                  readOnly
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-teal"
+                />
                 <p className="text-[12.5px] font-medium leading-snug">{title}</p>
-                <span className="mt-1.5 inline-block rounded-md bg-teal-soft px-1.5 py-0.5 text-[10px] font-semibold text-chip">
-                  {t.itemStatus.approved}
-                </span>
               </li>
             ))}
           </ul>
@@ -200,24 +208,22 @@ function HeroMock() {
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
             {m.editorTitle}
           </p>
-          <p className="mt-1 font-doc text-xl font-semibold leading-snug">{m.docTitle}</p>
-          <div className="mt-3 grid gap-2" aria-hidden="true">
-            <div className="h-2.5 w-11/12 rounded bg-line" />
-            <div className="h-2.5 w-full rounded bg-line" />
-            <div className="h-2.5 w-3/5 rounded bg-line" />
+          <div className="mt-3 grid gap-3">
+            {PICKED.map((i) => (
+              <div key={i}>
+                <p className="font-doc text-[15px] font-semibold leading-snug text-teal underline underline-offset-2">
+                  {m.items[i]}
+                </p>
+                <div className="mt-2 grid gap-1.5" aria-hidden="true">
+                  <div className="h-2 w-full rounded bg-line" />
+                  <div className="h-2 w-3/5 rounded bg-line" />
+                </div>
+              </div>
+            ))}
           </div>
-          <div className="mt-4 rounded-lg border border-teal/20 bg-teal-soft/60 p-2.5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-chip">
-              {t.commentary.label}
-            </p>
-            <div className="mt-1.5 h-2.5 w-4/5 rounded bg-teal/15" aria-hidden="true" />
-          </div>
-          <div className="mt-4 flex items-center gap-2" aria-hidden="true">
-            <span className="rounded-md bg-line/70 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
-              [1]
-            </span>
-            <div className="h-2 w-2/5 rounded bg-line" />
-          </div>
+          <p className="mt-4 rounded-lg border border-line px-2.5 py-2 text-[12px] text-muted">
+            {m.editorHint}
+          </p>
         </div>
       </div>
     </div>
