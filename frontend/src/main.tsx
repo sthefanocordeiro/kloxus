@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ApiRequestError } from "./api";
 import { LangProvider } from "./i18n";
 import { ErrorPage, NotFound } from "./pages/ErrorPage";
 import { Landing } from "./pages/Landing";
@@ -16,7 +17,14 @@ if (location.pathname === "/app" || location.pathname.startsWith("/app/")) {
 }
 
 const qc = new QueryClient({
-  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+  defaultOptions: {
+    queries: {
+      // KLOX-194: never auto-retry a 429 — an immediate second hit just
+      // feeds the limiter; Retry-After lives on the error for the UI
+      retry: (n, err) => n < 1 && !(err instanceof ApiRequestError && err.status === 429),
+      refetchOnWindowFocus: false,
+    },
+  },
 });
 
 // Heavy screens (the Tiptap editor above all) load on demand so the

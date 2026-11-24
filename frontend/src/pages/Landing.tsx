@@ -1,7 +1,8 @@
 import { BookOpen, ClipboardCopy, PenLine } from "lucide-react";
 import { useT } from "../i18n";
-import { errText } from "../lib/errors";
+import { errText, isRateLimited } from "../lib/errors";
 import { Card } from "../ui";
+import { RateLimited } from "../components/RateLimited";
 import { SiteCta, SiteFooter, SiteHeader, useSiteEntry } from "../components/SiteChrome";
 
 // The landing page (KLOX-61 §1, reworked per owner review KLOX-69):
@@ -52,10 +53,22 @@ export function Landing() {
                 {t.landing.alreadyCreator}
               </button>
             </p>
-            {entry.start.error && (
-              <p role="alert" className="mt-2 text-sm text-danger-soft">
-                {errText(t, entry.start.error)}
-              </p>
+            {/* KLOX-194: a 429 on "Criar meu Radar" gets the friendly
+                card with "Tentar de novo", not a bare error line — the
+                retry re-runs whichever entry the visitor last picked. */}
+            {entry.start.error && isRateLimited(entry.start.error) ? (
+              <RateLimited
+                className="mt-4 text-ink"
+                error={entry.start.error}
+                busy={entry.start.isPending}
+                onRetry={entry.retry}
+              />
+            ) : (
+              entry.start.error && (
+                <p role="alert" className="mt-2 text-sm text-danger-soft">
+                  {errText(t, entry.start.error)}
+                </p>
+              )
             )}
           </div>
           <HeroMock />

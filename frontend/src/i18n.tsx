@@ -193,6 +193,10 @@ export const dict = {
       home: "Back to Radar",
       notFoundTitle: "Not found",
       notFoundDetail: "This page or brief doesn't exist — or belongs to another session.",
+      rateLimitedTitle: "A lot of people are signing in at once from here",
+      rateLimitedBody: "Try again in a few minutes.",
+      rateLimitedRetry: "Try again",
+      rateLimitedWait: (s: number) => `Try again in ${s}s`,
     },
     nav: {
       today: "Today",
@@ -422,6 +426,10 @@ export const dict = {
       home: "Voltar ao Radar",
       notFoundTitle: "Não encontrado",
       notFoundDetail: "Esta página ou pauta não existe — ou pertence a outra sessão.",
+      rateLimitedTitle: "Muita gente entrando ao mesmo tempo daqui",
+      rateLimitedBody: "Tente de novo em alguns minutos.",
+      rateLimitedRetry: "Tentar de novo",
+      rateLimitedWait: (s: number) => `Tentar de novo em ${s}s`,
     },
     nav: {
       today: "Hoje",

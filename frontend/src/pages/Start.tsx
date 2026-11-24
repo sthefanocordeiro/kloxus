@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiRequestError, type PautaCard } from "../api";
 import { useT } from "../i18n";
-import { errText } from "../lib/errors";
+import { errText, isRateLimited } from "../lib/errors";
+import { RateLimited } from "../components/RateLimited";
 import { Button, Card, SkeletonLine } from "../ui";
 import { StepCounter } from "../components/StepCounter";
 import { ClaimEmail } from "../components/ClaimEmail";
@@ -72,6 +73,12 @@ export function Start() {
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
       <StepCounter steps={s.step} current={stepIdx} />
 
+      {/* KLOX-194: a 429 while the workspace resolves gets the friendly
+          state — falling through to the form would just fail again */}
+      {phase === "about" && ws.isError && isRateLimited(ws.error) && (
+        <RateLimited className="mt-6" error={ws.error} busy={ws.isFetching} onRetry={() => ws.refetch()} />
+      )}
+
       {phase === "about" && ws.data && !claimed && (
         <>
           <h1 className="mt-4 font-display text-2xl font-bold">{s.gateTitle}</h1>
@@ -82,7 +89,7 @@ export function Start() {
         </>
       )}
 
-      {phase === "about" && (claimed || ws.isError) && (
+      {phase === "about" && (claimed || (ws.isError && !isRateLimited(ws.error))) && (
         <>
           <h1 className="mt-4 font-display text-2xl font-bold">{s.aboutTitle}</h1>
           <p className="mt-1 text-sm text-muted">{s.aboutHint}</p>
