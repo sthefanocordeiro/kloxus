@@ -61,7 +61,10 @@ describe("Escrever (KLOX-168)", () => {
     expect(link).toHaveAttribute("href", "https://a.test/1");
     expect(link).toHaveAttribute("target", "_blank");
 
-    fireEvent.change(screen.getByLabelText("Your text: Primeira"), { target: { value: "Minha nota" } });
+    // KLOX-162: the comment space stays closed until "Comment"
+    expect(screen.queryByLabelText("Your comment: Primeira")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Comment: Primeira" }));
+    fireEvent.change(screen.getByLabelText("Your comment: Primeira"), { target: { value: "Minha nota" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Move story down" })[0]);
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
     const body = vi.mocked(api.pautaSave).mock.calls.at(-1)![1];

@@ -20,7 +20,10 @@ test.describe("main flow (KLOX-168)", () => {
 
     await page.waitForURL(/\/pauta\/\d+$/);
     await expect(page.getByTestId("pauta-entry")).toHaveCount(2);
-    const first = page.getByTestId("pauta-entry").first().locator("textarea");
+    // KLOX-162: each news has a "Comment" button that opens its box
+    const firstEntry = page.getByTestId("pauta-entry").first();
+    await firstEntry.getByRole("button", { name: "Comment" }).click();
+    const first = firstEntry.locator("textarea");
     await first.fill("Minha nota sobre a primeira notícia.");
     await expect(page.getByText("Saved")).toBeVisible({ timeout: 10_000 });
 

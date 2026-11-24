@@ -19,7 +19,8 @@ const FORMAT_LABEL: Record<string, string> = {
 // /publications/:id/today — Notícias de hoje (KLOX-168): the day's news
 // for the radar with a checkbox on every card and Sim/Não (training
 // continues). The ticking order becomes the text order; "Montar pauta →"
-// opens the Escrever page. No model is called here.
+// opens the Escrever page. "Escrever" on a card (KLOX-162) marks it.
+// No model is called here.
 export function Today() {
   const { id } = useParams();
   const { t, lang } = useT();
@@ -127,6 +128,17 @@ export function Today() {
                   </Button>
                   <Button size="sm" variant="outline" disabled={answer.isPending} onClick={() => answer.mutate({ c, a: "no" })}>
                     {s.no}
+                  </Button>
+                  {/* KLOX-162: "Escrever" marks the card in this choose
+                      step — same as ticking its checkbox */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`${s.write}: ${c.title}`}
+                    disabled={pos >= 0}
+                    onClick={() => setPicked((p) => (p.includes(c.story_id) ? p : [...p, c.story_id]))}
+                  >
+                    {s.write}
                   </Button>
                 </div>
               </Card>
