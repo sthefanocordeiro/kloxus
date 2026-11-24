@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -141,6 +142,9 @@ func LoadOrCreateSecret(path string) ([]byte, error) {
 	}
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
 	if err := os.WriteFile(path, []byte(hex.EncodeToString(b)), 0o600); err != nil {
