@@ -38,9 +38,10 @@ jobs:
       # the deterministic demo pipeline, or real mode with
       # llm_mode=off. Mail posture selects the send checks (KLOX-59):
       # outbox targets run the full claim-and-send journey; a live-mail
-      # target is verified through the paths that cannot send — the
-      # claim gate must refuse a readers send (409) and the unclaimed
-      # test send must land in the outbox ledger (provider=outbox).
+      # target is verified through the paths that cannot send: healthz,
+      # SPA, sample, preflight (incl. the webhook probe), the admin guards
+      # and the claim gate (Radar creation must answer 403 email_required
+      # on the unclaimed workspace). It never claims, so no mail leaves.
       # A claimed workspace, an unknown transport, or a real target
       # with the model enabled makes the script refuse before any
       # mail- or model-capable request, so this job can never send

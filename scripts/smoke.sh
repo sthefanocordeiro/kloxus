@@ -204,7 +204,26 @@ say "admin surface guarded"
 # workspace claimed, which the transport preflight above forbids — fail
 # closed with the reason instead of a confusing 403 at create time.
 if [ "$MAILPOSTURE" != "outbox" ]; then
-	die "live-mail target: Radar creation needs a claimed owner and the claim would send a real email — run the smoke against an outbox-mode target (KLOX-161)"
+	# Live-safe path (KLOX-165): every journey step past here needs a
+	# publication, which needs a claimed owner — and a claim on a live
+	# target mails a real magic link and leaves the workspace claimed. So
+	# the live target is verified through what cannot send: the claim gate
+	# itself must refuse Radar creation (403 email_required) on the
+	# unclaimed workspace. The send-path checks (readers send -> 409, test
+	# send -> outbox ledger) are unreachable here since KLOX-161 and are
+	# covered by outbox-target runs and the fake-live e2e suite.
+	[ "$(req GET /api/v1/proposal)" = "200" ] || die "proposal fetch failed"
+	node -e '
+		const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).proposal;
+		require("fs").writeFileSync(process.argv[2], JSON.stringify({ name: d.name, topic: d.topic,
+			audience: d.audience, editorial_line: d.editorial_line, tone: d.tone, language: d.language,
+			frequency: d.frequency, ai_disclosure: d.ai_disclosure, sections: d.sections, paywall: d.paywall }));' "$RESP" "$REQBODY"
+	code="$(reqf POST /api/v1/publications "$REQBODY")"
+	[ "$code" = "403" ] && [ "$(jget error.code)" = "email_required" ] 		|| die "live target must gate Radar creation on a claimed owner: got $code $(cat "$RESP")"
+	say "claim gate held: Radar creation refused before any claim or mail (403 email_required)"
+	say "live-mail target: no claim, no send — journey steps 5-13 skipped by design (KLOX-165)"
+	say "ALL CHECKS PASSED (live-safe)"
+	exit 0
 fi
 [ "$(req POST /api/v1/workspace/claim '{"email":"smoke@kloxus.dev"}')" = "200" ] || die "claim start: $(cat "$RESP")"
 CLAIMPATH="$(jget claim_url | sed -E 's#^https?://[^/]+##')"
