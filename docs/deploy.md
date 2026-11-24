@@ -156,7 +156,7 @@ If two PRs are in flight, finish one round before deploying the next.
 
 ```bash
 scripts/smoke.sh https://kloxus.fly.dev            # health → SPA → sample → workspace → fixture run → reader page
-cd frontend && E2E_BASE_URL=https://kloxus.fly.dev npx playwright test
+cd frontend && E2E_BASE_URL=https://kloxus.fly.dev E2E_LIVE_SAFE=1 npx playwright test
 ```
 
 Hosted verification must never send real email; model calls are
@@ -183,8 +183,17 @@ the test send must land in the outbox ledger (`delivery=outbox`,
 `provider=outbox` — nothing mailed). A live target that reports
 `claimed=true` fails closed, since a test send there would reach the
 owner for real — as do an unknown transport and a real target with an
-unknown `llm_mode`. The e2e specs still require the demo pipeline — their
-journeys depend on fixture content the real target does not serve.
+unknown `llm_mode`. The mutating e2e specs still require the demo
+pipeline — their journeys depend on fixture content the real target
+does not serve — so against a `mail=live` target their preflight keeps
+refusing closed. `E2E_LIVE_SAFE=1` is the hosted opt-in that narrows
+collection to `e2e/live-safe.spec.ts` (KLOX-176): an explicit
+read-only subset — posture evidence, landing, sample, legal pages,
+admin-guard and webhook-refusal probes, the claim gate and the
+publishing-off 404s — gated by `assertLiveSafe` on the target's own
+`/api/v1/workspace` (mode=real, mail=live over resend, unclaimed,
+webhook configured). No claims, sends, publications, runs or model
+calls; the flag changes nothing for any other spec.
 
 The live-mail contract (claim gate, confirmed readers, `delivery`
 outcomes, fallback) is verified **locally** against the loopback fake

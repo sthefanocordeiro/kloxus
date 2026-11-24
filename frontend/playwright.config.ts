@@ -1,5 +1,12 @@
 import { defineConfig } from "@playwright/test";
-import { appEnv, APP_ORIGIN, FAKE_ORIGIN, FAKE_PORT, resolveMode } from "../scripts/e2e-harness.mjs";
+import {
+  appEnv,
+  APP_ORIGIN,
+  FAKE_ORIGIN,
+  FAKE_PORT,
+  liveSafe,
+  resolveMode,
+} from "../scripts/e2e-harness.mjs";
 
 // E2E runs against the real Go server — it serves the embedded build
 // under /app. Build the frontend first (npm run build) so the binary
@@ -15,12 +22,21 @@ import { appEnv, APP_ORIGIN, FAKE_ORIGIN, FAKE_PORT, resolveMode } from "../scri
 //               refuse anything but the deterministic demo pipeline
 //               with outbox mail — a hosted target can never send.
 //
+// E2E_LIVE_SAFE=1 (KLOX-176) with E2E_BASE_URL narrows collection to
+// e2e/live-safe.spec.ts — the explicit read-only subset for a live-mail
+// target, itself gated by assertLiveSafe on the server's own posture.
+// Mutating specs are never even collected; without the flag the suite
+// keeps refusing a mail=live target closed.
+//
 // E2E_BASE_URL and E2E_LIVE_MAIL together are a hard error.
 const mode = resolveMode();
 const baseURL = process.env.E2E_BASE_URL ?? APP_ORIGIN;
+const liveSafeHosted = mode === "hosted" && liveSafe();
 
 export default defineConfig({
   testDir: "./e2e",
+  // Live-safe is the explicit read-only subset — collect no other spec.
+  testMatch: liveSafeHosted ? "live-safe.spec.ts" : undefined,
   // Hosted targets run the same journey against remote Postgres — two
   // pipeline runs plus editor ops need a much larger budget than local,
   // and the real app fetches live feeds on top of that.
