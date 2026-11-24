@@ -129,12 +129,12 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := s.publicBase(r) + "/claim?t=" + url.QueryEscape(token)
-	subject, md := "Save your Kloxus with this email",
-		fmt.Sprintf("Confirm this email to keep your Kloxus.\n\n[Save my Kloxus](%s)\n\nThe link works once and expires in 15 minutes.", link)
+	subject, md := "Confirm your email to create your Radar",
+		fmt.Sprintf("Confirm this email to create your Radar.\n\n[Create my Radar](%s)\n\nThe link works once and expires in 15 minutes.", link)
 	if ptLang(in.Lang) {
 		link += "&lang=pt"
-		subject, md = "Salve o seu Kloxus com este e-mail",
-			fmt.Sprintf("Confirme este e-mail para guardar o seu Kloxus.\n\n[Guardar o meu Kloxus](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
+		subject, md = "Confirme seu e-mail para criar seu Radar",
+			fmt.Sprintf("Confirme este e-mail para criar o seu Radar.\n\n[Criar meu Radar](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
 	}
 	res, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{email},
@@ -284,9 +284,9 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 		// claimed workspace.
 		s.d.WS.SetCookie(w, r, wsID)
 	}
-	// straight on to "Create your Radar" — /new forwards to the existing
-	// Radar when the owner already has one
-	http.Redirect(w, r, "/new", http.StatusSeeOther)
+	// straight on to "Criar seu Radar" (/start) — the screen forwards to
+	// the existing Radar when the owner already has one
+	http.Redirect(w, r, "/start", http.StatusSeeOther)
 }
 
 // claimFail renders the single failure state for a bad, spent or

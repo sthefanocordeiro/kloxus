@@ -1230,7 +1230,7 @@ func TestMailWebhookPosture(t *testing.T) {
 
 // TestClaimConfirmGoesStraightToCreateRadar covers KLOX-173: the claim
 // page carries the app's look, the email names the Radar, and confirming
-// lands on "Create your Radar" (/new) instead of the landing.
+// lands on "Criar seu Radar" (/start) instead of the landing.
 func TestClaimConfirmGoesStraightToCreateRadar(t *testing.T) {
 	fake := &fakeSender{}
 	deps, db, _, _ := liveDeps(t, fake, nil)
@@ -1252,7 +1252,7 @@ func TestClaimConfirmGoesStraightToCreateRadar(t *testing.T) {
 		t.Fatalf("claim page not styled / localized: %d %s", page.Code, body)
 	}
 	rr = apiCall(t, srv, "POST", "/claim?t="+tok+"&lang=pt", nil)
-	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/new" {
-		t.Fatalf("POST /claim = %d → %q, want 303 → /new", rr.Code, rr.Header().Get("Location"))
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/start" {
+		t.Fatalf("POST /claim = %d → %q, want 303 → /start", rr.Code, rr.Header().Get("Location"))
 	}
 }

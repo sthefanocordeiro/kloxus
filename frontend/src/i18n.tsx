@@ -376,7 +376,7 @@ export const dict = {
       faq: [
         {
           q: "Do I need an account?",
-          a: "Not to try it. To keep your work, you confirm your email.",
+          a: "Your email is the account — confirm one link and create your Radar. No password.",
         },
         {
           q: "Does the AI write for me?",
@@ -953,7 +953,7 @@ export const dict = {
       faq: [
         {
           q: "Preciso criar conta?",
-          a: "Não para testar. Para guardar seu trabalho, você confirma seu e-mail.",
+          a: "Seu e-mail é a conta — você confirma um link e cria o Radar. Sem senha.",
         },
         {
           q: "A IA escreve por mim?",
