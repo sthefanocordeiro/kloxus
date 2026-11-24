@@ -1,124 +1,231 @@
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { api, type SampleDossier } from "../api";
+import { BookOpen, ClipboardCopy, PenLine } from "lucide-react";
 import { useT } from "../i18n";
-import { Badge, Button, Card } from "../ui";
+import { errText } from "../lib/errors";
+import { Card } from "../ui";
+import { SiteCta, SiteFooter, SiteHeader, useSiteEntry } from "../components/SiteChrome";
 
-// The landing page: product promise + a real cited dossier from the
-// sample issue, fetched workspace-free so no demo session is created
-// before the visitor chooses Start.
+// The landing page (KLOX-61 §1, reworked per owner review KLOX-69):
+// sticky header with the PT/EN switch and a hamburger menu on mobile,
+// a dark-green hero with a simplified product mock (legible at both
+// widths — the old full-app screenshot read as decoration at 390 px),
+// a real-sources strip, three numbered steps, three cards for writers,
+// a collapsed FAQ, a closing band and the shared site footer. Start
+// resolves-or-creates the visitor's workspace through the
+// signed-cookie flow (D17) and lands on onboarding; a returning
+// visitor gets "Ir para o painel" instead.
 export function Landing() {
   const { t } = useT();
-  const sample = useQuery({ queryKey: ["sample"], queryFn: api.sample });
-  const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
-  const first = pubs.data?.[0];
+  const entry = useSiteEntry();
+
+  const cardIcons = [PenLine, BookOpen, ClipboardCopy];
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-10">
-      <p className="text-xs font-semibold uppercase tracking-widest text-teal">{t.landing.kicker}</p>
-      <h1 className="mt-2 font-doc text-4xl font-semibold leading-tight">{t.landing.headline}</h1>
-      <p className="mt-3 max-w-xl text-base text-muted">{t.landing.lede}</p>
+    <div className="min-h-dvh bg-paper text-ink">
+      <SiteHeader />
 
-      <div className="mt-6 flex flex-wrap items-center gap-3">
-        <Link to="/new">
-          <Button size="lg">{t.landing.start}</Button>
-        </Link>
-        {first && (
-          <Link to={`/publications/${first.id}`} className="text-sm text-teal underline underline-offset-2">
-            {t.landing.continueHint} {first.name} →
-          </Link>
-        )}
-        {(pubs.data?.length ?? 0) > 1 && (
-          <Link to="/publications" className="text-sm text-teal underline underline-offset-2">
-            {t.landing.secondary} →
-          </Link>
-        )}
-      </div>
-
-      {sample.data && (
-        <div className="mt-10">
-          <p className="mb-2 text-xs uppercase tracking-wide text-muted">{t.landing.sampleCaption}</p>
-          <div className="grid gap-4">
-            {sample.data.dossiers.map((d) => (
-              <SampleCard key={d.ref} d={d} />
-            ))}
+      <section className="bg-teal text-paper">
+        <div className="mx-auto grid max-w-6xl gap-10 px-4 py-14 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:py-20">
+          <div>
+            <p className="mb-3 text-sm font-semibold uppercase tracking-wider text-paper/70">
+              {t.landing.eyebrow}
+            </p>
+            <h1 className="font-doc text-3xl font-bold leading-tight md:text-5xl">
+              {t.landing.headline}
+            </h1>
+            <p className="mt-4 max-w-xl text-lg text-paper/80">{t.landing.subhead}</p>
+            <div className="mt-7">
+              <SiteCta size="lg" entry={entry} />
+            </div>
+            <p className="mt-3 max-w-xl text-sm text-paper/70">{t.landing.emailNote}</p>
+            <p className="mt-2 max-w-xl text-sm text-paper/70">{t.landing.waitlistSupport}</p>
+            <p className="mt-5 text-sm">
+              <button
+                type="button"
+                onClick={entry.signIn}
+                disabled={entry.start.isPending}
+                className="text-paper/80 underline underline-offset-4 hover:text-paper disabled:opacity-50"
+              >
+                {t.landing.alreadyCreator}
+              </button>
+            </p>
+            {entry.start.error && (
+              <p role="alert" className="mt-2 text-sm text-danger-soft">
+                {errText(t, entry.start.error)}
+              </p>
+            )}
           </div>
+          <HeroMock />
         </div>
-      )}
+      </section>
 
-      {sample.data && sample.data.how_it_works.length > 0 && (
-        <Card className="mt-8 p-5">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">
-            {t.landing.howTitle}
-          </h2>
-          <ul className="grid gap-2 text-sm">
-            {sample.data.how_it_works.map((h, i) => (
-              <li key={i} className="flex gap-2">
-                <span className="text-teal">•</span>
-                <span>{h}</span>
+      <section aria-label={t.landing.sourcesStrip} className="border-b border-line bg-paper">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-baseline gap-x-6 gap-y-1.5 px-4 py-5">
+          <p className="shrink-0 text-xs font-semibold uppercase tracking-wider text-muted">
+            {t.landing.sourcesStrip}
+          </p>
+          <ul className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+            {SOURCES.map((n) => (
+              <li key={n} className="font-doc text-[15px] font-semibold text-ink/80">
+                {n}
               </li>
             ))}
           </ul>
-        </Card>
-      )}
+        </div>
+      </section>
+
+      <section id="como-funciona" aria-labelledby="landing-how" className="scroll-mt-20 border-b border-line">
+        <div className="mx-auto max-w-6xl px-4 py-14 md:py-16">
+          <h2 id="landing-how" className="font-doc text-2xl font-bold md:text-3xl">
+            {t.landing.howTitle}
+          </h2>
+          <ol className="mt-8 grid gap-6 md:grid-cols-3">
+            {t.landing.howSteps.map((s, i) => (
+              <li key={i} className="flex gap-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal text-sm font-bold text-paper">
+                  {i + 1}
+                </span>
+                <div>
+                  <h3 className="font-display text-lg font-bold">{s.title}</h3>
+                  <p className="mt-1 text-sm text-muted">{s.body}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section aria-labelledby="landing-writers" className="bg-surface">
+        <div className="mx-auto max-w-6xl px-4 py-14 md:py-16">
+          <h2 id="landing-writers" className="font-doc text-2xl font-bold md:text-3xl">
+            {t.landing.cardsTitle}
+          </h2>
+          <div className="mt-8 grid gap-5 md:grid-cols-3">
+            {t.landing.cards.map((c, i) => {
+              const Icon = cardIcons[i];
+              return (
+                <Card key={i} className="p-5">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-soft text-teal">
+                    <Icon size={20} aria-hidden />
+                  </span>
+                  <h3 className="mt-4 font-display text-lg font-bold">{c.title}</h3>
+                  <p className="mt-1.5 text-sm text-muted">{c.body}</p>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section id="perguntas" aria-labelledby="landing-faq" className="scroll-mt-20 border-t border-line">
+        <div className="mx-auto max-w-3xl px-4 py-14 md:py-16">
+          <h2 id="landing-faq" className="font-doc text-2xl font-bold md:text-3xl">
+            {t.landing.faqTitle}
+          </h2>
+          <div className="mt-4">
+            {t.landing.faq.map((f, i) => (
+              <details key={i} className="border-b border-line py-4">
+                <summary className="cursor-pointer text-base font-medium">{f.q}</summary>
+                <p className="mt-2 text-sm text-muted">{f.a}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="landing-close" className="bg-teal text-paper">
+        <div className="mx-auto max-w-6xl px-4 py-14 text-center md:py-16">
+          <h2 id="landing-close" className="font-doc text-2xl font-bold md:text-3xl">
+            {t.landing.closingTitle}
+          </h2>
+          <div className="mt-6 flex justify-center">
+            <SiteCta size="lg" entry={entry} />
+          </div>
+        </div>
+      </section>
+
+      <SiteFooter />
     </div>
   );
 }
 
-function SampleCard({ d }: { t?: unknown; d: SampleDossier }) {
+// The "Fontes reais" credibility strip (KLOX-69): real outlet names,
+// same in both locales — proper nouns need no translation.
+// The mock ticks the first two stories and writes about them.
+const PICKED = [0, 1];
+
+const SOURCES = [
+  "Tecnoblog",
+  "Olhar Digital",
+  "MacMagazine",
+  "Meio Bit",
+  "Startups.com.br",
+];
+
+// A simplified product illustration inside a clean browser frame
+// (KLOX-69 #2): the pauta rail plus the writing surface, rendered as
+// real text so it stays legible at 1440 px and meaningful at 390 px —
+// on the smallest widths the rail drops out and the document carries
+// the picture alone.
+function HeroMock() {
   const { t } = useT();
-  const src = (ref: number) => d.sources.find((s) => s.ref === ref);
+  const m = t.landing.mock;
   return (
-    <Card className="p-5">
-      <h3 className="font-doc text-lg font-semibold leading-snug">{d.title}</h3>
-      <p className="mt-1 text-sm text-muted">{d.summary}</p>
-
-      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">{t.landing.facts}</h4>
-      <ul className="mt-1 grid gap-1.5 text-sm">
-        {d.facts.map((f, i) => (
-          <li key={i} className="flex items-baseline gap-2">
-            <span className="min-w-0 flex-1">{f.text}</span>
-            {src(f.ref) && (
-              <a
-                href={`/sample/a?u=${encodeURIComponent(src(f.ref)!.url)}`}
-                target="_blank"
-                rel="noreferrer"
-                title={src(f.ref)!.name || src(f.ref)!.url}
-                className="shrink-0 rounded bg-teal/10 px-1.5 py-0.5 font-mono text-[11px] text-teal hover:bg-teal/20"
-              >
-                [{f.ref}]
-              </a>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      {d.quote?.text && (
-        <blockquote className="mt-4 border-l-2 border-teal/50 pl-3 text-sm italic text-muted">
-          “{d.quote.text}”
-          <span className="mt-1 block text-xs not-italic">— {d.quote.attribution}</span>
-        </blockquote>
-      )}
-
-      {d.unknowns?.length > 0 && (
-        <div className="mt-4">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">{t.landing.unknowns}</h4>
-          <ul className="mt-1 grid gap-1 text-sm text-muted">
-            {d.unknowns.map((u, i) => (
-              <li key={i}>· {u}</li>
+    <div
+      role="img"
+      aria-label={t.landing.shotAlt}
+      className="overflow-hidden rounded-xl border border-white/15 bg-paper text-ink shadow-2xl"
+    >
+      <div className="flex h-9 items-center gap-1.5 border-b border-line bg-surface px-3">
+        <span className="h-2.5 w-2.5 rounded-full bg-line" />
+        <span className="h-2.5 w-2.5 rounded-full bg-line" />
+        <span className="h-2.5 w-2.5 rounded-full bg-line" />
+        <span className="mx-auto truncate rounded-md bg-paper px-6 py-0.5 text-[11px] text-muted">
+          kloxus.fly.dev
+        </span>
+      </div>
+      <div className="grid sm:grid-cols-[2fr_3fr]">
+        <div className="hidden border-r border-line bg-surface/70 p-3 sm:block">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+            {m.railTitle}
+          </p>
+          <ul className="mt-2 grid gap-2">
+            {m.items.map((title, i) => (
+              <li key={i} className="flex items-start gap-2 rounded-lg border border-line bg-paper p-2.5">
+                <input
+                  type="checkbox"
+                  checked={PICKED.includes(i)}
+                  readOnly
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-teal"
+                />
+                <p className="text-[12.5px] font-medium leading-snug">{title}</p>
+              </li>
             ))}
           </ul>
         </div>
-      )}
-
-      <div className="mt-4 flex flex-wrap gap-1.5 border-t border-line pt-3">
-        <span className="mr-1 text-xs uppercase tracking-wide text-muted">{t.landing.citedFrom}:</span>
-        {d.sources.map((s) => (
-          <a key={s.ref} href={`/sample/a?u=${encodeURIComponent(s.url)}`} target="_blank" rel="noreferrer">
-            <Badge>{s.name || s.url}</Badge>
-          </a>
-        ))}
+        <div className="p-4 sm:p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+            {m.editorTitle}
+          </p>
+          <div className="mt-3 grid gap-3">
+            {PICKED.map((i) => (
+              <div key={i}>
+                <p className="font-doc text-[15px] font-semibold leading-snug text-teal underline underline-offset-2">
+                  {m.items[i]}
+                </p>
+                <div className="mt-2 grid gap-1.5" aria-hidden="true">
+                  <div className="h-2 w-full rounded bg-line" />
+                  <div className="h-2 w-3/5 rounded bg-line" />
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-4 rounded-lg border border-line px-2.5 py-2 text-[12px] text-muted">
+            {m.editorHint}
+          </p>
+        </div>
       </div>
-    </Card>
+    </div>
   );
 }
