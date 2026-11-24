@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { api, type Publication } from "../api";
+import { api, ApiRequestError, type Publication } from "../api";
 import { LangProvider } from "../i18n";
 import { Landing } from "../pages/Landing";
 import { PrivacyPage, TermsPage } from "../pages/Legal";
@@ -55,6 +55,8 @@ function renderApp() {
 
 describe("Landing", () => {
   beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
     vi.mocked(api.workspace).mockResolvedValue({ id: "w1", label: "visitor w1…", mode: "demo", hosted: true, llm_mode: "auto" });
     vi.mocked(api.publications).mockResolvedValue([]);
   });
@@ -88,11 +90,44 @@ describe("Landing", () => {
     expect((await screen.findAllByRole("button", { name: /sign in/i })).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: /dashboard/i })).not.toBeInTheDocument();
 
+    // KLOX-194: the "Ir para o painel" detection only probes browsers
+    // that already hold a session (the marker survives reloads)
+    localStorage.setItem("kloxus.session", "1");
     vi.mocked(api.publications).mockResolvedValue([pub]);
     renderApp();
     expect(await screen.findByRole("link", { name: /dashboard/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: /dashboard/i }));
     expect(await screen.findByText("publications screen")).toBeInTheDocument();
+  });
+
+  // KLOX-194: a fresh visit fires no session-touching call — the
+  // landing stays open without minting a workspace. The publications
+  // probe resumes once the browser holds a session.
+  it("fires no API call on a fresh visit and probes only with a session", async () => {
+    renderApp();
+    await screen.findAllByRole("button", { name: /create your Radar/i });
+    await waitFor(() => expect(api.publications).not.toHaveBeenCalled());
+
+    localStorage.setItem("kloxus.session", "1");
+    renderApp();
+    await waitFor(() => expect(api.publications).toHaveBeenCalledTimes(1));
+  });
+
+  // KLOX-194: a 429 on "Criar meu Radar" shows the friendly card with
+  // "Tentar de novo" — and the retry re-fires the same entry.
+  it("shows the friendly state on 429 and retries on click", async () => {
+    renderApp();
+    const error = new ApiRequestError(429, { code: "rate_limited", message: "slow down" });
+    vi.mocked(api.workspace)
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({ id: "w1", label: "visitor w1…", mode: "demo", hosted: true, llm_mode: "auto" });
+
+    fireEvent.click((await screen.findAllByRole("button", { name: /create your Radar/i }))[0]);
+    expect(await screen.findByText(/a lot of people are signing in at once/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => expect(api.workspace).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("onboarding screen")).toBeInTheDocument();
   });
 
   // KLOX-161: the landing no longer captures an email — the hero CTA
