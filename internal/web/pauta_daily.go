@@ -91,7 +91,7 @@ func (s *Server) DailyPautaTick(ctx context.Context, pool *store.Pool, now time.
 	day := pautaDayOf(now)
 	buildDue := local.Hour() > pautaBuildHour ||
 		(local.Hour() == pautaBuildHour && local.Minute() >= pautaBuildMin)
-	mailDue := local.Hour() >= pautaMailHour
+	mailDue := s.d.DailyPautaMail && local.Hour() >= pautaMailHour
 	if !buildDue && !mailDue {
 		return
 	}
@@ -217,7 +217,7 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	link := base + "/claim?t=" + url.QueryEscape(token) + "&lang=pt"
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Bom dia! A pauta do seu radar **%s** de hoje está pronta:\n\n", pub.Name)
+	fmt.Fprintf(&b, "Bom dia! As notícias do seu radar **%s** de hoje estão prontas:\n\n", pub.Name)
 	for i, c := range cards {
 		if i >= pautaMailTop {
 			break
@@ -231,9 +231,9 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	if len(cards) > 0 {
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "[Abrir minha pauta](%s)\n\nO link assina este navegador na sua conta salva e vale por 72 horas.", link)
+	fmt.Fprintf(&b, "[Abrir minhas notícias](%s)\n\nO link assina este navegador na sua conta salva e vale por 72 horas.", link)
 
-	subject := "Sua pauta de hoje está pronta"
+	subject := "Suas notícias de hoje estão prontas"
 	md := b.String()
 	if _, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{owner},

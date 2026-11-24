@@ -57,7 +57,7 @@ describe("ComposeBox", () => {
     renderBox({ addSentence: add });
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "The thing happened." } });
     fireEvent.click(screen.getByRole("button", { name: "[1] Radar" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add to story" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to brief" }));
     await waitFor(() => expect(add).toHaveBeenCalledWith(3, "The thing happened.", [1], "fact"));
     // the box clears for the next paragraph
     await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(""));
@@ -67,7 +67,7 @@ describe("ComposeBox", () => {
     const add = vi.fn(async () => null);
     renderBox({ addSentence: add });
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Uncited claim." } });
-    fireEvent.click(screen.getByRole("button", { name: "Add to story" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to brief" }));
     await waitFor(() => expect(add).toHaveBeenCalledWith(3, "Uncited claim.", [], "fact"));
   });
 
@@ -75,7 +75,7 @@ describe("ComposeBox", () => {
     const add = vi.fn(async () => null);
     renderBox({ addSentence: add }, item({ sources: [item().sources[0]] }));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Typed freely." } });
-    fireEvent.click(screen.getByRole("button", { name: "Add to story" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to brief" }));
     await waitFor(() => expect(add).toHaveBeenCalledWith(3, "Typed freely.", [1], "fact"));
   });
 
@@ -84,7 +84,7 @@ describe("ComposeBox", () => {
     renderBox({ addSentence: add });
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "My read of it." } });
     fireEvent.click(screen.getByRole("checkbox"));
-    fireEvent.click(screen.getByRole("button", { name: "Add to story" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to brief" }));
     await waitFor(() => expect(add).toHaveBeenCalledWith(3, "My read of it.", [], "interpretation"));
   });
 
@@ -99,7 +99,7 @@ describe("ComposeBox", () => {
     const add = vi.fn(async () => "That source number does not exist for this item");
     renderBox({ addSentence: add });
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Keep me." } });
-    fireEvent.click(screen.getByRole("button", { name: "Add to story" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to brief" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("does not exist"));
     expect(screen.getByRole("textbox")).toHaveValue("Keep me.");
   });
@@ -107,6 +107,6 @@ describe("ComposeBox", () => {
   it("does not submit empty text", () => {
     const add = vi.fn(async () => null);
     renderBox({ addSentence: add });
-    expect(screen.getByRole("button", { name: "Add to story" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add to brief" })).toBeDisabled();
   });
 });

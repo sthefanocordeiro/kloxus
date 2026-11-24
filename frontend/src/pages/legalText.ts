@@ -141,7 +141,7 @@ export const legalDict = {
         {
           h: "O serviço",
           body: [
-            "O Kloxus lê as fontes públicas que você escolhe, organiza sugestões de pauta e registra de onde veio cada fato. A pesquisa pode contar com apoio de IA, mas o texto da newsletter é sempre escrito e aprovado por você. Nenhuma edição é enviada sem a sua aprovação explícita.",
+            "O Kloxus lê as fontes públicas que você escolhe, organiza as notícias do dia e registra de onde veio cada fato. A pesquisa pode contar com apoio de IA, mas o texto da newsletter é sempre escrito e aprovado por você. Nenhuma edição é enviada sem a sua aprovação explícita.",
           ],
         },
         {

@@ -30,6 +30,9 @@ import (
 // America/Sao_Paulo offset since Brazil dropped DST in 2019.
 var spZone = time.FixedZone("America/Sao_Paulo", -3*3600)
 
+// pautaMailOn is the DailyPautaMail setting pautaHosted builds with.
+var pautaMailOn = true
+
 func spAt(y int, mo time.Month, d, h, mi int) time.Time {
 	return time.Date(y, mo, d, h, mi, 0, 0, spZone)
 }
@@ -71,6 +74,7 @@ func pautaHosted(t *testing.T, mailer delivery.Sender) (*web.Server, *store.Pool
 		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir("")},
 		Monitor: sources.FakeMonitor{}, Scraper: sources.FakeScraper{},
 		Mailer: mailer, Seed: seed, Pool: pool,
+		DailyPautaMail: pautaMailOn,
 	})
 	return srv, pool, mgr
 }
@@ -212,6 +216,30 @@ func TestDailyPautaBuild(t *testing.T) {
 	}
 }
 
+// TestDailyPautaMailOffByDefault (KLOX-166 / D2): with the mail flag off
+// the sweep still builds the pauta but never mails a claimed radar.
+func TestDailyPautaMailOff(t *testing.T) {
+	ctx := context.Background()
+	pautaMailOn = false
+	t.Cleanup(func() { pautaMailOn = true })
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+	now := spAt(2026, 11, 24, 7, 5)
+	cookie, db := pautaVisitor(t, mgr)
+	pub := pautaRadar(t, srv, cookie)
+	owner := fmt.Sprintf("pauta-off-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	srv.DailyPautaTick(ctx, pool, now)
+	if row, _ := db.PautaDay(ctx, pub, spDayOf(now)); row == nil {
+		t.Fatal("pauta not built")
+	}
+	for _, m := range fake.messages() {
+		t.Fatalf("pauta mail sent while disabled: %v", m.Subject)
+	}
+}
+
 // TestDailyPautaMail: at 07:00 SP claimed radars get the one daily
 // "sua pauta de hoje está pronta" mail with a working sign-in link;
 // anonymous radars are skipped, and a second tick never re-sends.
@@ -254,7 +282,7 @@ func TestDailyPautaMail(t *testing.T) {
 		t.Fatalf("mails to %s = %d, want 1", owner, len(mine))
 	}
 	msg := mine[0]
-	if msg.Subject != "Sua pauta de hoje está pronta" || msg.Kind != "pauta" {
+	if msg.Subject != "Suas notícias de hoje estão prontas" || msg.Kind != "pauta" {
 		t.Fatalf("mail = %q kind %q", msg.Subject, msg.Kind)
 	}
 	if !strings.Contains(msg.Text, "/claim?t=") {

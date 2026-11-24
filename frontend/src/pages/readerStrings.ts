@@ -16,9 +16,9 @@ const en = {
   payExpired: "This checkout expired — start a new one.",
   alreadyPaid: "This address already has an active subscription.",
   // the /p/{slug} newsletter landing page (KLOX-102)
-  editionsArchive: "Pieces",
+  editionsArchive: "Briefs",
   latestBadge: "Latest",
-  noEditions: "No pieces out yet — subscribe to get the next one.",
+  noEditions: "No briefs published yet — subscribe to get the next one.",
   newsletterPaid: (price: string) => `${price} · paid sections are for subscribers.`,
 };
 
@@ -34,9 +34,9 @@ const pt: typeof en = {
   payExpired: "Este checkout expirou — comece um novo.",
   alreadyPaid: "Este endereço já tem uma assinatura ativa.",
   // a página pública /p/{slug} (KLOX-102)
-  editionsArchive: "Peças",
+  editionsArchive: "Pautas",
   latestBadge: "Mais recente",
-  noEditions: "Nenhuma peça publicada ainda — inscreva-se para receber a próxima.",
+  noEditions: "Nenhuma pauta publicada ainda — inscreva-se para receber a próxima.",
   newsletterPaid: (price: string) => `${price} · seções pagas são para assinantes.`,
 };
 

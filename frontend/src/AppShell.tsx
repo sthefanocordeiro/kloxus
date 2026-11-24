@@ -95,7 +95,7 @@ export function AppShell() {
   const pubBase = pubKey ? `/publications/${pubKey}` : "/publications";
   const editionTo = latest ? `/issues/${latest.id}` : pubBase;
 
-  // KLOXUS_PUBLISHING off (KLOX-122): Hoje · Peças · Radar · Configurações.
+  // KLOXUS_PUBLISHING off (KLOX-122): Hoje · Pautas · Radar · Configurações.
   // Readers, send and the outbox are not reachable from the nav.
   const items = publishing
     ? [

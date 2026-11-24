@@ -125,7 +125,7 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
     // resolving pubQ only fills in data — the nav targets stay identical
     d.resolve({ publication: pub, latest_issue: issue });
     await waitFor(() => {
-      for (const a of screen.getAllByRole("link", { name: "Current piece" })) {
+      for (const a of screen.getAllByRole("link", { name: "Current brief" })) {
         expect(a).toHaveAttribute("href", "/issues/7");
       }
     });
@@ -154,7 +154,7 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
   });
 });
 
-// KLOX-90 regression: with no edition yet the "Current piece" link
+// KLOX-90 regression: with no edition yet the "Current brief" link
 // points at pubBase, and NavLink's prefix match lit it on every
 // publication sub-page (plus /publications, where it collided with
 // "Issues"). Highlight now follows chrome.section only.
@@ -179,31 +179,31 @@ describe("AppShell nav highlight without an edition (KLOX-90)", () => {
     }
   };
 
-  it("does not glow 'Current piece' on a publication sub-page", async () => {
+  it("does not glow 'Current brief' on a publication sub-page", async () => {
     renderAt("/publications/42/sources");
     await screen.findByText("pub screen");
     await waitFor(() => expect(api.publication).toHaveBeenCalled());
-    await screen.findAllByRole("link", { name: "Current piece" });
+    await screen.findAllByRole("link", { name: "Current brief" });
 
-    expectInactive("Current piece");
-    expectInactive("Pieces");
+    expectInactive("Current brief");
+    expectInactive("Briefs");
     const sources = screen.getAllByRole("link", { name: "Sources" })[0];
     expect(sources.className).toContain("bg-teal-soft");
   });
 
-  it("glows only 'Pieces' on /publications", async () => {
+  it("glows only 'Briefs' on /publications", async () => {
     renderAt("/publications");
     await screen.findByText("pubs screen");
-    await screen.findAllByRole("link", { name: "Current piece" });
+    await screen.findAllByRole("link", { name: "Current brief" });
 
-    expectInactive("Current piece");
-    const issues = screen.getAllByRole("link", { name: "Pieces" })[0];
+    expectInactive("Current brief");
+    const issues = screen.getAllByRole("link", { name: "Briefs" })[0];
     expect(issues.className).toContain("bg-teal-soft");
   });
 });
 
 // KLOX-122: with publishing off (the default) the sidebar is exactly
-// Today · Pieces · Radar · Settings — no readers, outbox or send.
+// Today · Briefs · Radar · Settings — no readers, outbox or send.
 describe("AppShell nav with publishing off (KLOX-122)", () => {
   beforeEach(() => {
     vi.mocked(api.workspace).mockResolvedValue({
@@ -218,13 +218,13 @@ describe("AppShell nav with publishing off (KLOX-122)", () => {
     vi.mocked(api.publication).mockResolvedValue({ publication: pub });
   });
 
-  it("shows only Today, Pieces, Radar and Settings", async () => {
+  it("shows only Today, Briefs, Radar and Settings", async () => {
     renderAt("/publications/42/sources");
     await screen.findByText("pub screen");
     const side = screen.getAllByRole("navigation", { name: "Radar" })[0];
     expect(Array.from(side.querySelectorAll("a")).map((a) => a.textContent)).toEqual([
       "Today",
-      "Pieces",
+      "Briefs",
       "Radar",
       "Settings",
     ]);
