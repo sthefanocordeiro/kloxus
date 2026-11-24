@@ -104,8 +104,10 @@ func TestNoMintOnPageviews(t *testing.T) {
 	slug := pubs[0].Slug
 	wsq := "?ws=" + wsA.ID
 
-	// now clamp the create limit: any pageview mint would exhaust it
-	mgr.SetCreateLimit(1)
+	// now clamp the create limit to setup + one: the mint above already
+	// spent one create on this (IP, fingerprint) bucket, so any pageview
+	// mint below exhausts the allowance before the final real request
+	mgr.SetCreateLimit(2)
 
 	anon := []struct{ method, path string }{
 		{"GET", "/"},
@@ -143,7 +145,7 @@ func TestNoMintOnPageviews(t *testing.T) {
 	}
 
 	// and a real session request still mints — the pageviews above did
-	// not spend the single allowance
+	// not spend the remaining allowance
 	rr := serve("GET", "/api/v1/workspace", nil)
 	if rr.Code != 200 || !strings.Contains(rr.Header().Get("Set-Cookie"), workspace.CookieName) {
 		t.Fatalf("first real mint = %d (pageviews consumed the allowance?)", rr.Code)
@@ -217,9 +219,19 @@ func TestRateLimitedSurfaces(t *testing.T) {
 		t.Fatalf("page 429 body missing the pt copy: %s", shortBody(rr))
 	}
 
-	// exempt routes stay exempt even under an exhausted bucket
-	if rr := serve("GET", "/", "browser-A", "pt-BR", nil); rr.Code != 200 {
-		t.Fatalf("GET / under exhausted bucket = %d, want 200", rr.Code)
+	// exempt routes stay exempt even under an exhausted bucket: the
+	// request reaches appPage — 200 with a built frontend, 503 with the
+	// placeholder dist the tests run with — but never 429, never a
+	// Retry-After, never a session cookie
+	rr = serve("GET", "/", "browser-A", "pt-BR", nil)
+	if rr.Code != 200 && rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET / under exhausted bucket = %d, want 200 or 503", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") != "" {
+		t.Fatal("GET / under exhausted bucket set Retry-After — not exempt")
+	}
+	if sc := rr.Header().Get("Set-Cookie"); strings.Contains(sc, workspace.CookieName) {
+		t.Fatal("GET / under exhausted bucket minted a session")
 	}
 
 	// same address, another browser: independent bucket (CGNAT case)
