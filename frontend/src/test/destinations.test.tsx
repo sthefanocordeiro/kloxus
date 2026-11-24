@@ -54,6 +54,34 @@ describe("DestinationStep", () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  // KLOX-196: a failed save used to drop the body and go back to idle
+  it("keeps the edit queued and retries when a save fails", async () => {
+    const { save } = setup([mk(1, "linkedin", { body_text: "um" })]);
+    save.mockRejectedValueOnce(new Error("boom"));
+    const ta = await screen.findByRole("textbox", { name: /LinkedIn/ });
+    fireEvent.change(ta, { target: { value: "dois" } });
+    expect(await screen.findByText("Couldn't save — retrying")).toBeTruthy();
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    expect(save).toHaveBeenLastCalledWith(1, 1, "dois");
+    await screen.findByText("Saved");
+  });
+
+  it("saves on blur without waiting for the debounce", async () => {
+    const { save } = setup([mk(1, "linkedin", { body_text: "um" })]);
+    const ta = await screen.findByRole("textbox", { name: /LinkedIn/ });
+    fireEvent.change(ta, { target: { value: "dois" } });
+    fireEvent.blur(ta);
+    await waitFor(() => expect(save).toHaveBeenCalledWith(1, 1, "dois"), { timeout: 1000 });
+  });
+
+  it("flushes the pending edit when the editor unmounts", async () => {
+    const { save } = setup([mk(1, "linkedin", { body_text: "um" }), mk(2, "markdown", { body_md: "# md" })]);
+    const ta = await screen.findByRole("textbox", { name: /LinkedIn/ });
+    fireEvent.change(ta, { target: { value: "dois" } });
+    fireEvent.click(screen.getByRole("tab", { name: /Markdown/ }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(1, 1, "dois"), { timeout: 1000 });
+  });
+
   it("confirms removal in-app instead of window.confirm", async () => {
     const del = vi.spyOn(api, "renditionDelete").mockResolvedValue(undefined);
     const confirmSpy = vi.spyOn(window, "confirm");
