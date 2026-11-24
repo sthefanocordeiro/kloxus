@@ -91,6 +91,62 @@ func (db *DB) RefreshRendition(ctx context.Context, issueID, id int64, text, htm
 		 RETURNING `+renditionCols, db.ws, issueID, id, text, html, md, baseHash))
 }
 
+// IssueExports lists the formats the author already copied or
+// downloaded for an issue, oldest first (KLOX-184).
+func (db *DB) IssueExports(ctx context.Context, issueID int64) ([]string, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT format FROM issue_exports
+		 WHERE workspace_id = $1 AND issue_id = $2 ORDER BY exported_at, format`, db.ws, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// IssueExportsFor maps issue id → exported formats for a whole list in
+// one query (the Hoje pieces and the Pautas page read it per row).
+func (db *DB) IssueExportsFor(ctx context.Context, issueIDs []int64) (map[int64][]string, error) {
+	out := map[int64][]string{}
+	if len(issueIDs) == 0 {
+		return out, nil
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT issue_id, format FROM issue_exports
+		 WHERE workspace_id = $1 AND issue_id = ANY($2) ORDER BY exported_at, format`, db.ws, issueIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var f string
+		if err := rows.Scan(&id, &f); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], f)
+	}
+	return out, rows.Err()
+}
+
+// MarkIssueExport records that the author copied or downloaded one
+// format — the first export of a format keeps its timestamp.
+func (db *DB) MarkIssueExport(ctx context.Context, issueID int64, format string) error {
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO issue_exports (workspace_id, issue_id, format) VALUES ($1,$2,$3)
+		 ON CONFLICT (workspace_id, issue_id, format) DO NOTHING`,
+		db.ws, issueID, format)
+	return err
+}
+
 // DeleteRendition removes a rendition — sql.ErrNoRows when absent.
 func (db *DB) DeleteRendition(ctx context.Context, issueID, id int64) error {
 	res, err := db.ExecContext(ctx,

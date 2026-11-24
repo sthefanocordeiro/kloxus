@@ -58,4 +58,16 @@ describe("DestinationStep", () => {
     setup([mk(1, "markdown", { body_md: "# md", stale: true })]);
     expect(await screen.findByRole("button", { name: "Update this version?" })).toBeTruthy();
   });
+
+  // KLOX-184: copying or downloading marks the piece "Exportada".
+  it("marks the piece exported when the author copies", async () => {
+    const mark = vi.spyOn(api, "markExported").mockResolvedValue({ exported: true, formats: ["linkedin"] });
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+    });
+    setup([mk(1, "linkedin", { body_text: "oi" })]);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(mark).toHaveBeenCalledWith(1, "linkedin"));
+  });
 });

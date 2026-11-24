@@ -22,6 +22,7 @@ export const dict = {
       approved: "Ready",
       scheduled: "Scheduled",
       sent: "Exported",
+      exported: "Exported",
       blocked: "Blocked",
     },
     run: {
@@ -252,6 +253,7 @@ export const dict = {
       approved: "Pronta",
       scheduled: "Agendada",
       sent: "Exportada",
+      exported: "Exportada",
       blocked: "Bloqueada",
     },
     run: {

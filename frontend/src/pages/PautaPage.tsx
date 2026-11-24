@@ -21,7 +21,8 @@ export function IssueRedirect() {
     staleTime: 60_000,
   });
   if (!q.data && !q.isError) return null;
-  return <Navigate to={pautaPath(id, q.data?.status)} replace />;
+  // an exported pauta opens straight on the export step (KLOX-184)
+  return <Navigate to={pautaPath(id, q.data?.exported ? "exported" : q.data?.status)} replace />;
 }
 
 // /pauta/:id — Escrever (KLOX-168): the ticked news in the chosen order,

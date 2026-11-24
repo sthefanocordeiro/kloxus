@@ -225,9 +225,9 @@ func (db *DB) ResolveFlags(ctx context.Context, issueID int64, flags []Flag) err
 func (db *DB) GetIssueItem(ctx context.Context, id int64) (*IssueItem, error) {
 	var ii IssueItem
 	err := db.QueryRowContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section, ai_draft
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section, ai_draft, title
 		 FROM issue_items WHERE workspace_id = $1 AND id = $2`, db.ws, id).
-		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.AIDraft)
+		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.AIDraft, &ii.Title)
 	if err != nil {
 		return nil, err
 	}
@@ -325,9 +325,9 @@ func (db *DB) SetIssueBody(ctx context.Context, id int64, bodyMD string) error {
 func (db *DB) IssueItemByStory(ctx context.Context, issueID, storyID int64) (*IssueItem, error) {
 	var ii IssueItem
 	err := db.QueryRowContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section, title
 		 FROM issue_items WHERE workspace_id = $1 AND issue_id = $2 AND story_id = $3`, db.ws, issueID, storyID).
-		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection)
+		Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.Title)
 	if err != nil {
 		return nil, err
 	}

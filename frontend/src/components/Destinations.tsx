@@ -129,6 +129,21 @@ async function copyRich(html: string) {
   await navigator.clipboard.writeText(abs);
 }
 
+// KLOX-184: copying or downloading a rendition marks the piece
+// "Exportada" — fire-and-forget so a failed mark never breaks the copy.
+function useExportMark(issueID: number, format: RenditionFormat) {
+  const qc = useQueryClient();
+  return () => {
+    api.markExported(issueID, format)
+      .then(() => {
+        for (const key of ["issues", "today", "issue", "pauta"]) {
+          void qc.invalidateQueries({ queryKey: [key] });
+        }
+      })
+      .catch(() => {});
+  };
+}
+
 function useCopied() {
   const [done, setDone] = useState<string | null>(null);
   const timer = useRef<number>(0);
@@ -209,6 +224,7 @@ function PlainEditor({
   const [text, setText] = useState(r.body_text);
   const save = useAutosave(issueID, r.id, onSaved);
   const [copied, copy] = useCopied();
+  const markExported = useExportMark(issueID, r.format);
   const linkedin = r.format === "linkedin";
   const fold = linkedin ? foldIndex(text) : -1;
   const posts = useMemo(() => (linkedin ? [] : splitForX(text)), [linkedin, text]);
@@ -218,7 +234,7 @@ function PlainEditor({
       <div className="flex flex-wrap items-center gap-3">
         <Counter n={count} max={linkedin ? LINKEDIN_LIMIT : X_LIMIT} s={s} />
         <SaveBadge state={save.state} s={s} />
-        <Button size="sm" className="ml-auto" onClick={() => copy("text", () => copyText(text))}>
+        <Button size="sm" className="ml-auto" onClick={() => copy("text", async () => { await copyText(text); markExported(); })}>
           {copied === "text" ? s.copied : s.copy}
         </Button>
       </div>
@@ -246,7 +262,7 @@ function PlainEditor({
               <p className="whitespace-pre-wrap text-sm">{p}</p>
               <div className="mt-2 flex items-center gap-3">
                 <span className="text-xs tabular-nums text-muted">{s.chars(xCount(p), X_LIMIT)}</span>
-                <Button size="sm" variant="outline" className="ml-auto" onClick={() => copy(`p${i}`, () => copyText(p))}>
+                <Button size="sm" variant="outline" className="ml-auto" onClick={() => copy(`p${i}`, async () => { await copyText(p); markExported(); })}>
                   {copied === `p${i}` ? s.copied : s.copy}
                 </Button>
               </div>
@@ -266,15 +282,16 @@ function MarkdownEditor({
   const [md, setMd] = useState(r.body_md);
   const save = useAutosave(issueID, r.id, onSaved);
   const [copied, copy] = useCopied();
+  const markExported = useExportMark(issueID, r.format);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <SaveBadge state={save.state} s={s} />
         <div className="ml-auto flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => copy("md", () => copyText(md))}>
+          <Button size="sm" onClick={() => copy("md", async () => { await copyText(md); markExported(); })}>
             {copied === "md" ? s.copied : s.copy}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => download("peca.md", "text/markdown", md)}>
+          <Button size="sm" variant="outline" onClick={() => { download("peca.md", "text/markdown", md); markExported(); }}>
             {s.downloadMd}
           </Button>
         </div>
@@ -314,6 +331,7 @@ function HtmlEditor({
 }: { r: Rendition; issueID: number; s: Strings; onSaved: (r: Rendition) => void }) {
   const save = useAutosave(issueID, r.id, onSaved);
   const [copied, copy] = useCopied();
+  const markExported = useExportMark(issueID, r.format);
   const [err, setErr] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<Editor | null>(null);
@@ -395,17 +413,17 @@ function HtmlEditor({
       <div className="flex flex-wrap items-center gap-2">
         <SaveBadge state={save.state} s={s} />
         <div className="ml-auto flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => copy("rich", () => copyRich(html()))}>
+          <Button size="sm" onClick={() => copy("rich", async () => { await copyRich(html()); markExported(); })}>
             {copied === "rich" ? s.copied : s.copyRich}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => copy("html", () => copyText(absolutizeHtml(html(), window.location.origin)))}>
+          <Button size="sm" variant="outline" onClick={() => copy("html", async () => { await copyText(absolutizeHtml(html(), window.location.origin)); markExported(); })}>
             {copied === "html" ? s.copied : s.copyHtml}
           </Button>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => download("pauta.html", "text/html", standaloneHtml(
-              editor.getText().split("\n")[0] || "Pauta", absolutizeHtml(html(), window.location.origin)))}
+            onClick={() => { download("pauta.html", "text/html", standaloneHtml(
+              editor.getText().split("\n")[0] || "Pauta", absolutizeHtml(html(), window.location.origin))); markExported(); }}
           >
             {s.downloadHtml}
           </Button>

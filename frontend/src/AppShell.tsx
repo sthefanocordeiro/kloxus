@@ -98,7 +98,7 @@ export function AppShell() {
   // every pub-scoped link pointing at /publications/<word> until pubQ
   // resolved, a dead route that 404s and never recovers (KLOX-74).
   const pubBase = pubKey ? `/publications/${pubKey}` : "/publications";
-  const editionTo = latest ? pautaPath(latest.id, latest.status) : pubBase;
+  const editionTo = latest ? pautaPath(latest.id, latest.exported ? "exported" : latest.status) : pubBase;
 
   // KLOXUS_PUBLISHING off (KLOX-122): Hoje · Pautas · Radar · Configurações.
   // Readers, send and the outbox are not reachable from the nav.

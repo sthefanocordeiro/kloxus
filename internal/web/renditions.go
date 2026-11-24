@@ -169,6 +169,42 @@ func (s *Server) apiRenditionRefresh(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{"rendition": staleView([]store.Rendition{*rd}, doc)[0]})
 }
 
+// apiIssueExported records that the author copied or downloaded a
+// format (KLOX-184): the piece reads "Exportada" in the lists and the
+// formats that left are remembered. Kloxus never sees the paste — the
+// mark is the author's own click.
+func (s *Server) apiIssueExported(w http.ResponseWriter, r *http.Request) {
+	iss, err := s.apiIssueID(r)
+	if apiDBErr(w, r, err, "issue") {
+		return
+	}
+	var in struct {
+		Format string `json:"format"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if !validRenditionFormat(in.Format) {
+		apiErr(w, 400, "validation", "format must be linkedin, x, html or markdown")
+		return
+	}
+	if iss.Status != "approved" && iss.Status != "sent" && iss.Status != "scheduled" {
+		apiErr(w, 409, "blocked", "only a finished pauta can be exported",
+			apiReason{Code: "not_approved", Message: "issue is not approved",
+				Target: &apiTarget{Kind: "issue", Ref: strconv.FormatInt(iss.ID, 10)}})
+		return
+	}
+	if apiDBErr(w, r, db(r).MarkIssueExport(r.Context(), iss.ID, in.Format), "export") {
+		return
+	}
+	formats, err := db(r).IssueExports(r.Context(), iss.ID)
+	if apiDBErr(w, r, err, "export") {
+		return
+	}
+	apiJSON(w, 200, map[string]any{"exported": true, "formats": formats})
+}
+
 // apiRenditionDelete drops a rendition (the author unticks a destination).
 func (s *Server) apiRenditionDelete(w http.ResponseWriter, r *http.Request) {
 	rid, ok := renditionID(w, r)

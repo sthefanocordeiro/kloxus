@@ -3,9 +3,18 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiRequestError, pautaPath, type PautaCard, type PieceRow } from "../api";
 import { useT } from "../i18n";
+import { fmtDate } from "../lib/fmt";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card, SkeletonLine } from "../ui";
 import { useToday } from "./todayStrings";
+
+// Exported formats read as product names — same in pt and en.
+const FORMAT_LABEL: Record<string, string> = {
+  linkedin: "LinkedIn",
+  x: "X",
+  html: "HTML",
+  markdown: "Markdown",
+};
 
 // /publications/:id/today — Notícias de hoje (KLOX-168): the day's news
 // for the radar with a checkbox on every card and Sim/Não (training
@@ -13,7 +22,7 @@ import { useToday } from "./todayStrings";
 // opens the Escrever page. No model is called here.
 export function Today() {
   const { id } = useParams();
-  const { t } = useT();
+  const { t, lang } = useT();
   const s = useToday();
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -131,8 +140,20 @@ export function Today() {
       <ul className="mt-3 divide-y divide-line rounded border border-line bg-paper-raised">
         {pieces.map((p: PieceRow) => (
           <li key={p.id}>
-            <Link to={pautaPath(p.id, p.status)} className="flex items-center justify-between px-4 py-3 text-sm hover:bg-line/40">
-              <span className="font-medium">{s.piece.replace("{n}", String(p.number))}</span>
+            <Link to={pautaPath(p.id, p.status)} className="flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-line/40">
+              <span className="min-w-0">
+                <span className="block truncate font-medium">
+                  {p.title || s.piece.replace("{n}", String(p.number))}
+                </span>
+                <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
+                  {p.created_at && <span>{fmtDate(p.created_at, lang)}</span>}
+                  {(p.exported_formats ?? []).map((f) => (
+                    <span key={f} className="rounded-full bg-teal-soft px-1.5 py-0.5 text-[10px] font-medium text-teal">
+                      {FORMAT_LABEL[f] ?? f}
+                    </span>
+                  ))}
+                </span>
+              </span>
               <Badge tone={p.status === "draft" ? "warn" : "teal"}>{s.status[p.status]}</Badge>
             </Link>
           </li>

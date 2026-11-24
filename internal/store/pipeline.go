@@ -629,9 +629,15 @@ type IssueItem struct {
 	// the composer shows it as generated content until the author's
 	// first edit clears the flag.
 	AIDraft bool
+	// Title is the story's title snapshotted at lineup time (KLOX-184):
+	// stories are rebuilt every run and story_id goes dangling, so the
+	// lists name the pauta from this copy, not the stories row.
+	Title string
 }
 
-// CreateIssueItem inserts an issue_item row.
+// CreateIssueItem inserts an issue_item row. The title is copied off
+// the story at insert time — stories are rebuilt every run (D13), so
+// the pauta's name can't keep living there.
 func (db *DB) CreateIssueItem(ctx context.Context, ii IssueItem) (int64, error) {
 	if ii.Origin == "" {
 		ii.Origin = "phaseA"
@@ -641,16 +647,19 @@ func (db *DB) CreateIssueItem(ctx context.Context, ii IssueItem) (int64, error) 
 	}
 	var id int64
 	err := db.QueryRowContext(ctx,
-		`INSERT INTO issue_items (workspace_id, issue_id, story_id, section, score, reason, status, origin, position, orig_section)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-		db.ws, ii.IssueID, ii.StoryID, ii.Section, ii.Score, ii.Reason, ii.Status, ii.Origin, ii.Position, ii.OrigSection).Scan(&id)
+		`INSERT INTO issue_items (workspace_id, issue_id, story_id, section, score, reason, status, origin, position, orig_section, title)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+		         COALESCE(NULLIF($11,''),
+		                  (SELECT title FROM stories WHERE workspace_id = $1 AND id = $3), ''))
+		 RETURNING id`,
+		db.ws, ii.IssueID, ii.StoryID, ii.Section, ii.Score, ii.Reason, ii.Status, ii.Origin, ii.Position, ii.OrigSection, ii.Title).Scan(&id)
 	return id, err
 }
 
 // IssueItems lists an issue's items ordered by score descending.
 func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section, ai_draft
+		`SELECT id, issue_id, story_id, section, score, reason, status, origin, position, orig_section, ai_draft, title
 		 FROM issue_items WHERE workspace_id = $1 AND issue_id = $2 ORDER BY score DESC`, db.ws, issueID)
 	if err != nil {
 		return nil, err
@@ -659,7 +668,7 @@ func (db *DB) IssueItems(ctx context.Context, issueID int64) ([]IssueItem, error
 	var out []IssueItem
 	for rows.Next() {
 		var ii IssueItem
-		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.AIDraft); err != nil {
+		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.AIDraft, &ii.Title); err != nil {
 			return nil, err
 		}
 		out = append(out, ii)
@@ -681,7 +690,7 @@ type IssueItemDossier struct {
 // remote Postgres (KLOX-47).
 func (db *DB) IssueItemDossiers(ctx context.Context, issueID int64) ([]IssueItemDossier, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT ii.id, ii.issue_id, ii.story_id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft,
+		SELECT ii.id, ii.issue_id, ii.story_id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft, ii.title,
 		       COALESCE(d.json, '')
 		FROM issue_items ii
 		LEFT JOIN dossiers d ON d.workspace_id = ii.workspace_id AND d.issue_item_id = ii.id
@@ -694,7 +703,7 @@ func (db *DB) IssueItemDossiers(ctx context.Context, issueID int64) ([]IssueItem
 	for rows.Next() {
 		var p IssueItemDossier
 		ii := &p.Item
-		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.AIDraft, &p.Dossier); err != nil {
+		if err := rows.Scan(&ii.ID, &ii.IssueID, &ii.StoryID, &ii.Section, &ii.Score, &ii.Reason, &ii.Status, &ii.Origin, &ii.Position, &ii.OrigSection, &ii.AIDraft, &ii.Title, &p.Dossier); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -729,6 +738,7 @@ type bundlePair struct {
 	Position    int     `json:"position"`
 	OrigSection string  `json:"orig_section"`
 	AIDraft     bool    `json:"ai_draft"`
+	Title       string  `json:"title"`
 	Dossier     string  `json:"dossier"`
 }
 
@@ -769,7 +779,7 @@ func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundl
 		       (SELECT COALESCE(json_agg(row_to_json(x) ORDER BY x.score DESC), '[]')
 		        FROM (
 		            SELECT ii.id, ii.issue_id, ii.story_id, ii.section, ii.score, ii.reason,
-		                   ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft,
+		                   ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft, ii.title,
 		                   COALESCE(d.json, '') AS dossier
 		            FROM issue_items ii
 		            LEFT JOIN dossiers d ON d.workspace_id = ii.workspace_id AND d.issue_item_id = ii.id
@@ -826,6 +836,7 @@ func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundl
 				ID: p.ID, IssueID: p.IssueID, StoryID: p.StoryID, Section: p.Section,
 				Score: p.Score, Reason: p.Reason, Status: p.Status, Origin: p.Origin,
 				Position: p.Position, OrigSection: p.OrigSection, AIDraft: p.AIDraft,
+				Title: p.Title,
 			},
 			Dossier: p.Dossier,
 		})
@@ -969,7 +980,7 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 	rows, err := db.QueryContext(ctx, `
 		SELECT s.id, s.title, COALESCE(s.triage_score,0), COALESCE(s.triage_reason,''),
 		       (SELECT COUNT(*) FROM story_items si WHERE si.story_id = s.id), s.stage1_hidden,
-		       ii.id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft,
+		       ii.id, ii.section, ii.score, ii.reason, ii.status, ii.origin, ii.position, ii.orig_section, ii.ai_draft, ii.title,
 		       EXISTS(SELECT 1 FROM dossiers d WHERE d.workspace_id = $1 AND d.issue_item_id = ii.id)
 		FROM stories s
 		LEFT JOIN (
@@ -1007,11 +1018,12 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 			iiScore                 sql.NullFloat64
 			iiReason, iiOrigSec     sql.NullString
 			iiDraft                 sql.NullBool
+			iiTitle                 sql.NullString
 			dossier                 bool
 		)
 		if err := rows.Scan(&storyID, &title, &score, &reason, &members, &hidden,
 			&iiID, &iiSec, &iiScore, &iiReason, &iiStatus, &iiOrig, &iiPos, &iiOrigSec, &iiDraft,
-			&dossier); err != nil {
+			&iiTitle, &dossier); err != nil {
 			return nil, err
 		}
 		c := RankedCandidate{
@@ -1024,7 +1036,7 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 				Section: iiSec.String, Score: iiScore.Float64, Reason: iiReason.String,
 				Status: iiStatus.String, Origin: iiOrig.String,
 				Position: int(iiPos.Int64), OrigSection: iiOrigSec.String,
-				AIDraft: iiDraft.Bool,
+				AIDraft: iiDraft.Bool, Title: iiTitle.String,
 			}
 		}
 		out = append(out, c)

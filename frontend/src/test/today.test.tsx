@@ -92,6 +92,22 @@ describe("Hoje (KLOX-123)", () => {
     expect(screen.getByText("Draft")).toBeVisible();
   });
 
+  // KLOX-184: an exported piece reads "Exportada" with its content
+  // title, the day and the formats that left.
+  it("lists pieces with title, date and exported formats", async () => {
+    vi.mocked(api.today).mockResolvedValue(data({
+      pieces: [{
+        id: 4, number: 3, status: "exported",
+        title: "Fim da escala 6×1", created_at: "2026-11-24 10:00:00",
+        exported_formats: ["x"],
+      }],
+    }));
+    renderToday();
+    expect(await screen.findByText("Fim da escala 6×1")).toBeVisible();
+    expect(screen.getByText("Exported")).toBeVisible();
+    expect(screen.getByText("X")).toBeVisible();
+  });
+
   it("explains an empty pauta", async () => {
     vi.mocked(api.today).mockResolvedValue(data({ cards: [] }));
     renderToday();

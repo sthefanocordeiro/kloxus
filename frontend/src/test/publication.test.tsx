@@ -82,6 +82,25 @@ describe("PublicationPage pauta list (KLOX-179)", () => {
     expect(hrefs.some((h) => h?.startsWith("/issues/"))).toBe(false);
   });
 
+  // KLOX-184: the row names the pauta by its content, shows the date
+  // and the formats that left, and an exported one opens /export.
+  it("names the pauta and shows date plus exported formats", async () => {
+    vi.mocked(api.issues).mockResolvedValue([{
+      ...issue(9, "approved"),
+      title: "Fim da escala 6×1 no Brasil",
+      created_at: "2026-11-24 10:00:00",
+      exported: true,
+      exported_formats: ["linkedin", "markdown"],
+    }]);
+    renderPage();
+
+    expect(await screen.findByText("Fim da escala 6×1 no Brasil")).toBeInTheDocument();
+    expect(screen.getByText("LinkedIn")).toBeInTheDocument();
+    expect(screen.getByText("Markdown")).toBeInTheDocument();
+    expect(screen.getByText("Exported")).toBeInTheDocument();
+    expect(screen.getByRole("link").getAttribute("href")).toBe("/pauta/9/export");
+  });
+
   it("shows the empty copy when there are no pautas", async () => {
     vi.mocked(api.issues).mockResolvedValue([]);
     renderPage();
