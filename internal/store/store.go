@@ -656,6 +656,8 @@ func (db *DB) DeletePublication(ctx context.Context, pubID int64) error {
 		`DELETE FROM issue_items WHERE workspace_id = $1 AND issue_id IN (` + issuesOfPub + `)`,
 		`DELETE FROM jobs WHERE workspace_id = $1 AND kind = 'send_issue' AND ref_id IN (` + issuesOfPub + `)`,
 		`DELETE FROM runs WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM renditions WHERE workspace_id = $1 AND issue_id IN (`+issuesOfPub+`)`,
+		`DELETE FROM issue_exports WHERE workspace_id = $1 AND issue_id IN (`+issuesOfPub+`)`,
 		`DELETE FROM issues WHERE workspace_id = $1 AND publication_id = $2`,
 		`DELETE FROM story_items WHERE workspace_id = $1 AND (story_id IN (SELECT id FROM stories WHERE workspace_id = $1 AND publication_id = $2)
 			OR item_id IN (SELECT id FROM items WHERE workspace_id = $1 AND source_id IN (SELECT id FROM sources WHERE workspace_id = $1 AND publication_id = $2)))`,
@@ -668,6 +670,7 @@ func (db *DB) DeletePublication(ctx context.Context, pubID int64) error {
 		`DELETE FROM media WHERE workspace_id = $1 AND publication_id = $2`,
 		`DELETE FROM standard_messages WHERE workspace_id = $1 AND publication_id = $2`,
 		`DELETE FROM payment_accounts WHERE workspace_id = $1 AND publication_id = $2`,
+		`DELETE FROM pauta_days WHERE workspace_id = $1 AND publication_id = $2`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, db.ws, pubID); err != nil {
 			return err

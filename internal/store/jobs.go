@@ -104,7 +104,7 @@ func (db *DB) CancelJobs(ctx context.Context, kind string, refID int64) error {
 // RequeueStaleJobs.
 func (p *Pool) ClaimDueJobs(ctx context.Context, limit int) ([]Job, error) {
 	rows, err := p.db.QueryContext(ctx, `
-		UPDATE jobs SET status = 'running', attempts = attempts + 1
+		UPDATE jobs SET status = 'running', attempts = attempts + 1, claimed_at = $1
 		WHERE id IN (
 			SELECT id FROM jobs
 			WHERE status = 'pending' AND run_at <= $1
@@ -145,9 +145,12 @@ func (p *Pool) FailJob(ctx context.Context, jobID int64, cause error, maxAttempt
 }
 
 // RequeueStaleJobs returns jobs stuck in 'running' since before cutoff
-// (a dispatcher that died mid-claim) to pending.
+// (a dispatcher that died mid-claim) to pending. Staleness is measured
+// from claimed_at (set by ClaimDueJobs), not created_at: a job enqueued
+// long ago and claimed just now is not stale. Rows claimed before the
+// column existed carry '' and are treated as stale.
 func (p *Pool) RequeueStaleJobs(ctx context.Context, cutoff string) error {
 	_, err := p.db.ExecContext(ctx,
-		`UPDATE jobs SET status = 'pending' WHERE status = 'running' AND created_at < $1`, cutoff)
+		`UPDATE jobs SET status = 'pending' WHERE status = 'running' AND claimed_at < $1`, cutoff)
 	return err
 }
