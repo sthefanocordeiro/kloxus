@@ -274,13 +274,8 @@ test.describe(`klox-68 checks ${WIDTH}px`, () => {
 
     const visits: Array<[string, string]> = [
       ["edicoes", `/publications/${pubId}`],
-      ["leitores", `/publications/${pubId}/readers`],
       ["fontes", `/publications/${pubId}/sources`],
-      ["secoes", `/publications/${pubId}/sections`],
       ["configuracoes", `/publications/${pubId}/settings`],
-      ["template", `/publications/${pubId}/template`],
-      ["guia", `/publications/${pubId}/guide`],
-      ["outbox", `/publications/${pubId}/outbox`],
     ];
     for (const [name, to] of visits) {
       await page.goto(to);

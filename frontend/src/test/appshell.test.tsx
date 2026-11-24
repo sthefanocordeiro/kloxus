@@ -109,17 +109,17 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
     vi.mocked(api.publication).mockReturnValue(d.promise);
     renderAt("/publications/42/sources");
     await screen.findByText("pub screen");
-    await screen.findAllByRole("link", { name: "Readers" }); // workspace flag settled
+    await screen.findAllByRole("link", { name: "Settings" }); // workspace flag settled
 
     // pubQ is unresolved — the nav must already point at /publications/42
     expectNoDeadLinks();
     const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
-    for (const tail of ["readers", "sources", "sections", "settings"]) {
+    for (const tail of ["sources", "settings"]) {
       expect(hrefs).toContain(`/publications/42/${tail}`);
     }
-    expect(screen.getByRole("link", { name: "Sections" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
       "href",
-      "/publications/42/sections",
+      "/publications/42/settings",
     );
 
     // resolving pubQ only fills in data — the nav targets stay identical
@@ -129,9 +129,9 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
         expect(a).toHaveAttribute("href", "/issues/7");
       }
     });
-    expect(screen.getByRole("link", { name: "Sections" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
       "href",
-      "/publications/42/sections",
+      "/publications/42/settings",
     );
   });
 
@@ -144,9 +144,9 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
     // the issue fetch supplies the publication id one round-trip before
     // pubQ could — links go pub-scoped as soon as it lands
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "Sections" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
         "href",
-        "/publications/42/sections",
+        "/publications/42/settings",
       );
     });
     expect(api.publication).toHaveBeenCalledWith("42");

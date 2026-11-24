@@ -5,7 +5,6 @@ import { api, type PreviewItem } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card, SkeletonLine } from "../ui";
-import { StepCounter } from "../components/StepCounter";
 
 // /publications/:id/sources — the onboarding sources screen: suggested fixture
 // sources with real previews, add/remove, and confirm → auto first run.
@@ -99,7 +98,6 @@ export function SourcesPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      {!pub.data?.latest_issue && <StepCounter steps={t.steps.onboarding} current={3} />}
       <h1 className="mt-4 font-display text-2xl font-bold">
         {t.sourcesPage.title}
         {pub.data && <span className="ml-2 text-base font-normal text-muted">— {pub.data.publication.name}</span>}
@@ -252,13 +250,6 @@ export function SourcesPage() {
               {count === 0 && !loading ? t.sourcesPage.empty : count > 0 ? t.sourcesPage.selected(count) : null}
             </span>
             <div className="ml-auto flex items-center gap-3">
-              <Button
-                variant="outline"
-                disabled={confirm.isPending}
-                onClick={() => nav(`/publications/${id}/sections?onboarding=1`)}
-              >
-                {t.nav.back}
-              </Button>
               <Button disabled={count === 0 || confirm.isPending} onClick={() => confirm.mutate()}>
                 {confirm.isPending ? t.sourcesPage.confirming : t.create.next}
               </Button>

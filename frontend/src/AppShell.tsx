@@ -2,18 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, NavLink, Outlet, matchPath, useLocation } from "react-router-dom";
 import {
-  BookOpen,
   CircleUser,
   Ellipsis,
-  Inbox,
   Layers,
-  LayoutGrid,
-  LayoutTemplate,
   Newspaper,
   Plus,
   Rss,
   Settings,
-  Users,
 } from "lucide-react";
 import { api } from "./api";
 import { useT, type Lang, type T } from "./i18n";
@@ -57,12 +52,7 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
     const map: Record<string, [string, string]> = {
       today: [t.nav.today, "today"],
       sources: [t.sources, "sources"],
-      readers: [t.nav.readers, "readers"],
-      sections: [t.nav.sections, "sections"],
       settings: [t.nav.settings, "settings"],
-      template: [t.nav.template, "more"],
-      outbox: [t.outbox, "more"],
-      guide: [t.guide.title, "more"],
     };
     const [title, section] = map[tail] ?? [pubName ?? t.nav.editions, "editions"];
     const crumbs = tail === pub ? [] : [pubCrumb];
@@ -111,9 +101,7 @@ export function AppShell() {
     ? [
         { to: editionTo, label: t.nav.edition, icon: Newspaper, section: "edition", end: true },
         { to: pubBase, label: t.nav.editions, icon: Layers, section: "editions", end: true },
-        { to: `${pubBase}/readers`, label: t.nav.readers, icon: Users, section: "readers" },
         { to: `${pubBase}/sources`, label: t.sources, icon: Rss, section: "sources" },
-        { to: `${pubBase}/sections`, label: t.nav.sections, icon: LayoutGrid, section: "sections" },
         { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },
       ]
     : [
@@ -123,12 +111,10 @@ export function AppShell() {
         { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },
       ];
   // the Radar entry spans its configuration pages
-  const section = !publishing && ["sources", "sections", "more"].includes(chrome.section) ? "radar" : chrome.section;
+  const section = !publishing && ["sources"].includes(chrome.section) ? "radar" : chrome.section;
   const radarTabs = !publishing && section === "radar"
     ? [
         { to: `${pubBase}/sources`, label: t.sources, on: chrome.section === "sources" },
-        { to: `${pubBase}/sections`, label: t.nav.sections, on: chrome.section === "sections" },
-        { to: `${pubBase}/guide`, label: t.guide.title, on: chrome.section === "more" },
       ]
     : [];
 
@@ -393,11 +379,7 @@ function MoreMenu({ pubBase }: { pubBase: string }) {
   const { t, lang, setLang } = useT();
   const links = [
     { to: `${pubBase}/sources`, label: t.sources, icon: Rss },
-    { to: `${pubBase}/sections`, label: t.nav.sections, icon: LayoutGrid },
-    { to: `${pubBase}/template`, label: t.nav.template, icon: LayoutTemplate },
     { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings },
-    { to: `${pubBase}/guide`, label: t.guide.title, icon: BookOpen },
-    { to: `${pubBase}/outbox`, label: t.outbox, icon: Inbox },
     { to: "/publications", label: t.publications, icon: Layers },
   ];
   return (
