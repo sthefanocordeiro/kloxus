@@ -350,13 +350,13 @@ export const dict = {
       eyebrow: "For people who publish every day",
       headline: "The research is ready. The writing is yours.",
       subhead:
-        "Every day, the news that matters to your niche arrives organized, with sources and checkable facts. You pick the angle and write in your own voice, to publish where your audience is.",
+        "Every day, the news that matters to your niche arrives organized, with a link to every story. You pick the angle and write in your own voice, to publish where your audience is.",
       emailNote:
         "You confirm your email by magic link as you create your Radar — that is also how you get the launch invitation.",
       waitlistSupport:
         "No AI writing for you. Just the boring work of finding and checking what happened, done before you open the editor.",
       alreadyCreator: "Already a creator? Sign in",
-      shotAlt: "The Kloxus editor with a drafted piece and its sources",
+      shotAlt: "Kloxus: a news list with ticked boxes and the editor with two linked stories",
       howTitle: "How it works",
       howSteps: [
         { title: "Say what you cover", body: "Your topics and sources." },
@@ -364,12 +364,12 @@ export const dict = {
           title: "Pick today's story list",
           body: "Kloxus picks what matters. You choose.",
         },
-        { title: "Write and review", body: "With your sources beside you, in your own voice." },
+        { title: "Write and export", body: "For LinkedIn, X, your blog or newsletter." },
       ],
       cardsTitle: "Made for people who write",
       cards: [
         { title: "Your voice", body: "AI does the research. The words and the opinion are yours." },
-        { title: "Sources in sight", body: "Every fact shows where it came from." },
+        { title: "Link to the source", body: "Every story links to the original article." },
         { title: "A Radar that keeps watching", body: "Tell Kloxus your topic once; it keeps the lineup coming." },
       ],
       faqTitle: "Questions",
@@ -380,18 +380,18 @@ export const dict = {
         },
         {
           q: "Does the AI write for me?",
-          a: "No. It reads the sources, summarizes and organizes the facts. The writing is yours.",
+          a: "No. It finds and summarizes the news. The writing is yours.",
         },
         {
           q: "Which sources can I use?",
           a: "Sources that allow automated reading. We respect each site's rules.",
         },
         {
-          q: "Does the AI decide what goes in my piece?",
-          a: "Never. Kloxus only suggests — every piece waits for your review.",
+          q: "Who chooses the news?",
+          a: "You do, never the AI. Kloxus only suggests.",
         },
       ],
-      closingTitle: "Your next piece starts here.",
+      closingTitle: "Your next story list starts here.",
       footerProduct: "Product",
       footerLegal: "Legal",
       footerTerms: "Terms",
@@ -400,9 +400,9 @@ export const dict = {
       menu: "Menu",
       sourcesStrip: "Works with the feeds you already read",
       mock: {
-        docTitle: "The big one",
-        railTitle: "Today",
-        editorTitle: "Post editor",
+        railTitle: "Today's news",
+        editorTitle: "Your text",
+        editorHint: "Write here, in your own voice…",
         items: [
           "Regulator opens consultation on AI in hiring",
           "New handheld console surprises on battery life",
@@ -927,13 +927,13 @@ export const dict = {
       eyebrow: "Para quem publica todo dia",
       headline: "A pauta pronta. A escrita é sua.",
       subhead:
-        "Todo dia, as notícias que importam pro seu nicho chegam organizadas, com fonte e fatos checáveis. Você escolhe o ângulo e escreve do seu jeito, na sua voz. Pra publicar onde sua audiência está.",
+        "Todo dia, as notícias que importam pro seu nicho chegam organizadas, com o link de cada matéria. Você escolhe o ângulo e escreve do seu jeito, na sua voz. Pra publicar onde sua audiência está.",
       emailNote:
         "Você confirma seu e-mail por link mágico ao criar o Radar — é também assim que recebe o convite do lançamento.",
       waitlistSupport:
         "Sem IA escrevendo por você. Só o trabalho chato de achar e conferir o que aconteceu, feito antes de você abrir o editor.",
       alreadyCreator: "Já sou criador? Entrar",
-      shotAlt: "O editor do Kloxus com uma peça em rascunho e as fontes",
+      shotAlt: "O Kloxus: lista de notícias com caixas marcadas e o editor com duas notícias linkadas",
       howTitle: "Como funciona",
       howSteps: [
         { title: "Diga do que você fala", body: "Seus temas e fontes." },
@@ -941,12 +941,12 @@ export const dict = {
           title: "Escolha a pauta do dia",
           body: "O Kloxus separa o que vale. Você escolhe.",
         },
-        { title: "Escreva e revise", body: "Com as fontes ao lado, no seu tom." },
+        { title: "Escreva e exporte", body: "Para LinkedIn, X, blog ou newsletter." },
       ],
       cardsTitle: "Feito para quem escreve",
       cards: [
         { title: "Sua voz", body: "A IA pesquisa. O texto e a opinião são seus." },
-        { title: "Fontes à vista", body: "Cada fato mostra de onde veio." },
+        { title: "Link para a fonte", body: "Cada notícia leva à matéria original." },
         { title: "Um Radar que não para", body: "Diga o tema uma vez; o Kloxus mantém a pauta chegando." },
       ],
       faqTitle: "Perguntas",
@@ -957,18 +957,18 @@ export const dict = {
         },
         {
           q: "A IA escreve por mim?",
-          a: "Não. Ela lê as fontes, resume e organiza os fatos. A escrita é sua.",
+          a: "Não. Ela encontra e resume as notícias. A escrita é sua.",
         },
         {
           q: "Quais fontes posso usar?",
           a: "Fontes que permitem leitura automatizada. Respeitamos as regras de cada site.",
         },
         {
-          q: "A IA decide o que entra na minha peça?",
-          a: "Nunca. O Kloxus só sugere — toda peça espera sua revisão.",
+          q: "Quem escolhe as notícias?",
+          a: "Você escolhe, nunca a IA. O Kloxus só sugere.",
         },
       ],
-      closingTitle: "Sua próxima peça começa aqui.",
+      closingTitle: "Sua próxima pauta começa aqui.",
       footerProduct: "Produto",
       footerLegal: "Jurídico",
       footerTerms: "Termos",
@@ -977,9 +977,9 @@ export const dict = {
       menu: "Menu de navegação",
       sourcesStrip: "Funciona com os feeds que você já lê",
       mock: {
-        docTitle: "O destaque",
-        railTitle: "Hoje",
-        editorTitle: "Editor de post",
+        railTitle: "Notícias de hoje",
+        editorTitle: "Seu texto",
+        editorHint: "Escreva aqui, no seu tom…",
         items: [
           "Regulador abre consulta sobre IA em contratações",
           "Novo console portátil surpreende na bateria",

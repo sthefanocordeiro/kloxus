@@ -38,7 +38,8 @@ export function SiteCta({
 }) {
   const { t } = useT();
   const own = useSiteEntry();
-  const { start, create } = entry ?? own;
+  const { start, create, returning } = entry ?? own;
+  const nav = useNavigate();
   return (
     <Button
       size={size}
@@ -47,10 +48,11 @@ export function SiteCta({
       className={className}
       onClick={() => {
         onClick?.();
-        create();
+        if (returning) nav("/publications");
+        else create();
       }}
     >
-      {start.isPending ? t.landing.starting : t.landing.cta}
+      {start.isPending ? t.landing.starting : returning ? t.landing.navDashboard : t.landing.cta}
     </Button>
   );
 }
