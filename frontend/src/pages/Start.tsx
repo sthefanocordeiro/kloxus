@@ -122,8 +122,10 @@ export function Start() {
                     aria-pressed={on}
                     onClick={() => setNiches(on ? niches.filter((n) => n !== k) : [...niches, k])}
                     className={
+                      // KLOX-187: the selected chip darkens further on
+                      // hover — a lightening hover read as "unchecked".
                       "rounded-full border px-3 py-1 text-sm transition-colors " +
-                      (on ? "border-teal bg-teal font-semibold text-white shadow-sm" : "border-line text-muted hover:border-ink/40")
+                      (on ? "border-teal bg-teal font-semibold text-white shadow-sm hover:bg-ink-soft" : "border-line text-muted hover:border-ink/40")
                     }
                   >
                     {s.niches[k]}

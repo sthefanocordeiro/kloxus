@@ -21,6 +21,22 @@ export function fmtDate(iso: string, lang: Lang, withTime = false): string {
   }).format(d);
 }
 
+// Story dates read like Hoje's cards (KLOX-187): "há 13 h" under a
+// day old, "24/11" after that — never the raw ISO timestamp.
+export function fmtStoryDate(iso: string, lang: Lang): string {
+  const d = parseAPITime(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const hours = (Date.now() - d.getTime()) / 3_600_000;
+  if (hours >= 0 && hours < 24) {
+    const n = Math.max(1, Math.round(hours));
+    return lang === "pt" ? `há ${n} h` : `${n} h ago`;
+  }
+  return new Intl.DateTimeFormat(lang === "pt" ? "pt-BR" : "en-US", {
+    day: "2-digit",
+    month: "2-digit",
+  }).format(d);
+}
+
 // Run-cost formatting: cents for normal values, sub-cent precision
 // under $0.01 so a cheap run never reads "$0.00".
 export function fmtUSD(v: number): string {

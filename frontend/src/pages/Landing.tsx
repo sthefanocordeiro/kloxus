@@ -36,7 +36,11 @@ export function Landing() {
             <div className="mt-7">
               <SiteCta size="lg" entry={entry} />
             </div>
-            <p className="mt-3 max-w-xl text-sm text-paper/70">{t.landing.emailNote}</p>
+            {/* KLOX-187: a returning visitor already has a Radar — the
+                magic-link pitch only makes sense before one exists. */}
+            {!entry.returning && (
+              <p className="mt-3 max-w-xl text-sm text-paper/70">{t.landing.emailNote}</p>
+            )}
             <p className="mt-2 max-w-xl text-sm text-paper/70">{t.landing.waitlistSupport}</p>
             <p className="mt-5 text-sm">
               <button
