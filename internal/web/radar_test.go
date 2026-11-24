@@ -127,10 +127,19 @@ func TestRadarNameTooLong(t *testing.T) {
 	}
 }
 
-func TestLogoutRequiresClaim(t *testing.T) {
-	srv, _ := emptyServer(t)
+func TestLogout(t *testing.T) {
+	srv, _, _, _ := testServer(t, false, nil)
 	rr := apiCall(t, srv, "POST", "/api/v1/logout", map[string]any{})
 	if rr.Code == 200 {
 		t.Fatalf("unclaimed logout = %d, want refusal", rr.Code)
+	}
+
+	srv, _ = emptyServer(t) // claimed workspace
+	rr = apiCall(t, srv, "POST", "/api/v1/logout", map[string]any{})
+	if rr.Code != 200 {
+		t.Fatalf("claimed logout = %d %s", rr.Code, rr.Body.String())
+	}
+	if c := rr.Header().Get("Set-Cookie"); !strings.Contains(c, "kloxus_ws=") || !strings.Contains(c, "Max-Age=0") {
+		t.Fatalf("logout cookie = %q, want an expired kloxus_ws", c)
 	}
 }
