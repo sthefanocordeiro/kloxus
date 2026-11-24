@@ -194,6 +194,12 @@ func classifyKind(titleFolded string, categories []string) string {
 		}
 	}
 	switch {
+	case containsTerm(titleFolded, "review"), containsTerm(titleFolded, "testamos"),
+		containsTerm(titleFolded, "hands-on"), containsTerm(titleFolded, "primeiras impressoes"):
+		return "review"
+	case containsTerm(titleFolded, "tutorial"), containsTerm(titleFolded, "passo a passo"),
+		containsTerm(titleFolded, "como fazer"), containsTerm(titleFolded, "como configurar"):
+		return "tutorial"
 	case containsTerm(titleFolded, "melhores") || containsTerm(titleFolded, "melhor "),
 		containsTerm(titleFolded, "guia"), containsTerm(titleFolded, "lista"),
 		containsTerm(titleFolded, "onde assistir"), containsTerm(titleFolded, "como assistir"):

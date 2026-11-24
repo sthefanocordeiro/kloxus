@@ -101,3 +101,16 @@ func TestDetectLanguage(t *testing.T) {
 		t.Fatal("short text should be undecidable")
 	}
 }
+
+func TestClassifyReviewAndTutorialKinds(t *testing.T) {
+	for title, want := range map[string]string{
+		"Review: o novo celular da Marca testado por duas semanas": "review",
+		"Tutorial: como fazer backup no WhatsApp":                   "tutorial",
+		"Passo a passo para declarar o imposto":                     "tutorial",
+		"Selic sobe e mercado reage":                                "noticia",
+	} {
+		if got := Classify(title, "texto", nil).Kind; got != want {
+			t.Errorf("%q: kind=%q want %q", title, got, want)
+		}
+	}
+}

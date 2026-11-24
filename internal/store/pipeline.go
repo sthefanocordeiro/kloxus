@@ -132,7 +132,7 @@ func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, err
 		      SELECT 1 FROM item_enrichment e
 		      WHERE e.item_id = i.id
 		        AND (e.promotional OR e.ai_kind IN
-		             ('lista','publieditorial','entretenimento','esporte','efemeride')))
+		             ('lista','publieditorial','entretenimento','esporte','efemeride','tutorial','review')))
 		) i
 		LEFT JOIN sources s ON s.id = i.source_id
 		LEFT JOIN source_catalog c ON c.id = i.catalog_id
@@ -990,7 +990,7 @@ func (db *DB) RankedCandidates(ctx context.Context, pubID, issueID int64) ([]Ran
 		        SELECT 1 FROM item_enrichment e
 		        WHERE e.item_id = it2.id
 		          AND (e.promotional OR e.ai_kind IN
-		               ('lista','publieditorial','entretenimento','esporte','efemeride'))))
+		               ('lista','publieditorial','entretenimento','esporte','efemeride','tutorial','review'))))
 		ORDER BY COALESCE(s.triage_score,0) DESC, s.id`, db.ws, pubID, issueID)
 	if err != nil {
 		return nil, err
@@ -1055,7 +1055,7 @@ func (db *DB) UnusedCandidateCount(ctx context.Context, pubID int64) (int, error
 		        SELECT 1 FROM item_enrichment e
 		        WHERE e.item_id = it2.id
 		          AND (e.promotional OR e.ai_kind IN
-		               ('lista','publieditorial','entretenimento','esporte','efemeride'))))`,
+		               ('lista','publieditorial','entretenimento','esporte','efemeride','tutorial','review'))))`,
 		db.ws, pubID).Scan(&n)
 	return n, err
 }

@@ -37,6 +37,7 @@ var EnrichmentKinds = []struct {
 	{"tutorial", "tutorial"},
 	{"forum", "pergunta de fórum"},
 	{"lancamento", "lançamento de produto"},
+	{"review", "review/teste de produto"},
 	{"lista", "lista/guia de compra"},
 	{"publieditorial", "publieditorial/promoção"},
 	{"entretenimento", "entretenimento"},
