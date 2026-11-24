@@ -34,11 +34,14 @@ func TestPautaFlow(t *testing.T) {
 		t.Fatalf("order = %v", es)
 	}
 
-	// write text, reorder, add a third, opening
+	// write text, reorder, add a third, opening — the first entry is the
+	// KLOX-181 regression case: a '. ' boundary mid-line, a blank-line
+	// paragraph break and an emoji must all read back verbatim
+	const verbatim = "Alta, mas com ressalvas. Vale ler os detalhes. ✅\nlinha dois\n\noutro parágrafo"
 	rr = apiCall(t, srv, "PUT", "/api/v1/issues/"+iid+"/pauta", map[string]any{
 		"opening": "Bom dia, leitor",
 		"entries": []any{
-			map[string]any{"story_id": s1, "text": "Primeira nota.\nSegunda linha # com hash"},
+			map[string]any{"story_id": s1, "text": verbatim + "\nSegunda linha # com hash"},
 			map[string]any{"story_id": s3, "text": ""},
 			map[string]any{"story_id": s2, "text": "Texto da terceira [2]"},
 		},
@@ -51,7 +54,7 @@ func TestPautaFlow(t *testing.T) {
 	if len(es) != 3 || es[0].(map[string]any)["story_id"] != s1 || es[1].(map[string]any)["story_id"] != s3 {
 		t.Fatalf("order after save = %v", es)
 	}
-	if got := es[0].(map[string]any)["text"]; got != "Primeira nota.\nSegunda linha # com hash" {
+	if got := es[0].(map[string]any)["text"]; got != verbatim+"\nSegunda linha # com hash" {
 		t.Fatalf("text = %q", got)
 	}
 	if p["opening"] != "Bom dia, leitor" {
@@ -90,12 +93,29 @@ func TestPautaFlow(t *testing.T) {
 		t.Fatalf("missing_text = %v", m)
 	}
 
-	// export opens and carries the text
-	rr = apiCall(t, srv, "POST", "/api/v1/issues/"+iid+"/renditions", map[string]any{"format": "markdown"})
-	if rr.Code != 201 {
-		t.Fatalf("rendition = %d %s", rr.Code, rr.Body.String())
+	// export opens and carries the text — verbatim in every format. The
+	// verbatim save must land before the forks: a repeat fork returns
+	// the existing rendition untouched, and a save re-drafts the issue
+	// so it needs a second finish
+	rr = apiCall(t, srv, "PUT", "/api/v1/issues/"+iid+"/pauta", map[string]any{
+		"entries": []any{map[string]any{"story_id": s1, "text": verbatim}},
+	})
+	if rr.Code != 200 {
+		t.Fatalf("save4 = %d %s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "Só esta.") {
-		t.Fatalf("export lost the text: %s", rr.Body.String())
+	rr = apiCall(t, srv, "POST", "/api/v1/issues/"+iid+"/pauta/finish", map[string]any{})
+	if rr.Code != 200 {
+		t.Fatalf("finish2 = %d %s", rr.Code, rr.Body.String())
+	}
+	for _, format := range []string{"linkedin", "x", "html", "markdown"} {
+		rr = apiCall(t, srv, "POST", "/api/v1/issues/"+iid+"/renditions", map[string]any{"format": format})
+		if rr.Code != 201 {
+			t.Fatalf("rendition %s = %d %s", format, rr.Code, rr.Body.String())
+		}
+		body := apiJSON(t, rr)["rendition"].(map[string]any)
+		got := body["body_text"].(string) + body["body_html"].(string) + body["body_md"].(string)
+		if !strings.Contains(got, "com ressalvas. Vale ler os detalhes.") {
+			t.Fatalf("%s lost the '. ' boundary: %s", format, got)
+		}
 	}
 }

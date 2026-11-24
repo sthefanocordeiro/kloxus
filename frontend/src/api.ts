@@ -279,6 +279,10 @@ export interface DocItem {
   ref: number;
   issue_item_id: number;
   headline: string;
+  /** KLOX-181: the item's written text as one field, exactly as the
+   * author typed it — the sentence-split model drops the period at
+   * every '. ' boundary, so pauta entries and exports use this. */
+  text?: string;
   sentences: DocSentence[];
   sources: { ref: number; name: string; url: string; item_id: number; excerpt: string; date: string }[];
   flags?: { sentence: string; note: string }[];
