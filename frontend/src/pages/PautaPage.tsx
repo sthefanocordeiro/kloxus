@@ -249,7 +249,9 @@ export function PautaExport() {
   });
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-6">
-      <h1 className="mt-4 font-display text-2xl font-bold">{s.exportTitle}</h1>
+      {/* the shell topbar already renders this page's h1 ("Export") —
+          a second heading with the same name breaks role queries */}
+      <p className="mt-4 font-display text-2xl font-bold">{s.exportTitle}</p>
       {missing > 0 && (
         <p className="mt-3 rounded border border-warn/40 bg-warn-soft p-3 text-sm" role="status">
           {(missing === 1 ? s.missing1 : s.missingN).replace("{n}", String(missing))}
