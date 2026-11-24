@@ -460,9 +460,11 @@ else
 			console.log(m ? m[0] : "");' "$RESP")"
 		[ -n "$CLAIM" ] || die "claim link not found in the outbox email"
 		# Two-step claim: the emailed link lands a confirm page (a scanner's
-		# prefetch must not spend the token); its explicit POST claims.
+		# prefetch must not spend the token); its explicit POST claims. The
+		# page copy changes with the product language — assert the
+		# token-bound form, not the words on it (KLOX-173).
 		[ "$(req GET "$CLAIM")" = "200" ] || die "claim page failed: $(cat "$RESP")"
-		grep -q 'Confirm claim' "$RESP" || die "claim page is not the confirm form"
+		grep -q 'action="/claim?t=' "$RESP" || die "claim page is not the confirm form"
 		[ "$(req POST "$CLAIM")" = "303" ] || die "claim confirm failed: $(cat "$RESP")"
 		say "workspace claimed via magic link"
 		[ "$(req POST "/api/v1/issues/$IID/send" '{"audience":"readers","when":"now"}')" = "200" ] \

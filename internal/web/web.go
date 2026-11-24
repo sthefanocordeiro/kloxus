@@ -24,6 +24,11 @@ import (
 
 // Deps wires the server's collaborators (demo or real implementations).
 type Deps struct {
+	// DailyPautaMail turns the 07:00 "pauta pronta" mail on. Off by
+	// default (D2, KLOX-166): the user opens the app to see the pauta;
+	// the 06:30 build still runs. Transactional mail (magic links) is
+	// unaffected.
+	DailyPautaMail bool
 	WS      *workspace.Manager
 	Cfg     *config.Config
 	Fetcher sources.Fetcher

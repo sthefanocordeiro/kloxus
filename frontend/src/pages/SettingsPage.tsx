@@ -1,13 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { BookOpen, Inbox, LayoutTemplate } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
 import { api, type Publication } from "../api";
 import { useT } from "../i18n";
 import { usePublishing } from "../lib/publishing";
 import { errText } from "../lib/errors";
 import { Button, Card } from "../ui";
-import { StepCounter } from "../components/StepCounter";
 import { KDialog } from "../ui-overlays";
 
 // Configurações (§3.1, KLOX-65): the publication's editorial identity,
@@ -18,8 +16,6 @@ export function SettingsPage() {
   const publishing = usePublishing();
   const { id } = useParams();
   const nav = useNavigate();
-  // onboarding round-trip (KLOX-113): Seções → Voltar lands here as step 1
-  const onboarding = useSearchParams()[0].get("onboarding") === "1";
   const qc = useQueryClient();
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id!) });
   const [form, setForm] = useState<Publication | null>(null);
@@ -35,17 +31,13 @@ export function SettingsPage() {
       api.updatePublication(id!, {
         name: form!.name,
         topic: form!.topic,
-        audience: form!.audience,
-        editorial_line: form!.editorial_line,
         reject_terms: form!.reject_terms,
-        tone: form!.tone,
         paywall: form!.paywall,
       }),
     onSuccess: () => {
       setSaved(true);
       qc.invalidateQueries({ queryKey: ["publication", id] });
       qc.invalidateQueries({ queryKey: ["publications"] });
-      if (onboarding) nav(`/publications/${id}/sections?onboarding=1`);
     },
   });
 
@@ -67,14 +59,10 @@ export function SettingsPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-6">
-      {onboarding && <StepCounter steps={t.steps.onboarding} current={1} />}
       <Card className="p-5">
         <Field label={t.settingsPage.name} value={form.name} onChange={(v) => set("name", v)} />
         <Field label={t.settingsPage.topic} value={form.topic} onChange={(v) => set("topic", v)} />
-        <Field label={t.settingsPage.audience} value={form.audience} onChange={(v) => set("audience", v)} />
-        <Field label={t.settingsPage.editorialLine} value={form.editorial_line} onChange={(v) => set("editorial_line", v)} area />
         <Field label={t.settingsPage.rejectTerms} value={form.reject_terms ?? ""} onChange={(v) => set("reject_terms", v)} hint={t.settingsPage.rejectTermsHint} />
-        <Field label={t.settingsPage.tone} value={form.tone} onChange={(v) => set("tone", v)} />
         {publishing && form.paywall.enabled && (
           <Field
             label={t.settingsPage.price}
@@ -90,28 +78,9 @@ export function SettingsPage() {
         {saved && <p className="mt-3 text-xs font-medium text-teal">{t.settingsPage.saved}</p>}
         <div className="mt-5">
           <Button disabled={save.isPending || !form.name.trim()} onClick={() => save.mutate()}>
-            {save.isPending ? t.settingsPage.saving : onboarding ? t.create.next : t.settingsPage.save}
+            {save.isPending ? t.settingsPage.saving : t.settingsPage.save}
           </Button>
         </div>
-      </Card>
-
-      <Card className="flex flex-wrap gap-4 p-5">
-        {publishing && (
-          <Link to={`/publications/${p.id}/template`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
-            <LayoutTemplate size={15} aria-hidden />
-            {t.templatePage.title}
-          </Link>
-        )}
-        <Link to={`/publications/${p.id}/guide`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
-          <BookOpen size={15} aria-hidden />
-          {t.settingsPage.guideLink}
-        </Link>
-        {publishing && (
-          <Link to={`/publications/${p.id}/outbox`} className="inline-flex items-center gap-2 text-sm font-medium text-teal hover:underline">
-            <Inbox size={15} aria-hidden />
-            {t.settingsPage.outboxLink}
-          </Link>
-        )}
       </Card>
 
       <Card className="border-danger/40 p-5">

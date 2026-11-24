@@ -5,10 +5,11 @@ import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Button } from "../ui";
 
-// "Salvar com seu e-mail" (§3.4): the single place the app asks for the
-// creator's address — inside the account menu and inside the send flow
-// when a real send needs it. It mails one magic link; outbox mode
-// returns the link itself so the demo can open it.
+// The email gate (§3.4): the single place the app asks for the
+// creator's address — inside the account menu, at the start of
+// onboarding and inside the send flow when a real send needs it. It
+// mails one magic link; outbox mode returns the link itself so the
+// demo can open it.
 export function ClaimEmail({ onDone }: { onDone?: () => void }) {
   const { t, lang } = useT();
   const qc = useQueryClient();

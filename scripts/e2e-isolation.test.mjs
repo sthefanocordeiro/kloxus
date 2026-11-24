@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveMode, assertTransport, appEnv, FAKE_ORIGIN } from "./e2e-harness.mjs";
+import { resolveMode, assertTransport, assertLiveSafe, liveSafe, appEnv, FAKE_ORIGIN } from "./e2e-harness.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(here, "..");
@@ -54,6 +54,63 @@ test("conflicting E2E flags are a hard error, never a silent precedence", () => 
   assert.equal(resolveMode({ E2E_BASE_URL: "https://kloxus.fly.dev" }), "hosted");
   assert.equal(resolveMode({ E2E_LIVE_MAIL: "1" }), "fake-live");
   assert.equal(resolveMode({}), "local");
+});
+
+test("E2E_LIVE_SAFE is hosted-only and never combines with fake-live", () => {
+  assert.throws(
+    () => resolveMode({ E2E_BASE_URL: "https://kloxus.fly.dev", E2E_LIVE_MAIL: "1", E2E_LIVE_SAFE: "1" }),
+    /mutually exclusive/,
+  );
+  assert.throws(
+    () => resolveMode({ E2E_LIVE_MAIL: "1", E2E_LIVE_SAFE: "1" }),
+    /mutually exclusive/,
+  );
+  assert.throws(() => resolveMode({ E2E_LIVE_SAFE: "1" }), /needs E2E_BASE_URL/);
+  assert.equal(
+    resolveMode({ E2E_BASE_URL: "https://kloxus.fly.dev", E2E_LIVE_SAFE: "1" }),
+    "hosted",
+  );
+  assert.equal(liveSafe({ E2E_LIVE_SAFE: "1" }), true);
+  assert.equal(liveSafe({ E2E_LIVE_SAFE: "0" }), false);
+  assert.equal(liveSafe({}), false);
+});
+
+test("live-safe preflight accepts only the real live posture", () => {
+  const real = {
+    hosted: true,
+    mode: "real",
+    llm_mode: "auto",
+    mail: "live",
+    mail_transport: "resend",
+    claimed: false,
+    mail_webhook: "configured",
+  };
+  assert.doesNotThrow(() => assertLiveSafe(real));
+  assert.doesNotThrow(() => assertLiveSafe({ ...real, llm_mode: "off" }));
+  // every deviation fails closed — missing fields, wrong mode, outbox
+  // target, claimed workspace, non-resend transport, dead webhook,
+  // unknown llm posture, null
+  for (const ws of [
+    { ...real, hosted: false },
+    { ...real, mode: "demo" },
+    { ...real, mail: "outbox", mail_transport: "outbox" },
+    { ...real, mail_transport: "custom" },
+    { ...real, mail_transport: "synthetic" },
+    { ...real, claimed: true },
+    { ...real, mail_webhook: "unconfigured" },
+    { ...real, mail_webhook: "n/a" },
+    { ...real, llm_mode: "sandbox" },
+    { hosted: true, mode: "real" },
+    {},
+    null,
+  ]) {
+    assert.throws(() => assertLiveSafe(ws), /live-safe preflight/);
+  }
+  // the regular transport guard still refuses the very same posture —
+  // the flag widens nothing outside the read-only subset
+  for (const mode of ["hosted", "local", "fake-live"]) {
+    assert.throws(() => assertTransport(real, mode), /preflight/);
+  }
 });
 
 test("app env never carries inherited credentials", () => {

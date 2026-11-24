@@ -129,12 +129,12 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := s.publicBase(r) + "/claim?t=" + url.QueryEscape(token)
-	subject, md := "Save your Kloxus with this email",
-		fmt.Sprintf("Confirm this email to keep your Kloxus.\n\n[Save my Kloxus](%s)\n\nThe link works once and expires in 15 minutes.", link)
+	subject, md := "Confirm your email to create your Radar",
+		fmt.Sprintf("Confirm this email to create your Radar.\n\n[Create my Radar](%s)\n\nThe link works once and expires in 15 minutes.", link)
 	if ptLang(in.Lang) {
 		link += "&lang=pt"
-		subject, md = "Salve o seu Kloxus com este e-mail",
-			fmt.Sprintf("Confirme este e-mail para guardar o seu Kloxus.\n\n[Guardar o meu Kloxus](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
+		subject, md = "Confirme seu e-mail para criar seu Radar",
+			fmt.Sprintf("Confirme este e-mail para criar seu Radar.\n\n[Criar meu Radar](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
 	}
 	res, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{email},
@@ -200,24 +200,43 @@ func (s *Server) claimPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// the URL carries a credential — don't let a cache keep or replay it
 	w.Header().Set("Cache-Control", "no-store")
-	title, blurb, button, note := "Save your Kloxus",
+	title, blurb, button, note := "Confirm your email to create your Radar",
 		"Confirming signs this browser in as the owner (%s).",
-		"Confirm",
+		"Confirm and continue",
 		"The link works once and expires 15 minutes after it was sent."
 	if ptLang(lang) {
-		title, blurb, button, note = "Salve o seu Kloxus",
+		title, blurb, button, note = "Confirme seu e-mail para criar seu Radar",
 			"Ao confirmar, este navegador fica associado ao e-mail %s.",
-			"Confirmar",
+			"Confirmar e continuar",
 			"O link funciona uma vez e expira 15 minutos depois de enviado."
 	}
-	fmt.Fprintf(w, `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:34em;margin:4em auto">`+
-		`<h1>%s</h1><p>`+blurb+`</p>`+
+	fmt.Fprintf(w, claimShell(lang, `<h1 style="font-size:1.5rem;line-height:1.25;margin:0 0 .75rem">%s</h1>`+
+		`<p style="margin:0 0 1.5rem;color:#111814">`+blurb+`</p>`+
 		`<form method="POST" action="/claim?t=%s&amp;lang=%s"><button type="submit" `+
-		`style="font-size:1em;padding:.6em 1.4em;cursor:pointer">%s</button></form>`+
-		`<p style="color:#777;font-size:.85em">%s</p></body></html>`,
+		`style="font:inherit;font-weight:600;padding:.7em 1.5em;border:0;border-radius:.6rem;`+
+		`background:#0e3b2e;color:#fff;cursor:pointer">%s</button></form>`+
+		`<p style="margin:1.5rem 0 0;color:#5b6660;font-size:.85rem">%s</p>`),
 		html.EscapeString(title), html.EscapeString(email),
 		url.QueryEscape(token), url.QueryEscape(lang),
 		html.EscapeString(button), html.EscapeString(note))
+}
+
+// claimShell wraps the claim pages in the app's look (surface
+// background, white card, brand teal) — the page is server-rendered, so
+// it carries its own inline styles instead of the SPA stylesheet.
+// body is a Printf template; callers escape their own arguments.
+func claimShell(lang, body string) string {
+	htmlLang := "en"
+	if ptLang(lang) {
+		htmlLang = "pt-BR"
+	}
+	return `<!DOCTYPE html><html lang="` + htmlLang + `"><head><meta charset="utf-8">` +
+		`<meta name="viewport" content="width=device-width,initial-scale=1"><title>Kloxus</title></head>` +
+		`<body style="margin:0;background:#f4f6f3;color:#111814;font-family:system-ui,-apple-system,'Segoe UI',sans-serif">` +
+		`<main style="max-width:30rem;margin:0 auto;padding:3rem 1rem">` +
+		`<p style="margin:0 0 1.25rem;font-weight:700;font-size:1.25rem;color:#0e3b2e">Kloxus</p>` +
+		`<div style="background:#fff;border:1px solid #dde4dc;border-radius:1rem;padding:2rem">` +
+		body + `</div></main></body></html>`
 }
 
 // claimConfirm spends a magic link: it must be unexpired and unused,
@@ -265,7 +284,9 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 		// claimed workspace.
 		s.d.WS.SetCookie(w, r, wsID)
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	// straight on to "Criar seu Radar" (/start) — the screen forwards to
+	// the existing Radar when the owner already has one
+	http.Redirect(w, r, "/start", http.StatusSeeOther)
 }
 
 // claimFail renders the single failure state for a bad, spent or
@@ -279,8 +300,8 @@ func claimFail(w http.ResponseWriter, lang string) {
 		title, body = "Link expirado ou já usado",
 			"O link funciona uma vez e expira em 15 minutos. Volte ao Kloxus e peça um novo."
 	}
-	fmt.Fprintf(w, `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;max-width:34em;margin:4em auto">`+
-		`<h1>%s</h1><p>%s</p></body></html>`, html.EscapeString(title), html.EscapeString(body))
+	fmt.Fprintf(w, claimShell(lang, `<h1 style="font-size:1.5rem;margin:0 0 .75rem">%s</h1>`+
+		`<p style="margin:0;color:#5b6660">%s</p>`), html.EscapeString(title), html.EscapeString(body))
 }
 
 // --- reader double opt-in ---

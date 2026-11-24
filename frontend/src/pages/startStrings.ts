@@ -25,7 +25,7 @@ const pt = {
   next: "Continuar",
   creating: "Criando seu Radar…",
   calibTitle: "Dar match",
-  calibHint: "Notícias reais das últimas 48 h. Diga se entram na sua pauta — cada resposta ensina o Radar.",
+  calibHint: "Notícias reais das últimas 48 h. Diga se entram nas notícias de hoje — cada resposta ensina o Radar.",
   loadingDeck: "Buscando notícias reais…",
   loadingSlow: "Isso pode levar alguns segundos — as notícias aparecem aqui assim que chegarem.",
   doneLoading: "Separando as notícias de hoje para você…",
@@ -38,7 +38,7 @@ const pt = {
   hidePrompt: "Esconder {topic}?",
   hideYes: "Esconder",
   hideNo: "Manter",
-  hidden: "{topic} escondido da sua pauta.",
+  hidden: "{topic} escondido das notícias de hoje.",
   emptyDeck: "Ainda não há notícias do seu tema para dar match — o Radar aprende conforme você usa.",
   doneTitle: "Pronto!",
   doneHint: "Seu Radar está no ar e já aprendeu com suas respostas.",
@@ -48,7 +48,7 @@ const pt = {
   doneNone: "Ainda não há notícias do seu tema hoje — o Radar segue buscando.",
   firstPost: "Criar primeiro post",
   opening: "Abrindo…",
-  seeToday: "Ver a pauta de hoje",
+  seeToday: "Ver as notícias de hoje",
   hoursAgo: "há {n} h",
 };
 
@@ -74,7 +74,7 @@ const en: typeof pt = {
   next: "Continue",
   creating: "Creating your Radar…",
   calibTitle: "Match",
-  calibHint: "Real stories from the last 48 h. Say whether they belong in your pauta — each answer teaches the Radar.",
+  calibHint: "Real stories from the last 48 h. Say whether they belong in today's stories — each answer teaches the Radar.",
   loadingDeck: "Fetching real stories…",
   loadingSlow: "This can take a few seconds — stories show up here as soon as they arrive.",
   doneLoading: "Picking today's news for you…",
@@ -87,7 +87,7 @@ const en: typeof pt = {
   hidePrompt: "Hide {topic}?",
   hideYes: "Hide",
   hideNo: "Keep",
-  hidden: "{topic} hidden from your pauta.",
+  hidden: "{topic} hidden from today's stories.",
   emptyDeck: "No stories on your topic to match yet — the Radar learns as you use it.",
   doneTitle: "Done!",
   doneHint: "Your Radar is live and already learned from your answers.",
@@ -97,7 +97,7 @@ const en: typeof pt = {
   doneNone: "No stories on your topic today yet — the Radar keeps looking.",
   firstPost: "Create first post",
   opening: "Opening…",
-  seeToday: "See today's pauta",
+  seeToday: "See today's stories",
   hoursAgo: "{n} h ago",
 };
 
