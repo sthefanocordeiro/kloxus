@@ -37,7 +37,7 @@ function setup(initial: NewsletterSection[]) {
 describe("SectionBuilder", () => {
   it("shows the live story total and skeleton preview", () => {
     setup([make({ items: 3 }), make({ items: 5 })]);
-    expect(screen.getByText("Your piece will have 8 stories")).toBeVisible();
+    expect(screen.getByText("Your brief will have 8 stories")).toBeVisible();
     expect(screen.getByText("Preview")).toBeVisible();
   });
 
@@ -99,11 +99,11 @@ describe("SectionBuilder", () => {
 
   it("explains what a section is and what each format means (KLOX-81)", () => {
     setup([make()]);
-    expect(screen.getByText(/Each block is a section of the piece/)).toBeVisible();
+    expect(screen.getByText(/Each block is a section of the brief/)).toBeVisible();
     // the legend names all three formats; the picked format's help
     // also sits under the Format select
-    expect(screen.getAllByText(/the one that opens the piece/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText(/cited facts plus your take/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/the one that opens the brief/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/stories with your own text/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/nothing to write/).length).toBeGreaterThanOrEqual(1);
   });
 

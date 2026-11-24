@@ -6,7 +6,7 @@ import { claimOwner } from "./mail.ts";
 // → the first collection run, then waits for the board to fill.
 // Extracted from journey.spec.ts so focused specs reuse the same path.
 
-export const issueCol = (page: Page) => page.locator('section[aria-label="This piece"]');
+export const issueCol = (page: Page) => page.locator('section[aria-label="This brief"]');
 export const benchCol = (page: Page) => page.locator('section[aria-label="Suggestions"]');
 
 // The workspace starts empty — every journey walks onboarding first:
@@ -25,7 +25,7 @@ export async function onboard(page: Page) {
   // step 2 is the section builder (KLOX-65): keep the classic template
   // the proposal suggested — the edition totals travel with it
   await page.getByRole("button", { name: "Next", exact: true }).click();
-  await expect(page.getByText(/Your piece will have \d+ stor/)).toBeVisible();
+  await expect(page.getByText(/Your brief will have \d+ stor/)).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.waitForURL(/\/publications\/\d+\/sources/);
 
@@ -45,8 +45,8 @@ export async function boardReady(page: Page, isPhone: boolean) {
   // column sits behind its tab — the tab bar is the ready signal there.
   await expect(
     isPhone
-      ? page.getByRole("button", { name: /This piece/ })
-      : page.getByRole("heading", { name: "This piece" }),
+      ? page.getByRole("button", { name: /This brief/ })
+      : page.getByRole("heading", { name: "This brief" }),
     // hosted runs the real pipeline (~10 min); local fixtures land fast
   ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 120_000 });
   // hosted: the bench fills when the real run ends (~10-13 min)

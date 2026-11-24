@@ -33,11 +33,11 @@ test("section builder onboarding, Seções screen and Configurações delete", a
   // step 2: the builder lists the proposal's sections; adding a section
   // moves the live edition total
   await expect(
-    page.getByText(/Your piece will have \d+ stories/),
+    page.getByText(/Your brief will have \d+ stories/),
   ).toBeVisible();
   await page.getByRole("button", { name: "Add section" }).click();
   await expect(
-    page.getByText(/Your piece will have \d+ stories/),
+    page.getByText(/Your brief will have \d+ stories/),
   ).toBeVisible();
   const newName = page.getByPlaceholder("Section name").last();
   await newName.fill("Quick links");
@@ -59,7 +59,7 @@ test("section builder onboarding, Seções screen and Configurações delete", a
   await added.fill("Links I liked");
   await page.getByRole("button", { name: "Save sections", exact: true }).click();
   await expect(
-    page.getByText(/Sections saved — they apply to the next piece/),
+    page.getByText(/Sections saved — they apply to the next brief/),
   ).toBeVisible({ timeout: 15000 });
 
   // Configurações: editable identity fields plus the danger zone

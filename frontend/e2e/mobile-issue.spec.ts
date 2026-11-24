@@ -26,7 +26,7 @@ test("mobile 390px: pautas board controls meet the 44px hit-area rule", async ({
   await boardReady(page, true);
 
   // the bench/issue column tabs are themselves touch targets
-  const tabIssue = page.getByRole("button", { name: /This piece/ });
+  const tabIssue = page.getByRole("button", { name: /This brief/ });
   const tabBench = page.getByRole("button", { name: /^Suggestions/ });
   for (const tab of [tabIssue, tabBench]) {
     const box = await tab.boundingBox();
@@ -47,7 +47,7 @@ test("mobile 390px: pautas board controls meet the 44px hit-area rule", async ({
 
   // bench column: the "+" add affordance — the audit's 31×28px offender
   await tabBench.click();
-  const add = benchCol(page).getByRole("button", { name: "Add to piece", exact: true }).first();
+  const add = benchCol(page).getByRole("button", { name: "Add to brief", exact: true }).first();
   const addBox = await add.boundingBox();
   expect(addBox!.height).toBeGreaterThanOrEqual(44);
   expect(addBox!.width).toBeGreaterThanOrEqual(44);
@@ -66,11 +66,11 @@ test("mobile 390px: issue pane tab bar is pinned above the global nav", async ({
 
   // manual compose lands the editor (and its tab bar) without a model
   // run — the deterministic mode's "Write it myself" path
-  await page.getByRole("button", { name: /This piece/ }).click();
+  await page.getByRole("button", { name: /This brief/ }).click();
   await page.getByRole("button", { name: "Write it myself" }).click();
   await expect(page.locator(".ProseMirror").first()).toBeVisible({ timeout: 60_000 });
 
-  const tabbar = page.getByRole("navigation", { name: "Piece panes" });
+  const tabbar = page.getByRole("navigation", { name: "Brief panes" });
   const globalNav = page.getByRole("navigation", { name: "Radar" });
   await expect(tabbar).toBeVisible();
 
@@ -91,7 +91,7 @@ test("mobile 390px: issue pane tab bar is pinned above the global nav", async ({
   await expect(page.getByText("Reader", { exact: true })).toBeVisible();
   await tabbar.getByRole("button", { name: "Stories" }).click();
   await expect(page.getByRole("button", { name: /— (approved|to decide)$/ }).first()).toBeVisible();
-  await tabbar.getByRole("button", { name: "Piece" }).click();
+  await tabbar.getByRole("button", { name: "Brief" }).click();
   await expect(page.locator(".ProseMirror").first()).toBeVisible();
 
   // desktop keeps the old flow — the phone bar never renders at ≥768px
