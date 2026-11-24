@@ -1,5 +1,11 @@
 import { expect, type Page } from "@playwright/test";
-import { assertTransport, FAKE_ORIGIN, resolveMode } from "../../scripts/e2e-harness.mjs";
+import {
+  assertLiveSafe,
+  assertTransport,
+  FAKE_ORIGIN,
+  liveSafe as harnessLiveSafe,
+  resolveMode,
+} from "../../scripts/e2e-harness.mjs";
 
 // Shared e2e mail/transport helpers (KLOX-32). Every spec runs a
 // transport preflight first: the server's own /api/v1/workspace
@@ -8,14 +14,22 @@ import { assertTransport, FAKE_ORIGIN, resolveMode } from "../../scripts/e2e-har
 
 export const e2eMode = resolveMode();
 export const fakeLive = e2eMode === "fake-live";
+// E2E_LIVE_SAFE=1 (KLOX-176): the hosted opt-in that collects only the
+// explicit read-only subset (live-safe.spec.ts) against a live-mail
+// target. Mutating specs keep the assertTransport preflight and refuse
+// the same target — nothing about this flag weakens them.
+export const liveSafe = harnessLiveSafe();
 
 export interface WorkspaceInfo {
   mail?: string;
   mail_transport?: string;
+  mail_webhook?: string;
   mode?: string;
+  hosted?: boolean;
   llm_mode?: string;
   claimed?: boolean;
   owner_email?: string;
+  publishing?: boolean;
 }
 
 export async function workspaceInfo(page: Page): Promise<WorkspaceInfo> {
@@ -31,6 +45,14 @@ export async function workspaceInfo(page: Page): Promise<WorkspaceInfo> {
 // performs a single mail- or model-capable action.
 export async function preflight(page: Page) {
   assertTransport(await workspaceInfo(page), e2eMode);
+}
+
+// preflightLiveSafe gates only the live-safe.spec.ts read-only subset:
+// the target must prove the real-app live-mail posture (assertLiveSafe
+// in the harness). Call it from test.beforeEach — a target that reports
+// anything else fails closed before a single request the subset makes.
+export async function preflightLiveSafe(page: Page) {
+  assertLiveSafe(await workspaceInfo(page));
 }
 
 // neverRealMail is the in-body guard for helpers that must never touch
