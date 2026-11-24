@@ -14,6 +14,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -32,16 +33,32 @@ import (
 const CookieName = "kloxus_ws"
 
 // Limits for the hosted app: workspaces outlive the evaluation window
-// and creation is rate-limited per IP. There is no handle cache and no
+// and creation is rate-limited per (IP, browser fingerprint) — CGNAT
+// puts a whole office or carrier behind one address, so the key can't
+// be the address alone (KLOX-193). There is no handle cache and no
 // count-based eviction — idle workspaces are deleted by age only.
 const (
 	defaultMaxAge    = 21 * 24 * time.Hour
-	createsPerHour   = 30
+	createsPerHour   = 120
 	touchInterval    = time.Hour
 	cleanupInterval  = 10 * time.Minute
 	cookieMaxAgeDays = 30
 	entryIdle        = 24 * time.Hour
 )
+
+// ErrRateLimited is the sentinel Resolve and New wrap when the
+// session-create limit refuses a mint — the concrete error is
+// *RateLimitedError, which carries how long to wait.
+var ErrRateLimited = errors.New("too many new sessions from this address — try again later")
+
+// RateLimitedError reports a refused session mint. RetryAfter is the
+// wait until the oldest create in the sliding window expires.
+type RateLimitedError struct {
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitedError) Error() string { return ErrRateLimited.Error() }
+func (e *RateLimitedError) Unwrap() error { return ErrRateLimited }
 
 // Workspace is one visitor's environment: a workspace-scoped store
 // handle plus coordination for pipeline runs and resets.
@@ -73,12 +90,12 @@ type Manager struct {
 
 	createMu sync.Mutex
 	creates  map[string][]time.Time
-	// createLimit is the per-IP new-session cap per hour; 0 means the
-	// createsPerHour default.
+	// createLimit is the per-(IP,fingerprint) new-session cap per hour;
+	// 0 means the createsPerHour default.
 	createLimit int
 }
 
-// SetCreateLimit overrides the per-IP new-session cap per hour
+// SetCreateLimit overrides the per-visitor new-session cap per hour
 // (KLOXUS_NEW_SESSIONS_PER_IP_HOUR). Values <= 0 keep the current value.
 func (m *Manager) SetCreateLimit(n int) {
 	m.createMu.Lock()
@@ -291,14 +308,26 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-// allowCreate rate-limits workspace creation per IP (sliding window).
-// Idle IP entries are pruned so the map stays bounded (review F3).
-func (m *Manager) allowCreate(ip string) bool {
+// createKey is the rate-limit bucket for session minting: the client IP
+// plus a short fingerprint of what the browser says about itself. A
+// tracking cookie would be sturdier, but the two headers every real
+// browser already sends separate the users sharing one CGNAT address
+// (KLOX-193) — no new state, no new cookie.
+func createKey(r *http.Request) string {
+	sum := sha256.Sum256([]byte(r.UserAgent() + "|" + r.Header.Get("Accept-Language")))
+	return clientIP(r) + "|" + hex.EncodeToString(sum[:4])
+}
+
+// allowCreate rate-limits workspace creation per (IP, fingerprint)
+// pair (sliding window) and reports the wait when the window is full.
+// Idle entries are pruned so the map stays bounded (review F3).
+func (m *Manager) allowCreate(key string) (bool, time.Duration) {
 	m.createMu.Lock()
 	defer m.createMu.Unlock()
-	cutoff := time.Now().Add(-time.Hour)
-	keep := m.creates[ip][:0]
-	for _, t := range m.creates[ip] {
+	now := time.Now()
+	cutoff := now.Add(-time.Hour)
+	keep := m.creates[key][:0]
+	for _, t := range m.creates[key] {
 		if t.After(cutoff) {
 			keep = append(keep, t)
 		}
@@ -308,10 +337,10 @@ func (m *Manager) allowCreate(ip string) bool {
 		limit = m.createLimit
 	}
 	if len(keep) >= limit {
-		m.creates[ip] = keep
-		return false
+		m.creates[key] = keep
+		return false, keep[0].Add(time.Hour).Sub(now)
 	}
-	m.creates[ip] = append(keep, time.Now())
+	m.creates[key] = append(keep, now)
 	if len(m.creates) > 4096 {
 		for k, ts := range m.creates {
 			fresh := ts[:0]
@@ -327,7 +356,7 @@ func (m *Manager) allowCreate(ip string) bool {
 			}
 		}
 	}
-	return true
+	return true, 0
 }
 
 // Resolve returns the workspace for a request: the cookie's workspace in
@@ -343,8 +372,8 @@ func (m *Manager) Resolve(w http.ResponseWriter, r *http.Request) (*Workspace, e
 		}
 		// Unknown/deleted workspace: fall through and create a fresh one.
 	}
-	if !m.allowCreate(clientIP(r)) {
-		return nil, fmt.Errorf("too many new sessions from this address — try again later")
+	if ok, retry := m.allowCreate(createKey(r)); !ok {
+		return nil, &RateLimitedError{RetryAfter: retry}
 	}
 	ws, err := m.Create(r.Context())
 	if err != nil {
@@ -359,8 +388,8 @@ func (m *Manager) New(w http.ResponseWriter, r *http.Request) (*Workspace, error
 	if m.local != nil {
 		return m.local, nil
 	}
-	if !m.allowCreate(clientIP(r)) {
-		return nil, fmt.Errorf("too many new sessions from this address — try again later")
+	if ok, retry := m.allowCreate(createKey(r)); !ok {
+		return nil, &RateLimitedError{RetryAfter: retry}
 	}
 	ws, err := m.Create(r.Context())
 	if err != nil {

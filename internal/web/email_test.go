@@ -917,13 +917,13 @@ func TestGlobalCapAcrossWorkspaces(t *testing.T) {
 	}
 
 	// workspace A's claim mail spends the single global slot
-	cookieA := strings.SplitN(serve("GET", "/", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
+	cookieA := strings.SplitN(serve("GET", "/api/v1/workspace", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
 	if rr := serve("POST", "/api/v1/workspace/claim", cookieA, map[string]string{"email": "a@x.dev"}); rr.Code != 200 {
 		t.Fatalf("claim A = %d", rr.Code)
 	}
 
 	// workspace B's claim send is refused — loudly, and recorded.
-	cookieB := strings.SplitN(serve("GET", "/", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
+	cookieB := strings.SplitN(serve("GET", "/api/v1/workspace", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
 	rr := serve("POST", "/api/v1/workspace/claim", cookieB, map[string]string{"email": "b@x.dev"})
 	if rr.Code != 200 {
 		t.Fatalf("claim B = %d %s", rr.Code, shortBody(rr))
@@ -1113,7 +1113,7 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 	}
 
 	// visitor A claims their workspace by email
-	cookieA := strings.SplitN(serve("GET", "/", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
+	cookieA := strings.SplitN(serve("GET", "/api/v1/workspace", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
 	rr := serve("POST", "/api/v1/workspace/claim", cookieA, map[string]string{"email": "host@hackbrazil.dev"})
 	if rr.Code != 200 {
 		t.Fatalf("claim = %d %s", rr.Code, shortBody(rr))

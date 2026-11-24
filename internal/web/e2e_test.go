@@ -517,7 +517,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	}
 
 	// visitor A: gets a workspace cookie, a finished issue, a magic link
-	rrA := serve("GET", "/", "", nil)
+	rrA := serve("GET", "/api/v1/workspace", "", nil)
 	cookieA := strings.SplitN(rrA.Header().Get("Set-Cookie"), ";", 2)[0]
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Cookie", cookieA)
@@ -578,7 +578,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 	// SECURITY: the reader link must never hijack the visitor's editor
 	// session — opening it from another browser leaves that browser's
 	// workspace cookie (and every editor route) untouched.
-	cookieB := strings.SplitN(serve("GET", "/", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
+	cookieB := strings.SplitN(serve("GET", "/api/v1/workspace", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
 	rr = serve("GET", apiLink, cookieB, nil)
 	if !strings.Contains(rr.Body.String(), "Conteúdo completo") {
 		t.Fatalf("magic link with own session: got %d", rr.Code)

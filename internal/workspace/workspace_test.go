@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -102,21 +103,71 @@ func TestClientIPPrefersFlyHeader(t *testing.T) {
 func TestAllowCreateBounded(t *testing.T) {
 	m := testMgr()
 	for i := 0; i < createsPerHour; i++ {
-		if !m.allowCreate("10.0.0.1") {
+		if ok, _ := m.allowCreate("10.0.0.1|fp"); !ok {
 			t.Fatalf("create %d rejected early", i)
 		}
 	}
-	if m.allowCreate("10.0.0.1") {
+	if ok, retry := m.allowCreate("10.0.0.1|fp"); ok {
 		t.Fatal("rate limit not enforced")
+	} else if retry <= 0 || retry > time.Hour {
+		t.Fatalf("retryAfter = %v, want (0, 1h]", retry)
 	}
-	// a different IP is unaffected
-	if !m.allowCreate("10.0.0.2") {
-		t.Fatal("unrelated IP rate-limited")
+	// a different (IP, fingerprint) bucket is unaffected
+	if ok, _ := m.allowCreate("10.0.0.2|fp"); !ok {
+		t.Fatal("unrelated bucket rate-limited")
 	}
 	// stale entries age out of the window
-	m.creates["10.0.0.1"] = []time.Time{time.Now().Add(-2 * time.Hour)}
-	if !m.allowCreate("10.0.0.1") {
+	m.creates["10.0.0.1|fp"] = []time.Time{time.Now().Add(-2 * time.Hour)}
+	if ok, _ := m.allowCreate("10.0.0.1|fp"); !ok {
 		t.Fatal("stale window still blocking")
+	}
+}
+
+// TestAllowCreateCompositeKey: the bucket is IP+fingerprint, not IP
+// alone — visitors sharing a CGNAT address keep independent limits
+// (KLOX-193), and retryAfter is the window's oldest entry expiring.
+func TestAllowCreateCompositeKey(t *testing.T) {
+	m := testMgr()
+	m.SetCreateLimit(2)
+	ok, _ := m.allowCreate("10.0.0.9|ua-a")
+	ok, _ = m.allowCreate("10.0.0.9|ua-a")
+	_ = ok
+	if ok, _ := m.allowCreate("10.0.0.9|ua-a"); ok {
+		t.Fatal("third create on the same (IP, fingerprint) allowed")
+	}
+	// same IP, another browser fingerprint: independent allowance
+	if ok, _ := m.allowCreate("10.0.0.9|ua-b"); !ok {
+		t.Fatal("same IP with a different fingerprint was rate-limited")
+	}
+	// same fingerprint, another IP: independent allowance
+	if ok, _ := m.allowCreate("10.0.0.10|ua-a"); !ok {
+		t.Fatal("same fingerprint on another IP was rate-limited")
+	}
+	// retryAfter tracks when the oldest create leaves the window
+	m.creates["10.0.0.9|ua-a"] = []time.Time{time.Now().Add(-30 * time.Minute), time.Now()}
+	if _, retry := m.allowCreate("10.0.0.9|ua-a"); retry < 29*time.Minute || retry > 31*time.Minute {
+		t.Fatalf("retryAfter = %v, want ~30m", retry)
+	}
+}
+
+// TestCreateKeySplitsBrowsers: two browsers behind one address must
+// not share a rate-limit bucket (KLOX-193).
+func TestCreateKeySplitsBrowsers(t *testing.T) {
+	mk := func(ua, lang string) *http.Request {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Fly-Client-IP", "198.51.100.77")
+		req.Header.Set("User-Agent", ua)
+		req.Header.Set("Accept-Language", lang)
+		return req
+	}
+	a := createKey(mk("Mozilla/5.0 Chrome/131", "pt-BR"))
+	b := createKey(mk("Mozilla/5.0 Firefox/133", "pt-BR"))
+	c := createKey(mk("Mozilla/5.0 Chrome/131", "en-US"))
+	if a == b || a == c {
+		t.Fatal("distinct browser fingerprints collapsed into one bucket")
+	}
+	if a != createKey(mk("Mozilla/5.0 Chrome/131", "pt-BR")) {
+		t.Fatal("same request produced two buckets")
 	}
 }
 
@@ -124,11 +175,11 @@ func TestSetCreateLimit(t *testing.T) {
 	m := testMgr()
 	m.SetCreateLimit(3)
 	for i := 0; i < 3; i++ {
-		if !m.allowCreate("10.0.0.5") {
+		if ok, _ := m.allowCreate("10.0.0.5|fp"); !ok {
 			t.Fatalf("create %d rejected early", i)
 		}
 	}
-	if m.allowCreate("10.0.0.5") {
+	if ok, _ := m.allowCreate("10.0.0.5|fp"); ok {
 		t.Fatal("custom limit not enforced")
 	}
 	m.SetCreateLimit(0)
