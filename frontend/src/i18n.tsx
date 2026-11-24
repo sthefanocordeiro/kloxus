@@ -350,13 +350,13 @@ export const dict = {
       eyebrow: "For people who publish every day",
       headline: "The research is ready. The writing is yours.",
       subhead:
-        "Every day, the news that matters to your niche arrives organized, with a link to each story. You pick the angle and write in your own voice, to publish where your audience is.",
+        "Every day, the news that matters to your niche arrives organized, with a link to every story. You pick the angle and write in your own voice, to publish where your audience is.",
       emailNote:
         "You confirm your email by magic link as you create your Radar — that is also how you get the launch invitation.",
       waitlistSupport:
         "No AI writing for you. Just the boring work of finding and checking what happened, done before you open the editor.",
       alreadyCreator: "Already a creator? Sign in",
-      shotAlt: "The Kloxus editor with a drafted brief and its stories",
+      shotAlt: "Kloxus: a news list with ticked boxes and the editor with two linked stories",
       howTitle: "How it works",
       howSteps: [
         { title: "Say what you cover", body: "Your topics and sources." },
@@ -364,12 +364,12 @@ export const dict = {
           title: "Pick today's stories",
           body: "Kloxus picks what matters. You choose.",
         },
-        { title: "Write and export", body: "For LinkedIn, X, blog or newsletter." },
+        { title: "Write and export", body: "For LinkedIn, X, your blog or newsletter." },
       ],
       cardsTitle: "Made for people who write",
       cards: [
         { title: "Your voice", body: "AI does the research. The words and the opinion are yours." },
-        { title: "Link to the source", body: "Every story leads to the original article." },
+        { title: "Link to the source", body: "Every story links to the original article." },
         { title: "A Radar that keeps watching", body: "Tell Kloxus your topic once; it keeps the lineup coming." },
       ],
       faqTitle: "Questions",
@@ -387,11 +387,11 @@ export const dict = {
           a: "Sources that allow automated reading. We respect each site's rules.",
         },
         {
-          q: "Does the AI decide what goes in my brief?",
-          a: "Never. You choose — never the AI.",
+          q: "Who chooses the news?",
+          a: "You do, never the AI. Kloxus only suggests.",
         },
       ],
-      closingTitle: "Your next brief starts here.",
+      closingTitle: "Your next story list starts here.",
       footerProduct: "Product",
       footerLegal: "Legal",
       footerTerms: "Terms",
@@ -400,9 +400,9 @@ export const dict = {
       menu: "Menu",
       sourcesStrip: "Works with the feeds you already read",
       mock: {
-        docTitle: "The big one",
-        railTitle: "Today",
-        editorTitle: "Post editor",
+        railTitle: "Today's news",
+        editorTitle: "Your text",
+        editorHint: "Write here, in your own voice…",
         items: [
           "Regulator opens consultation on AI in hiring",
           "New handheld console surprises on battery life",
@@ -933,7 +933,7 @@ export const dict = {
       waitlistSupport:
         "Sem IA escrevendo por você. Só o trabalho chato de achar e conferir o que aconteceu, feito antes de você abrir o editor.",
       alreadyCreator: "Já sou criador? Entrar",
-      shotAlt: "O editor do Kloxus com uma pauta em rascunho e suas notícias",
+      shotAlt: "O Kloxus: lista de notícias com caixas marcadas e o editor com duas notícias linkadas",
       howTitle: "Como funciona",
       howSteps: [
         { title: "Diga do que você fala", body: "Seus temas e fontes." },
@@ -964,8 +964,8 @@ export const dict = {
           a: "Fontes que permitem leitura automatizada. Respeitamos as regras de cada site.",
         },
         {
-          q: "A IA decide o que entra na minha pauta?",
-          a: "Nunca. Você escolhe — nunca a IA.",
+          q: "Quem escolhe as notícias?",
+          a: "Você escolhe, nunca a IA. O Kloxus só sugere.",
         },
       ],
       closingTitle: "Sua próxima pauta começa aqui.",
@@ -977,9 +977,9 @@ export const dict = {
       menu: "Menu de navegação",
       sourcesStrip: "Funciona com os feeds que você já lê",
       mock: {
-        docTitle: "O destaque",
-        railTitle: "Hoje",
-        editorTitle: "Editor de post",
+        railTitle: "Notícias de hoje",
+        editorTitle: "Seu texto",
+        editorHint: "Escreva aqui, no seu tom…",
         items: [
           "Regulador abre consulta sobre IA em contratações",
           "Novo console portátil surpreende na bateria",
