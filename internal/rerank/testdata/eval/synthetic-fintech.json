@@ -1,0 +1,12 @@
+{
+  "name": "synthetic-fintech",
+  "synthetic": true,
+  "relevant": ["f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12"],
+  "rankings": {
+    "fts":        ["f1","f2","x1","f3","f4","f5","f6","x2","f7","f8","x3","f9"],
+    "emb":        ["f1","f2","f3","f4","f5","f6","x2","f7","f8","f9","f10","x1"],
+    "emb_rerank": ["f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","x2"]
+  },
+  "must_not_top20": ["fileserver"],
+  "promos": ["promo1"]
+}
