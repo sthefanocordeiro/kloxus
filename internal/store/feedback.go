@@ -117,6 +117,58 @@ func (db *DB) ApplyFeedback(ctx context.Context, pubID, storyID int64, model, ki
 	return tx.Commit()
 }
 
+// StoryAnswer is one persisted Sim/Não on a story, keyed by a stable
+// FeedbackKeys identifier (KLOX-183).
+type StoryAnswer struct {
+	Key    string
+	Answer string // yes | no
+	Title  string
+}
+
+// SaveStoryAnswers upserts the latest Sim/Não for each of the story's
+// stable keys — the answer survives the stories-table rebuild, unlike
+// the Rocchio fold which only shifts weights. The latest answer per
+// key wins, so a re-dealt card answered again overwrites the first.
+func (db *DB) SaveStoryAnswers(ctx context.Context, pubID int64, keys []string, answer, title string) error {
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO story_feedback (workspace_id, publication_id, story_key, answer, title)
+			VALUES ($1,$2,$3,$4,$5)
+			ON CONFLICT (publication_id, story_key)
+			DO UPDATE SET answer = EXCLUDED.answer, title = EXCLUDED.title`,
+			db.ws, pubID, k, answer, title); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RejectedStoryFeedback lists the publication's "no" answers — the
+// keys Hoje and the calibration deck must never serve again. Titles
+// come along so the ranker can demote look-alike stories.
+func (db *DB) RejectedStoryFeedback(ctx context.Context, pubID int64) ([]StoryAnswer, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT story_key, title FROM story_feedback
+		WHERE workspace_id = $1 AND publication_id = $2 AND answer = 'no'`, db.ws, pubID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StoryAnswer
+	for rows.Next() {
+		var a StoryAnswer
+		if err := rows.Scan(&a.Key, &a.Title); err != nil {
+			return nil, err
+		}
+		a.Answer = "no"
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // FeedbackForItem resolves an issue item to its story and applies kind.
 func (db *DB) FeedbackForItem(ctx context.Context, pubID, issueItemID int64, model, kind string) error {
 	ii, err := db.GetIssueItem(ctx, issueItemID)

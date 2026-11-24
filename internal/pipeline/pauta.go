@@ -131,6 +131,12 @@ func (r *Runner) Pauta(ctx context.Context, pub *store.Publication, stories []st
 	_, base := scoreStoriesEnriched(stories, pub.Language, pub, enrich)
 	s1 := r.rankStage1(ctx, pub, stories, base, enrich)
 
+	// Sim/Não answers persist on stable story keys (KLOX-183): a "no"
+	// story never reaches Hoje or the re-dealt calibration deck, and
+	// look-alike stories sink — the deterministic counterpart of the
+	// Rocchio reject mean, which needs embeddings to exist at all.
+	rejected, rejectedTitles := r.rejectedAnswers(ctx, pub.ID)
+
 	now := time.Now()
 	type cand struct {
 		idx  int
@@ -142,6 +148,9 @@ func (r *Runner) Pauta(ctx context.Context, pub *store.Publication, stories []st
 		if s1.Hidden[i] != "" {
 			continue
 		}
+		if storyKeysRejected(&stories[i], rejected) {
+			continue
+		}
 		age := -1.0
 		if t, ok := storyNewest(&stories[i]); ok {
 			age = now.Sub(t).Hours()
@@ -149,7 +158,7 @@ func (r *Runner) Pauta(ctx context.Context, pub *store.Publication, stories []st
 				age = 0
 			}
 		}
-		c := cand{idx: i, age: age, rank: s1.Scores[i]}
+		c := cand{idx: i, age: age, rank: s1.Scores[i] - noAnswerPenalty(&stories[i], rejectedTitles)}
 		if age >= 0 && age <= maxAge.Hours() {
 			fresh = append(fresh, c)
 		} else {
@@ -184,6 +193,105 @@ func (r *Runner) Pauta(ctx context.Context, pub *store.Publication, stories []st
 		ordered = append(ordered, pautaCard(&stories[c.idx], enrich, c.age, c.rank))
 	}
 	return capPerOutlet(ordered, n)
+}
+
+// rejectedAnswers loads the publication's "no" answers as a key set
+// plus the distinct rejected titles the similarity demotion reads.
+// A load failure degrades to no feedback — the deck still builds.
+func (r *Runner) rejectedAnswers(ctx context.Context, pubID int64) (map[string]bool, []string) {
+	answers, err := r.DB.RejectedStoryFeedback(ctx, pubID)
+	if err != nil || len(answers) == 0 {
+		return nil, nil
+	}
+	keys := map[string]bool{}
+	var titles []string
+	seen := map[string]bool{}
+	for _, a := range answers {
+		keys[a.Key] = true
+		if a.Title != "" && !seen[a.Title] {
+			seen[a.Title] = true
+			titles = append(titles, a.Title)
+		}
+	}
+	return keys, titles
+}
+
+// storyKeysRejected reports whether any of the story's stable
+// FeedbackKeys carries a "no" answer.
+func storyKeysRejected(s *store.Story, rejected map[string]bool) bool {
+	if len(rejected) == 0 {
+		return false
+	}
+	for _, k := range s.FeedbackKeys() {
+		if rejected[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// noAnswerMinOverlap is the shared-content-token ratio (against the
+// rejected title) from which a story counts as a look-alike.
+const noAnswerMinOverlap = 0.5
+
+// noAnswerPenaltyMax caps the demotion a look-alike story takes.
+// Scores run 0–10, so the penalty drops look-alikes below the fresh
+// coverage without hiding them when the deck is thin.
+const noAnswerPenaltyMax = 8.0
+
+// noAnswerPenalty sinks a story that reads like one the creator
+// answered "Não" — the deterministic half of "um Não reduz o peso de
+// notícias parecidas" (KLOX-183). The overlap is graded: sharing half
+// the rejected headline's content words costs half the cap, sharing
+// all of them the full noAnswerPenaltyMax; below noAnswerMinOverlap
+// the story keeps its rank.
+func noAnswerPenalty(s *store.Story, rejectedTitles []string) float64 {
+	if len(rejectedTitles) == 0 {
+		return 0
+	}
+	var b strings.Builder
+	b.WriteString(s.Title)
+	for i := range s.Items {
+		b.WriteString(" ")
+		b.WriteString(s.Items[i].Title)
+	}
+	cand := contentTokens(b.String())
+	if len(cand) == 0 {
+		return 0
+	}
+	best := 0.0
+	for _, rt := range rejectedTitles {
+		rej := contentTokens(rt)
+		if len(rej) == 0 {
+			continue
+		}
+		shared := 0
+		for w := range rej {
+			if wordHit(w, cand) {
+				shared++
+			}
+		}
+		if o := float64(shared) / float64(len(rej)); o > best {
+			best = o
+		}
+	}
+	if best < noAnswerMinOverlap {
+		return 0
+	}
+	return noAnswerPenaltyMax * best
+}
+
+// contentTokens is the folded content-word set of a title — the same
+// vocabulary rules the topic/reject matchers use (folded, ≥3 chars,
+// no function words).
+func contentTokens(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range textToks(s) {
+		if len(w) >= 3 && !termStopwords[w] {
+			out[w] = true
+		}
+	}
+	return out
 }
 
 // capPerOutlet takes n cards from the ranked list with at most
@@ -274,10 +382,24 @@ func firstSentence(body string, max int) string {
 	return cut + "…"
 }
 
-// RecordStoryFeedback folds a Sim/Não answer on a story into the
-// publication's Rocchio means. Best-effort and free: it only reads the
-// stored vectors.
+// RecordStoryFeedback persists the Sim/Não answer on the story's
+// stable keys — a "no" keeps it out of Hoje and the re-dealt deck —
+// and folds it into the publication's Rocchio means when embeddings
+// exist. Best-effort: feedback never fails the answer, and with no
+// vectors the Rocchio half is a silent no-op while the persisted
+// answer still applies (KLOX-183).
 func RecordStoryFeedback(ctx context.Context, db *store.DB, pubID, storyID int64, accept bool) error {
+	answer := "no"
+	if accept {
+		answer = "yes"
+	}
+	st, err := db.StoryWithItems(ctx, storyID)
+	if err != nil || st == nil || st.PublicationID != pubID {
+		return nil // unknown or foreign story — nothing to record
+	}
+	if err := db.SaveStoryAnswers(ctx, pubID, st.FeedbackKeys(), answer, st.Title); err != nil {
+		return fmt.Errorf("story answer: %w", err)
+	}
 	emb := DefaultEmbedder
 	if emb == nil {
 		return nil

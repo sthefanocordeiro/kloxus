@@ -76,3 +76,49 @@ func TestTodayAndWrite(t *testing.T) {
 		t.Fatalf("unknown story = %d", rr.Code)
 	}
 }
+
+// TestTodayNoHidesStory: answering "Não" on a Hoje card keeps that
+// story out of the rebuilt pauta — story ids change on every rebuild,
+// so the assertion is on the title (KLOX-183).
+func TestTodayNoHidesStory(t *testing.T) {
+	srv, _ := emptyServer(t)
+	rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{"about": "futuro e tecnologia"})
+	if rr.Code != 201 {
+		t.Fatalf("radar = %d %s", rr.Code, rr.Body.String())
+	}
+	id := fmt.Sprint(int64(apiJSON(t, rr)["publication"].(map[string]any)["id"].(float64)))
+
+	today := apiGet(t, srv, "/api/v1/publications/"+id+"/today")
+	cards, _ := today["cards"].([]any)
+	if len(cards) < 2 {
+		t.Fatalf("cards = %d, want at least 2", len(cards))
+	}
+	first := cards[0].(map[string]any)
+	title := first["title"].(string)
+
+	rr = apiCall(t, srv, "POST", "/api/v1/publications/"+id+"/calibration/answer",
+		map[string]any{"story_id": first["story_id"], "answer": "no"})
+	if rr.Code != 200 {
+		t.Fatalf("answer = %d %s", rr.Code, rr.Body.String())
+	}
+
+	// the answer drops today's snapshot; the rebuild must not serve
+	// the rejected story again under a new id
+	today = apiGet(t, srv, "/api/v1/publications/"+id+"/today")
+	for _, c := range today["cards"].([]any) {
+		if c.(map[string]any)["title"] == title {
+			t.Fatalf("rejected story %q is back on Hoje", title)
+		}
+	}
+
+	// the re-dealt calibration deck must not serve it either
+	cal := apiCall(t, srv, "POST", "/api/v1/publications/"+id+"/calibration", nil)
+	if cal.Code != 200 {
+		t.Fatalf("calibration = %d %s", cal.Code, cal.Body.String())
+	}
+	for _, c := range apiJSON(t, cal)["cards"].([]any) {
+		if c.(map[string]any)["title"] == title {
+			t.Fatalf("rejected story %q is back in the calibration deck", title)
+		}
+	}
+}
