@@ -139,9 +139,11 @@ export function Today() {
         ))}
       </ul>
 
+      {/* fixed just above the global bottom nav on phone — at bottom-0
+          the z-40 nav covered it and taps hit Configurações (KLOX-180) */}
       {picked.length > 0 && (
         <div
-          className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-paper-raised/95 px-4 py-3 backdrop-blur"
+          className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 border-t border-line bg-paper-raised/95 px-4 py-3 backdrop-blur md:bottom-0"
           role="region"
           aria-label={s.build}
         >
