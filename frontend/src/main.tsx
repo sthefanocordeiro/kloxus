@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LangProvider } from "./i18n";
 import { ErrorPage, NotFound } from "./pages/ErrorPage";
@@ -47,6 +47,10 @@ const router = createBrowserRouter([
     ),
     children: [
       { path: "/start", lazy: () => import("./pages/Start").then((x) => ({ Component: x.Start })) },
+      // the legacy /new wizard is gone (KLOX-177); keep old external
+      // links landing on onboarding instead of the 404 — replace so
+      // back doesn't return to the dead route
+      { path: "/new", element: <Navigate to="/start" replace /> },
       { path: "/publications", lazy: () => import("./pages/Publications").then((m) => ({ Component: m.Publications })) },
       { path: "/publications/:id", lazy: () => import("./pages/PublicationPage").then((m) => ({ Component: m.PublicationPage })) },
       { path: "/publications/:id/today", lazy: () => import("./pages/Today").then((m) => ({ Component: m.Today })) },
