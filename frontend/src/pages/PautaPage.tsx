@@ -49,6 +49,7 @@ export function PautaPage() {
   const latest = useRef({ opening, entries });
   latest.current = { opening, entries };
   const dirty = useRef(false);
+  const flight = useRef<Promise<void> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -59,34 +60,60 @@ export function PautaPage() {
     }
   }, [q.data, ready]);
 
+  const persistRef = useRef<() => Promise<void>>(async () => {});
   const persist = useCallback(async () => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
+    // a save already flying finishes first so this one lands after it —
+    // "Ir para exportar" awaits persist() and must see every edit saved
+    if (flight.current) await flight.current;
     if (!dirty.current) return;
     dirty.current = false;
     setSaveState("saving");
     const cur = latest.current;
+    let ok = false;
+    const req = api.pautaSave(issueID, {
+      opening: cur.opening,
+      entries: cur.entries.map((e) => ({ story_id: e.story_id, text: e.text })),
+    });
+    flight.current = req.then(() => undefined, () => undefined);
     try {
-      await api.pautaSave(issueID, {
-        opening: cur.opening,
-        entries: cur.entries.map((e) => ({ story_id: e.story_id, text: e.text })),
-      });
+      await req;
+      ok = true;
       setSaveState(dirty.current ? "saving" : "saved");
     } catch {
       dirty.current = true;
       setSaveState("error");
+    } finally {
+      flight.current = null;
+      // edits that landed mid-flight still need to go out, in order;
+      // on error dirty stays set and the next touch/blur retries
+      if (ok && dirty.current) timer.current = setTimeout(() => void persistRef.current(), 400);
     }
   }, [issueID]);
+  persistRef.current = persist;
 
   const touch = useCallback(() => {
     dirty.current = true;
     setSaveState("saving");
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => void persist(), 700);
-  }, [persist]);
+    timer.current = setTimeout(() => void persistRef.current(), 800);
+  }, []);
 
   // leaving the page never drops the last keystrokes
   useEffect(() => () => { void persist(); }, [persist]);
+
+  // closing/reloading mid-save would drop them — warn first (KLOX-196)
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (dirty.current || flight.current !== null) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
 
   const edit = (fn: (e: PautaEntry[]) => PautaEntry[]) => {
     setEntries((p) => fn(p));
@@ -138,6 +165,7 @@ export function PautaPage() {
         placeholder={s.openingHint}
         value={opening}
         onChange={(e) => { setOpening(e.target.value); touch(); }}
+        onBlur={() => void persist()}
       />
 
       {entries.length === 0 && <p className="mt-6 text-sm text-muted">{s.empty}</p>}
@@ -179,6 +207,7 @@ export function PautaPage() {
                   placeholder={s.textHint}
                   value={e.text}
                   onChange={(ev) => edit((p) => p.map((x) => (x.story_id === e.story_id ? { ...x, text: ev.target.value } : x)))}
+                  onBlur={() => void persist()}
                 />
               ) : (
                 <Button

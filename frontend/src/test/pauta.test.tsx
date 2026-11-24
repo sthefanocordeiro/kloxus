@@ -78,6 +78,40 @@ describe("Escrever (KLOX-168)", () => {
     expect(api.pautaFinish).toHaveBeenCalledWith(5);
   });
 
+  // KLOX-196: leaving mid-save used to drop the last keystrokes
+  it("saves on blur without waiting for the debounce", async () => {
+    renderPage();
+    await screen.findByRole("link", { name: "Primeira" });
+    fireEvent.click(screen.getByRole("button", { name: "Comment: Primeira" }));
+    const ta = screen.getByLabelText("Your comment: Primeira");
+    fireEvent.change(ta, { target: { value: "Minha nota" } });
+    fireEvent.blur(ta);
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 1000 });
+    expect(vi.mocked(api.pautaSave).mock.calls.at(-1)![1].entries[0])
+      .toEqual({ story_id: 1, text: "Minha nota" });
+  });
+
+  it("warns before unloading while a save is pending", async () => {
+    renderPage();
+    await screen.findByRole("link", { name: "Primeira" });
+    fireEvent.change(screen.getByLabelText(/Opening/), { target: { value: "oi" } });
+    const ev = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("keeps the text and shows an error when a save fails", async () => {
+    vi.mocked(api.pautaSave).mockRejectedValueOnce(new Error("boom"));
+    renderPage();
+    await screen.findByRole("link", { name: "Primeira" });
+    const ta = screen.getByLabelText(/Opening/);
+    fireEvent.change(ta, { target: { value: "abertura" } });
+    expect(await screen.findByText("Could not save — will retry on your next edit")).toBeTruthy();
+    fireEvent.change(ta, { target: { value: "abertura 2" } });
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    expect(vi.mocked(api.pautaSave).mock.calls.at(-1)![1].opening).toBe("abertura 2");
+  });
+
   it("removes a story from the pauta", async () => {
     renderPage();
     await screen.findByRole("link", { name: "Primeira" });

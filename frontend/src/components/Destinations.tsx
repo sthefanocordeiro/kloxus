@@ -39,6 +39,7 @@ const en = {
   cancel: "Cancel",
   saving: "Saving…",
   saved: "Saved",
+  saveError: "Couldn't save — retrying",
   copy: "Copy",
   copied: "Copied",
   copyRich: "Copy to paste",
@@ -81,6 +82,7 @@ const pt: Strings = {
   cancel: "Cancelar",
   saving: "Salvando…",
   saved: "Salvo",
+  saveError: "Não salvou — tentando de novo",
   copy: "Copiar",
   copied: "Copiado",
   copyRich: "Copiar p/ colar",
@@ -171,21 +173,41 @@ function useCopied() {
 }
 
 // useAutosave debounces edits into PUT /renditions/{id}. The first
-// render never saves — only real edits do.
+// render never saves — only real edits do. A failed save keeps the
+// body queued and retries instead of dropping it on the floor
+// (KLOX-196); the badge shows "error" rather than going back to idle.
 function useAutosave(issueID: number, id: number, onSaved: (r: Rendition) => void) {
-  const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const timer = useRef<number>(0);
   const pending = useRef<string | null>(null);
+  const inFlight = useRef(false);
+  const retry = useRef(0);
   const flush = async () => {
     const body = pending.current;
-    if (body === null) return;
+    if (body === null || inFlight.current) return;
     pending.current = null;
+    inFlight.current = true;
     setState("saving");
+    let failed = false;
     try {
       onSaved(await api.renditionSave(issueID, id, body));
+      retry.current = 0;
       setState(pending.current === null ? "saved" : "saving");
     } catch {
-      setState("idle");
+      // re-queue the body — a newer push already holds the newest text
+      failed = true;
+      pending.current = pending.current ?? body;
+      setState("error");
+      retry.current = Math.min(retry.current + 1, 5);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => void flushRef.current(), 1000 * retry.current);
+    } finally {
+      inFlight.current = false;
+    }
+    // edits queued while this save flew flush right after, in order
+    if (!failed && pending.current !== null) {
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => void flushRef.current(), 0);
     }
   };
   const flushRef = useRef(flush);
@@ -194,22 +216,37 @@ function useAutosave(issueID: number, id: number, onSaved: (r: Rendition) => voi
     window.clearTimeout(timer.current);
     void flushRef.current();
   }, []);
+  // a reload/close while a save is pending would drop it — warn first
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (pending.current !== null || inFlight.current) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
   return {
     state,
     push: (body: string) => {
       pending.current = body;
       setState("saving");
       window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => void flushRef.current(), 700);
+      timer.current = window.setTimeout(() => void flushRef.current(), 800);
     },
+    flush: () => void flushRef.current(),
   };
 }
 
-function SaveBadge({ state, s }: { state: "idle" | "saving" | "saved"; s: Strings }) {
+function SaveBadge({ state, s }: { state: "idle" | "saving" | "saved" | "error"; s: Strings }) {
   if (state === "idle") return null;
   return (
-    <span className="rounded-full bg-teal-soft px-2 py-0.5 text-[11px] text-teal">
-      {state === "saving" ? s.saving : s.saved}
+    <span className={cn(
+      "rounded-full px-2 py-0.5 text-[11px]",
+      state === "error" ? "bg-danger-soft text-danger" : "bg-teal-soft text-teal",
+    )}>
+      {state === "saving" ? s.saving : state === "error" ? s.saveError : s.saved}
     </span>
   );
 }
@@ -260,6 +297,7 @@ function PlainEditor({
         aria-label={s.formats[r.format].name}
         value={text}
         onChange={(e) => { setText(e.target.value); save.push(e.target.value); }}
+        onBlur={save.flush}
         rows={16}
         className="w-full whitespace-pre-wrap rounded-[var(--radius-input)] border border-line bg-paper p-3 text-sm leading-relaxed"
       />
@@ -319,6 +357,7 @@ function MarkdownEditor({
           aria-label="Markdown"
           value={md}
           onChange={(e) => { setMd(e.target.value); save.push(e.target.value); }}
+          onBlur={save.flush}
           rows={20}
           className="w-full rounded-[var(--radius-input)] border border-line bg-paper p-3 font-mono text-xs leading-relaxed"
         />
@@ -399,6 +438,7 @@ function HtmlEditor({
       },
     },
     onUpdate: ({ editor: e }) => save.push(e.getHTML()),
+    onBlur: () => save.flush(),
   });
   editorRef.current = editor;
   if (!editor) return null;
