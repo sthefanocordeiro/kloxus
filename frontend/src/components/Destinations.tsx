@@ -6,6 +6,7 @@ import Image from "@tiptap/extension-image";
 import { api, type Rendition, type RenditionFormat } from "../api";
 import { useT } from "../i18n";
 import { Button } from "../ui";
+import { KDialog } from "../ui-overlays";
 import { Markdown } from "../markdown";
 import { cn } from "../lib/cn";
 import {
@@ -33,6 +34,9 @@ const en = {
   refresh: "Update this version?",
   refreshConfirm: "Updating replaces your edits in this version with the current brief. Continue?",
   removeConfirm: "Remove this version and its edits?",
+  removeTitle: "Remove this version?",
+  update: "Update",
+  cancel: "Cancel",
   saving: "Saving…",
   saved: "Saved",
   copy: "Copy",
@@ -72,6 +76,9 @@ const pt: Strings = {
   refresh: "Atualizar esta versão?",
   refreshConfirm: "Atualizar troca suas edições desta versão pelo texto atual da pauta. Continuar?",
   removeConfirm: "Remover esta versão e suas edições?",
+  removeTitle: "Remover esta versão?",
+  update: "Atualizar",
+  cancel: "Cancelar",
   saving: "Salvando…",
   saved: "Salvo",
   copy: "Copiar",
@@ -483,6 +490,8 @@ export function DestinationStep({
   const q = useQuery({ queryKey: key, queryFn: () => api.renditions(issueID) });
   const [active, setActive] = useState<RenditionFormat | null>(null);
   const [refreshing, setRefreshing] = useState(0);
+  const [confirmRemove, setConfirmRemove] = useState<RenditionFormat | null>(null);
+  const [confirmRefresh, setConfirmRefresh] = useState(false);
 
   const rs = q.data?.renditions ?? [];
   const byFormat = new Map(rs.map((r) => [r.format, r]));
@@ -506,8 +515,10 @@ export function DestinationStep({
   const toggle = (f: RenditionFormat) => {
     const cur = byFormat.get(f);
     if (!cur) { create.mutate(f); return; }
-    if (window.confirm(s.removeConfirm)) del.mutate(cur);
+    setConfirmRemove(f);
   };
+
+  const removing = confirmRemove ? byFormat.get(confirmRemove) : undefined;
 
   const current = (active && byFormat.get(active)) || (rs.length ? rs[0] : undefined);
   const socialChosen = rs.some((r) => isSocial(r.format));
@@ -535,7 +546,7 @@ export function DestinationStep({
                     checked={on}
                     disabled={q.isLoading || create.isPending || del.isPending}
                     onChange={() => toggle(f)}
-                    className="mt-1 h-4 w-4"
+                    className="mt-1 h-4 w-4 cursor-pointer accent-teal"
                   />
                   <span>
                     <span className="block text-sm font-medium">{s.formats[f].name}</span>
@@ -581,7 +592,7 @@ export function DestinationStep({
                   size="sm"
                   variant="outline"
                   disabled={refresh.isPending}
-                  onClick={() => { if (window.confirm(s.refreshConfirm)) refresh.mutate(current); }}
+                  onClick={() => setConfirmRefresh(true)}
                 >
                   {s.refresh}
                 </Button>
@@ -605,6 +616,45 @@ export function DestinationStep({
           </section>
         )}
       </div>
+
+      <KDialog
+        open={removing !== undefined}
+        onOpenChange={(o) => { if (!o) setConfirmRemove(null); }}
+        title={s.removeTitle}
+      >
+        <p className="text-sm text-muted">{s.removeConfirm}</p>
+        <div className="mt-5 flex gap-3">
+          <Button
+            variant="danger"
+            disabled={del.isPending}
+            onClick={() => { if (removing) del.mutate(removing); setConfirmRemove(null); }}
+          >
+            {s.remove}
+          </Button>
+          <Button variant="outline" onClick={() => setConfirmRemove(null)}>
+            {s.cancel}
+          </Button>
+        </div>
+      </KDialog>
+
+      <KDialog
+        open={confirmRefresh}
+        onOpenChange={setConfirmRefresh}
+        title={s.refresh}
+      >
+        <p className="text-sm text-muted">{s.refreshConfirm}</p>
+        <div className="mt-5 flex gap-3">
+          <Button
+            disabled={refresh.isPending}
+            onClick={() => { if (current) refresh.mutate(current); setConfirmRefresh(false); }}
+          >
+            {s.update}
+          </Button>
+          <Button variant="outline" onClick={() => setConfirmRefresh(false)}>
+            {s.cancel}
+          </Button>
+        </div>
+      </KDialog>
     </div>
   );
 }

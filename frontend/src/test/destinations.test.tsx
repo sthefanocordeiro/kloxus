@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, type Rendition } from "../api";
@@ -52,6 +52,29 @@ describe("DestinationStep", () => {
     fireEvent.change(ta, { target: { value: "dois" } });
     await waitFor(() => expect(save).toHaveBeenCalledWith(1, 1, "dois"), { timeout: 2000 });
     expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms removal in-app instead of window.confirm", async () => {
+    const del = vi.spyOn(api, "renditionDelete").mockResolvedValue(undefined);
+    const confirmSpy = vi.spyOn(window, "confirm");
+    setup([mk(1, "markdown", { body_md: "# md" })]);
+    const box = await screen.findByRole("checkbox", { name: /Markdown/ });
+    await waitFor(() => expect(box).toBeEnabled());
+
+    fireEvent.click(box);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Remove this version and its edits/)).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(del).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(box);
+    const again = await screen.findByRole("dialog");
+    fireEvent.click(within(again).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(del).toHaveBeenCalledWith(1, 1));
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
   it("offers a manual refresh when the base changed", async () => {
