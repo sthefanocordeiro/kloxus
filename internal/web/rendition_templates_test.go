@@ -13,6 +13,7 @@ func renditionFixture() *issueDocument {
 			Commentary: docCommentary{Mode: "optional", Text: "Semana intensa."},
 			Items: []docItem{{
 				Ref: 1, Headline: "BC muda regra",
+				Text: "O BC publicou a norma. Vale desde segunda.",
 				Sentences: []docSentence{
 					{Text: "O BC publicou a norma.", Kind: "fact", Citations: []int{1}},
 					{Text: "Vale desde segunda.", Kind: "fact", Citations: []int{1, 2}},
@@ -83,6 +84,31 @@ func TestRenditionNoRawInterpretationMarkup(t *testing.T) {
 	}
 }
 
+// KLOX-181: the item's text exports exactly as the author typed it —
+// punctuation between sentences, line breaks and paragraph breaks.
+func TestRenditionTextVerbatim(t *testing.T) {
+	doc := renditionFixture()
+	doc.Sections[0].Items[0].Text = "Com ressalvas. Vale ler os detalhes. 🎯\nsegunda linha\n\noutro parágrafo"
+	text, _, _, _ := renditionBodies(doc, FmtLinkedIn)
+	for _, frag := range []string{
+		"Com ressalvas. Vale ler os detalhes. 🎯\nsegunda linha",
+		"outro parágrafo",
+	} {
+		if !strings.Contains(text, frag) {
+			t.Errorf("linkedin lost %q:\n%s", frag, text)
+		}
+	}
+	_, h, _, _ := renditionBodies(doc, FmtHTML)
+	if !strings.Contains(h, "Com ressalvas. Vale ler os detalhes. 🎯<br>\nsegunda linha") ||
+		!strings.Contains(h, "</p>\n<p>outro parágrafo</p>") {
+		t.Errorf("html lost the author's breaks:\n%s", h)
+	}
+	_, _, m, _ := renditionBodies(doc, FmtMarkdown)
+	if !strings.Contains(m, "Com ressalvas. Vale ler os detalhes. 🎯\nsegunda linha\n\noutro parágrafo") {
+		t.Errorf("markdown lost the author's breaks:\n%s", m)
+	}
+}
+
 func TestRenditionXSplitsPerStory(t *testing.T) {
 	doc := &issueDocument{Sections: []docSection{{
 		Title: "Posts",
@@ -122,7 +148,7 @@ func TestRenditionFormatsUseOwnColumnAndHashTracksBase(t *testing.T) {
 	if hash1 != hash2 {
 		t.Fatal("hash must not depend on the chosen format")
 	}
-	doc.Sections[0].Items[0].Sentences[0].Text = "O BC revisou a norma."
+	doc.Sections[0].Items[0].Text = "O BC revisou a norma."
 	_, _, _, hash3 := renditionBodies(doc, FmtMarkdown)
 	if hash3 == hash1 {
 		t.Fatal("hash must change when the piece text changes")

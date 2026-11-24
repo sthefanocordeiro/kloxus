@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html"
+	"regexp"
 	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -45,6 +46,10 @@ type rdDoc struct {
 	Blocks []rdBlock
 }
 
+// paraSplitRe cuts an item's text into paragraphs at blank-line runs —
+// the author's own paragraph breaks, one rdBlock each.
+var paraSplitRe = regexp.MustCompile(`\n\s*\n`)
+
 // buildRenditionDoc flattens the issue document into the neutral model
 // every template renders from.
 func buildRenditionDoc(doc *issueDocument) *rdDoc {
@@ -66,21 +71,36 @@ func buildRenditionDoc(doc *issueDocument) *rdDoc {
 				if h := strings.TrimSpace(it.Headline); h != "" {
 					out.Blocks = append(out.Blocks, rdBlock{Kind: "heading", Level: 3, Text: h, URL: itemURL(it)})
 				}
-				var facts []string
 				var interp []rdBlock
 				for _, s := range it.Sentences {
-					t := cleanExportText(s.Text)
-					if t == "" {
+					if s.Kind != "interpretation" {
 						continue
 					}
-					if s.Kind == "interpretation" {
+					if t := cleanExportText(s.Text); t != "" {
 						interp = append(interp, rdBlock{Kind: "para", Text: t})
-						continue
 					}
-					facts = append(facts, t)
 				}
-				if len(facts) > 0 {
-					out.Blocks = append(out.Blocks, rdBlock{Kind: "para", Text: strings.Join(facts, " ")})
+				// the item's text exports verbatim — one field, exactly
+				// as the author typed it (KLOX-181). Documents built
+				// without the text field (tests) fall back to the
+				// sentence join.
+				text := it.Text
+				if text == "" {
+					var facts []string
+					for _, s := range it.Sentences {
+						if s.Kind != "fact" {
+							continue
+						}
+						if t := cleanExportText(s.Text); t != "" {
+							facts = append(facts, t)
+						}
+					}
+					text = strings.Join(facts, " ")
+				}
+				for _, p := range paraSplitRe.Split(cleanExportText(text), -1) {
+					if p = strings.TrimSpace(p); p != "" {
+						out.Blocks = append(out.Blocks, rdBlock{Kind: "para", Text: p})
+					}
 				}
 				out.Blocks = append(out.Blocks, interp...)
 			case "heading":
@@ -278,7 +298,8 @@ func renderX(d *rdDoc) string {
 
 // renderHTML is the blog / newsletter template: per story an <h3> whose
 // text links to the article, then the text. The markup stays inside what
-// the TipTap schema round-trips.
+// the TipTap schema round-trips. A line break inside a paragraph ships
+// as <br> so the author's breaks survive the format.
 func renderHTML(d *rdDoc) string {
 	var b strings.Builder
 	for _, bl := range d.Blocks {
@@ -290,7 +311,7 @@ func renderHTML(d *rdDoc) string {
 			}
 			fmt.Fprintf(&b, "<h%d>%s</h%d>\n", bl.Level, t, bl.Level)
 		case "para":
-			b.WriteString("<p>" + html.EscapeString(bl.Text) + "</p>\n")
+			b.WriteString("<p>" + strings.ReplaceAll(html.EscapeString(bl.Text), "\n", "<br>\n") + "</p>\n")
 		case "link":
 			t := bl.Text
 			if t == "" {
