@@ -194,7 +194,13 @@ export function PautaPage() {
         )}
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-paper-raised/95 px-4 py-3 backdrop-blur">
+      {/* fixed just above the global bottom nav on phone — at bottom-0
+          the z-40 nav covered it and taps hit Configurações (KLOX-180) */}
+      <div
+        className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 border-t border-line bg-paper-raised/95 px-4 py-3 backdrop-blur md:bottom-0"
+        role="region"
+        aria-label={s.toExport}
+      >
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
           {finish.isError ? (
             <p className="text-sm text-danger" role="alert">{errText(t, finish.error)}</p>
