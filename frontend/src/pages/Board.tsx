@@ -406,7 +406,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             showToast(
               rule ? t.board.ruleLearned(rule) : t.board.moved(short(inCand.title)),
               { kind: "reject", itemID },
-              rule ? { text: t.board.viewGuide, url: `/publications/${issue.publication_id}/guide` } : undefined,
+              undefined,
             );
             qc.invalidateQueries({ queryKey: ["candidates", issue.id] });
           },
@@ -434,7 +434,7 @@ export function BuildBoard({ issue, onDrafted }: { issue: IssueSummary; onDrafte
             showToast(
               rule ? t.board.ruleLearned(rule) : t.board.removed(short(cand.title)),
               { kind: "reject", itemID: cand.item_id! },
-              rule ? { text: t.board.viewGuide, url: `/publications/${issue.publication_id}/guide` } : undefined,
+              undefined,
             );
             qc.invalidateQueries({ queryKey: ["candidates", issue.id] });
           },

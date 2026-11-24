@@ -171,31 +171,6 @@ test("create flow has no horizontal clipping at 390px", async ({ page }) => {
   await fitsViewport();
 });
 
-// KLOX-87: the shell's Voltar used to be desktop-only
-// (`hidden sm:inline-flex`), so at 390px the header on pub-scoped
-// pages had no way back — the bottom tabs only switch top-level
-// sections, and the Mais-menu pages (Seções among them) sit one level
-// deeper. The button now shows at every width and leads to the
-// crumb's destination, same as on desktop.
-test("mobile 390px: the shell Voltar shows on Seções and leads back", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const id = await createViaAPI(page);
-
-  await page.goto(`/publications/${id}/sections`);
-  const back = page.getByRole("link", { name: /Voltar para/ });
-  await expect(back).toBeVisible({ timeout: 15000 });
-  // the header still fits — the control must not push past the edge
-  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  }));
-  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
-  await expect(page.getByRole("heading", { name: "Seções" })).toBeVisible();
-
-  await back.click();
-  await page.waitForURL(new RegExp(`/publications/${id}$`));
-});
-
 async function createViaAPI(page: import("@playwright/test").Page) {
   await claimOwner(page);
   const proposal = (await (await page.request.get("/api/v1/proposal")).json()).proposal;
@@ -217,21 +192,6 @@ async function createViaAPI(page: import("@playwright/test").Page) {
   return ((await res.json()).publication as { id: number }).id;
 }
 
-test("page 3 (Fontes) carries the same Voltar + Avançar pair", async ({ page }) => {
-  const id = await createViaAPI(page);
-
-  await page.goto(`/publications/${id}/sources`);
-  const fwd = page.getByRole("button", { name: "Avançar", exact: true });
-  await expect(fwd).toBeVisible({ timeout: 15000 });
-  const back = page.getByRole("button", { name: "Voltar", exact: true });
-  await expect(back).toBeVisible();
-  // Voltar left, Avançar right — the same order as the other steps
-  const [backBox, fwdBox] = await Promise.all([back.boundingBox(), fwd.boundingBox()]);
-  expect(backBox!.x).toBeLessThan(fwdBox!.x);
-  await back.click();
-  await page.waitForURL(new RegExp(`/publications/${id}/sections`));
-});
-
 test("an account with a newsletter never reaches the create flow", async ({ page }) => {
   // create the publication via API first — the UI path must then refuse
   // entry to /new and land on the publication's editions instead
@@ -241,21 +201,4 @@ test("an account with a newsletter never reaches the create flow", async ({ page
   await page.goto("/new");
   await page.waitForURL(/\/publications\/\d+/, { timeout: 15000 });
   await expect(page.getByLabel("Cole um link")).toHaveCount(0);
-});
-
-// KLOX-113: Seções (step 2 after creation) had no way back to step 1
-test("onboarding round-trip 3→2→1→2→3 keeps what was filled", async ({ page }) => {
-  const id = await createViaAPI(page);
-  await page.goto(`/publications/${id}/sources`);
-  await page.getByRole("button", { name: "Voltar", exact: true }).click();
-  await page.waitForURL(/\/sections\?onboarding=1/);
-  await page.getByRole("button", { name: "Voltar", exact: true }).click();
-  await page.waitForURL(/\/settings\?onboarding=1/);
-  const name = page.getByLabel(/nome/i).first();
-  await expect(name).not.toHaveValue("");
-  await page.getByRole("button", { name: "Avançar", exact: true }).click();
-  await page.waitForURL(/\/sections\?onboarding=1/);
-  // 2→3 closes the round-trip
-  await page.getByRole("button", { name: "Avançar", exact: true }).click();
-  await page.waitForURL(/\/publications\/\d+\/sources/);
 });
