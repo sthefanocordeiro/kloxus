@@ -52,12 +52,7 @@ export function Publications() {
         {pubs.data?.map((p) => (
           <Link key={p.id} to={`/publications/${p.id}`}>
             <Card className="transition-colors hover:border-ink/40">
-              <div className="flex items-baseline justify-between">
-                <h2 className="font-display text-lg font-bold">{p.name}</h2>
-                <span className="text-xs text-muted">
-                  {(t.frequency as Record<string, string>)[p.frequency] ?? p.frequency}
-                </span>
-              </div>
+              <h2 className="font-display text-lg font-bold">{p.name}</h2>
               <p className="mt-1 line-clamp-2 text-sm text-muted">{p.editorial_line}</p>
             </Card>
           </Link>

@@ -130,19 +130,6 @@ export function SourcesPage() {
               />
               <span className="mt-1 block text-xs text-muted">{t.create.rejectTermsHint}</span>
             </label>
-            {pub.data.publication.sections.map((s) => (
-              <label key={s.id} className="block">
-                <span className="text-xs font-medium text-muted">
-                  {s.title || "—"} · {t.sourcesPage.sectionTopicLabel}
-                </span>
-                <input
-                  value={adForm.sections[s.id] ?? ""}
-                  onChange={(e) => editAd({ sections: { ...adForm.sections, [s.id]: e.target.value } })}
-                  placeholder={t.sourcesPage.sectionTopicEmpty}
-                  className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
-                />
-              </label>
-            ))}
           </div>
           <div className="mt-3 flex items-center gap-3">
             {/* outline: the screen's one primary is the forward action

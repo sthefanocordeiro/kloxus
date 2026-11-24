@@ -20,7 +20,7 @@ import {
 
 const en = {
   title: "Where is it going?",
-  hint: "Pick one or more destinations. Each gets its own copy you can edit — editing it never reopens the review.",
+  hint: "Pick one or more destinations. Each destination gets its own editable copy.",
   formats: {
     linkedin: { name: "LinkedIn post", sub: "Plain text · 3,000 characters" },
     x: { name: "X post", sub: "Plain text · 280 per post" },
@@ -59,7 +59,7 @@ type Strings = typeof en;
 
 const pt: Strings = {
   title: "Para onde vai?",
-  hint: "Escolha um ou mais destinos. Cada um ganha sua própria cópia editável — editar não reabre a revisão.",
+  hint: "Escolha um ou mais destinos. Cada destino ganha sua própria cópia editável.",
   formats: {
     linkedin: { name: "Post LinkedIn", sub: "Texto puro · 3.000 caracteres" },
     x: { name: "Post X", sub: "Texto puro · 280 por post" },

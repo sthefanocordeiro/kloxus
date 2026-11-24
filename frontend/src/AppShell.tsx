@@ -44,7 +44,9 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
   // /new's crumb used to point at /new itself — a Voltar that went
   // nowhere (KLOX-79). Publicações is the real parent.
   if (pathname === "/start") return { title: t.nav.creating, crumbs: [], section: "new" };
-  if (pathname === "/publications") return { title: t.publications, crumbs: [], section: "editions" };
+  // the publications list is Radar-level chrome — highlight the "Radar"
+  // nav item, not "Pautas" (KLOX-185)
+  if (pathname === "/publications") return { title: t.publications, crumbs: [], section: "radar" };
   if (issueM) {
     return {
       title: issueNumber ? `${t.issue} ${issueNumber}` : t.nav.edition,
@@ -82,13 +84,18 @@ export function AppShell() {
     queryFn: () => api.issue(issueId!),
     enabled: !!issueId,
   });
-  const pubKey = pubId ?? (issue.data?.publication_id ? String(issue.data.publication_id) : undefined);
+  const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
+  // off a publication route (e.g. /publications itself) fall back to the
+  // account's Radar so pub-scoped links still resolve (KLOX-185)
+  const pubKey =
+    pubId ??
+    (issue.data?.publication_id ? String(issue.data.publication_id) : undefined) ??
+    (pubs.data?.length ? String(pubs.data[0].id) : undefined);
   const pubQ = useQuery({
     queryKey: ["publication", pubKey],
     queryFn: () => api.publication(pubKey!),
     enabled: !!pubKey,
   });
-  const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
 
   const pub = pubQ.data?.publication;
   const latest = pubQ.data?.latest_issue;
@@ -117,7 +124,9 @@ export function AppShell() {
       ];
   // the Radar entry spans its configuration pages
   const section = !publishing && ["sources"].includes(chrome.section) ? "radar" : chrome.section;
-  const radarTabs = !publishing && section === "radar"
+  // the Radar tab strip belongs to the sources screen — /publications
+  // shares the "radar" section for highlighting but is not a tab page
+  const radarTabs = !publishing && section === "radar" && !!pubM
     ? [
         { to: `${pubBase}/sources`, label: t.sources, on: chrome.section === "sources" },
       ]

@@ -28,7 +28,6 @@ export const dict = {
     run: {
       noItems: "No items collected — check the Radar's sources",
     },
-    frequency: { weekly: "weekly", daily: "daily", monthly: "monthly" },
     errors: {
       conflict: "The document changed — reloaded the latest version",
       read_only: "This brief was already exported — it is read-only",
@@ -159,7 +158,7 @@ export const dict = {
       },
     },
     create: {
-      rejectTerms: "Never cover",
+      rejectTerms: "Never show",
       rejectTermsHint: "Themes that never make it in — e.g. celular, games.",
       next: "Next",
     },
@@ -180,12 +179,10 @@ export const dict = {
       empty: "No sources yet — pick one from the catalog to collect.",
       suspendedBadge: "paused",
       aderenciaTitle: "Radar topics",
-      aderenciaHint: "Stories rank by these topics. Rejected themes stay on the bench, marked — never auto-slotted.",
+      aderenciaHint: "Stories rank by these topics.",
       newsletterTheme: "Radar theme",
       themePlaceholder: "e.g. fintech and regulation",
-      rejectsLabel: "Never cover",
-      sectionTopicLabel: "what fits here",
-      sectionTopicEmpty: "any story",
+      rejectsLabel: "Never show",
       save: "Save",
       saved: "Saved — applies to next briefs.",
     },
@@ -220,7 +217,7 @@ export const dict = {
     settingsPage: {
       name: "Name",
       topic: "Topic",
-      rejectTerms: "Never cover",
+      rejectTerms: "Never show",
       rejectTermsHint: "Themes that never make it in — e.g. celular, games.",
       price: "Price",
       pricePlaceholder: "e.g. $10/month",
@@ -259,7 +256,6 @@ export const dict = {
     run: {
       noItems: "Nada foi coletado — confira as fontes do Radar",
     },
-    frequency: { weekly: "semanal", daily: "diária", monthly: "mensal" },
     errors: {
       conflict: "O documento mudou — a versão mais recente foi carregada",
       read_only: "Esta pauta já foi exportada — é somente leitura",
@@ -390,7 +386,7 @@ export const dict = {
       },
     },
     create: {
-      rejectTerms: "Nunca pautar",
+      rejectTerms: "Nunca mostrar",
       rejectTermsHint: "Temas que nunca entram — ex.: celular, games.",
       next: "Avançar",
     },
@@ -411,12 +407,10 @@ export const dict = {
       empty: "Nenhuma fonte ainda — escolha uma do catálogo para coletar.",
       suspendedBadge: "pausada",
       aderenciaTitle: "Temas do Radar",
-      aderenciaHint: "As notícias seguem esses temas. Temas rejeitados ficam na reserva, marcados — nunca entram sozinhos.",
+      aderenciaHint: "As notícias seguem esses temas.",
       newsletterTheme: "Tema do Radar",
       themePlaceholder: "ex.: fintech e regulação",
-      rejectsLabel: "Nunca pautar",
-      sectionTopicLabel: "o que entra aqui",
-      sectionTopicEmpty: "qualquer notícia",
+      rejectsLabel: "Nunca mostrar",
       save: "Salvar",
       saved: "Salvo — vale para a próxima pauta.",
     },
@@ -451,7 +445,7 @@ export const dict = {
     settingsPage: {
       name: "Nome",
       topic: "Tema",
-      rejectTerms: "Nunca pautar",
+      rejectTerms: "Nunca mostrar",
       rejectTermsHint: "Temas que nunca entram — ex.: celular, games.",
       price: "Preço",
       pricePlaceholder: "ex.: R$ 10/mês",
