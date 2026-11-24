@@ -449,6 +449,11 @@ func (s *Server) pautaTitle(r *http.Request, iss *store.Issue, pub *store.Public
 		}
 	}
 	if first != nil {
+		// The snapshotted title survives the deck rebuild; the live
+		// story is only a fallback for rows that predate the column.
+		if title := strings.TrimSpace(first.Title); title != "" {
+			return title
+		}
 		if title, err := db(r).StoryTitle(r.Context(), first.StoryID); err == nil && strings.TrimSpace(title) != "" {
 			return strings.TrimSpace(title)
 		}
