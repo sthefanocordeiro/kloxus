@@ -289,7 +289,7 @@ export const dict = {
     },
     claim: {
       emailPlaceholder: "you@example.com",
-      action: "Save with your email",
+      action: "Send link",
       sending: "Sending…",
       sent: (email: string) => `We sent a link to ${email} — it expires in 15 minutes.`,
       openLink: "Open the link",
@@ -866,7 +866,7 @@ export const dict = {
     },
     claim: {
       emailPlaceholder: "você@exemplo.com",
-      action: "Salvar com seu e-mail",
+      action: "Enviar link",
       sending: "Enviando…",
       sent: (email: string) => `Enviamos um link para ${email} — ele expira em 15 minutos.`,
       openLink: "Abrir o link",

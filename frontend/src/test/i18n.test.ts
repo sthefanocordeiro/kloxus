@@ -192,7 +192,7 @@ describe("pt glossary (KLOX-64 §2)", () => {
   });
 
   it("speaks second person", () => {
-    expect(t.claim.action).toBe("Salvar com seu e-mail");
+    expect(t.claim.action).toBe("Enviar link");
     expect(t.errors.unclaimed_workspace).toBe("Salve com seu e-mail antes de enviar");
   });
 });
