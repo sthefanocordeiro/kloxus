@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api, type OutboxEmail } from "../api";
 import { useT } from "../i18n";
 import { cn } from "../lib/cn";
 import { fmtDate } from "../lib/fmt";
-import { Badge, Card } from "../ui";
+import { Badge, Card, SkeletonLine } from "../ui";
 import { useState } from "react";
 
 const KIND_TONE: Record<string, "teal" | "ink" | "muted"> = {
@@ -27,10 +27,7 @@ export function OutboxPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-8">
-      <Link to={`/publications/${id}`} className="text-sm text-muted hover:text-ink">
-        ← {t.back}
-      </Link>
-      <h1 className="mt-3 mb-6 font-doc text-2xl font-semibold">{t.outbox}</h1>
+      <h1 className="mb-6 font-display text-2xl font-bold">{t.outbox}</h1>
 
       {emails.data?.length === 0 && <p className="text-sm text-muted">{t.outboxPage.empty}</p>}
 
@@ -58,14 +55,19 @@ export function OutboxPage() {
 function EmailPreview({ id }: { id: number }) {
   const q = useQuery({ queryKey: ["outboxEmail", id], queryFn: () => api.outboxEmail(id) });
   const e: OutboxEmail | undefined = q.data;
-  if (!e) return <div className="border-t border-line px-4 py-3 text-xs text-muted">…</div>;
+  if (!e) return <div className="border-t border-line px-4 py-3"><SkeletonLine className="h-3 w-32" /></div>;
+  // A fetched same-origin frame, not a srcdoc one — srcdoc previews
+  // painted blank intermittently at narrow widths (KLOX-100). The
+  // server wraps the body in a strict CSP sandbox; the attribute here
+  // is a second layer. Markdown-only mails render inside the same
+  // frame, so every email previews identically at any viewport.
   return (
     <div className="border-t border-line">
-      {e.body_html ? (
+      {e.body_html || e.body_md ? (
         <iframe
           title={e.subject}
           sandbox=""
-          srcDoc={e.body_html}
+          src={`/outbox/${id}/html`}
           className={cn("h-[420px] w-full bg-white")}
         />
       ) : (
