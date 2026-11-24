@@ -123,7 +123,7 @@ export function Start() {
                     onClick={() => setNiches(on ? niches.filter((n) => n !== k) : [...niches, k])}
                     className={
                       "rounded-full border px-3 py-1 text-sm transition-colors " +
-                      (on ? "border-teal bg-teal/10 font-medium text-teal" : "border-line text-muted hover:border-ink/40")
+                      (on ? "border-teal bg-teal font-semibold text-white shadow-sm" : "border-line text-muted hover:border-ink/40")
                     }
                   >
                     {s.niches[k]}
@@ -224,7 +224,11 @@ function Calibrate({ pubID, s, onDone }: { pubID: number; s: StartStrings; onDon
 
       {cards === null && (
         <Card className="mt-6 p-5" aria-busy="true">
-          <p className="text-sm text-muted">{s.loadingDeck}</p>
+          <p className="text-sm text-muted" role="status">{s.loadingDeck}</p>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded bg-line" role="progressbar" aria-label={s.loadingDeck}>
+            <div className="h-full w-1/3 animate-pulse rounded bg-teal" />
+          </div>
+          <p className="mt-2 text-xs text-muted">{s.loadingSlow}</p>
           <SkeletonLine />
           <SkeletonLine />
         </Card>
@@ -318,11 +322,11 @@ function Done({ pubID, s, name, topics }: { pubID: number; s: StartStrings; name
           </div>
         </dl>
         <p className="mt-4 text-sm" aria-live="polite">
-          {today.isPending ? "…" : cards.length > 0 ? fill(s.doneMatches, { n: cards.length }) : s.doneNone}
+          {today.isPending ? s.doneLoading : cards.length > 0 ? fill(s.doneMatches, { n: cards.length }) : s.doneNone}
         </p>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
           <Link to={todayPath} replace className="text-sm underline hover:text-ink">{s.seeToday}</Link>
-          <Button disabled={cards.length === 0} onClick={() => nav(todayPath, { replace: true })}>
+          <Button disabled={today.isPending || cards.length === 0} title={today.isPending ? s.doneLoading : undefined} onClick={() => nav(todayPath, { replace: true })}>
             {s.firstPost}
           </Button>
         </div>

@@ -4,6 +4,7 @@ import { Link, NavLink, Outlet, matchPath, useLocation } from "react-router-dom"
 import {
   BookOpen,
   CircleUser,
+  LogOut,
   Ellipsis,
   Inbox,
   Layers,
@@ -132,7 +133,10 @@ export function AppShell() {
       ]
     : [];
 
-  const back = chrome.crumbs[chrome.crumbs.length - 1];
+  // top-level screens (the nav's own destinations) have no "← Voltar"
+  const tail = pathname.split("/").pop() ?? "";
+  const topLevel = !!pubM && ["today", "sources", "readers", "sections", "settings"].includes(tail);
+  const back = topLevel ? undefined : chrome.crumbs[chrome.crumbs.length - 1];
 
   return (
     <div className="flex h-dvh">
@@ -149,14 +153,14 @@ export function AppShell() {
               when the account still has none */}
           {pub ? (
             <Link
-              to={pubBase}
+              to={`${pubBase}/today`}
               className="flex h-10 w-full items-center truncate rounded-[var(--radius-input)] border border-line bg-paper-raised px-3 text-sm font-medium text-ink hover:border-teal/50"
             >
               <span className="truncate">{pub.name}</span>
             </Link>
           ) : pubs.data?.length ? (
             <Link
-              to={`/publications/${pubs.data[0].id}`}
+              to={`/publications/${pubs.data[0].id}/today`}
               className="flex h-10 w-full items-center truncate rounded-[var(--radius-input)] border border-line bg-paper-raised px-3 text-sm font-medium text-ink hover:border-teal/50"
             >
               <span className="truncate">{pubs.data[0].name}</span>
@@ -374,11 +378,34 @@ function LangSwitch({ lang, setLang, className }: { lang: Lang; setLang: (l: Lan
 
 function AccountMenu({ claimed, email }: { claimed?: boolean; email?: string }) {
   const { t } = useT();
+  // one Radar per account: a new Radar means signing out and starting
+  // fresh; the claimed account comes back with an e-mail link
+  const leave = async (to: string) => {
+    try {
+      await api.logout();
+    } catch {
+      return;
+    }
+    window.location.assign(to);
+  };
+  const item = "flex h-11 w-full items-center gap-3 rounded-[var(--radius-btn)] px-2 text-sm font-medium text-ink hover:bg-surface";
   return (
     <div className="space-y-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted">{t.nav.account}</p>
       {claimed && email ? (
-        <p className="text-sm text-ink">{t.nav.savedWith(email)}</p>
+        <>
+          <p className="text-sm text-ink">{t.nav.savedWith(email)}</p>
+          <div className="grid gap-1 border-t border-line pt-2">
+            <button type="button" className={item} onClick={() => leave("/start")}>
+              <Plus size={16} aria-hidden className="text-muted" />
+              {t.nav.newNewsletter}
+            </button>
+            <button type="button" className={item} onClick={() => leave("/")}>
+              <LogOut size={16} aria-hidden className="text-muted" />
+              {t.nav.signOut}
+            </button>
+          </div>
+        </>
       ) : (
         <div className="space-y-2">
           <p className="text-sm font-medium">{t.nav.saveWithEmail}</p>

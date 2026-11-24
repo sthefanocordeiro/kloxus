@@ -19,7 +19,7 @@ func TestRadarOnboarding(t *testing.T) {
 	}
 
 	rr = apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{
-		"name": "Fintech para bancários", "about": "fintech, Pix e regulação", "niches": []string{"fintech", "bogus"},
+		"name": "Fintech para bancários", "about": "fintech, Pix e regulação", "niches": []string{"mercado-financeiro", "bogus"},
 	})
 	if rr.Code != 201 {
 		t.Fatalf("create radar = %d %s", rr.Code, rr.Body.String())
@@ -124,5 +124,13 @@ func TestRadarNameTooLong(t *testing.T) {
 	rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{"name": strings.Repeat("x", 61), "about": "pix"})
 	if rr.Code != 400 || apiErrCode(t, rr) != "validation" {
 		t.Fatalf("long name = %d", rr.Code)
+	}
+}
+
+func TestLogoutRequiresClaim(t *testing.T) {
+	srv, _ := emptyServer(t)
+	rr := apiCall(t, srv, "POST", "/api/v1/logout", map[string]any{})
+	if rr.Code == 200 {
+		t.Fatalf("unclaimed logout = %d, want refusal", rr.Code)
 	}
 }

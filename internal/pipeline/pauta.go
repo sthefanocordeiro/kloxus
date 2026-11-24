@@ -209,8 +209,13 @@ func pautaCard(s *store.Story, enrich map[int64]*store.ItemEnrichment, age, scor
 			}
 		}
 	}
-	if card.Summary == "" && len(s.Items) > 0 {
-		card.Summary = firstSentence(s.Items[0].ContentText, 180)
+	// no enriched summary: the opening of the first item that has a body
+	// (not only item 0 — signal items often carry none)
+	for _, it := range s.Items {
+		if card.Summary != "" {
+			break
+		}
+		card.Summary = firstSentence(it.ContentText, 180)
 	}
 	return card
 }

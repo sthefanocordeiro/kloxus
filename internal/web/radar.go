@@ -26,25 +26,40 @@ const (
 // catalog is what the global scheduler ingests (D29) — the person only
 // unchecks from this list; their own sources stay in settings.
 var nicheSources = map[string][]string{
-	"fintech":    {"exame", "startups", "mobiletime", "tecnoblog", "techcrunch"},
-	"cripto":     {"exame", "tecnoblog", "techcrunch"},
-	"regulacao":  {"exame", "tecnoblog", "mobiletime"},
-	"ia":         {"techcrunch", "wired", "ars-technica", "the-verge", "tecnoblog"},
-	"startups":   {"startups", "techcrunch", "exame"},
-	"tecnologia": {"tecnoblog", "canaltech", "olhar-digital", "tecmundo", "meiobit", "the-verge", "ars-technica"},
-	"mercado":    {"exame", "startups", "techcrunch", "valor"},
-	"economia":   {"exame", "valor"},
-	"negocios":   {"exame", "valor", "startups"},
-	"carreira":   {"exame", "valor"},
+	"politica":           {"agencia-brasil-politica", "camara-noticias", "poder360", "g1", "folha"},
+	"economia":           {"agencia-brasil-economia", "exame", "valor", "infomoney", "folha"},
+	"mercado-financeiro": {"infomoney", "seu-dinheiro", "money-times", "valor", "finsiders"},
+	"financas-pessoais":  {"infomoney", "seu-dinheiro", "money-times", "exame"},
+	"negocios":           {"exame", "valor", "startups", "folha"},
+	"startups":           {"startups", "techcrunch", "exame"},
+	"carreira":           {"mundo-rh", "rh-portal", "exame", "valor"},
+	"tecnologia":         {"tecnoblog", "canaltech", "olhar-digital", "tecmundo", "meiobit", "the-verge", "ars-technica"},
+	"internacional":      {"g1", "folha", "cnn-brasil", "the-verge", "wired"},
+	// No dedicated feeds in the catalog yet for the editorias below: they
+	// fall back to the general news portals until sources are added.
+	"agronegocio":     generalPortals,
+	"brasil-cidades":  generalPortals,
+	"justica-direito": generalPortals,
+	"saude":           generalPortals,
+	"educacao":        generalPortals,
+	"ciencia":         {"wired", "ars-technica", "g1", "folha"},
+	"meio-ambiente":   generalPortals,
+	"cultura":         generalPortals,
+	"estilo-vida":     generalPortals,
 }
+
+var generalPortals = []string{"g1", "folha", "cnn-brasil", "metropoles"}
 
 // defaultNicheSources is what a person who picked no chip gets.
 var defaultNicheSources = []string{"tecnoblog", "canaltech", "exame", "techcrunch"}
 
 var nicheLabels = map[string]string{
-	"fintech": "fintech", "cripto": "cripto", "regulacao": "regulação financeira",
-	"ia": "inteligência artificial", "startups": "startups", "tecnologia": "tecnologia", "mercado": "mercado",
-	"economia": "economia", "negocios": "negócios", "carreira": "carreira",
+	"politica": "política", "economia": "economia", "mercado-financeiro": "mercado financeiro e investimentos",
+	"financas-pessoais": "finanças pessoais", "negocios": "negócios e empresas", "startups": "startups e inovação",
+	"carreira": "carreira e trabalho", "tecnologia": "tecnologia", "agronegocio": "agronegócio",
+	"internacional": "internacional", "brasil-cidades": "Brasil e cidades", "justica-direito": "justiça e direito",
+	"saude": "saúde", "educacao": "educação", "ciencia": "ciência", "meio-ambiente": "meio ambiente e sustentabilidade",
+	"cultura": "cultura e entretenimento", "estilo-vida": "estilo de vida e consumo",
 }
 
 // radarName is a short display name from the free text.
