@@ -72,6 +72,11 @@ export interface IssueSummary {
   // a post-approval edit reverted the issue to drafted — the header
   // shows "re-approve to send" until a fresh approval lands (KLOX-66)
   edited_after_approval?: boolean;
+  // KLOX-184: list-friendly name (first story title, opening or
+  // subject) plus the export mark — copied/downloaded formats.
+  title?: string;
+  exported?: boolean;
+  exported_formats?: string[];
 }
 
 export interface OutboxEmail {
@@ -511,6 +516,9 @@ export interface PieceRow {
   id: number;
   number: number;
   status: "draft" | "reviewed" | "exported";
+  title?: string;
+  created_at?: string;
+  exported_formats?: string[];
 }
 
 export interface TodayData {
@@ -676,6 +684,10 @@ export const api = {
       .then((r) => r.rendition),
   renditionDelete: (issueID: number, id: number) =>
     request<void>("DELETE", `/api/v1/issues/${issueID}/renditions/${id}`),
+  // KLOX-184: the author copied or downloaded a format — the piece
+  // reads "Exportada" and the format is remembered.
+  markExported: (issueID: number | string, format: RenditionFormat) =>
+    request<{ exported: boolean; formats: string[] }>("POST", `/api/v1/issues/${issueID}/exported`, { format }),
   // standard-message library (KLOX-66 D3): reusable author text
   messages: (pubID: number) =>
     request<{ messages: StdMessage[] }>("GET", `/api/v1/publications/${pubID}/messages`).then((r) => r.messages),

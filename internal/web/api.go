@@ -367,10 +367,9 @@ func publicationView(p *store.Publication) apiPublication {
 func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any {
 	ctx := r.Context()
 	counts := map[string]int{"pending": 0, "approved": 0, "rejected": 0, "alternative": 0}
-	if items, err := db(r).IssueItems(ctx, iss.ID); err == nil {
-		for _, ii := range items {
-			counts[ii.Status]++
-		}
+	items, _ := db(r).IssueItems(ctx, iss.ID)
+	for _, ii := range items {
+		counts[ii.Status]++
 	}
 	missing := 0
 	subject := iss.Subject
@@ -413,6 +412,14 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	if rec, err := db(r).ApprovalReceipt(ctx, iss.ID); err == nil {
 		m["receipt"] = receiptView(rec)
 	}
+	// KLOX-184: lists name the pauta by its content — first story
+	// title, opening line or subject — and remember which formats the
+	// author already copied or downloaded ("Exportada").
+	m["title"] = s.pautaTitle(r, iss, pub, items)
+	if formats, err := db(r).IssueExports(ctx, iss.ID); err == nil && len(formats) > 0 {
+		m["exported"] = true
+		m["exported_formats"] = formats
+	}
 	// Edited-after-approval (KLOX-66): the issue sat in "approved" and a
 	// post-approval edit reverted it — the stored approve decision for
 	// this issue is the marker (the receipt itself is voided on revert).
@@ -424,6 +431,34 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 		}
 	}
 	return m
+}
+
+// pautaTitle names a pauta in lists (KLOX-184): the first story's
+// title, the opening line when there is no story, else the stored
+// subject — never the bare "pauta N".
+func (s *Server) pautaTitle(r *http.Request, iss *store.Issue, pub *store.Publication, items []store.IssueItem) string {
+	var first *store.IssueItem
+	for i := range items {
+		ii := &items[i]
+		if ii.Status == "removed" || ii.Status == "rejected" {
+			continue
+		}
+		if first == nil || ii.Position < first.Position ||
+			(ii.Position == first.Position && ii.ID < first.ID) {
+			first = ii
+		}
+	}
+	if first != nil {
+		if title, err := db(r).StoryTitle(r.Context(), first.StoryID); err == nil && strings.TrimSpace(title) != "" {
+			return strings.TrimSpace(title)
+		}
+	}
+	for _, sc := range issueSections(iss, pub) {
+		if line := strings.TrimSpace(strings.SplitN(iss.Commentary[sc.Title], "\n", 2)[0]); line != "" {
+			return line
+		}
+	}
+	return iss.Subject
 }
 
 // issueSections returns the section definitions an edition works with:

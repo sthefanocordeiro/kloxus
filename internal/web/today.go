@@ -24,9 +24,10 @@ const (
 	todayWindow = pipeline.CalibrationWindow
 )
 
-// pieceStatus is the creator-facing state of a Peça. Export arrives
-// with Block 4; until then only rascunho and revisada exist, and a sent
-// legacy issue reads as exportada.
+// pieceStatus is the creator-facing state of a Peça. Exports (a copied
+// or downloaded rendition, KLOX-184) override it in apiToday; until
+// then only rascunho and revisada exist, and a sent legacy issue reads
+// as exportada.
 func pieceStatus(status string) string {
 	switch status {
 	case "approved":
@@ -42,6 +43,19 @@ type pieceView struct {
 	ID     int64  `json:"id"`
 	Number int    `json:"number"`
 	Status string `json:"status"` // draft | reviewed | exported
+	// KLOX-184: the list names the pauta by its content — first story
+	// title, opening line or subject — with the day it was built and
+	// the formats the author already took out.
+	Title           string   `json:"title"`
+	CreatedAt       string   `json:"created_at"`
+	ExportedFormats []string `json:"exported_formats,omitempty"`
+}
+
+// mustItems loads an issue's items for the title lookup — a failed
+// read just falls back to the opening/subject, never breaks the list.
+func mustItems(r *http.Request, issueID int64) []store.IssueItem {
+	items, _ := db(r).IssueItems(r.Context(), issueID)
+	return items
 }
 
 // openPiece is the newest Peça still being written, nil when none.
@@ -90,9 +104,26 @@ func (s *Server) apiToday(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "pieces") {
 		return
 	}
+	ids := make([]int64, 0, len(issues))
+	for _, iss := range issues {
+		ids = append(ids, iss.ID)
+	}
+	exports, err := db(r).IssueExportsFor(r.Context(), ids)
+	if apiDBErr(w, r, err, "pieces") {
+		return
+	}
 	pieces := []pieceView{}
 	for _, iss := range issues {
-		pieces = append(pieces, pieceView{ID: iss.ID, Number: iss.Number, Status: pieceStatus(iss.Status)})
+		formats := exports[iss.ID]
+		st := pieceStatus(iss.Status)
+		if len(formats) > 0 {
+			st = "exported"
+		}
+		pieces = append(pieces, pieceView{
+			ID: iss.ID, Number: iss.Number, Status: st,
+			Title:     s.pautaTitle(r, iss, pub, mustItems(r, iss.ID)),
+			CreatedAt: iss.CreatedAt, ExportedFormats: formats,
+		})
 	}
 	open := int64(0)
 	if o := openPiece(issues); o != nil {

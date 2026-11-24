@@ -205,6 +205,7 @@ func New(d Deps) *Server {
 	m.HandleFunc("PUT /api/v1/issues/{id}/renditions/{rid}", s.apiRenditionSave)
 	m.HandleFunc("POST /api/v1/issues/{id}/renditions/{rid}/refresh", s.apiRenditionRefresh)
 	m.HandleFunc("DELETE /api/v1/issues/{id}/renditions/{rid}", s.apiRenditionDelete)
+	m.HandleFunc("POST /api/v1/issues/{id}/exported", s.apiIssueExported)
 	m.HandleFunc("GET /m/{id}", s.apiMediaGet)
 	m.HandleFunc("GET /api/v1/publications/{id}/messages", s.apiMessages)
 	m.HandleFunc("POST /api/v1/publications/{id}/messages", s.apiMessageCreate)
