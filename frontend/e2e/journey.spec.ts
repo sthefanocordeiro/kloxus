@@ -87,7 +87,7 @@ async function settleBenchAdd(page: Page) {
 
 async function boardOps(page: Page, isPhone: boolean) {
   const off = await llmOff(page);
-  const tabIssue = page.getByRole("button", { name: /This piece/ });
+  const tabIssue = page.getByRole("button", { name: /This brief/ });
   const tabBench = page.getByRole("button", { name: /^Suggestions/ });
   if (isPhone) await tabIssue.click();
 
@@ -108,7 +108,7 @@ async function boardOps(page: Page, isPhone: boolean) {
   //    full suggested section opens the section chooser instead of
   //    failing.
   if (isPhone) await tabBench.click();
-  await benchCol(page).getByRole("button", { name: "Add to piece", exact: true }).nth(1).click();
+  await benchCol(page).getByRole("button", { name: "Add to brief", exact: true }).nth(1).click();
   await settleBenchAdd(page);
 
   // 3) move a Worth-knowing story into Quick links via the move menu —
@@ -150,7 +150,7 @@ async function boardOps(page: Page, isPhone: boolean) {
   //    itself, then fill each empty item slot by hand the way
   //    compose.spec.ts does — a real draft lands with sentences and
   //    skips the fill
-  await page.getByRole("button", { name: /Draft the piece/ }).click();
+  await page.getByRole("button", { name: /Write the brief/ }).click();
   await expect(page.locator(".ProseMirror").first()).toBeVisible({
     timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000,
   });
@@ -205,8 +205,8 @@ async function boardOps(page: Page, isPhone: boolean) {
     await expect(page.locator("[data-sid]")).toHaveCount(filled + 1, { timeout: 15000 });
     filled++;
     // the composer lives in the document (KLOX-96) — on phone make sure
-    // the Piece tab is in front so the next slot stays reachable
-    if (isPhone) await page.getByRole("button", { name: /^Piece$/ }).click();
+    // the Brief tab is in front so the next slot stays reachable
+    if (isPhone) await page.getByRole("button", { name: /^Brief$/ }).click();
   }
 
   // the last add leaves the composer open on the last pauta — KLOX-96
@@ -230,14 +230,14 @@ async function boardOps(page: Page, isPhone: boolean) {
   for (let i = 0; i < n; i++) {
     // an item-heading click opens the evidence pane — on phone that
     // swaps tabs, so reopen the document before the next heading
-    if (isPhone) await page.getByRole("button", { name: /^Piece$/ }).click();
+    if (isPhone) await page.getByRole("button", { name: /^Brief$/ }).click();
     await headings.nth(i).click();
     await page.keyboard.type("XYZ", { delay: 10 });
   }
   await page.waitForTimeout(300);
   expect(await docEl.first().textContent()).toBe(before);
   await expect(docEl.getByText("XYZ")).toHaveCount(0);
-  if (isPhone) await page.getByRole("button", { name: /^Piece$/ }).click();
+  if (isPhone) await page.getByRole("button", { name: /^Brief$/ }).click();
 }
 
 async function clearFlags(page: Page) {
@@ -499,7 +499,7 @@ async function readerJourney(page: Page) {
   // visitor's first stop
   await page.goto("/p/futuro-proximo" + tokQ);
   await expect(page.getByRole("heading", { level: 1, name: "Futuro Próximo" })).toBeVisible({ timeout: 15000 });
-  await expect(page.getByRole("heading", { name: "Pieces" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Briefs" })).toBeVisible();
   await expect(page.getByText("Latest")).toBeVisible();
   // subscribe capture runs the existing double opt-in. Outbox mode
   // answers with the confirm link itself; under live mail the link only
@@ -629,12 +629,12 @@ test("demo reset returns to onboarding and the sample journey still works", asyn
   // the sidebar repeats the single newsletter's link (KLOX-66) — the
   // publication card is the one inside main
   await page.getByRole("main").getByRole("link", { name: /Futuro Próximo/ }).click();
-  await page.getByRole("button", { name: "Prepare next piece" }).click();
+  await page.getByRole("button", { name: "Prepare next brief" }).click();
   await expect(
     page
       .getByText(/Nothing new/)
-      .or(page.getByText(/Preparing the piece/))
-      .or(page.getByRole("heading", { name: "This piece" })),
+      .or(page.getByText(/Preparing the brief/))
+      .or(page.getByRole("heading", { name: "This brief" })),
   ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
 
   // reset wipes the workspace — the visitor walks onboarding again and

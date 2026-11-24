@@ -86,7 +86,7 @@ describe("onboarding from zero (KLOX-123)", () => {
     expect(await screen.findByTestId("email-gate")).toBeVisible();
     expect(screen.queryByLabelText("Radar name")).toBeNull();
     fireEvent.change(screen.getByLabelText("you@example.com"), { target: { value: "ana@exemplo.com" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save with your email" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send link" }));
     await waitFor(() => expect(api.claim).toHaveBeenCalledWith("ana@exemplo.com", "en"));
 
     // the link is opened (here: elsewhere) — the next poll sees the claim
@@ -138,7 +138,7 @@ describe("onboarding from zero (KLOX-123)", () => {
     expect(await screen.findByText("editor screen")).toBeVisible();
   });
 
-  it("lets the visitor skip matching and open today's pauta from Done", async () => {
+  it("lets the visitor skip matching and open today's stories from Done", async () => {
     renderStart();
     fireEvent.change(await screen.findByLabelText("Radar name"), { target: { value: "R" } });
     fireEvent.change(screen.getByLabelText("Topics (comma separated)"), { target: { value: "startups" } });
@@ -147,7 +147,7 @@ describe("onboarding from zero (KLOX-123)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     expect(await screen.findByRole("heading", { name: "Done!" })).toBeVisible();
     expect(api.calibrationAnswer).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("link", { name: "See today's pauta" }));
+    fireEvent.click(screen.getByRole("link", { name: "See today's stories" }));
     expect(await screen.findByText("today screen")).toBeVisible();
   });
 });

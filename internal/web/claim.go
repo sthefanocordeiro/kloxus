@@ -129,12 +129,12 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := s.publicBase(r) + "/claim?t=" + url.QueryEscape(token)
-	subject, md := "Save your Kloxus with this email",
-		fmt.Sprintf("Confirm this email to keep your Kloxus.\n\n[Save my Kloxus](%s)\n\nThe link works once and expires in 15 minutes.", link)
+	subject, md := "Confirm your email to create your Radar",
+		fmt.Sprintf("Confirm this email to create your Radar.\n\n[Create my Radar](%s)\n\nThe link works once and expires in 15 minutes.", link)
 	if ptLang(in.Lang) {
 		link += "&lang=pt"
-		subject, md = "Salve o seu Kloxus com este e-mail",
-			fmt.Sprintf("Confirme este e-mail para guardar o seu Kloxus.\n\n[Guardar o meu Kloxus](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
+		subject, md = "Confirme seu e-mail para criar seu Radar",
+			fmt.Sprintf("Confirme este e-mail para criar seu Radar.\n\n[Criar meu Radar](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
 	}
 	res, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{email},
@@ -200,12 +200,12 @@ func (s *Server) claimPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// the URL carries a credential — don't let a cache keep or replay it
 	w.Header().Set("Cache-Control", "no-store")
-	title, blurb, button, note := "Save your Kloxus",
+	title, blurb, button, note := "Confirm your email to create your Radar",
 		"Confirming signs this browser in as the owner (%s).",
 		"Confirm",
 		"The link works once and expires 15 minutes after it was sent."
 	if ptLang(lang) {
-		title, blurb, button, note = "Salve o seu Kloxus",
+		title, blurb, button, note = "Confirme seu e-mail para criar seu Radar",
 			"Ao confirmar, este navegador fica associado ao e-mail %s.",
 			"Confirmar",
 			"O link funciona uma vez e expira 15 minutos depois de enviado."

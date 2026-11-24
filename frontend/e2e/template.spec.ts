@@ -29,7 +29,7 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
   await page.getByRole("button", { name: "Next", exact: true }).click();
   // both steps now share the one "Next" label — wait for the section
   // step to render so the second click can't land on page 1's button
-  await expect(page.getByText(/Your piece will have \d+ stor/)).toBeVisible();
+  await expect(page.getByText(/Your brief will have \d+ stor/)).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.waitForURL(/\/publications\/(\d+)\/sources/);
   const pubId = page.url().match(/publications\/(\d+)/)![1];
@@ -54,7 +54,7 @@ test("newsletter template: defaults, edit and save", async ({ page }) => {
   await page.getByPlaceholder("Write a note for readers…").fill("Bom dia — header note");
   await page.getByRole("button", { name: "Save template", exact: true }).click();
   await expect(
-    page.getByText("Template saved — new pieces start from it."),
+    page.getByText("Template saved — new briefs start from it."),
   ).toBeVisible({ timeout: 15000 });
 
   // reload keeps the saved list — four rows now

@@ -94,15 +94,15 @@ describe("Hoje (KLOX-123)", () => {
       pieces: [{ id: 3, number: 2, status: "reviewed" }, { id: 2, number: 1, status: "draft" }],
     }));
     renderToday();
-    expect(await screen.findByText("Piece 2")).toBeVisible();
-    expect(screen.getByText("Reviewed")).toBeVisible();
+    expect(await screen.findByText("Brief 2")).toBeVisible();
+    expect(screen.getByText("Ready")).toBeVisible();
     expect(screen.getByText("Draft")).toBeVisible();
   });
 
   it("explains an empty pauta", async () => {
     vi.mocked(api.today).mockResolvedValue(data({ cards: [] }));
     renderToday();
-    expect(await screen.findByText(/No new pauta/)).toBeVisible();
-    expect(screen.getByText(/No pieces yet/)).toBeVisible();
+    expect(await screen.findByText(/No new stories/)).toBeVisible();
+    expect(screen.getByText(/No briefs yet/)).toBeVisible();
   });
 });

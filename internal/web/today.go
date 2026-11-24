@@ -143,7 +143,7 @@ func (s *Server) apiTodayWrite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		id, err := db(r).CreateIssue(ctx, pub.ID, number,
-			fmt.Sprintf("%s — peça %d", pub.Name, number), "", config.PostSections())
+			fmt.Sprintf("%s — pauta %d", pub.Name, number), "", config.PostSections())
 		if apiDBErr(w, r, err, "piece") {
 			return
 		}

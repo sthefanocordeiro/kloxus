@@ -28,10 +28,10 @@ const en = {
     markdown: { name: "Markdown", sub: "Ghost, Notion, Obsidian" },
   } as Record<RenditionFormat, { name: string; sub: string }>,
   manyStories: (n: number, head: string) =>
-    `This piece has ${n} stories. Social posts read better with one main story${head ? ` — maybe “${head}”` : ""}. You can go ahead as is.`,
-  stale: "The piece changed since this version was made.",
+    `This brief has ${n} stories. Social posts read better with one main story${head ? ` — maybe “${head}”` : ""}. You can go ahead as is.`,
+  stale: "The brief changed since this version was made.",
   refresh: "Update this version?",
-  refreshConfirm: "Updating replaces your edits in this version with the current piece. Continue?",
+  refreshConfirm: "Updating replaces your edits in this version with the current brief. Continue?",
   removeConfirm: "Remove this version and its edits?",
   saving: "Saving…",
   saved: "Saved",
@@ -67,10 +67,10 @@ const pt: Strings = {
     markdown: { name: "Markdown", sub: "Ghost, Notion, Obsidian" },
   },
   manyStories: (n, head) =>
-    `Esta peça tem ${n} histórias. Posts sociais funcionam melhor com uma principal${head ? ` — talvez “${head}”` : ""}. Você pode seguir assim.`,
-  stale: "A peça mudou desde que esta versão foi feita.",
+    `Esta pauta tem ${n} notícias. Posts sociais funcionam melhor com uma principal${head ? ` — talvez “${head}”` : ""}. Você pode seguir assim.`,
+  stale: "A pauta mudou desde que esta versão foi feita.",
   refresh: "Atualizar esta versão?",
-  refreshConfirm: "Atualizar troca suas edições desta versão pelo texto atual da peça. Continuar?",
+  refreshConfirm: "Atualizar troca suas edições desta versão pelo texto atual da pauta. Continuar?",
   removeConfirm: "Remover esta versão e suas edições?",
   saving: "Salvando…",
   saved: "Salvo",
@@ -404,8 +404,8 @@ function HtmlEditor({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => download("peca.html", "text/html", standaloneHtml(
-              editor.getText().split("\n")[0] || "Peça", absolutizeHtml(html(), window.location.origin)))}
+            onClick={() => download("pauta.html", "text/html", standaloneHtml(
+              editor.getText().split("\n")[0] || "Pauta", absolutizeHtml(html(), window.location.origin)))}
           >
             {s.downloadHtml}
           </Button>

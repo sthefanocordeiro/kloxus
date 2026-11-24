@@ -60,7 +60,7 @@ type rdDoc struct {
 func buildRenditionDoc(doc *issueDocument) *rdDoc {
 	out := &rdDoc{Title: strings.TrimSpace(doc.Subject)}
 	if out.Title == "" {
-		out.Title = fmt.Sprintf("Peça %d", doc.Number)
+		out.Title = fmt.Sprintf("Pauta %d", doc.Number)
 	}
 	byURL := map[string]int{}
 	number := func(s docSource) int {

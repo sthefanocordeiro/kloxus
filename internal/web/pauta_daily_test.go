@@ -254,7 +254,7 @@ func TestDailyPautaMail(t *testing.T) {
 		t.Fatalf("mails to %s = %d, want 1", owner, len(mine))
 	}
 	msg := mine[0]
-	if msg.Subject != "Sua pauta de hoje está pronta" || msg.Kind != "pauta" {
+	if msg.Subject != "Suas notícias de hoje estão prontas" || msg.Kind != "pauta" {
 		t.Fatalf("mail = %q kind %q", msg.Subject, msg.Kind)
 	}
 	if !strings.Contains(msg.Text, "/claim?t=") {

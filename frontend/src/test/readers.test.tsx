@@ -112,7 +112,7 @@ describe("PublicNewsletterPage /p/{slug} (KLOX-102)", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Futuro Próximo" })).toBeInTheDocument();
     expect(screen.getByText("R$ 12/mês · paid sections are for subscribers.")).toBeInTheDocument();
-    expect(screen.getByText("Pieces")).toBeInTheDocument();
+    expect(screen.getByText("Briefs")).toBeInTheDocument();
     // the newest edition is first and badged; both link to the reader page
     const links = screen.getAllByRole("link", { name: /Edição/ });
     expect(links).toHaveLength(2);
@@ -140,7 +140,7 @@ describe("PublicNewsletterPage /p/{slug} (KLOX-102)", () => {
     });
     renderLanding();
 
-    expect(await screen.findByText("No pieces out yet — subscribe to get the next one.")).toBeInTheDocument();
+    expect(await screen.findByText("No briefs published yet — subscribe to get the next one.")).toBeInTheDocument();
     expect(screen.queryByText(/paid sections/)).toBeNull();
   });
 });
