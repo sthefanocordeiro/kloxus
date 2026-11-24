@@ -198,8 +198,9 @@ func renderText(d *rdDoc) string {
 }
 
 const (
-	xURLLen = 23  // X counts every link as 23 characters
-	xLimit  = 280 // post length cap
+	xURLLen  = 23  // X counts every link as 23 characters
+	xLimit   = 280 // post length cap
+	xNumRoom = 7   // room a " 12/12" thread counter needs
 )
 
 // xLen counts a post the way X does.
@@ -222,19 +223,39 @@ func xLen(s string) int {
 	return n - 1
 }
 
-// renderX is the X template, one post per story: title, URL (23
-// characters), text. A story over the limit continues in follow-up posts
-// cut at word boundaries. Posts are separated by a "---" line.
+// renderX is the X template: the opening (text before the first story)
+// is the first post and then there is one post per story — title, URL
+// (23 characters), text. A story over the limit continues in follow-up
+// posts cut at word boundaries. In the stored body a blank line is
+// always a post boundary — the export copies one block per post — so
+// the lines inside a post join with single breaks and no "---"
+// separators appear.
 func renderX(d *rdDoc) string {
+	stories := groupStories(d)
+	posts := xPosts(stories, xLimit)
+	if len(posts) > 1 {
+		// The export appends a " n/N" counter to every post; keep room
+		// for it so a numbered post still fits.
+		posts = xPosts(stories, xLimit-xNumRoom)
+	}
+	if len(posts) == 0 {
+		return ""
+	}
+	return strings.Join(posts, "\n\n") + "\n"
+}
+
+// xPosts packs each story into its own posts of at most limit
+// characters; a story's first post carries its title+URL head.
+func xPosts(stories []rdStory, limit int) []string {
 	var posts []string
-	for _, st := range groupStories(d) {
-		cur := st.head()
-		fresh := true // cur holds only the story head (or nothing)
+	for _, st := range stories {
+		head := st.head()
+		cur := head
 		flush := func() {
 			if strings.TrimSpace(cur) != "" {
 				posts = append(posts, strings.TrimSpace(cur))
 			}
-			cur, fresh = "", true
+			cur = ""
 		}
 		add := func(sep, s string) {
 			if cur == "" {
@@ -244,36 +265,34 @@ func renderX(d *rdDoc) string {
 			}
 		}
 		for _, p := range st.Paras {
-			if xLen(cur+"\n\n"+p) <= xLimit || cur == "" && xLen(p) <= xLimit {
-				add("\n\n", p)
-				fresh = false
+			sep := "\n"
+			if cur == "" {
+				sep = ""
+			}
+			if xLen(cur+sep+p) <= limit {
+				add(sep, p)
 				continue
 			}
-			if !fresh {
+			if cur != "" && cur != head {
 				flush()
 			}
 			for _, w := range strings.Fields(p) {
-				sep := " "
-				if cur == st.head() && cur != "" {
-					sep = "\n\n"
-				}
+				wsep := " "
 				if cur == "" {
-					sep = ""
+					wsep = ""
+				} else if cur == head {
+					wsep = "\n"
 				}
-				if xLen(cur+sep+w) > xLimit && !(cur == "" || cur == st.head()) {
+				if cur != "" && cur != head && xLen(cur+wsep+w) > limit {
 					flush()
-					sep = ""
+					wsep = ""
 				}
-				add(sep, w)
-				fresh = false
+				add(wsep, w)
 			}
 		}
 		flush()
 	}
-	if len(posts) == 0 {
-		return ""
-	}
-	return strings.Join(posts, "\n\n---\n\n") + "\n"
+	return posts
 }
 
 // renderHTML is the blog / newsletter template: per story an <h3> whose

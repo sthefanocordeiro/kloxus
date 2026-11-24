@@ -35,6 +35,23 @@ describe("renditions helpers", () => {
     expect(splitForX("curto")).toEqual(["curto"]);
   });
 
+  it("keeps every blank-line block its own post — opening first, one per story", () => {
+    const posts = splitForX(
+      "Abertura do fio.\n\nNotícia um\nhttps://a.example/um\nTexto um.\n\nNotícia dois\nhttps://b.example/dois\nTexto dois.",
+    );
+    expect(posts).toEqual([
+      "Abertura do fio. 1/3",
+      "Notícia um\nhttps://a.example/um\nTexto um. 2/3",
+      "Notícia dois\nhttps://b.example/dois\nTexto dois. 3/3",
+    ]);
+    expect(posts.join(" ")).not.toContain("---");
+  });
+
+  it("treats a '---' block as a boundary, never post text", () => {
+    const posts = splitForX("Abertura.\n\n---\n\nNotícia\nhttps://a.example/1\nTexto.");
+    expect(posts).toEqual(["Abertura. 1/2", "Notícia\nhttps://a.example/1\nTexto. 2/2"]);
+  });
+
   it("absolutizes root-relative media and links only", () => {
     const html = '<img src="/m/1-ab"><a href="https://x.com/a">x</a><a href="//cdn/x">y</a>';
     expect(absolutizeHtml(html, "https://kloxus.fly.dev/")).toBe(

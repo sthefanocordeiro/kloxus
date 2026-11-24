@@ -203,10 +203,21 @@ function Counter({ n, max, s }: { n: number; max: number; s: Strings }) {
 
 // ---------- plain text (LinkedIn / X) ----------
 
+// dropLegacySeparators removes the "---" post separators old X bodies
+// carry — a blank line is the post boundary now.
+function dropLegacySeparators(text: string): string {
+  return text
+    .split("\n")
+    .filter((l) => l.trim() !== "---")
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
 function PlainEditor({
   r, issueID, s, onSaved,
 }: { r: Rendition; issueID: number; s: Strings; onSaved: (r: Rendition) => void }) {
-  const [text, setText] = useState(r.body_text);
+  const [text, setText] = useState(() =>
+    r.format === "x" ? dropLegacySeparators(r.body_text) : r.body_text);
   const save = useAutosave(issueID, r.id, onSaved);
   const [copied, copy] = useCopied();
   const linkedin = r.format === "linkedin";
