@@ -1227,3 +1227,32 @@ func TestMailWebhookPosture(t *testing.T) {
 		t.Fatalf("outbox posture = %v", ws)
 	}
 }
+
+// TestClaimConfirmGoesStraightToCreateRadar covers KLOX-173: the claim
+// page carries the app's look, the email names the Radar, and confirming
+// lands on "Create your Radar" (/new) instead of the landing.
+func TestClaimConfirmGoesStraightToCreateRadar(t *testing.T) {
+	fake := &fakeSender{}
+	deps, db, _, _ := liveDeps(t, fake, nil)
+	srv := web.New(deps)
+
+	rr := apiCall(t, srv, "POST", "/api/v1/workspace/claim", map[string]string{"email": "radar@x.dev", "lang": "pt"})
+	if rr.Code != 200 {
+		t.Fatalf("claim = %d %s", rr.Code, shortBody(rr))
+	}
+	msgs := fake.messages()
+	if len(msgs) != 1 || msgs[0].Subject != "Confirme seu e-mail para criar seu Radar" ||
+		!strings.Contains(msgs[0].Text, "[Criar meu Radar](") {
+		t.Fatalf("claim email text: %+v", msgs)
+	}
+	tok := claimToken(t, db)
+	page := apiCall(t, srv, "GET", "/claim?t="+tok+"&lang=pt", nil)
+	body := page.Body.String()
+	if page.Code != 200 || !strings.Contains(body, "#0e3b2e") || !strings.Contains(body, "Confirmar e continuar") {
+		t.Fatalf("claim page not styled / localized: %d %s", page.Code, body)
+	}
+	rr = apiCall(t, srv, "POST", "/claim?t="+tok+"&lang=pt", nil)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/new" {
+		t.Fatalf("POST /claim = %d → %q, want 303 → /new", rr.Code, rr.Header().Get("Location"))
+	}
+}

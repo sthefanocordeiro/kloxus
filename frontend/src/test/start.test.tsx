@@ -84,7 +84,7 @@ describe("onboarding from zero (KLOX-123)", () => {
     expect(await screen.findByTestId("email-gate")).toBeVisible();
     expect(screen.queryByLabelText("Radar name")).toBeNull();
     fireEvent.change(screen.getByLabelText("you@example.com"), { target: { value: "ana@exemplo.com" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save with your email" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send link" }));
     await waitFor(() => expect(api.claim).toHaveBeenCalledWith("ana@exemplo.com", "en"));
 
     // the link is opened (here: elsewhere) — the next poll sees the claim
