@@ -35,7 +35,7 @@ const matchIssue = (pathname: string) =>
   matchPath("/pauta/:id", pathname) ??
   matchPath("/pauta/:id/export", pathname);
 
-function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: number): Chrome {
+function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: number, issuePubID?: number): Chrome {
   const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
   const issueM = matchIssue(pathname);
   const pub = pubM?.params.id;
@@ -48,11 +48,22 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
   // nav item, not "Pautas" (KLOX-185)
   if (pathname === "/publications") return { title: t.publications, crumbs: [], section: "radar" };
   if (issueM) {
-    return {
-      title: issueNumber ? `${t.issue} ${issueNumber}` : t.nav.edition,
-      crumbs: [pubCrumb],
-      section: "edition",
+    // KLOX-187: the pauta pages used to show a bare "Kloxus" header —
+    // the trail is Radar › Pauta, and on export Pauta › Exportar so
+    // "← Voltar" lands back on the editor, like every other screen.
+    const radarCrumb: Crumb = {
+      label: t.publications,
+      to: issuePubID ? `/publications/${issuePubID}` : "/publications",
     };
+    const pautaLabel = issueNumber ? `${t.issue} ${issueNumber}` : t.issue;
+    if (pathname.endsWith("/export")) {
+      return {
+        title: t.nav.export,
+        crumbs: [radarCrumb, { label: pautaLabel, to: `/pauta/${issueM.params.id}` }],
+        section: "edition",
+      };
+    }
+    return { title: pautaLabel, crumbs: [radarCrumb], section: "edition" };
   }
   if (pub) {
     const tail = pathname.split("/").pop() ?? "";
@@ -99,7 +110,7 @@ export function AppShell() {
 
   const pub = pubQ.data?.publication;
   const latest = pubQ.data?.latest_issue;
-  const chrome = chromeFor(pathname, t, pub?.name, issue.data?.number);
+  const chrome = chromeFor(pathname, t, pub?.name, issue.data?.number, issue.data?.publication_id);
   // Nav targets come from the URL pubId (or the issue's publication_id on
   // /pauta/:id), not the fetched entity — deriving them from `pub` left
   // every pub-scoped link pointing at /publications/<word> until pubQ
@@ -131,6 +142,13 @@ export function AppShell() {
         { to: `${pubBase}/sources`, label: t.sources, on: chrome.section === "sources" },
       ]
     : [];
+
+  // KLOX-187: before the first Radar exists the nav's destinations all
+  // 404 — hide the items (sidebar and bottom tabs) until there is one.
+  // pubs.data === undefined means still loading: keep the items rather
+  // than flash an empty shell on every page.
+  const noRadar = pubs.data !== undefined && pubs.data.length === 0;
+  const navItems = noRadar ? [] : items;
 
   // top-level screens (the nav's own destinations) have no "← Voltar"
   const tail = pathname.split("/").pop() ?? "";
@@ -167,7 +185,7 @@ export function AppShell() {
           ) : null}
         </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-3" aria-label={t.publications}>
-          {items.map((it) => (
+          {navItems.map((it) => (
             <NavLink
               key={it.section}
               to={it.to}
@@ -263,12 +281,13 @@ export function AppShell() {
         </main>
 
         {/* mobile bottom tabs — first nav items + "Mais" overflow (§3.1) */}
+        {navItems.length > 0 && (
         <nav
           className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-line bg-paper-raised md:hidden"
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           aria-label={t.publications}
         >
-          {(publishing ? items.slice(0, 3) : items)
+          {(publishing ? navItems.slice(0, 3) : navItems)
             .map((tab) => (
             <Link
               key={tab.label}
@@ -300,6 +319,7 @@ export function AppShell() {
             <MoreMenu pubBase={pubBase} />
           </Drop>}
         </nav>
+        )}
       </div>
     </div>
   );

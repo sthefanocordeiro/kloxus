@@ -3,10 +3,10 @@ import { ArrowDown, ArrowUp, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, pautaPath, type PautaEntry } from "../api";
-import { BackButton } from "../components/BackButton";
 import { DestinationStep } from "../components/Destinations";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
+import { fmtStoryDate } from "../lib/fmt";
 import { Button, Card } from "../ui";
 import { usePautaStrings } from "./pautaStrings";
 
@@ -32,7 +32,7 @@ export function IssueRedirect() {
 export function PautaPage() {
   const { id } = useParams();
   const issueID = Number(id);
-  const { t } = useT();
+  const { t, lang } = useT();
   const s = usePautaStrings();
   const nav = useNavigate();
   const q = useQuery({ queryKey: ["pauta", issueID], queryFn: () => api.pauta(issueID), staleTime: Infinity });
@@ -120,7 +120,6 @@ export function PautaPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6 pb-28">
-      <BackButton to={pubID ? `/publications/${pubID}/today` : "/publications"} dest={s.todayDest} />
       <div className="mt-4 flex items-baseline justify-between gap-3">
         <h1 className="font-display text-2xl font-bold">{s.title}</h1>
         <span className="text-xs text-muted" role="status" aria-live="polite">
@@ -147,21 +146,27 @@ export function PautaPage() {
               <div className="flex items-start gap-3">
                 <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-teal text-sm text-white">{i + 1}</span>
                 <div className="min-w-0 flex-1">
-                  <h2 className="font-display text-lg font-semibold leading-snug">
-                    {e.url ? (
-                      <a href={e.url} target="_blank" rel="noreferrer noopener" className="underline decoration-line underline-offset-2 hover:decoration-ink">
-                        {e.title}
-                      </a>
-                    ) : e.title}
-                  </h2>
-                  <p className="mt-0.5 text-xs text-muted">
-                    {[e.outlet, e.date && e.date.slice(0, 10)].filter(Boolean).join(" · ")}
-                  </p>
-                </div>
-                <div className="flex shrink-0 gap-1">
-                  <Button size="icon" variant="ghost" aria-label={s.up} disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={16} /></Button>
-                  <Button size="icon" variant="ghost" aria-label={s.down} disabled={i === entries.length - 1} onClick={() => move(i, 1)}><ArrowDown size={16} /></Button>
-                  <Button size="icon" variant="ghost" aria-label={`${s.remove}: ${e.title}`} onClick={() => edit((p) => p.filter((x) => x.story_id !== e.story_id))}><X size={16} /></Button>
+                  {/* on phone the three 44 px buttons squeezed the title
+                      to one word per line — they drop under it (KLOX-187) */}
+                  <div className="flex items-start justify-between gap-3 max-sm:flex-col max-sm:gap-2">
+                    <div className="min-w-0">
+                      <h2 className="font-display text-lg font-semibold leading-snug">
+                        {e.url ? (
+                          <a href={e.url} target="_blank" rel="noreferrer noopener" className="underline decoration-line underline-offset-2 hover:decoration-ink">
+                            {e.title}
+                          </a>
+                        ) : e.title}
+                      </h2>
+                      <p className="mt-0.5 text-xs text-muted">
+                        {[e.outlet, e.date && fmtStoryDate(e.date, lang)].filter(Boolean).join(" · ")}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <Button size="icon" variant="ghost" aria-label={s.up} disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={16} /></Button>
+                      <Button size="icon" variant="ghost" aria-label={s.down} disabled={i === entries.length - 1} onClick={() => move(i, 1)}><ArrowDown size={16} /></Button>
+                      <Button size="icon" variant="ghost" aria-label={`${s.remove}: ${e.title}`} onClick={() => edit((p) => p.filter((x) => x.story_id !== e.story_id))}><X size={16} /></Button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <textarea
@@ -245,8 +250,9 @@ export function PautaExport() {
   });
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-6">
-      <BackButton to={`/pauta/${issueID}`} dest={s.title} />
-      <h1 className="mt-4 font-display text-2xl font-bold">{s.exportTitle}</h1>
+      {/* the shell topbar already renders this page's h1 ("Export") —
+          a second heading with the same name breaks role queries */}
+      <p className="mt-4 font-display text-2xl font-bold">{s.exportTitle}</p>
       {missing > 0 && (
         <p className="mt-3 rounded border border-warn/40 bg-warn-soft p-3 text-sm" role="status">
           {(missing === 1 ? s.missing1 : s.missingN).replace("{n}", String(missing))}

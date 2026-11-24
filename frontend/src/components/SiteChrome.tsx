@@ -126,7 +126,10 @@ export function SiteHeader() {
         <div className="ml-auto flex items-center gap-2">
           <LangToggle />
           <span className="hidden md:inline-flex">{entry}</span>
-          <SiteCta size="sm" className="hidden md:inline-flex" entry={siteEntry} />
+          {/* KLOX-187: a returning visitor already has the "Ir para o
+              painel" entry link — a second SiteCta repeated it verbatim
+              in the same header. */}
+          {!returning && <SiteCta size="sm" className="hidden md:inline-flex" entry={siteEntry} />}
           <button
             className="flex h-11 w-11 items-center justify-center rounded-[var(--radius-btn)] text-ink hover:bg-surface md:hidden"
             aria-expanded={open}
@@ -176,7 +179,9 @@ export function SiteHeader() {
               </button>
             )}
           </nav>
-          <SiteCta size="md" className="mt-3 w-full" entry={siteEntry} onClick={() => setOpen(false)} />
+          {!returning && (
+            <SiteCta size="md" className="mt-3 w-full" entry={siteEntry} onClick={() => setOpen(false)} />
+          )}
         </div>
       )}
     </header>

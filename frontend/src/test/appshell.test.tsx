@@ -5,7 +5,7 @@
 // /publications/:id, 404s and never recovers — for as long as pubQ was
 // in flight, which on hosted latency is long enough to click.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { api, type IssueSummary, type Publication } from "../api";
@@ -73,6 +73,7 @@ function renderAt(path: string) {
               <Route path="/publications/:id" element={<div>pub screen</div>} />
               <Route path="/publications/:id/:tail" element={<div>pub screen</div>} />
               <Route path="/pauta/:id" element={<div>issue screen</div>} />
+              <Route path="/pauta/:id/export" element={<div>export screen</div>} />
             </Route>
           </Routes>
         </MemoryRouter>
@@ -232,5 +233,103 @@ describe("AppShell nav with publishing off (KLOX-122)", () => {
     for (const a of screen.getAllByRole("link")) {
       expect(a.getAttribute("href") ?? "").not.toMatch(/readers|outbox/);
     }
+  });
+});
+
+// KLOX-187: the pauta screens used to show a bare "Kloxus" header.
+// The trail is Radar › Pauta, and on export Pauta › Exportar so
+// "← Voltar" lands back on the editor, like every other screen.
+describe("AppShell header trail on pauta screens (KLOX-187)", () => {
+  beforeEach(() => {
+    vi.mocked(api.workspace).mockResolvedValue({
+      id: "w1",
+      label: "w",
+      mode: "demo",
+      hosted: false,
+      llm_mode: "off",
+      publishing: true,
+    });
+    vi.mocked(api.publications).mockResolvedValue([pub]);
+    vi.mocked(api.issue).mockResolvedValue(issue);
+    vi.mocked(api.publication).mockResolvedValue({ publication: pub, latest_issue: issue });
+  });
+
+  const crumbLinks = () => {
+    const trail = screen.getByRole("navigation", { name: "breadcrumb" });
+    return within(trail)
+      .getAllByRole("link")
+      .map((a) => [a.textContent, a.getAttribute("href")]);
+  };
+
+  it("shows Radar › Brief 3 on the pauta editor", async () => {
+    renderAt("/pauta/7");
+    await screen.findByText("issue screen");
+
+    // the crumb's target and the title fill in once the issue fetch
+    // lands (publication_id and number come from it, not pubQ)
+    await waitFor(() => {
+      expect(crumbLinks()).toEqual([["Radar", "/publications/42"]]);
+    });
+    expect(screen.getByRole("heading", { name: "Brief 3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to Radar" })).toHaveAttribute(
+      "href",
+      "/publications/42",
+    );
+  });
+
+  it("shows Radar › Brief 3 on the export screen and Voltar returns to the editor", async () => {
+    renderAt("/pauta/7/export");
+    await screen.findByText("export screen");
+
+    await waitFor(() => {
+      expect(crumbLinks()).toEqual([
+        ["Radar", "/publications/42"],
+        ["Brief 3", "/pauta/7"],
+      ]);
+    });
+    expect(screen.getByRole("heading", { name: "Export" })).toBeInTheDocument();
+    // "← Voltar" is the last crumb — back to the editor, not to Radar
+    expect(screen.getByRole("link", { name: "Back to Brief 3" })).toHaveAttribute(
+      "href",
+      "/pauta/7",
+    );
+  });
+});
+
+// KLOX-187: before the first Radar exists the nav's destinations all
+// 404 — hide the items (sidebar and bottom tabs) until there is one.
+// pubs.data === undefined means still loading: keep the items rather
+// than flash an empty shell on every page.
+describe("AppShell nav before the first Radar (KLOX-187)", () => {
+  beforeEach(() => {
+    vi.mocked(api.workspace).mockResolvedValue({
+      id: "w1",
+      label: "w",
+      mode: "demo",
+      hosted: false,
+      llm_mode: "off",
+      publishing: true,
+    });
+    vi.mocked(api.publication).mockResolvedValue({ publication: pub });
+  });
+
+  it("keeps the items while publications loads, hides them when it returns empty", async () => {
+    const d = deferred<Publication[]>();
+    vi.mocked(api.publications).mockReturnValue(d.promise);
+    renderAt("/publications");
+    await screen.findByText("pubs screen");
+
+    // still loading — the shell must not flash an empty nav
+    await screen.findAllByRole("link", { name: "Settings" });
+
+    d.resolve([]);
+    await waitFor(() => {
+      expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+    });
+    for (const name of ["Current brief", "Briefs", "Sources"]) {
+      expect(screen.queryByRole("link", { name })).toBeNull();
+    }
+    // the only way forward is creating the first Radar
+    expect(screen.getByRole("link", { name: "New Radar" })).toHaveAttribute("href", "/start");
   });
 });
