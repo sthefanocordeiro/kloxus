@@ -58,6 +58,8 @@ const router = createBrowserRouter([
       { path: "/publications/:id/sections", lazy: () => import("./pages/SectionsPage").then((m) => ({ Component: m.SectionsPage })) },
       { path: "/publications/:id/settings", lazy: () => import("./pages/SettingsPage").then((m) => ({ Component: m.SettingsPage })) },
       { path: "/publications/:id/template", lazy: () => import("./pages/TemplatePage").then((m) => ({ Component: m.TemplatePage })) },
+      { path: "/pauta/:id", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaPage })) },
+      { path: "/pauta/:id/export", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaExport })) },
       { path: "/issues/:id", lazy: () => import("./pages/IssuePage").then((m) => ({ Component: m.IssuePage })) },
       { path: "/runs/:runID", lazy: () => import("./pages/Board").then((m) => ({ Component: m.RunLanding })) },
       { path: "*", element: <NotFound /> },
