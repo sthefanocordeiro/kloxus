@@ -1,36 +1,44 @@
 import { useT } from "../i18n";
 
-// Hoje strings (KLOX-123 slice 2) — only /today imports this, so they
-// stay out of the landing chunk (KLOX-16 budget).
+// Hoje strings — only /today imports this, so they stay out of the
+// landing chunk (KLOX-16 budget). KLOX-168: the list is for choosing.
 const pt = {
   title: "Notícias de hoje",
-  hint: "Marque as notícias que entram e clique em Escrever.",
-  loading: "Montando as notícias…",
-  empty: "Sem notícias novas agora — volte mais tarde ou revise suas fontes no Radar.",
-  write: "Escrever",
+  hint: "Marque as notícias que quer no seu texto. Sim e Não ensinam o radar.",
+  loading: "Buscando as notícias…",
+  empty: "Sem notícia nova agora — volte mais tarde ou revise suas fontes no Radar.",
+  select: "Selecionar notícia",
   yes: "Sim",
   no: "Não",
   outlets: "{n} veículos",
   hoursAgo: "há {n} h",
+  selected: "{n} notícias selecionadas",
+  selected1: "1 notícia selecionada",
+  build: "Montar pauta →",
+  building: "Montando…",
   piecesTitle: "Pautas em andamento",
-  noPieces: "Nenhuma pauta ainda. Escolha uma notícia e clique em Escrever.",
+  noPieces: "Nenhuma pauta ainda. Marque notícias e clique em Montar pauta.",
   piece: "Pauta {n}",
   status: { draft: "Rascunho", reviewed: "Pronta", exported: "Exportada" } as Record<string, string>,
 };
 
 const en: typeof pt = {
-  title: "Today's stories",
-  hint: "Mark the stories that go in and click Write.",
-  loading: "Building today's stories…",
+  title: "Today's news",
+  hint: "Tick the stories you want in your text. Yes and No teach the radar.",
+  loading: "Fetching the news…",
   empty: "No new stories right now — come back later or review your sources in Radar.",
-  write: "Write",
+  select: "Select story",
   yes: "Yes",
   no: "No",
   outlets: "{n} outlets",
   hoursAgo: "{n} h ago",
-  piecesTitle: "Briefs in progress",
-  noPieces: "No briefs yet. Pick a story and click Write.",
-  piece: "Brief {n}",
+  selected: "{n} stories selected",
+  selected1: "1 story selected",
+  build: "Build pauta →",
+  building: "Building…",
+  piecesTitle: "Pautas in progress",
+  noPieces: "No pautas yet. Tick stories and click Build pauta.",
+  piece: "Pauta {n}",
   status: { draft: "Draft", reviewed: "Ready", exported: "Exported" },
 };
 

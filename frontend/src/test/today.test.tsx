@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { api, type IssueDocument, type PautaCard, type TodayData } from "../api";
+import { api, type PautaCard, type TodayData } from "../api";
 import { LangProvider } from "../i18n";
 import { Today } from "../pages/Today";
 
@@ -17,7 +17,7 @@ vi.mock("../api", async (importOriginal) => {
     api: {
       ...mod.api,
       today: vi.fn(),
-      todayWrite: vi.fn(),
+      pautaCreate: vi.fn(),
       calibrationAnswer: vi.fn(),
       document: vi.fn(),
       blockInsert: vi.fn(),
@@ -41,7 +41,7 @@ function renderToday() {
         <MemoryRouter initialEntries={["/publications/7/today"]}>
           <Routes>
             <Route path="/publications/:id/today" element={<Today />} />
-            <Route path="/issues/:id" element={<div>editor screen</div>} />
+            <Route path="/pauta/:id" element={<div>pauta screen</div>} />
           </Routes>
         </MemoryRouter>
       </LangProvider>
@@ -60,7 +60,7 @@ describe("Hoje (KLOX-123)", () => {
     renderToday();
     expect(await screen.findByText("Story 1")).toBeVisible();
     const first = screen.getAllByTestId("today-card")[0];
-    fireEvent.click(first.querySelectorAll("button")[2]); // Não
+    fireEvent.click(first.querySelectorAll("button")[1]); // Não
     await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith("7", 1, "no"));
     await waitFor(() => expect(screen.queryByText("Story 1")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
@@ -68,25 +68,18 @@ describe("Hoje (KLOX-123)", () => {
     expect(await screen.findByRole("button", { name: /✓ Yes/ })).toBeDisabled();
   });
 
-  it("Escrever opens the piece the server created", async () => {
-    vi.mocked(api.todayWrite).mockResolvedValue({ issue_id: 55, created: true });
+  it("ticks stories in order, shows the numbering and builds the pauta", async () => {
+    vi.mocked(api.pautaCreate).mockResolvedValue({ issue_id: 55 });
     renderToday();
     await screen.findByText("Story 1");
-    fireEvent.click(screen.getAllByRole("button", { name: "Write" })[0]);
-    expect(await screen.findByText("editor screen")).toBeVisible();
-    expect(api.todayWrite).toHaveBeenCalledWith("7", 1);
-    expect(api.blockInsert).not.toHaveBeenCalled();
-  });
-
-  it("adds the story through the editor block insert when writing already began", async () => {
-    vi.mocked(api.todayWrite).mockResolvedValue({ issue_id: 9, add_block: true, section: "Pauta" });
-    vi.mocked(api.document).mockResolvedValue({ version: "v1" } as IssueDocument);
-    vi.mocked(api.blockInsert).mockResolvedValue({ document: {} as IssueDocument });
-    renderToday();
-    await screen.findByText("Story 1");
-    fireEvent.click(screen.getAllByRole("button", { name: "Write" })[1]);
-    expect(await screen.findByText("editor screen")).toBeVisible();
-    expect(api.blockInsert).toHaveBeenCalledWith(9, { section: "Pauta", kind: "item", story_id: 2, version: "v1" });
+    expect(screen.queryByRole("region", { name: "Build pauta →" })).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Story 2/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Story 1/ }));
+    expect(screen.getByText("2 stories selected")).toBeVisible();
+    expect(screen.getAllByTestId("pick-order").map((n) => n.textContent)).toEqual(["2", "1"]);
+    fireEvent.click(screen.getByRole("button", { name: "Build pauta →" }));
+    expect(await screen.findByText("pauta screen")).toBeVisible();
+    expect(api.pautaCreate).toHaveBeenCalledWith("7", [2, 1]);
   });
 
   it("lists pieces in progress with their status", async () => {
@@ -94,7 +87,7 @@ describe("Hoje (KLOX-123)", () => {
       pieces: [{ id: 3, number: 2, status: "reviewed" }, { id: 2, number: 1, status: "draft" }],
     }));
     renderToday();
-    expect(await screen.findByText("Brief 2")).toBeVisible();
+    expect(await screen.findByText("Pauta 2")).toBeVisible();
     expect(screen.getByText("Ready")).toBeVisible();
     expect(screen.getByText("Draft")).toBeVisible();
   });
@@ -103,6 +96,6 @@ describe("Hoje (KLOX-123)", () => {
     vi.mocked(api.today).mockResolvedValue(data({ cards: [] }));
     renderToday();
     expect(await screen.findByText(/No new stories/)).toBeVisible();
-    expect(screen.getByText(/No briefs yet/)).toBeVisible();
+    expect(screen.getByText(/No pautas yet/)).toBeVisible();
   });
 });
