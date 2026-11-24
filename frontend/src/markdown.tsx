@@ -64,18 +64,6 @@ export function Markdown({ md }: { md: string }) {
     if (!quote.length) return;
     const q = quote.join(" ");
     quote = [];
-    if (/Subscribers only|Exclusivo para assinantes/i.test(q)) {
-      out.push(
-        <div key={k++} className="my-3 flex items-start gap-3 rounded-lg border border-dashed border-line bg-paper-raised px-4 py-3">
-          <svg viewBox="0 0 16 16" className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-            <rect x="3" y="7" width="10" height="6" rx="1.5" />
-            <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
-          </svg>
-          <div className="text-sm font-medium text-ink">{inline(q.replace(/^\*\*|\*\*$/g, ""), k)}</div>
-        </div>,
-      );
-      return;
-    }
     out.push(<blockquote key={k++} className="border-l-2 border-line pl-3 italic text-muted my-2">{inline(q, k)}</blockquote>);
   };
   for (const line of lines) {

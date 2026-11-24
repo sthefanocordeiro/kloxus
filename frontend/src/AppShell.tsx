@@ -28,9 +28,19 @@ interface Chrome {
   section: string;
 }
 
+// A pauta lives at /pauta/:id (and /pauta/:id/export); /issues/:id only
+// survives as a redirect into it (KLOX-179).
+function pautaMatch(pathname: string) {
+  return (
+    matchPath("/issues/:id", pathname) ??
+    matchPath("/pauta/:id/export", pathname) ??
+    matchPath("/pauta/:id", pathname)
+  );
+}
+
 function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: number): Chrome {
   const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
-  const issueM = matchPath("/issues/:id", pathname);
+  const issueM = pautaMatch(pathname);
   const runM = matchPath("/runs/:id", pathname);
   const pub = pubM?.params.id;
   const pubCrumb: Crumb = { label: pubName ?? t.publications, to: pub ? `/publications/${pub}` : "/publications" };
@@ -69,7 +79,7 @@ export function AppShell() {
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, retry: false, staleTime: Infinity });
 
   const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
-  const issueM = matchPath("/issues/:id", pathname);
+  const issueM = pautaMatch(pathname);
   const pubId = pubM?.params.id;
   const issueId = issueM?.params.id ? Number(issueM.params.id) : undefined;
 
@@ -90,11 +100,13 @@ export function AppShell() {
   const latest = pubQ.data?.latest_issue;
   const chrome = chromeFor(pathname, t, pub?.name, issue.data?.number);
   // Nav targets come from the URL pubId (or the issue's publication_id on
-  // /issues/:id), not the fetched entity — deriving them from `pub` left
+  // /pauta/:id), not the fetched entity — deriving them from `pub` left
   // every pub-scoped link pointing at /publications/<word> until pubQ
   // resolved, a dead route that 404s and never recovers (KLOX-74).
   const pubBase = pubKey ? `/publications/${pubKey}` : "/publications";
-  const editionTo = latest ? `/issues/${latest.id}` : pubBase;
+  const editionTo = latest
+    ? `/pauta/${latest.id}${latest.status === "sent" || latest.status === "scheduled" ? "/export" : ""}`
+    : pubBase;
 
   // KLOXUS_PUBLISHING off (KLOX-122): Hoje · Pautas · Radar · Configurações.
   // Readers, send and the outbox are not reachable from the nav.

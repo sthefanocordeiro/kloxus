@@ -48,7 +48,7 @@ function renderStart() {
           <Routes>
             <Route path="/start" element={<Start />} />
             <Route path="/publications/:id/today" element={<div>today screen</div>} />
-            <Route path="/issues/:id" element={<div>editor screen</div>} />
+            <Route path="/pauta/:id" element={<div>editor screen</div>} />
           </Routes>
         </MemoryRouter>
       </LangProvider>

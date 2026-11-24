@@ -1,16 +1,13 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { claimOwner } from "./mail.ts";
 
-// Shared onboarding helpers — every test walks its own anonymous
+// Shared onboarding helper — every test walks its own anonymous
 // workspace (fresh browser context) through landing → /new → sources
-// → the first collection run, then waits for the board to fill.
+// → the first collection run, then waits for the pauta editor.
 // Extracted from journey.spec.ts so focused specs reuse the same path.
 
-export const issueCol = (page: Page) => page.locator('section[aria-label="This brief"]');
-export const benchCol = (page: Page) => page.locator('section[aria-label="Suggestions"]');
-
 // The workspace starts empty — every journey walks onboarding first:
-// landing → /new → /pub/:id/sources → confirm → first run → board.
+// landing → /new → /pub/:id/sources → confirm → first run → /pauta/:id.
 export async function onboard(page: Page) {
   await page.goto("/");
   // the landing renders the hero headline before any workspace exists
@@ -30,43 +27,12 @@ export async function onboard(page: Page) {
   await page.waitForURL(/\/publications\/\d+\/sources/);
 
   // the sources screen offers the fixture sources — preview one, then
-  // confirm all: the first collection runs automatically into the board
+  // confirm all: the first collection runs automatically into the pauta
   await expect(page.getByText("Suggested sources")).toBeVisible();
   await page.getByRole("button", { name: "Latest items", exact: true }).first().click();
   await expect(page.locator("ul li a").first()).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Next", exact: true }).click();
   // the first real-mode run collects, dedupes and triages live feeds —
-  // ~10-13 min hosted, seconds against fixtures
-  await page.waitForURL(/\/issues\/\d+/, { timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
-}
-
-export async function boardReady(page: Page, isPhone: boolean) {
-  // the step rail finishes, then the board lands. On phone the issue
-  // column sits behind its tab — the tab bar is the ready signal there.
-  await expect(
-    isPhone
-      ? page.getByRole("button", { name: /This brief/ })
-      : page.getByRole("heading", { name: "This brief" }),
-    // hosted runs the real pipeline (~10 min); local fixtures land fast
-  ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 120_000 });
-  // hosted: the bench fills when the real run ends (~10-13 min)
-  await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({
-    timeout: process.env.E2E_BASE_URL ? 840_000 : 60_000,
-  });
-}
-
-// Citation chips are pre-selected when an item has a single source (#91
-// soleSource), so a blind click would toggle the cite OFF. Make sure the
-// chip ends up pressed, whatever its starting state.
-export async function ensureCited(box: Locator, ref: number): Promise<void> {
-  const chip = box.getByRole("button", { name: new RegExp(`^\\[${ref}\\] `) });
-  if ((await chip.getAttribute("aria-pressed")) !== "true") await chip.click();
-  await expect(chip).toHaveAttribute("aria-pressed", "true");
-}
-
-// Counterpart of ensureCited for flows that need the source switched off.
-export async function ensureNotCited(box: Locator, ref: number): Promise<void> {
-  const chip = box.getByRole("button", { name: new RegExp(`^\\[${ref}\\] `) });
-  if ((await chip.getAttribute("aria-pressed")) === "true") await chip.click();
-  await expect(chip).toHaveAttribute("aria-pressed", "false");
+  // ~10-13 min hosted, seconds against fixtures; it lands on /pauta/:id
+  await page.waitForURL(/\/pauta\/\d+/, { timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
 }

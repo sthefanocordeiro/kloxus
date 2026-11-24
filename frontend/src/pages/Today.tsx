@@ -131,7 +131,7 @@ export function Today() {
       <ul className="mt-3 divide-y divide-line rounded border border-line bg-paper-raised">
         {pieces.map((p: PieceRow) => (
           <li key={p.id}>
-            <Link to={`/pauta/${p.id}`} className="flex items-center justify-between px-4 py-3 text-sm hover:bg-line/40">
+            <Link to={`/pauta/${p.id}${p.status === "exported" ? "/export" : ""}`} className="flex items-center justify-between px-4 py-3 text-sm hover:bg-line/40">
               <span className="font-medium">{s.piece.replace("{n}", String(p.number))}</span>
               <Badge tone={p.status === "draft" ? "warn" : "teal"}>{s.status[p.status]}</Badge>
             </Link>

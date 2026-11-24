@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LangProvider } from "./i18n";
 import { ErrorPage, NotFound } from "./pages/ErrorPage";
@@ -55,37 +55,21 @@ const router = createBrowserRouter([
       { path: "/publications/:id/settings", lazy: () => import("./pages/SettingsPage").then((m) => ({ Component: m.SettingsPage })) },
       { path: "/pauta/:id", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaPage })) },
       { path: "/pauta/:id/export", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaExport })) },
-      { path: "/issues/:id", lazy: () => import("./pages/IssuePage").then((m) => ({ Component: m.IssuePage })) },
+      // the old sentences editor is gone (KLOX-179) — the legacy route
+      // forwards to the pauta editor
+      { path: "/issues/:id", element: <IssueRedirect /> },
       { path: "/runs/:runID", lazy: () => import("./pages/Board").then((m) => ({ Component: m.RunLanding })) },
       { path: "*", element: <NotFound /> },
     ],
   },
-  // reader-facing pages live outside the editor shell — no app nav
-  {
-    // lazy like the app shell — the reader pages pull in the shared
-    // markdown renderer, which now carries the composer's image/embed
-    // blocks (KLOX-66) and must not inflate the landing payload
-    // (KLOX-16 budget)
-    lazy: () => import("./pages/ReaderPage").then((m) => ({ Component: m.ReaderShell })),
-    errorElement: <ErrorPage />,
-    children: [
-      {
-        // the newsletter's own landing page: brand, subscribe, archive
-        // (KLOX-102) — distinct from the per-issue page below
-        path: "/p/:slug",
-        lazy: () => import("./pages/ReaderPage").then((m) => ({ Component: m.PublicNewsletterPage })),
-      },
-      {
-        path: "/p/:slug/:num",
-        lazy: () => import("./pages/ReaderPage").then((m) => ({ Component: m.PublicIssue })),
-      },
-      {
-        path: "/unsub",
-        lazy: () => import("./pages/ReaderPage").then((m) => ({ Component: m.UnsubPage })),
-      },
-    ],
-  },
 ]);
+
+// /issues/:id → /pauta/:id (KLOX-179): old links and tabs kept open land
+// on the pauta editor.
+function IssueRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/pauta/${id}`} replace />;
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

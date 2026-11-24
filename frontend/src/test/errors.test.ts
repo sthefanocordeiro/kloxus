@@ -12,14 +12,14 @@ const pt = dict.pt as unknown as T;
 const en = dict.en as T;
 
 describe("errText coded errors (KLOX-90)", () => {
-  it("localizes interpretation_restricted in both locales", () => {
+  it("localizes read_only in both locales", () => {
     const e = new ApiRequestError(409, {
-      code: "interpretation_restricted",
-      message: "a claim with a number, a date or a quotation cannot be marked as interpretation — fix it or remove it",
+      code: "read_only",
+      message: "this brief was already exported — it is read-only",
     });
-    expect(errText(pt, e)).toBe(dict.pt.errors.interpretation_restricted);
-    expect(errText(pt, e)).not.toContain("interpretation");
-    expect(errText(en, e)).toBe(dict.en.errors.interpretation_restricted);
+    expect(errText(pt, e)).toBe(dict.pt.errors.read_only);
+    expect(errText(pt, e)).not.toContain("read-only");
+    expect(errText(en, e)).toBe(dict.en.errors.read_only);
   });
 });
 

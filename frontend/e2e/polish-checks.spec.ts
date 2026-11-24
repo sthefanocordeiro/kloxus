@@ -227,7 +227,7 @@ async function auditScreen(page: Page, screen: string) {
   for (const c of contrast) findings.push({ screen, kind: "contrast", detail: c });
 }
 
-async function onboardToBoard(page: Page): Promise<string> {
+async function onboardToPauta(page: Page): Promise<string> {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /A pauta pronta/ })).toBeVisible({ timeout: 15000 });
   await auditScreen(page, "landing");
@@ -246,7 +246,7 @@ async function onboardToBoard(page: Page): Promise<string> {
   await expect(page.getByText("Fontes sugeridas")).toBeVisible();
   await auditScreen(page, "onboard-step3-sources");
   await page.getByRole("button", { name: "Avançar", exact: true }).click();
-  await page.waitForURL(/\/issues\/\d+/, { timeout: 600_000 });
+  await page.waitForURL(/\/pauta\/\d+/, { timeout: 600_000 });
   return pubId;
 }
 
@@ -257,20 +257,14 @@ test.describe(`klox-68 checks ${WIDTH}px`, () => {
 
   test("audit every screen", async ({ page }) => {
     test.setTimeout(900_000);
-    const pubId = await onboardToBoard(page);
-    await expect(page.locator("p.font-doc").first()).toBeVisible({ timeout: 120_000 });
-    await auditScreen(page, "board");
-
-    const issueTab = page.getByRole("button", { name: /Esta pauta/ });
-    if (await issueTab.isVisible().catch(() => false)) await issueTab.click();
-    await page.getByRole("button", { name: /Escrever eu mesmo/ }).click();
-    await page.waitForTimeout(800);
+    const pubId = await onboardToPauta(page);
+    await expect(page.getByTestId("pauta-entry").first()).toBeVisible({ timeout: 120_000 });
     await auditScreen(page, "escrever");
 
-    const issueUrl = page.url().split("?")[0];
-    await page.goto(`${issueUrl}?step=revisar`);
+    const pautaUrl = page.url().split("?")[0];
+    await page.goto(`${pautaUrl}/export`);
     await page.waitForTimeout(800);
-    await auditScreen(page, "revisar");
+    await auditScreen(page, "exportar");
 
     const visits: Array<[string, string]> = [
       ["edicoes", `/publications/${pubId}`],

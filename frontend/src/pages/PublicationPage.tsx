@@ -7,6 +7,12 @@ import { Badge, Button, Card } from "../ui";
 import { ShellPrimary } from "../components/ShellPortal";
 import { NotFound } from "./ErrorPage";
 
+// Every pauta link opens the Escrever editor — an already-exported one
+// opens straight on the export step (KLOX-179).
+function pautaTo(status: string, id: number) {
+  return `/pauta/${id}${status === "sent" || status === "scheduled" ? "/export" : ""}`;
+}
+
 export function PublicationPage() {
   const { id = "" } = useParams();
   const { t } = useT();
@@ -64,7 +70,7 @@ export function PublicationPage() {
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">{t.issues}</h2>
       <div className="grid grid-cols-1 gap-2">
         {issues.data?.map((iss) => (
-          <Link key={iss.id} to={`/issues/${iss.id}`}>
+          <Link key={iss.id} to={pautaTo(iss.status, iss.id)}>
             <Card className="flex items-center justify-between hover:border-ink/40 transition-colors">
               <span className="font-doc">
                 {t.issue} {iss.number}

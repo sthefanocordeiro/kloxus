@@ -1,5 +1,5 @@
 // KLOX-74 regression: the shell's pub-scoped nav targets derive from the
-// URL pubId (or the issue's publication_id on /issues/:id), not the
+// URL pubId (or the issue's publication_id on /pauta/:id), not the
 // fetched publication entity. Deriving them from `pub` left every link
 // pointing at /publications/<word> — a route that re-matches
 // /publications/:id, 404s and never recovers — for as long as pubQ was
@@ -72,6 +72,7 @@ function renderAt(path: string) {
               <Route path="/publications" element={<div>pubs screen</div>} />
               <Route path="/publications/:id" element={<div>pub screen</div>} />
               <Route path="/publications/:id/:tail" element={<div>pub screen</div>} />
+              <Route path="/pauta/:id" element={<div>pauta screen</div>} />
               <Route path="/issues/:id" element={<div>issue screen</div>} />
             </Route>
           </Routes>
@@ -126,7 +127,7 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
     d.resolve({ publication: pub, latest_issue: issue });
     await waitFor(() => {
       for (const a of screen.getAllByRole("link", { name: "Current brief" })) {
-        expect(a).toHaveAttribute("href", "/issues/7");
+        expect(a).toHaveAttribute("href", "/pauta/7");
       }
     });
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
@@ -138,8 +139,8 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
   it("resolves pub links from the issue's publication_id ahead of pubQ", async () => {
     const d = deferred<{ publication: Publication }>();
     vi.mocked(api.publication).mockReturnValue(d.promise);
-    renderAt("/issues/7");
-    await screen.findByText("issue screen");
+    renderAt("/pauta/7");
+    await screen.findByText("pauta screen");
 
     // the issue fetch supplies the publication id one round-trip before
     // pubQ could — links go pub-scoped as soon as it lands
