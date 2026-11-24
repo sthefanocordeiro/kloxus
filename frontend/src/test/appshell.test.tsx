@@ -191,14 +191,15 @@ describe("AppShell nav highlight without an edition (KLOX-90)", () => {
     expect(sources.className).toContain("bg-teal-soft");
   });
 
-  it("glows only 'Briefs' on /publications", async () => {
+  it("glows nothing on /publications — the title is Radar-level (KLOX-185)", async () => {
     renderAt("/publications");
     await screen.findByText("pubs screen");
     await screen.findAllByRole("link", { name: "Current brief" });
 
     expectInactive("Current brief");
-    const issues = screen.getAllByRole("link", { name: "Briefs" })[0];
-    expect(issues.className).toContain("bg-teal-soft");
+    expectInactive("Briefs");
+    expectInactive("Sources");
+    expectInactive("Settings");
   });
 });
 

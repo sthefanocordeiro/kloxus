@@ -13,7 +13,7 @@ type Phase = "about" | "calibrate" | "done";
 
 // /start — onboarding in three steps (KLOX-123, KLOX-159 / D3-D4):
 // Criar Radar (name + topics + optional editorias), Dar match (eight real
-// stories, Sim/Não) and Pronto! → Criar primeiro post. Sources are picked
+// stories, Sim/Não) and Pronto! → Montar minha primeira pauta. Sources are picked
 // automatically from the topics. No account is needed and no model is
 // called anywhere in this flow.
 export function Start() {
@@ -295,7 +295,7 @@ function Calibrate({ pubID, s, onDone }: { pubID: number; s: StartStrings; onDon
   );
 }
 
-// Step 3: the Radar is ready. "Criar primeiro post" opens the list of
+// Step 3: the Radar is ready. "Montar minha primeira pauta" opens the list of
 // today's news to tick (KLOX-168); the link goes to the same place.
 function Done({ pubID, s, name, topics }: { pubID: number; s: StartStrings; name: string; topics: string }) {
   const nav = useNavigate();

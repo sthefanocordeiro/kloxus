@@ -131,7 +131,7 @@ describe("onboarding from zero (KLOX-123)", () => {
     expect(await screen.findByRole("heading", { name: "Done!" })).toBeVisible();
     expect(screen.getByText("Meu Radar")).toBeVisible();
     expect(await screen.findByText("1 stories match your Radar today.")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Create first post" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build my first brief" }));
     expect(await screen.findByText("today screen")).toBeVisible();
   });
 
