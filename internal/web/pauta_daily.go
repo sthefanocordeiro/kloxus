@@ -91,7 +91,7 @@ func (s *Server) DailyPautaTick(ctx context.Context, pool *store.Pool, now time.
 	day := pautaDayOf(now)
 	buildDue := local.Hour() > pautaBuildHour ||
 		(local.Hour() == pautaBuildHour && local.Minute() >= pautaBuildMin)
-	mailDue := local.Hour() >= pautaMailHour
+	mailDue := s.d.DailyPautaMail && local.Hour() >= pautaMailHour
 	if !buildDue && !mailDue {
 		return
 	}
