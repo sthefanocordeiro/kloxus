@@ -12,14 +12,15 @@ const pt = dict.pt as unknown as T;
 const en = dict.en as T;
 
 describe("errText coded errors (KLOX-90)", () => {
-  it("localizes interpretation_restricted in both locales", () => {
+  it("localizes known codes in both locales and falls back for unknown ones", () => {
     const e = new ApiRequestError(409, {
-      code: "interpretation_restricted",
-      message: "a claim with a number, a date or a quotation cannot be marked as interpretation — fix it or remove it",
+      code: "not_approved",
+      message: "issue is not approved",
     });
-    expect(errText(pt, e)).toBe(dict.pt.errors.interpretation_restricted);
-    expect(errText(pt, e)).not.toContain("interpretation");
-    expect(errText(en, e)).toBe(dict.en.errors.interpretation_restricted);
+    expect(errText(pt, e)).toBe(dict.pt.errors.not_approved);
+    expect(errText(en, e)).toBe(dict.en.errors.not_approved);
+    const unknown = new ApiRequestError(409, { code: "brand_new_code", message: "server said no" });
+    expect(errText(pt, unknown)).toBe("server said no");
   });
 });
 

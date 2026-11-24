@@ -49,7 +49,7 @@ const IDENTICAL_OK = new Set(["Radar" /* KLOX-122: same word in both locales */,
 
 // Function leaves whose output is language-neutral by design
 // (joiners/formatters, not translated copy).
-const IDENTICAL_FN_OK = new Set(["board.summaryOf"]);
+const IDENTICAL_FN_OK = new Set<string>();
 
 describe("pt locale ≠ en locale (KLOX-64)", () => {
   const en = dict.en as unknown as Record<string, unknown>;
@@ -159,40 +159,8 @@ describe("pt locale ≠ en locale (KLOX-64)", () => {
 describe("pt glossary (KLOX-64 §2)", () => {
   const t = dict.pt;
 
-  it("uses the exact required strings", () => {
-    expect(t.board.steps).toEqual(["Notícias", "Escrever", "Exportar"]);
-    expect(t.coverage.ok).toBe("fatos com fonte");
-    expect(t.coverage.fixNow).toBe("Ver pendências");
-    expect(t.compose.emptySlot).toBe("Escreva sobre esta notícia");
-    expect(t.commentary.required).toBe("Escreva seu comentário (obrigatório nesta seção)");
-    expect(t.board.bench).toBe("Notícias");
-    expect(t.evidence.title).toBe("Fontes e fatos");
-    expect(t.evidence.empty).toContain("pesquisa");
-  });
-
-  it("pluralizes sources correctly — never fonte(s)", () => {
-    expect(t.evidence.src(1)).toBe("1 fonte");
-    expect(t.evidence.src(2)).toBe("2 fontes");
-    expect(t.evidence.src(140)).toBe("140 fontes");
-  });
-
-  it("pluralizes draftAction — never '(1 notícias)'", () => {
-    expect(t.board.draftAction(1)).toBe("Montar pauta (1 notícia)");
-    expect(t.board.draftAction(2)).toBe("Montar pauta (2 notícias)");
-    expect(t.board.draftAction(7)).toBe("Montar pauta (7 notícias)");
-  });
-
-  it("agrees sectionFull on 'seção', not on the section title", () => {
-    expect(t.board.sectionFull("O destaque", 3)).toBe(
-      "A seção “O destaque” está cheia (3/3) — escolha uma notícia para trocar",
-    );
-    expect(t.board.sectionFull("Links rápidos", 4)).toContain(
-      "A seção “Links rápidos” está cheia",
-    );
-  });
-
   it("speaks second person", () => {
     expect(t.claim.action).toBe("Enviar link");
-    expect(t.errors.unclaimed_workspace).toBe("Confirme seu e-mail com o link mágico antes de salvar");
+    expect(t.errors.email_required).toBe("Confirme seu e-mail pelo link mágico antes de criar o Radar");
   });
 });

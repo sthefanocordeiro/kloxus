@@ -1,16 +1,12 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { claimOwner } from "./mail.ts";
 
-// Shared onboarding helpers — every test walks its own anonymous
-// workspace (fresh browser context) through landing → /new → sources
-// → the first collection run, then waits for the board to fill.
-// Extracted from journey.spec.ts so focused specs reuse the same path.
+// Shared onboarding helper — every test walks its own anonymous
+// workspace (fresh browser context) through landing → /start → claim →
+// Criar Radar → skip Dar match → Notícias de hoje (KLOX-179: the legacy
+// /new → sections → collection-run path is gone; Hoje builds the deck
+// on demand).
 
-export const issueCol = (page: Page) => page.locator('section[aria-label="This brief"]');
-export const benchCol = (page: Page) => page.locator('section[aria-label="Suggestions"]');
-
-// The workspace starts empty — every journey walks onboarding first:
-// landing → /new → /pub/:id/sources → confirm → first run → board.
 export async function onboard(page: Page) {
   await page.goto("/");
   // the landing renders the hero headline before any workspace exists
@@ -18,55 +14,25 @@ export async function onboard(page: Page) {
   await page.getByRole("button", { name: /Create your Radar/ }).first().click();
   await page.waitForURL(/\/start/);
   await claimOwner(page);
-  await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
 
-  // the sample proposal pre-fills the five editable blocks
-  await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
-  // step 2 is the section builder (KLOX-65): keep the classic template
-  // the proposal suggested — the edition totals travel with it
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await expect(page.getByText(/Your brief will have \d+ stor/)).toBeVisible();
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await page.waitForURL(/\/publications\/\d+\/sources/);
+  // the email gate polls until the claim lands (KLOX-161) — the about
+  // form only renders once the workspace is claimed
+  const name = page.getByLabel("Radar name");
+  await expect(name).toBeVisible({ timeout: 20000 });
+  await name.fill("Futuro Próximo");
+  await page.getByLabel("Topics (comma separated)").fill("fintech, startups");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
 
-  // the sources screen offers the fixture sources — preview one, then
-  // confirm all: the first collection runs automatically into the board
-  await expect(page.getByText("Suggested sources")).toBeVisible();
-  await page.getByRole("button", { name: "Latest items", exact: true }).first().click();
-  await expect(page.locator("ul li a").first()).toBeVisible({ timeout: 15000 });
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  // the first real-mode run collects, dedupes and triages live feeds —
-  // ~10-13 min hosted, seconds against fixtures
-  await page.waitForURL(/\/issues\/\d+/, { timeout: process.env.E2E_BASE_URL ? 840_000 : 600_000 });
-}
+  // Dar match: a real deck shows the Skip button inside the card; an
+  // empty deck shows a plain Continue instead — take whichever lands
+  await expect(page.getByRole("heading", { name: "Match", exact: true })).toBeVisible();
+  const skip = page.getByRole("button", { name: "Skip", exact: true })
+    .or(page.getByRole("button", { name: "Continue", exact: true }));
+  await skip.first().click({ timeout: 60_000 });
 
-export async function boardReady(page: Page, isPhone: boolean) {
-  // the step rail finishes, then the board lands. On phone the issue
-  // column sits behind its tab — the tab bar is the ready signal there.
-  await expect(
-    isPhone
-      ? page.getByRole("button", { name: /This brief/ })
-      : page.getByRole("heading", { name: "This brief" }),
-    // hosted runs the real pipeline (~10 min); local fixtures land fast
-  ).toBeVisible({ timeout: process.env.E2E_BASE_URL ? 840_000 : 120_000 });
-  // hosted: the bench fills when the real run ends (~10-13 min)
-  await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({
-    timeout: process.env.E2E_BASE_URL ? 840_000 : 60_000,
-  });
-}
-
-// Citation chips are pre-selected when an item has a single source (#91
-// soleSource), so a blind click would toggle the cite OFF. Make sure the
-// chip ends up pressed, whatever its starting state.
-export async function ensureCited(box: Locator, ref: number): Promise<void> {
-  const chip = box.getByRole("button", { name: new RegExp(`^\\[${ref}\\] `) });
-  if ((await chip.getAttribute("aria-pressed")) !== "true") await chip.click();
-  await expect(chip).toHaveAttribute("aria-pressed", "true");
-}
-
-// Counterpart of ensureCited for flows that need the source switched off.
-export async function ensureNotCited(box: Locator, ref: number): Promise<void> {
-  const chip = box.getByRole("button", { name: new RegExp(`^\\[${ref}\\] `) });
-  if ((await chip.getAttribute("aria-pressed")) === "true") await chip.click();
-  await expect(chip).toHaveAttribute("aria-pressed", "false");
+  // Pronto! → the link always opens Notícias de hoje (the primary
+  // button stays disabled while the deck loads)
+  await expect(page.getByRole("heading", { name: "Done!" })).toBeVisible();
+  await page.getByRole("link", { name: "See today's stories" }).click();
+  await page.waitForURL(/\/publications\/\d+\/today/);
 }
