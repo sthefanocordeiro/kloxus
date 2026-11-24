@@ -26,7 +26,6 @@ vi.mock("../api", async (importOriginal) => {
       calibrationAnswer: vi.fn(),
       skipTopic: vi.fn(),
       today: vi.fn(),
-      todayWrite: vi.fn(),
     },
   };
 });
@@ -69,7 +68,6 @@ describe("onboarding from zero (KLOX-123)", () => {
     vi.mocked(api.calibrationAnswer).mockResolvedValue({ ok: true });
     vi.mocked(api.skipTopic).mockResolvedValue({ publication: pub });
     vi.mocked(api.today).mockResolvedValue({ cards: [card(3, ["fintech"])], pieces: [], open_piece: 0, window_hours: 48 });
-    vi.mocked(api.todayWrite).mockResolvedValue({ issue_id: 55, created: true });
   });
 
   it("redirects an account that already has a radar", async () => {
@@ -134,8 +132,7 @@ describe("onboarding from zero (KLOX-123)", () => {
     expect(screen.getByText("Meu Radar")).toBeVisible();
     expect(await screen.findByText("1 stories match your Radar today.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Create first post" }));
-    await waitFor(() => expect(api.todayWrite).toHaveBeenCalledWith(7, 3));
-    expect(await screen.findByText("editor screen")).toBeVisible();
+    expect(await screen.findByText("today screen")).toBeVisible();
   });
 
   it("lets the visitor skip matching and open today's pauta from Done", async () => {

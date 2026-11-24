@@ -527,7 +527,36 @@ export interface TodayWrite {
   section?: string;
 }
 
+// KLOX-168: the main flow — ticked stories become a pauta of free text.
+export interface PautaEntry {
+  story_id: number;
+  issue_item_id?: number;
+  title: string;
+  url: string;
+  outlet: string;
+  date: string;
+  text: string;
+}
+export interface PautaState {
+  issue_id: number;
+  number: number;
+  status: string;
+  opening: string;
+  entries: PautaEntry[];
+}
+export interface PautaSave {
+  opening: string;
+  entries: { story_id: number; text: string }[];
+}
+
 export const api = {
+  pautaCreate: (pubID: number | string, storyIDs: number[]) =>
+    request<{ issue_id: number }>("POST", `/api/v1/publications/${pubID}/pauta`, { story_ids: storyIDs }),
+  pauta: (issueID: number | string) => request<PautaState>("GET", `/api/v1/issues/${issueID}/pauta`),
+  pautaSave: (issueID: number | string, body: PautaSave) =>
+    request<{ saved: boolean }>("PUT", `/api/v1/issues/${issueID}/pauta`, body),
+  pautaFinish: (issueID: number | string) =>
+    request<{ ready: boolean; missing_text: number }>("POST", `/api/v1/issues/${issueID}/pauta/finish`, {}),
   workspace: () => request<{ workspace: Workspace }>("GET", "/api/v1/workspace").then((r) => r.workspace ?? (r as unknown as Workspace)),
   publications: () => request<{ publications: Publication[] }>("GET", "/api/v1/publications").then((r) => r.publications),
   publication: (id: string | number) => request<{ publication: Publication; latest_issue?: IssueSummary }>("GET", `/api/v1/publications/${id}`),
