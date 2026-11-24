@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -132,5 +134,25 @@ func TestSetCreateLimit(t *testing.T) {
 	m.SetCreateLimit(0)
 	if m.createLimit != 3 {
 		t.Fatal("non-positive limit must keep the current value")
+	}
+}
+
+// A fresh KLOXUS_DATA_DIR (clean checkout, new volume) has no parent
+// directory yet — the first boot must create it, not fail.
+func TestLoadOrCreateSecretCreatesParentDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data", "cookie.secret")
+	s1, err := LoadOrCreateSecret(path)
+	if err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	s2, err := LoadOrCreateSecret(path)
+	if err != nil {
+		t.Fatalf("second load: %v", err)
+	}
+	if string(s1) != string(s2) {
+		t.Fatal("secret not persisted across loads")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("secret file missing: %v", err)
 	}
 }
