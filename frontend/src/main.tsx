@@ -47,7 +47,6 @@ const router = createBrowserRouter([
     ),
     children: [
       { path: "/start", lazy: () => import("./pages/Start").then((x) => ({ Component: x.Start })) },
-      { path: "/new", lazy: () => import("./pages/Create").then((m) => ({ Component: m.CreateNewsletter })) },
       { path: "/publications", lazy: () => import("./pages/Publications").then((m) => ({ Component: m.Publications })) },
       { path: "/publications/:id", lazy: () => import("./pages/PublicationPage").then((m) => ({ Component: m.PublicationPage })) },
       { path: "/publications/:id/today", lazy: () => import("./pages/Today").then((m) => ({ Component: m.Today })) },
@@ -55,8 +54,7 @@ const router = createBrowserRouter([
       { path: "/publications/:id/settings", lazy: () => import("./pages/SettingsPage").then((m) => ({ Component: m.SettingsPage })) },
       { path: "/pauta/:id", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaPage })) },
       { path: "/pauta/:id/export", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaExport })) },
-      { path: "/issues/:id", lazy: () => import("./pages/IssuePage").then((m) => ({ Component: m.IssuePage })) },
-      { path: "/runs/:runID", lazy: () => import("./pages/Board").then((m) => ({ Component: m.RunLanding })) },
+      { path: "/issues/:id", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.IssueRedirect })) },
       { path: "*", element: <NotFound /> },
     ],
   },

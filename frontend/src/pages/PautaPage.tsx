@@ -1,14 +1,28 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, type PautaEntry } from "../api";
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { api, pautaPath, type PautaEntry } from "../api";
 import { BackButton } from "../components/BackButton";
 import { DestinationStep } from "../components/Destinations";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Button, Card } from "../ui";
 import { usePautaStrings } from "./pautaStrings";
+
+// /issues/:id — the sentence editor is gone (KLOX-179); old links land
+// on the pauta editor, straight to the export step once the pauta left.
+export function IssueRedirect() {
+  const { id = "" } = useParams();
+  const q = useQuery({
+    queryKey: ["issue", id],
+    queryFn: () => api.issue(Number(id)),
+    retry: false,
+    staleTime: 60_000,
+  });
+  if (!q.data && !q.isError) return null;
+  return <Navigate to={pautaPath(id, q.data?.status)} replace />;
+}
 
 // /pauta/:id — Escrever (KLOX-168): the ticked news in the chosen order,
 // one free-text box under each title (autosaved), an optional opening.

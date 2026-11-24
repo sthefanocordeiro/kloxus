@@ -520,6 +520,14 @@ export interface TodayData {
   window_hours: number;
 }
 
+// /issues/:id is gone (KLOX-179): every pauta opens in the pauta
+// editor — straight to the export step once it left ("exported" on
+// Hoje; "sent"/"scheduled" on the legacy send flow).
+export const pautaPath = (id: number | string, status?: string) =>
+  status === "exported" || status === "sent" || status === "scheduled"
+    ? `/pauta/${id}/export`
+    : `/pauta/${id}`;
+
 export interface TodayWrite {
   issue_id: number;
   created?: boolean;

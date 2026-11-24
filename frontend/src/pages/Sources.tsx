@@ -7,9 +7,10 @@ import { errText } from "../lib/errors";
 import { Badge, Button, Card, SkeletonLine } from "../ui";
 
 // /publications/:id/sources — the onboarding sources screen: suggested fixture
-// sources with real previews, add/remove, and confirm → auto first run.
-// Its headline job is the aderência controls (KLOX-94): the theme, reject
-// terms and per-section pautas the suggestion engine ranks by.
+// sources with real previews, add/remove, and confirm → today's pauta
+// (Hoje builds the deck on demand — the old collection run is gone,
+// KLOX-179). Its headline job is the aderência controls (KLOX-94): the
+// theme, reject terms and per-section pautas the suggestion engine ranks by.
 export function SourcesPage() {
   const { id } = useParams();
   const { t } = useT();
@@ -78,11 +79,8 @@ export function SourcesPage() {
   // hint that the arriving data contradicts a moment later (KLOX-56)
   const loading = sources.isLoading || catalog.isLoading;
   const confirm = useMutation({
-    mutationFn: async () => {
-      await api.sourceConfirm(id!, offered.filter((o) => checked(o.url)).map((o) => o.url));
-      return api.startRun(Number(id));
-    },
-    onSuccess: (run) => nav(`/runs/${run.id}`, { replace: true }),
+    mutationFn: () => api.sourceConfirm(id!, offered.filter((o) => checked(o.url)).map((o) => o.url)),
+    onSuccess: () => nav(`/publications/${id}/today`, { replace: true }),
   });
 
   const preview = async (type: string, url: string) => {

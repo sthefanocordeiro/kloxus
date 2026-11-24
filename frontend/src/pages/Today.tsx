@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, ApiRequestError, type PautaCard, type PieceRow } from "../api";
+import { api, ApiRequestError, pautaPath, type PautaCard, type PieceRow } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { Badge, Button, Card, SkeletonLine } from "../ui";
@@ -131,7 +131,7 @@ export function Today() {
       <ul className="mt-3 divide-y divide-line rounded border border-line bg-paper-raised">
         {pieces.map((p: PieceRow) => (
           <li key={p.id}>
-            <Link to={`/pauta/${p.id}`} className="flex items-center justify-between px-4 py-3 text-sm hover:bg-line/40">
+            <Link to={pautaPath(p.id, p.status)} className="flex items-center justify-between px-4 py-3 text-sm hover:bg-line/40">
               <span className="font-medium">{s.piece.replace("{n}", String(p.number))}</span>
               <Badge tone={p.status === "draft" ? "warn" : "teal"}>{s.status[p.status]}</Badge>
             </Link>

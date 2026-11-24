@@ -11,7 +11,7 @@ import {
   Rss,
   Settings,
 } from "lucide-react";
-import { api } from "./api";
+import { api, pautaPath } from "./api";
 import { useT, type Lang, type T } from "./i18n";
 import { cn } from "./lib/cn";
 import { BackButton } from "./components/BackButton";
@@ -28,17 +28,22 @@ interface Chrome {
   section: string;
 }
 
+// /issues/:id redirects to /pauta/:id (KLOX-179) — the pauta editor is
+// the only edition surface, so both URLs count as "edition" chrome.
+const matchIssue = (pathname: string) =>
+  matchPath("/issues/:id", pathname) ??
+  matchPath("/pauta/:id", pathname) ??
+  matchPath("/pauta/:id/export", pathname);
+
 function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: number): Chrome {
   const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
-  const issueM = matchPath("/issues/:id", pathname);
-  const runM = matchPath("/runs/:id", pathname);
+  const issueM = matchIssue(pathname);
   const pub = pubM?.params.id;
   const pubCrumb: Crumb = { label: pubName ?? t.publications, to: pub ? `/publications/${pub}` : "/publications" };
 
   // /new's crumb used to point at /new itself — a Voltar that went
   // nowhere (KLOX-79). Publicações is the real parent.
   if (pathname === "/start") return { title: t.nav.creating, crumbs: [], section: "new" };
-  if (pathname === "/new") return { title: t.nav.creating, crumbs: [{ label: t.publications, to: "/publications" }], section: "new" };
   if (pathname === "/publications") return { title: t.publications, crumbs: [], section: "editions" };
   if (issueM) {
     return {
@@ -47,7 +52,6 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
       section: "edition",
     };
   }
-  if (runM) return { title: t.nav.preparing, crumbs: [{ label: t.publications, to: "/publications" }], section: "edition" };
   if (pub) {
     const tail = pathname.split("/").pop() ?? "";
     const map: Record<string, [string, string]> = {
@@ -69,7 +73,7 @@ export function AppShell() {
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, retry: false, staleTime: Infinity });
 
   const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
-  const issueM = matchPath("/issues/:id", pathname);
+  const issueM = matchIssue(pathname);
   const pubId = pubM?.params.id;
   const issueId = issueM?.params.id ? Number(issueM.params.id) : undefined;
 
@@ -90,11 +94,11 @@ export function AppShell() {
   const latest = pubQ.data?.latest_issue;
   const chrome = chromeFor(pathname, t, pub?.name, issue.data?.number);
   // Nav targets come from the URL pubId (or the issue's publication_id on
-  // /issues/:id), not the fetched entity — deriving them from `pub` left
+  // /pauta/:id), not the fetched entity — deriving them from `pub` left
   // every pub-scoped link pointing at /publications/<word> until pubQ
   // resolved, a dead route that 404s and never recovers (KLOX-74).
   const pubBase = pubKey ? `/publications/${pubKey}` : "/publications";
-  const editionTo = latest ? `/issues/${latest.id}` : pubBase;
+  const editionTo = latest ? pautaPath(latest.id, latest.status) : pubBase;
 
   // KLOXUS_PUBLISHING off (KLOX-122): Hoje · Pautas · Radar · Configurações.
   // Readers, send and the outbox are not reachable from the nav.
@@ -249,7 +253,7 @@ export function AppShell() {
           <Outlet />
         </main>
 
-        {/* mobile bottom tabs — fixed order: Edição, Edições, Leitores, Mais (§3.1) */}
+        {/* mobile bottom tabs — first nav items + "Mais" overflow (§3.1) */}
         <nav
           className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-line bg-paper-raised md:hidden"
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
