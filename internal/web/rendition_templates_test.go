@@ -121,20 +121,49 @@ func TestRenditionXSplitsPerStory(t *testing.T) {
 		Blocks: []docBlock{{Kind: "item", Ref: 1}, {Kind: "item", Ref: 2}},
 	}}}
 	x, _, _, _ := renditionBodies(doc, FmtX)
-	posts := strings.Split(strings.TrimSpace(x), "\n\n---\n\n")
+	if strings.Contains(x, "---") {
+		t.Fatalf("x thread must not carry '---':\n%s", x)
+	}
+	posts := strings.Split(strings.TrimSpace(x), "\n\n")
 	if len(posts) < 3 {
 		t.Fatalf("want one post for story 1 and a split for story 2, got %d:\n%s", len(posts), x)
 	}
-	if posts[0] != "Um\nhttps://a.example/um\n\nTexto um." {
+	if posts[0] != "Um\nhttps://a.example/um\nTexto um." {
 		t.Errorf("first post: %q", posts[0])
 	}
 	if !strings.HasPrefix(posts[1], "Dois\nhttps://b.example/dois") {
 		t.Errorf("second story must open with title+URL: %q", posts[1])
 	}
 	for i, p := range posts {
-		if xLen(p) > xLimit {
-			t.Errorf("post %d is %d > %d: %q", i, xLen(p), xLimit, p)
+		if xLen(p) > xLimit-xNumRoom {
+			t.Errorf("post %d leaves no room for the n/N counter: %q", i, p)
 		}
+	}
+}
+
+// KLOX-182: the thread's post 1 is the opening and each following post
+// is one story — title, URL, text.
+func TestRenditionXOpeningThenOnePostPerStory(t *testing.T) {
+	doc := renditionFixture()
+	doc.Sections[0].Items = append(doc.Sections[0].Items, docItem{
+		Ref: 2, Headline: "Segunda notícia",
+		Sentences: []docSentence{{Text: "Texto da segunda.", Kind: "fact"}},
+		Sources:   []docSource{{Ref: 1, URL: "https://c.example/dois"}},
+	})
+	doc.Sections[0].Blocks = append(doc.Sections[0].Blocks, docBlock{Kind: "item", Ref: 2})
+	x, _, _, _ := renditionBodies(doc, FmtX)
+	posts := strings.Split(strings.TrimSpace(x), "\n\n")
+	if len(posts) != 3 {
+		t.Fatalf("want opening + one post per story, got %d:\n%s", len(posts), x)
+	}
+	if posts[0] != "Semana intensa.\nAbertura." {
+		t.Errorf("post 1 must be the opening: %q", posts[0])
+	}
+	if posts[1] != "BC muda regra\nhttps://valor.example/a?x=(1)\nO BC publicou a norma. Vale desde segunda.\nPara mim, é um avanço." {
+		t.Errorf("post 2 must be story 1 (title+URL+text): %q", posts[1])
+	}
+	if posts[2] != "Segunda notícia\nhttps://c.example/dois\nTexto da segunda." {
+		t.Errorf("post 3 must be story 2 (title+URL+text): %q", posts[2])
 	}
 }
 

@@ -41,47 +41,38 @@ export function foldIndex(text: string, fold = LINKEDIN_FOLD): number {
   return cs.slice(0, cut).join("").length;
 }
 
-// splitForX proposes a thread: paragraphs are packed into posts of at
-// most 280 characters, over-long paragraphs break at sentence ends and
-// then at words. Each post of a multi-post thread gets a " n/N" suffix
-// budgeted into the limit.
+// splitForX proposes a thread: each blank-line-separated block is a
+// post — the rendition template emits one block per post (the opening
+// first, then one per story), so blocks are never merged. An over-long
+// block breaks at words. Each post of a multi-post thread gets a " n/N"
+// suffix budgeted into the limit.
 export function splitForX(text: string): string[] {
   const clean = text.replace(/\r\n/g, "\n").trim();
   if (!clean) return [];
-  if (xCount(clean) <= X_LIMIT) return [clean];
+  // A "---" block is the post separator old renditions carry — it is a
+  // boundary, never post text.
+  const blocks = clean
+    .split(/\n{2,}/)
+    .map((b) => b.trim())
+    .filter((b) => b !== "" && b !== "---");
+  if (blocks.length === 1 && xCount(blocks[0]) <= X_LIMIT) return [blocks[0]];
   const budget = X_LIMIT - 7; // room for " 12/12"
-  const pieces: string[] = [];
-  for (const para of clean.split(/\n{2,}/)) {
-    if (xCount(para) <= budget) {
-      pieces.push(para.trim());
+  const posts: string[] = [];
+  for (const b of blocks) {
+    if (xCount(b) <= budget) {
+      posts.push(b);
       continue;
     }
-    for (const sentence of para.split(/(?<=[.!?])\s+/)) {
-      if (xCount(sentence) <= budget) {
-        pieces.push(sentence.trim());
-        continue;
-      }
-      let cur = "";
-      for (const word of sentence.split(/\s+/)) {
-        const next = cur ? `${cur} ${word}` : word;
-        if (cur && xCount(next) > budget) {
-          pieces.push(cur);
-          cur = word;
-        } else cur = next;
-      }
-      if (cur) pieces.push(cur);
+    let cur = "";
+    for (const word of b.split(/\s+/)) {
+      const next = cur ? `${cur} ${word}` : word;
+      if (cur && xCount(next) > budget) {
+        posts.push(cur);
+        cur = word;
+      } else cur = next;
     }
+    if (cur) posts.push(cur);
   }
-  const posts: string[] = [];
-  let cur = "";
-  for (const p of pieces) {
-    const next = cur ? `${cur}\n\n${p}` : p;
-    if (cur && xCount(next) > budget) {
-      posts.push(cur);
-      cur = p;
-    } else cur = next;
-  }
-  if (cur) posts.push(cur);
   return posts.length === 1 ? posts : posts.map((p, i) => `${p} ${i + 1}/${posts.length}`);
 }
 
