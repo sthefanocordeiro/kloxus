@@ -17,7 +17,7 @@ test.skip(publishingOff, PUBLISHING_SKIP_REASON);
 // Buttons and the keyboard keep working in the other suites; here the
 // drag itself is the contract under test.
 
-const issueCol = (page: Page) => page.locator('section[aria-label="This piece"]');
+const issueCol = (page: Page) => page.locator('section[aria-label="This brief"]');
 const benchCol = (page: Page) => page.locator('section[aria-label="Suggestions"]');
 const sectionBox = (page: Page, name: string) =>
   issueCol(page).locator(`[data-section="${name}"]`);
@@ -33,7 +33,7 @@ async function onboard(page: Page) {
   await page.goto("/new"); // legacy create flow: still covered here, no longer the front door
   await expect(page.locator('input[value*="Futuro"]')).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Next", exact: true }).click();
-  await expect(page.getByText(/Your piece will have \d+ stor/)).toBeVisible();
+  await expect(page.getByText(/Your brief will have \d+ stor/)).toBeVisible();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.waitForURL(/\/publications\/\d+\/sources/);
   await expect(page.getByText("Suggested sources")).toBeVisible();
@@ -44,7 +44,7 @@ async function onboard(page: Page) {
 }
 
 async function boardReady(page: Page) {
-  await expect(page.getByRole("heading", { name: "This piece" })).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByRole("heading", { name: "This brief" })).toBeVisible({ timeout: 120_000 });
   await expect(benchCol(page).locator("p.font-doc").first()).toBeVisible({ timeout: 60_000 });
 }
 

@@ -134,7 +134,7 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 	if ptLang(in.Lang) {
 		link += "&lang=pt"
 		subject, md = "Confirme seu e-mail para criar seu Radar",
-			fmt.Sprintf("Confirme este e-mail para criar o seu Radar.\n\n[Criar meu Radar](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
+			fmt.Sprintf("Confirme este e-mail para criar seu Radar.\n\n[Criar meu Radar](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
 	}
 	res, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{email},

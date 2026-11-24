@@ -114,10 +114,10 @@ export function CoverageCounter({ coverage, onFixNow }: { coverage: Coverage; on
 // count === 1 labels — "1 pautas sem texto" read wrong (KLOX-124)
 const SINGULAR_FAIL: Record<string, Record<string, string>> = {
   pt: {
-    pending_decisions: "pauta por decidir",
+    pending_decisions: "notícia por escolher",
     uncited_sentences: "frase que precisa de fonte",
     flags_unresolved: "pendência de fonte por resolver",
-    empty_items: "pauta sem texto",
+    empty_items: "notícia sem texto",
   },
   en: {
     pending_decisions: "story still undecided",

@@ -33,9 +33,9 @@ func renditionFixture() *issueDocument {
 
 func TestRenditionTextTemplate(t *testing.T) {
 	text, _, _, _ := renditionBodies(renditionFixture(), FmtLinkedIn)
-	want := "Pix & cripto: a semana\n\nSemana intensa.\n\nAbertura.\n\n" +
-		"O BC publicou a norma. Vale desde segunda. [1] [2]\n\nPara mim, é um avanço.\n\n" +
-		"Fontes:\n[1] Valor — https://valor.example/a?x=(1)\n[2] Folha — https://folha.example/b\n"
+	want := "Semana intensa.\n\nAbertura.\n\n" +
+		"BC muda regra\nhttps://valor.example/a?x=(1)\n\n" +
+		"O BC publicou a norma. Vale desde segunda.\n\nPara mim, é um avanço.\n"
 	if text != want {
 		t.Fatalf("text template:\n%q\nwant\n%q", text, want)
 	}
@@ -44,20 +44,70 @@ func TestRenditionTextTemplate(t *testing.T) {
 func TestRenditionHTMLAndMarkdownTemplates(t *testing.T) {
 	_, h, _, _ := renditionBodies(renditionFixture(), FmtHTML)
 	for _, frag := range []string{
-		"<h1>Pix &amp; cripto: a semana</h1>", "<h2>Regulação</h2>", "<h3>BC muda regra</h3>",
-		`<a href="https://folha.example/b">[2]</a>`, "<h2>Fontes</h2>", "<ol>",
+		"<h2>Regulação</h2>", `<h3><a href="https://valor.example/a?x=(1)">BC muda regra</a></h3>`,
+		"<p>O BC publicou a norma. Vale desde segunda.</p>",
 	} {
 		if !strings.Contains(h, frag) {
 			t.Errorf("html missing %q in:\n%s", frag, h)
 		}
 	}
+	if strings.Contains(h, "<h1>") || strings.Contains(h, "Fontes") || strings.Contains(h, "[1]") {
+		t.Errorf("html must have no auto title, sources list or [n]:\n%s", h)
+	}
 	_, _, md, _ := renditionBodies(renditionFixture(), FmtMarkdown)
 	for _, frag := range []string{
-		"# Pix & cripto: a semana", "## Regulação", "### BC muda regra",
-		`[\[1\]](https://valor.example/a?x=%281%29)`, "## Fontes", "2. [Folha](https://folha.example/b)",
+		"## Regulação", "### [BC muda regra](https://valor.example/a?x=%281%29)",
 	} {
 		if !strings.Contains(md, frag) {
 			t.Errorf("markdown missing %q in:\n%s", frag, md)
+		}
+	}
+	if strings.HasPrefix(md, "# ") || strings.Contains(md, "Fontes") || strings.Contains(md, "peça") {
+		t.Errorf("markdown must have no auto title or sources list:\n%s", md)
+	}
+}
+
+func TestRenditionNoRawInterpretationMarkup(t *testing.T) {
+	doc := renditionFixture()
+	doc.Sections[0].Items[0].Sentences[2].Text = "> _Interpretação: > _Interpretação: Para mim, é um avanço.__"
+	for _, f := range []string{FmtLinkedIn, FmtX, FmtHTML, FmtMarkdown} {
+		tx, h, m, _ := renditionBodies(doc, f)
+		out := tx + h + m
+		if strings.Contains(out, "Interpretação") || strings.Contains(out, "&gt;") ||
+			strings.Contains(out, "> ") || strings.Contains(out, `\_`) {
+			t.Errorf("%s leaks interpretation markup: %q", f, out)
+		}
+		if !strings.Contains(out, "Para mim, é um avanço.") {
+			t.Errorf("%s lost interpretation text: %q", f, out)
+		}
+	}
+}
+
+func TestRenditionXSplitsPerStory(t *testing.T) {
+	doc := &issueDocument{Sections: []docSection{{
+		Title: "Posts",
+		Items: []docItem{
+			{Ref: 1, Headline: "Um", Sentences: []docSentence{{Text: "Texto um.", Kind: "fact"}},
+				Sources: []docSource{{Ref: 1, URL: "https://a.example/um"}}},
+			{Ref: 2, Headline: "Dois", Sentences: []docSentence{{Text: strings.Repeat("palavra ", 60), Kind: "fact"}},
+				Sources: []docSource{{Ref: 1, URL: "https://b.example/dois"}}},
+		},
+		Blocks: []docBlock{{Kind: "item", Ref: 1}, {Kind: "item", Ref: 2}},
+	}}}
+	x, _, _, _ := renditionBodies(doc, FmtX)
+	posts := strings.Split(strings.TrimSpace(x), "\n\n---\n\n")
+	if len(posts) < 3 {
+		t.Fatalf("want one post for story 1 and a split for story 2, got %d:\n%s", len(posts), x)
+	}
+	if posts[0] != "Um\nhttps://a.example/um\n\nTexto um." {
+		t.Errorf("first post: %q", posts[0])
+	}
+	if !strings.HasPrefix(posts[1], "Dois\nhttps://b.example/dois") {
+		t.Errorf("second story must open with title+URL: %q", posts[1])
+	}
+	for i, p := range posts {
+		if xLen(p) > xLimit {
+			t.Errorf("post %d is %d > %d: %q", i, xLen(p), xLimit, p)
 		}
 	}
 }

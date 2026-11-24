@@ -19,9 +19,9 @@ const pt: typeof en = {
   writing: (done: number, total: number) => `Escrevendo ${done} de ${total}`,
   editHint: "Clique para ações · dois cliques para editar",
   useFact: "usar como frase — reescreva do seu jeito",
-  prevPauta: "Pauta anterior",
-  nextPauta: "Próxima pauta",
-  position: (n: number, m: number) => `Pauta ${n} de ${m}`,
+  prevPauta: "Notícia anterior",
+  nextPauta: "Próxima notícia",
+  position: (n: number, m: number) => `Notícia ${n} de ${m}`,
 };
 
 export function useWrite() {

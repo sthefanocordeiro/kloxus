@@ -135,7 +135,7 @@ describe("onboarding from zero (KLOX-123)", () => {
     expect(await screen.findByText("today screen")).toBeVisible();
   });
 
-  it("lets the visitor skip matching and open today's pauta from Done", async () => {
+  it("lets the visitor skip matching and open today's stories from Done", async () => {
     renderStart();
     fireEvent.change(await screen.findByLabelText("Radar name"), { target: { value: "R" } });
     fireEvent.change(screen.getByLabelText("Topics (comma separated)"), { target: { value: "startups" } });
@@ -144,7 +144,7 @@ describe("onboarding from zero (KLOX-123)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     expect(await screen.findByRole("heading", { name: "Done!" })).toBeVisible();
     expect(api.calibrationAnswer).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("link", { name: "See today's pauta" }));
+    fireEvent.click(screen.getByRole("link", { name: "See today's stories" }));
     expect(await screen.findByText("today screen")).toBeVisible();
   });
 });

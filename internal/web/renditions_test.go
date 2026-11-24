@@ -53,11 +53,11 @@ func TestRenditionsLifecycle(t *testing.T) {
 				t.Errorf("linkedin body_text = %q", r["body_text"])
 			}
 		case "html":
-			if !strings.Contains(r["body_html"].(string), "<h1>Pix e cripto</h1>") {
+			if !strings.Contains(r["body_html"].(string), "<h3>Item</h3>") {
 				t.Errorf("html rendition was touched: %q", r["body_html"])
 			}
 		case "markdown":
-			if !strings.HasPrefix(r["body_md"].(string), "# Pix e cripto") {
+			if !strings.Contains(r["body_md"].(string), "### Item") {
 				t.Errorf("markdown rendition was touched: %q", r["body_md"])
 			}
 		}
@@ -83,7 +83,7 @@ func TestRenditionsLifecycle(t *testing.T) {
 		t.Fatalf("refresh = %d: %s", rr.Code, shortBody(rr))
 	}
 	r := apiJSON(t, rr)["rendition"].(map[string]any)
-	if r["stale"] != false || !strings.HasPrefix(r["body_text"].(string), "Pix e cripto") {
+	if r["stale"] != false || !strings.HasPrefix(r["body_text"].(string), "Item") {
 		t.Fatalf("refreshed rendition = %v", r)
 	}
 

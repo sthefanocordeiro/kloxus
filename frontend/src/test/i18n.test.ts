@@ -160,12 +160,12 @@ describe("pt glossary (KLOX-64 §2)", () => {
   const t = dict.pt;
 
   it("uses the exact required strings", () => {
-    expect(t.board.steps).toEqual(["Pautas", "Escrever", "Revisar"]);
+    expect(t.board.steps).toEqual(["Notícias", "Escrever", "Exportar"]);
     expect(t.coverage.ok).toBe("fatos com fonte");
     expect(t.coverage.fixNow).toBe("Ver pendências");
-    expect(t.compose.emptySlot).toBe("Escreva esta pauta");
+    expect(t.compose.emptySlot).toBe("Escreva sobre esta notícia");
     expect(t.commentary.required).toBe("Escreva seu comentário (obrigatório nesta seção)");
-    expect(t.board.bench).toBe("Sugestões");
+    expect(t.board.bench).toBe("Notícias");
     expect(t.evidence.title).toBe("Fontes e fatos");
     expect(t.evidence.empty).toContain("pesquisa");
   });
@@ -176,15 +176,15 @@ describe("pt glossary (KLOX-64 §2)", () => {
     expect(t.evidence.src(140)).toBe("140 fontes");
   });
 
-  it("pluralizes draftAction — never '(1 pautas)'", () => {
-    expect(t.board.draftAction(1)).toBe("Redigir a peça (1 pauta)");
-    expect(t.board.draftAction(2)).toBe("Redigir a peça (2 pautas)");
-    expect(t.board.draftAction(7)).toBe("Redigir a peça (7 pautas)");
+  it("pluralizes draftAction — never '(1 notícias)'", () => {
+    expect(t.board.draftAction(1)).toBe("Montar pauta (1 notícia)");
+    expect(t.board.draftAction(2)).toBe("Montar pauta (2 notícias)");
+    expect(t.board.draftAction(7)).toBe("Montar pauta (7 notícias)");
   });
 
   it("agrees sectionFull on 'seção', not on the section title", () => {
     expect(t.board.sectionFull("O destaque", 3)).toBe(
-      "A seção “O destaque” está cheia (3/3) — escolha uma pauta para trocar",
+      "A seção “O destaque” está cheia (3/3) — escolha uma notícia para trocar",
     );
     expect(t.board.sectionFull("Links rápidos", 4)).toContain(
       "A seção “Links rápidos” está cheia",
@@ -193,6 +193,6 @@ describe("pt glossary (KLOX-64 §2)", () => {
 
   it("speaks second person", () => {
     expect(t.claim.action).toBe("Enviar link");
-    expect(t.errors.unclaimed_workspace).toBe("Salve com seu e-mail antes de enviar");
+    expect(t.errors.unclaimed_workspace).toBe("Confirme seu e-mail com o link mágico antes de salvar");
   });
 });
