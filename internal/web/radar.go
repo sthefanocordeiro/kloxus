@@ -26,15 +26,15 @@ const (
 // catalog is what the global scheduler ingests (D29) — the person only
 // unchecks from this list; their own sources stay in settings.
 var nicheSources = map[string][]string{
-	"politica":           {"agencia-brasil-politica", "camara-noticias", "poder360", "g1", "folha"},
-	"economia":           {"agencia-brasil-economia", "exame", "valor", "infomoney", "folha"},
-	"mercado-financeiro": {"infomoney", "seu-dinheiro", "money-times", "valor", "finsiders"},
+	"politica":           {"agencia-brasil-politica", "camara-noticias", "poder360", "g1"},
+	"economia":           {"agencia-brasil-economia", "exame", "infomoney", "seu-dinheiro", "money-times", "g1", "cnn-brasil", "valor"},
+	"mercado-financeiro": {"infomoney", "seu-dinheiro", "money-times", "finsiders"},
 	"financas-pessoais":  {"infomoney", "seu-dinheiro", "money-times", "exame"},
-	"negocios":           {"exame", "valor", "startups", "folha"},
-	"startups":           {"startups", "techcrunch", "exame"},
-	"carreira":           {"mundo-rh", "rh-portal", "exame", "valor"},
+	"negocios":           {"exame", "infomoney", "startups", "money-times", "seu-dinheiro", "valor"},
+	"startups":           {"startups", "techcrunch", "exame", "tecnoblog", "infomoney"},
+	"carreira":           {"mundo-rh", "rh-portal", "exame", "infomoney", "agencia-brasil-economia", "valor"},
 	"tecnologia":         {"tecnoblog", "canaltech", "olhar-digital", "tecmundo", "meiobit", "the-verge", "ars-technica"},
-	"internacional":      {"g1", "folha", "cnn-brasil", "the-verge", "wired"},
+	"internacional":      {"g1", "cnn-brasil", "the-verge", "wired"},
 	// No dedicated feeds in the catalog yet for the editorias below: they
 	// fall back to the general news portals until sources are added.
 	"agronegocio":     generalPortals,
@@ -42,16 +42,21 @@ var nicheSources = map[string][]string{
 	"justica-direito": generalPortals,
 	"saude":           generalPortals,
 	"educacao":        generalPortals,
-	"ciencia":         {"wired", "ars-technica", "g1", "folha"},
+	"ciencia":         {"wired", "ars-technica", "the-verge", "g1", "folha"},
 	"meio-ambiente":   generalPortals,
 	"cultura":         generalPortals,
 	"estilo-vida":     generalPortals,
 }
 
-var generalPortals = []string{"g1", "folha", "cnn-brasil", "metropoles"}
+var generalPortals = []string{"g1", "cnn-brasil", "metropoles", "folha"}
+
+// paywalledSources are catalog slugs behind a reader paywall: a radar only
+// gets them when the person asks for them (KLOX-169) — a pauta whose links
+// the reader cannot open is worse than a narrower one.
+var paywalledSources = map[string]bool{"valor": true, "folha": true}
 
 // defaultNicheSources is what a person who picked no chip gets.
-var defaultNicheSources = []string{"tecnoblog", "canaltech", "exame", "techcrunch"}
+var defaultNicheSources = []string{"tecnoblog", "canaltech", "infomoney", "techcrunch"}
 
 var nicheLabels = map[string]string{
 	"politica": "política", "economia": "economia", "mercado-financeiro": "mercado financeiro e investimentos",
@@ -83,6 +88,9 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 		About  string   `json:"about"`  // the topics, free text separated by commas
 		Topics string   `json:"topics"` // alias of about
 		Niches []string `json:"niches"` // optional editorias
+		// AllowPaywall lists paywalled catalog slugs the person marked to
+		// include (e.g. "valor"); none by default.
+		AllowPaywall []string `json:"allow_paywall"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
@@ -159,7 +167,7 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "radar") {
 		return
 	}
-	s.attachNicheSources(r, pub, niches)
+	s.attachNicheSources(r, pub, niches, in.AllowPaywall)
 	db(r).SetProgress(r.Context(), "publication_created")
 	db(r).SetProgress(r.Context(), "sources_confirmed")
 	out := []apiSourceRow{}
@@ -169,17 +177,13 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 201, map[string]any{"publication": publicationView(pub), "sources": out})
 }
 
-// attachNicheSources adds the catalog sources of the chosen niches (the
-// union; the default set when none). Demo mode attaches the fixture
-// sources instead — that mode has no live catalog.
-func (s *Server) attachNicheSources(r *http.Request, pub *store.Publication, niches []string) {
-	if s.d.Cfg.Mode == "demo" || s.d.Pool == nil {
-		if def, err := s.sampleDef(); err == nil {
-			for _, sd := range def.Sources {
-				db(r).AddSource(r.Context(), pub.ID, sd.Type, sd.URL, sd.Name)
-			}
-		}
-		return
+// nicheSlugs is the catalog slugs a radar starts with: the union of its
+// niches (the default set when none), minus paywalled outlets the person
+// did not mark.
+func nicheSlugs(niches, allowPaywall []string) map[string]bool {
+	allow := map[string]bool{}
+	for _, sl := range allowPaywall {
+		allow[strings.TrimSpace(sl)] = true
 	}
 	want := map[string]bool{}
 	for _, n := range niches {
@@ -192,6 +196,27 @@ func (s *Server) attachNicheSources(r *http.Request, pub *store.Publication, nic
 			want[slug] = true
 		}
 	}
+	for slug := range want {
+		if paywalledSources[slug] && !allow[slug] {
+			delete(want, slug)
+		}
+	}
+	return want
+}
+
+// attachNicheSources adds the catalog sources of the chosen niches (the
+// union; the default set when none). Demo mode attaches the fixture
+// sources instead — that mode has no live catalog.
+func (s *Server) attachNicheSources(r *http.Request, pub *store.Publication, niches, allowPaywall []string) {
+	if s.d.Cfg.Mode == "demo" || s.d.Pool == nil {
+		if def, err := s.sampleDef(); err == nil {
+			for _, sd := range def.Sources {
+				db(r).AddSource(r.Context(), pub.ID, sd.Type, sd.URL, sd.Name)
+			}
+		}
+		return
+	}
+	want := nicheSlugs(niches, allowPaywall)
 	cat, err := s.d.Pool.Catalog(r.Context())
 	if err != nil {
 		return
