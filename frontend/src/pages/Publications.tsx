@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { api } from "../api";
 import { useT } from "../i18n";
-import { errText } from "../lib/errors";
+import { errText, isRateLimited } from "../lib/errors";
+import { RateLimited } from "../components/RateLimited";
 import { Button, Card, SkeletonLine } from "../ui";
 import { ShellPrimary } from "../components/ShellPortal";
 
@@ -40,6 +41,12 @@ export function Publications() {
         </ShellPrimary>
       )}
       {pubs.isLoading && <SkeletonLine />}
+      {pubs.isError &&
+        (isRateLimited(pubs.error) ? (
+          <RateLimited error={pubs.error} busy={pubs.isFetching} onRetry={() => pubs.refetch()} />
+        ) : (
+          <p className="text-sm text-danger" role="alert">{errText(t, pubs.error)}</p>
+        ))}
       {pubs.data?.length === 0 && (
         <Card className="p-6 text-center">
           <p className="text-sm text-muted">{t.landing.subhead}</p>

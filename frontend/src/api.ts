@@ -1,3 +1,5 @@
+import { clearSession, markSession } from "./lib/session";
+
 // Types mirroring docs/api.md (the /api/v1 contract).
 export interface Workspace {
   id: string;
@@ -451,12 +453,28 @@ export class ApiRequestError extends Error {
   status: number;
   body: ApiError;
   document?: IssueDocument;
-  constructor(status: number, body: ApiError, document?: IssueDocument) {
+  // seconds the server asked us to wait before retrying (429 Retry-After)
+  retryAfter?: number;
+  constructor(status: number, body: ApiError, document?: IssueDocument, retryAfter?: number) {
     super(body.message || `request failed: ${status}`);
     this.status = status;
     this.body = body;
     this.document = document;
+    this.retryAfter = retryAfter;
   }
+}
+
+// Retry-After as delta-seconds or an HTTP-date; anything unreadable
+// (or absurd) collapses to undefined so callers fall back to a plain
+// retry affordance.
+export function parseRetryAfter(v: string | null): number | undefined {
+  const s = v?.trim();
+  if (!s) return undefined;
+  const n = Number(s);
+  if (Number.isFinite(n)) return n >= 0 ? Math.min(Math.ceil(n), 3600) : undefined;
+  const at = Date.parse(s);
+  if (!Number.isNaN(at)) return Math.min(Math.max(0, Math.ceil((at - Date.now()) / 1000)), 3600);
+  return undefined;
 }
 
 // request is the single fetch path: JSON in, JSON out, envelope errors
@@ -471,8 +489,12 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   });
   const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = (data as { error?: ApiError }).error ?? { code: "internal", message: `HTTP ${res.status}` };
-    throw new ApiRequestError(res.status, err, (data as { document?: IssueDocument }).document);
+    const err = (data as { error?: ApiError }).error ??
+      { code: res.status === 429 ? "rate_limited" : "internal", message: `HTTP ${res.status}` };
+    throw new ApiRequestError(
+      res.status, err, (data as { document?: IssueDocument }).document,
+      res.status === 429 ? parseRetryAfter(res.headers.get("Retry-After")) : undefined,
+    );
   }
   return data as T;
 }
@@ -577,8 +599,19 @@ export const api = {
     request<{ saved: boolean }>("PUT", `/api/v1/issues/${issueID}/pauta`, body),
   pautaFinish: (issueID: number | string) =>
     request<{ ready: boolean; missing_text: number }>("POST", `/api/v1/issues/${issueID}/pauta/finish`, {}),
-  logout: () => request<{ ok: boolean }>("POST", "/api/v1/logout", {}),
-  workspace: () => request<{ workspace: Workspace }>("GET", "/api/v1/workspace").then((r) => r.workspace ?? (r as unknown as Workspace)),
+  logout: () =>
+    request<{ ok: boolean }>("POST", "/api/v1/logout", {}).then((r) => {
+      clearSession();
+      return r;
+    }),
+  // resolve-or-create: a successful answer means this browser holds a
+  // session, so the marker goes down for the public pages to read
+  workspace: () =>
+    request<{ workspace: Workspace }>("GET", "/api/v1/workspace").then((r) => {
+      const w = r.workspace ?? (r as unknown as Workspace);
+      markSession();
+      return w;
+    }),
   publications: () => request<{ publications: Publication[] }>("GET", "/api/v1/publications").then((r) => r.publications),
   publication: (id: string | number) => request<{ publication: Publication; latest_issue?: IssueSummary }>("GET", `/api/v1/publications/${id}`),
   issues: (pubID: number) => request<{ issues: IssueSummary[] }>("GET", `/api/v1/publications/${pubID}/issues`).then((r) => r.issues),
@@ -812,5 +845,8 @@ export const api = {
     request<{ guide: { version: number; content: string } }>("POST", `/api/v1/publications/${pubID}/guide/rebuild`, {}).then((r) => r.guide),
   demoReset: () => request<{ ok: boolean }>("POST", "/api/v1/demo/reset", {}),
   demoNew: () =>
-    request<{ workspace: { id: string; label: string } }>("POST", "/api/v1/demo/new", {}),
+    request<{ workspace: { id: string; label: string } }>("POST", "/api/v1/demo/new", {}).then((r) => {
+      markSession();
+      return r;
+    }),
 };

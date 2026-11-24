@@ -4,7 +4,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiRequestError, pautaPath, type PautaCard, type PieceRow } from "../api";
 import { useT } from "../i18n";
 import { fmtDate } from "../lib/fmt";
-import { errText } from "../lib/errors";
+import { errText, isRateLimited } from "../lib/errors";
+import { RateLimited } from "../components/RateLimited";
 import { Badge, Button, Card, SkeletonLine } from "../ui";
 import { useToday } from "./todayStrings";
 
@@ -89,11 +90,19 @@ export function Today() {
           <SkeletonLine />
         </Card>
       )}
-      {q.isError && <p className="mt-6 text-sm text-danger" role="alert">{errText(t, q.error)}</p>}
+      {q.isError &&
+        (isRateLimited(q.error) ? (
+          <RateLimited className="mt-6" error={q.error} busy={q.isFetching} onRetry={() => q.refetch()} />
+        ) : (
+          <p className="mt-6 text-sm text-danger" role="alert">{errText(t, q.error)}</p>
+        ))}
       {stale && <p className="mt-4 text-sm text-danger" role="alert">{s.stale}</p>}
-      {build.isError && !(build.error instanceof ApiRequestError && build.error.status === 404) && (
-        <p className="mt-4 text-sm text-danger" role="alert">{errText(t, build.error)}</p>
-      )}
+      {build.isError && !(build.error instanceof ApiRequestError && build.error.status === 404) &&
+        (isRateLimited(build.error) ? (
+          <RateLimited className="mt-4" error={build.error} busy={build.isPending} onRetry={() => build.mutate()} />
+        ) : (
+          <p className="mt-4 text-sm text-danger" role="alert">{errText(t, build.error)}</p>
+        ))}
 
       {q.data && cards.length === 0 && (
         <Card className="mt-6 p-5">

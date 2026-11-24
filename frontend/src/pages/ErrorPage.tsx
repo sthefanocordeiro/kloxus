@@ -1,5 +1,7 @@
 import { isRouteErrorResponse, Link, useRouteError } from "react-router-dom";
 import { useT } from "../i18n";
+import { isRateLimited } from "../lib/errors";
+import { RateLimited } from "../components/RateLimited";
 import { Button, Card } from "../ui";
 
 // Shared "not found" card — unknown routes (the catch-all), missing
@@ -32,6 +34,15 @@ export function ErrorPage() {
     return (
       <div className="flex min-h-screen flex-col bg-paper">
         <NotFound />
+      </div>
+    );
+  }
+  // KLOX-194: a 429 that reaches the boundary still gets the friendly
+  // page — never the raw status dump
+  if (isRateLimited(err) || (isRouteErrorResponse(err) && err.status === 429)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper p-4">
+        <RateLimited error={err} onRetry={() => window.location.reload()} />
       </div>
     );
   }

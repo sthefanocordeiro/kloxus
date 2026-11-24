@@ -1,12 +1,13 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useOutletContext, useParams, useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiRequestError } from "../api";
 import { useT, type Lang } from "../i18n";
 import { useReader } from "./readerStrings";
 import { Markdown } from "../markdown";
 import { fmtDate } from "../lib/fmt";
 import { Badge, Button, Card } from "../ui";
-import { errText } from "../lib/errors";
+import { errText, isRateLimited } from "../lib/errors";
+import { RateLimited } from "../components/RateLimited";
 import { useEffect, useState } from "react";
 
 // ReaderShell is the chrome for reader-facing pages: the newsletter's
@@ -79,6 +80,12 @@ export function PublicIssue() {
   }, [d?.publication.name, setBrand]);
 
   if (q.isLoading) return <div className="mx-auto max-w-2xl px-4 py-16 text-sm text-muted">…</div>;
+  if (q.isError && isRateLimited(q.error))
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16">
+        <RateLimited className="mx-auto" error={q.error} busy={q.isFetching} onRetry={() => q.refetch()} />
+      </div>
+    );
   if (q.isError || !d)
     return (
       <div className="mx-auto max-w-2xl px-4 py-16 text-center">
@@ -173,6 +180,12 @@ export function PublicNewsletterPage() {
   }, [d]);
 
   if (q.isLoading) return <div className="mx-auto max-w-2xl px-4 py-16 text-sm text-muted">…</div>;
+  if (q.isError && isRateLimited(q.error))
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16">
+        <RateLimited className="mx-auto" error={q.error} busy={q.isFetching} onRetry={() => q.refetch()} />
+      </div>
+    );
   if (q.isError || !d)
     return (
       <div className="mx-auto max-w-2xl px-4 py-16 text-center">
@@ -372,7 +385,7 @@ export function UnsubPage() {
     queryFn: () =>
       fetch(`/api/v1/unsub?${params.toString()}`, { headers: { Accept: "application/json" } }).then(
         async (r) => {
-          if (!r.ok) throw new Error(String(r.status));
+          if (!r.ok) throw new ApiRequestError(r.status, { code: "http", message: String(r.status) });
           return r.json() as Promise<{ unsubscribed: boolean }>;
         },
       ),
@@ -387,7 +400,10 @@ export function UnsubPage() {
           <p className="mt-2 text-sm text-muted">{t.reader.unsubHint}</p>
         </>
       )}
-      {q.isError && (
+      {q.isError && isRateLimited(q.error) && (
+        <RateLimited className="mx-auto" error={q.error} busy={q.isFetching} onRetry={() => q.refetch()} />
+      )}
+      {q.isError && !isRateLimited(q.error) && (
         <>
           <h1 className="font-doc text-2xl font-semibold">{t.errors.not_found}</h1>
           <p className="mt-2 text-sm text-muted">{t.reader.unsubFailed}</p>

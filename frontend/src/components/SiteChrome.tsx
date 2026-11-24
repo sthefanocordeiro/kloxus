@@ -5,6 +5,9 @@ import { Menu, X } from "lucide-react";
 import { api } from "../api";
 import { useT, type Lang } from "../i18n";
 import { cn } from "../lib/cn";
+import { isRateLimited } from "../lib/errors";
+import { hasSessionMarker } from "../lib/session";
+import { RateLimited } from "./RateLimited";
 import { Button } from "../ui";
 
 // Shared chrome for the public site surfaces — landing and the legal
@@ -16,11 +19,30 @@ import { Button } from "../ui";
 
 export function useSiteEntry() {
   const nav = useNavigate();
-  const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications, retry: false });
+  // KLOX-194: public pages never fire a session-touching call on a fresh
+  // visit — the publications probe (which resolves the workspace) only
+  // runs when this browser's marker says a session already exists, so
+  // landing/termos/privacidade stay open and mint nothing until the CTA
+  // click. Any probe failure (anonymous 401, 429, offline) reads as a
+  // new visitor: the CTA still resolves-or-creates on click.
+  const pubs = useQuery({
+    queryKey: ["publications"],
+    queryFn: api.publications,
+    retry: false,
+    enabled: hasSessionMarker(),
+  });
   const start = useMutation({ mutationFn: api.workspace });
-  const create = () => start.mutate(undefined, { onSuccess: () => nav("/start") });
-  const signIn = () => start.mutate(undefined, { onSuccess: () => nav("/publications") });
-  return { returning: (pubs.data?.length ?? 0) > 0, start, create, signIn };
+  const [dest, setDest] = useState<"/start" | "/publications" | null>(null);
+  const go = (d: "/start" | "/publications") => {
+    setDest(d);
+    start.mutate(undefined, { onSuccess: () => nav(d) });
+  };
+  const create = () => go("/start");
+  const signIn = () => go("/publications");
+  // re-fires whichever entry the visitor last picked — the 429 card's
+  // "Tentar de novo" goes through here
+  const retry = () => dest && go(dest);
+  return { returning: (pubs.data?.length ?? 0) > 0, start, create, signIn, retry };
 }
 
 // The hero/closing CTA and the header button share one definition —
@@ -106,6 +128,7 @@ export function SiteHeader() {
   );
 
   return (
+    <>
     <header className="sticky top-0 z-40 border-b border-line bg-paper/90 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-6xl items-center gap-4 px-4">
         <Link
@@ -185,6 +208,15 @@ export function SiteHeader() {
         </div>
       )}
     </header>
+    {/* KLOX-194: a 429 on the header's own entry (the landing keeps its
+        own card in the hero) still gets the friendly state — the page
+        itself stays open, only this action was refused. */}
+    {isRateLimited(start.error) && (
+      <div className="sticky top-16 z-30 mx-auto max-w-6xl px-4 pt-4">
+        <RateLimited error={start.error} busy={start.isPending} onRetry={siteEntry.retry} />
+      </div>
+    )}
+    </>
   );
 }
 
