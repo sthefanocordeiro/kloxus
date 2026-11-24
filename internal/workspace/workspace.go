@@ -256,6 +256,17 @@ func (m *Manager) SetCookie(w http.ResponseWriter, r *http.Request, id string) {
 	})
 }
 
+// ClearCookie expires the workspace cookie: the browser is anonymous
+// again and the next visit starts a fresh workspace. The workspace
+// itself is untouched — a claimed account signs back in by email link.
+func (m *Manager) ClearCookie(w http.ResponseWriter, r *http.Request) {
+	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	http.SetCookie(w, &http.Cookie{
+		Name: CookieName, Value: "", Path: "/", HttpOnly: true, Secure: secure,
+		SameSite: http.SameSiteLaxMode, MaxAge: -1,
+	})
+}
+
 // clientIP extracts the client address for rate limiting. On Fly the
 // platform-set Fly-Client-IP header wins — X-Forwarded-For is
 // client-controlled and must not drive the limit (review F3).

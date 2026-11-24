@@ -557,6 +557,7 @@ export const api = {
     request<{ saved: boolean }>("PUT", `/api/v1/issues/${issueID}/pauta`, body),
   pautaFinish: (issueID: number | string) =>
     request<{ ready: boolean; missing_text: number }>("POST", `/api/v1/issues/${issueID}/pauta/finish`, {}),
+  logout: () => request<{ ok: boolean }>("POST", "/api/v1/logout", {}),
   workspace: () => request<{ workspace: Workspace }>("GET", "/api/v1/workspace").then((r) => r.workspace ?? (r as unknown as Workspace)),
   publications: () => request<{ publications: Publication[] }>("GET", "/api/v1/publications").then((r) => r.publications),
   publication: (id: string | number) => request<{ publication: Publication; latest_issue?: IssueSummary }>("GET", `/api/v1/publications/${id}`),

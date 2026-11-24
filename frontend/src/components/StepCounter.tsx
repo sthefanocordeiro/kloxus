@@ -62,13 +62,13 @@ export function StepCounter({
                     )}
                   >
                     {chip}
-                    <span className="hidden sm:inline">{label}</span>
+                    <span className={cn("max-w-[5.5rem] truncate sm:max-w-none", !done && "hidden sm:inline")}>{label}</span>
                   </button>
                 ) : (
                   <>
                     {chip}
                     <span className={cn(
-                      active ? "font-semibold text-ink" : done ? "hidden text-teal sm:inline" : "hidden text-muted sm:inline",
+                      active ? "font-semibold text-ink" : done ? "max-w-[5.5rem] truncate text-teal sm:max-w-none" : "hidden text-muted sm:inline",
                     )}>
                       {label}
                     </span>

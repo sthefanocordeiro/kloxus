@@ -107,9 +107,9 @@ describe("onboarding from zero (KLOX-123)", () => {
     renderStart();
     fireEvent.change(await screen.findByLabelText("Radar name"), { target: { value: "Meu Radar" } });
     fireEvent.change(screen.getByLabelText("Topics (comma separated)"), { target: { value: "fintech, Pix" } });
-    fireEvent.click(screen.getByRole("button", { name: "Fintech" }));
+    fireEvent.click(screen.getByRole("button", { name: "Personal finance" }));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await waitFor(() => expect(api.createRadar).toHaveBeenCalledWith("Meu Radar", "fintech, Pix", ["fintech"]));
+    await waitFor(() => expect(api.createRadar).toHaveBeenCalledWith("Meu Radar", "fintech, Pix", ["financas-pessoais"]));
 
     expect(await screen.findByText("Story 1")).toBeVisible();
     fireEvent.keyDown(window, { key: "ArrowLeft" });

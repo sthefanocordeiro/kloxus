@@ -3,7 +3,7 @@ package web
 import "testing"
 
 func TestNicheSlugsPaywallAndSpread(t *testing.T) {
-	got := nicheSlugs([]string{"economia", "mercado"}, nil)
+	got := nicheSlugs([]string{"economia", "mercado-financeiro"}, nil)
 	if got["valor"] {
 		t.Error("paywalled valor included without the user's mark")
 	}

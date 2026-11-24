@@ -26,17 +26,29 @@ const (
 // catalog is what the global scheduler ingests (D29) — the person only
 // unchecks from this list; their own sources stay in settings.
 var nicheSources = map[string][]string{
-	"fintech":    {"finsiders", "infomoney", "seu-dinheiro", "money-times", "startups", "mobiletime", "tecnoblog", "techcrunch"},
-	"cripto":     {"infomoney", "money-times", "seu-dinheiro", "tecnoblog", "techcrunch"},
-	"regulacao":  {"finsiders", "agencia-brasil-economia", "infomoney", "poder360", "camara-noticias", "mobiletime"},
-	"ia":         {"techcrunch", "wired", "ars-technica", "the-verge", "tecnoblog", "canaltech", "olhar-digital"},
-	"startups":   {"startups", "techcrunch", "tecnoblog", "infomoney", "money-times"},
-	"tecnologia": {"tecnoblog", "canaltech", "olhar-digital", "tecmundo", "meiobit", "the-verge", "ars-technica", "gizmodo-br", "macmagazine"},
-	"mercado":    {"infomoney", "seu-dinheiro", "money-times", "agencia-brasil-economia", "startups", "valor"},
-	"economia":   {"infomoney", "seu-dinheiro", "money-times", "agencia-brasil-economia", "g1", "cnn-brasil", "valor"},
-	"negocios":   {"infomoney", "money-times", "seu-dinheiro", "startups", "agencia-brasil-economia", "valor"},
-	"carreira":   {"mundo-rh", "rh-portal", "infomoney", "agencia-brasil-economia", "valor"},
+	"politica":           {"agencia-brasil-politica", "camara-noticias", "poder360", "g1"},
+	"economia":           {"agencia-brasil-economia", "exame", "infomoney", "seu-dinheiro", "money-times", "g1", "cnn-brasil", "valor"},
+	"mercado-financeiro": {"infomoney", "seu-dinheiro", "money-times", "finsiders"},
+	"financas-pessoais":  {"infomoney", "seu-dinheiro", "money-times", "exame"},
+	"negocios":           {"exame", "infomoney", "startups", "money-times", "seu-dinheiro", "valor"},
+	"startups":           {"startups", "techcrunch", "exame", "tecnoblog", "infomoney"},
+	"carreira":           {"mundo-rh", "rh-portal", "exame", "infomoney", "agencia-brasil-economia", "valor"},
+	"tecnologia":         {"tecnoblog", "canaltech", "olhar-digital", "tecmundo", "meiobit", "the-verge", "ars-technica"},
+	"internacional":      {"g1", "cnn-brasil", "the-verge", "wired"},
+	// No dedicated feeds in the catalog yet for the editorias below: they
+	// fall back to the general news portals until sources are added.
+	"agronegocio":     generalPortals,
+	"brasil-cidades":  generalPortals,
+	"justica-direito": generalPortals,
+	"saude":           generalPortals,
+	"educacao":        generalPortals,
+	"ciencia":         {"wired", "ars-technica", "the-verge", "g1", "folha"},
+	"meio-ambiente":   generalPortals,
+	"cultura":         generalPortals,
+	"estilo-vida":     generalPortals,
 }
+
+var generalPortals = []string{"g1", "cnn-brasil", "metropoles", "folha"}
 
 // paywalledSources are catalog slugs behind a reader paywall: a radar only
 // gets them when the person asks for them (KLOX-169) — a pauta whose links
@@ -47,9 +59,12 @@ var paywalledSources = map[string]bool{"valor": true, "folha": true}
 var defaultNicheSources = []string{"tecnoblog", "canaltech", "infomoney", "techcrunch"}
 
 var nicheLabels = map[string]string{
-	"fintech": "fintech", "cripto": "cripto", "regulacao": "regulação financeira",
-	"ia": "inteligência artificial", "startups": "startups", "tecnologia": "tecnologia", "mercado": "mercado",
-	"economia": "economia", "negocios": "negócios", "carreira": "carreira",
+	"politica": "política", "economia": "economia", "mercado-financeiro": "mercado financeiro e investimentos",
+	"financas-pessoais": "finanças pessoais", "negocios": "negócios e empresas", "startups": "startups e inovação",
+	"carreira": "carreira e trabalho", "tecnologia": "tecnologia", "agronegocio": "agronegócio",
+	"internacional": "internacional", "brasil-cidades": "Brasil e cidades", "justica-direito": "justiça e direito",
+	"saude": "saúde", "educacao": "educação", "ciencia": "ciência", "meio-ambiente": "meio ambiente e sustentabilidade",
+	"cultura": "cultura e entretenimento", "estilo-vida": "estilo de vida e consumo",
 }
 
 // radarName is a short display name from the free text.

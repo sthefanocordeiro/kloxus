@@ -19,7 +19,7 @@ func TestRadarOnboarding(t *testing.T) {
 	}
 
 	rr = apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{
-		"name": "Fintech para bancários", "about": "fintech, Pix e regulação", "niches": []string{"fintech", "bogus"},
+		"name": "Fintech para bancários", "about": "fintech, Pix e regulação", "niches": []string{"mercado-financeiro", "bogus"},
 	})
 	if rr.Code != 201 {
 		t.Fatalf("create radar = %d %s", rr.Code, rr.Body.String())
@@ -124,5 +124,22 @@ func TestRadarNameTooLong(t *testing.T) {
 	rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{"name": strings.Repeat("x", 61), "about": "pix"})
 	if rr.Code != 400 || apiErrCode(t, rr) != "validation" {
 		t.Fatalf("long name = %d", rr.Code)
+	}
+}
+
+func TestLogout(t *testing.T) {
+	srv, _, _, _ := testServer(t, false, nil)
+	rr := apiCall(t, srv, "POST", "/api/v1/logout", map[string]any{})
+	if rr.Code == 200 {
+		t.Fatalf("unclaimed logout = %d, want refusal", rr.Code)
+	}
+
+	srv, _ = emptyServer(t) // claimed workspace
+	rr = apiCall(t, srv, "POST", "/api/v1/logout", map[string]any{})
+	if rr.Code != 200 {
+		t.Fatalf("claimed logout = %d %s", rr.Code, rr.Body.String())
+	}
+	if c := rr.Header().Get("Set-Cookie"); !strings.Contains(c, "kloxus_ws=") || !strings.Contains(c, "Max-Age=0") {
+		t.Fatalf("logout cookie = %q, want an expired kloxus_ws", c)
 	}
 }

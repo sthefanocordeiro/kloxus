@@ -453,3 +453,14 @@ func (s *Server) requireClaimed(w http.ResponseWriter, r *http.Request) bool {
 		"confirm your email with the magic link before creating a Radar")
 	return false
 }
+
+// apiLogout signs the browser out: it only expires the cookie. A claimed
+// workspace comes back with a new magic link; an unclaimed one has no
+// way back, so it is refused rather than orphaned.
+func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
+	if !s.requireClaimed(w, r) {
+		return
+	}
+	s.d.WS.ClearCookie(w, r)
+	apiJSON(w, 200, map[string]any{"ok": true})
+}

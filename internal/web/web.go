@@ -120,6 +120,7 @@ func New(d Deps) *Server {
 	// rate limits and isolation as the public routes.
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
 	m.HandleFunc("POST /api/v1/workspace/claim", s.apiClaimStart)
+	m.HandleFunc("POST /api/v1/logout", s.apiLogout)
 	m.HandleFunc("POST /api/v1/p/{slug}/subscribe", s.apiSubscribe)
 	m.HandleFunc("POST /api/v1/p/{slug}/checkout", s.apiPayCheckout)
 	m.HandleFunc("GET /api/v1/p/{slug}/pay/{ref}", s.apiPayStatus)
