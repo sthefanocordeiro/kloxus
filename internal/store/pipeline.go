@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
@@ -250,7 +251,25 @@ type Story struct {
 	// DedupeKey is the canonical URL shared by every member item; empty
 	// when the cluster merged on near-identical text (SimHash) alone.
 	DedupeKey string
-	Items     []Item
+	// Simhash is the fingerprint of the representative member's text —
+	// stable across the stories-table rebuilds between runs.
+	Simhash int64
+	Items   []Item
+}
+
+// FeedbackKeys are the stable identifiers a Sim/Não answer records
+// (KLOX-183): the canonical dedupe URL and the SimHash of the
+// representative member. Story ids do not survive ClearStories/
+// CreateStories, so feedback keys on these instead.
+func (s Story) FeedbackKeys() []string {
+	var out []string
+	if s.DedupeKey != "" {
+		out = append(out, "u:"+s.DedupeKey)
+	}
+	if s.Simhash != 0 {
+		out = append(out, "s:"+strconv.FormatInt(s.Simhash, 10))
+	}
+	return out
 }
 
 // Outlets returns the distinct source URLs covering this story.
@@ -431,9 +450,9 @@ func (db *DB) SetStoriesTriage(ctx context.Context, updates []StoryTriage) error
 func (db *DB) StoryWithItems(ctx context.Context, storyID int64) (*Story, error) {
 	var s Story
 	err := db.QueryRowContext(ctx,
-		`SELECT id, publication_id, title, COALESCE(triage_score,0), triage_reason, dedupe_key FROM stories
+		`SELECT id, publication_id, title, COALESCE(triage_score,0), triage_reason, dedupe_key, COALESCE(simhash,0) FROM stories
 		 WHERE workspace_id = $1 AND id = $2`,
-		db.ws, storyID).Scan(&s.ID, &s.PublicationID, &s.Title, &s.TriageScore, &s.TriageReason, &s.DedupeKey)
+		db.ws, storyID).Scan(&s.ID, &s.PublicationID, &s.Title, &s.TriageScore, &s.TriageReason, &s.DedupeKey, &s.Simhash)
 	if err != nil {
 		return nil, err
 	}
@@ -526,7 +545,7 @@ func (db *DB) StoryOutlets(ctx context.Context, storyIDs []int64) (map[int64][]S
 // StoriesWithItems loads all stories and their member items.
 func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, title, COALESCE(triage_score,0), COALESCE(triage_reason,''), dedupe_key
+		`SELECT id, title, COALESCE(triage_score,0), COALESCE(triage_reason,''), dedupe_key, COALESCE(simhash,0)
 		 FROM stories WHERE workspace_id = $1 AND publication_id = $2 ORDER BY id`, db.ws, pubID)
 	if err != nil {
 		return nil, err
@@ -536,7 +555,7 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 	var out []Story
 	for rows.Next() {
 		var s Story
-		if err := rows.Scan(&s.ID, &s.Title, &s.TriageScore, &s.TriageReason, &s.DedupeKey); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.TriageScore, &s.TriageReason, &s.DedupeKey, &s.Simhash); err != nil {
 			return nil, err
 		}
 		s.PublicationID = pubID
