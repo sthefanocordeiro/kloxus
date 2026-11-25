@@ -1,6 +1,6 @@
 package store
 
-// KLOX-223: the *_ts backfill/normalization migration (0021) is
+// KLOX-223: the *_ts backfill/normalization migration (0032) is
 // exercised on a scratch database replaying the pre-migration chain,
 // so the test proves upgrade behavior on mixed stored data — both
 // timestamp shapes plus unparseable values — not just the fresh-init
@@ -130,9 +130,9 @@ func scratchDB(t *testing.T, upto string, seed func(t *testing.T, db *sql.DB)) *
 	return db
 }
 
-func TestMigration0021Upgrade(t *testing.T) {
+func TestMigration0032Upgrade(t *testing.T) {
 	var catID, pubID int64
-	db := scratchDB(t, "0021_items_timestamptz.sql", func(t *testing.T, db *sql.DB) {
+	db := scratchDB(t, "0032_items_timestamptz.sql", func(t *testing.T, db *sql.DB) {
 		must := func(q string, args ...any) {
 			t.Helper()
 			if _, err := db.Exec(q, args...); err != nil {
