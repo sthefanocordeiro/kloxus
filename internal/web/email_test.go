@@ -1241,8 +1241,9 @@ func TestClaimConfirmGoesStraightToCreateRadar(t *testing.T) {
 		t.Fatalf("claim = %d %s", rr.Code, shortBody(rr))
 	}
 	msgs := fake.messages()
-	if len(msgs) != 1 || msgs[0].Subject != "Confirme seu e-mail para criar seu Radar" ||
-		!strings.Contains(msgs[0].Text, "[Criar meu Radar](") {
+	if len(msgs) != 1 || !strings.HasPrefix(msgs[0].Subject, "Seu link do Kloxus — ") ||
+		!strings.Contains(msgs[0].Text, "[Criar meu Radar](") ||
+		!strings.Contains(msgs[0].Text, "Se você não pediu, ignore este e-mail.") {
 		t.Fatalf("claim email text: %+v", msgs)
 	}
 	tok := claimToken(t, db)
