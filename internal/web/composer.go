@@ -99,7 +99,10 @@ func (s *Server) saveMediaUpload(w http.ResponseWriter, r *http.Request, pubID i
 
 // apiMediaGet serves an uploaded image. The URL carries an unguessable
 // token — the image is meant to be public: email clients and reader
-// pages fetch it with no workspace cookie.
+// pages fetch it with no workspace cookie. The bytes for a given URL
+// never change, so the browser caches immutably; `private` (not
+// `public`) keeps shared caches — email image proxies, CDNs — from
+// retaining media whose publication was deleted (D69).
 func (s *Server) apiMediaGet(w http.ResponseWriter, r *http.Request) {
 	raw := r.PathValue("id")
 	i := strings.IndexByte(raw, '-')
@@ -122,7 +125,7 @@ func (s *Server) apiMediaGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	w.Write(data)
 }
 
