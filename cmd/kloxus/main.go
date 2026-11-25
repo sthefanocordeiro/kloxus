@@ -8,7 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -26,11 +26,11 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/embed"
-	"github.com/sthefanocordeiro/kloxus/internal/rerank"
 	"github.com/sthefanocordeiro/kloxus/internal/ingest"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/payments"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/rerank"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 	"github.com/sthefanocordeiro/kloxus/internal/voyage"
@@ -331,7 +331,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		// The global feed scheduler — feeds fetch once for every
 		// workspace (D29). Daily Journal left the catalog again
 		// (KLOX-114); its client stays opt-in via the env flag.
-		sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
+		sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, slog.Default())
 		if cfg.DailyJournalEnabled {
 			sched.SetupDailyJournal(context.Background(), ingest.DefaultUserAgent)
 		}
@@ -350,7 +350,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		var embedWorker *embed.Worker
 		if emb := newEmbedder(cfg, pool); emb != nil {
 			pipeline.DefaultEmbedder = emb // stage-1 profile embedding (KLOX-109)
-			embedWorker = &embed.Worker{Store: pool, Embedder: emb, Log: log.Default()}
+			embedWorker = &embed.Worker{Store: pool, Embedder: emb, Log: slog.Default()}
 			embedWorker.Start()
 			go embedWorker.Run(context.Background())
 		}
@@ -361,15 +361,15 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		sched.AfterPoll = func(ctx context.Context) {
 			defer embedWorker.Kick() // nil-safe; non-blocking
 			if n, err := sem.Sweep(ctx, 200); err != nil {
-				log.Printf("semantic sweep: %v", err)
+				slog.Warn("semantic sweep failed", "err", err)
 			} else if n > 0 {
-				log.Printf("semantic sweep: %d items embedded+classified", n)
+				slog.Info("semantic sweep: items embedded+classified", "count", n)
 			}
 			if enr != nil {
 				if n, err := enr.Sweep(ctx, 200); err != nil {
-					log.Printf("enrich sweep: %v", err)
+					slog.Warn("enrich sweep failed", "err", err)
 				} else if n > 0 {
-					log.Printf("enrich sweep: %d items classified", n)
+					slog.Info("enrich sweep: items classified", "count", n)
 				}
 			}
 		}
@@ -780,7 +780,7 @@ func cmdIngest(args []string) error {
 	}
 	defer pool.Close()
 	ctx := context.Background()
-	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
+	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, slog.Default())
 	if cfg.DailyJournalEnabled {
 		sched.SetupDailyJournal(ctx, ingest.DefaultUserAgent)
 	}
@@ -865,16 +865,16 @@ func cmdIngestStatus() error {
 // off or no key is set (stage-1 order then stands).
 func newReranker(cfg *config.Config, pool *store.Pool) rerank.Reranker {
 	if strings.EqualFold(cfg.RerankProvider, "off") {
-		log.Printf("rerank: provider off - stage-1 order stands")
+		slog.Info("rerank: provider off - stage-1 order stands")
 		return nil
 	}
 	if cfg.VoyageKey == "" {
-		log.Printf("rerank: VOYAGE_API_SECRET not set - stage-1 order stands")
+		slog.Info("rerank: VOYAGE_API_SECRET not set - stage-1 order stands")
 		return nil
 	}
 	rr, err := rerank.New(rerank.Config{Provider: cfg.RerankProvider, Model: cfg.RerankModel}, newVoyageClient(cfg, pool))
 	if err != nil {
-		log.Printf("rerank: %v - stage-1 order stands", err)
+		slog.Warn("rerank: setup failed - stage-1 order stands", "err", err)
 		return nil
 	}
 	return rr
@@ -884,7 +884,7 @@ func newVoyageClient(cfg *config.Config, pool *store.Pool) *voyage.Client {
 	return &voyage.Client{
 		Key:    cfg.VoyageKey,
 		Ledger: pool,
-		Log:    log.Default(),
+		Log:    slog.Default(),
 		Limits: map[voyage.Group]voyage.Limits{
 			voyage.GroupEmbed:  {RPM: cfg.VoyageEmbedRPM, TPM: cfg.VoyageEmbedTPM},
 			voyage.GroupRerank: {RPM: cfg.VoyageRerankRPM, TPM: cfg.VoyageRerankTPM},
@@ -898,17 +898,17 @@ func newVoyageClient(cfg *config.Config, pool *store.Pool) *voyage.Client {
 
 func newEmbedder(cfg *config.Config, pool *store.Pool) embed.Embedder {
 	if strings.EqualFold(cfg.EmbedProvider, "off") {
-		log.Printf("embeddings: provider off - ranking uses the FTS fallback")
+		slog.Info("embeddings: provider off - ranking uses the FTS fallback")
 		return nil
 	}
 	if cfg.VoyageKey == "" {
-		log.Printf("embeddings: VOYAGE_API_SECRET not set - ranking uses the FTS fallback")
+		slog.Info("embeddings: VOYAGE_API_SECRET not set - ranking uses the FTS fallback")
 		return nil
 	}
 	client := &voyage.Client{
 		Key:    cfg.VoyageKey,
 		Ledger: pool,
-		Log:    log.Default(),
+		Log:    slog.Default(),
 		Limits: map[voyage.Group]voyage.Limits{
 			voyage.GroupEmbed:  {RPM: cfg.VoyageEmbedRPM, TPM: cfg.VoyageEmbedTPM},
 			voyage.GroupRerank: {RPM: cfg.VoyageRerankRPM, TPM: cfg.VoyageRerankTPM},
@@ -920,7 +920,7 @@ func newEmbedder(cfg *config.Config, pool *store.Pool) embed.Embedder {
 	}
 	emb, err := embed.New(embed.Config{Provider: cfg.EmbedProvider, Model: cfg.EmbedModel}, client)
 	if err != nil {
-		log.Printf("embeddings: %v - ranking uses the FTS fallback", err)
+		slog.Warn("embeddings: setup failed - ranking uses the FTS fallback", "err", err)
 		return nil
 	}
 	return emb
@@ -944,7 +944,7 @@ func cmdEmbedBackfill(args []string) error {
 	if emb == nil {
 		return errors.New("embeddings are off or VOYAGE_API_SECRET is not set")
 	}
-	w := &embed.Worker{Store: pool, Embedder: emb, Log: log.Default()}
+	w := &embed.Worker{Store: pool, Embedder: emb, Log: slog.Default()}
 	_, err = w.Backfill(context.Background(), *days, func(m string) { fmt.Println(m) })
 	return err
 }

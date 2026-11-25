@@ -108,12 +108,12 @@ func (m *Manager) SetCreateLimit(n int) {
 
 var idRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
-// NewID returns a random 128-bit workspace id (hex).
+// NewID returns a random 128-bit workspace id (hex). crypto/rand never
+// fails on supported platforms — since Go 1.24, Read is documented to
+// always fill the buffer — so there is no error to propagate.
 func NewID() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 

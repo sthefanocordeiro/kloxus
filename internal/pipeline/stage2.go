@@ -10,7 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -152,7 +152,7 @@ func (r *Runner) rerankStage(ctx context.Context, pub *store.Publication, storie
 	}
 	cached, err := r.DB.RerankScores(ctx, pub.ID, hash, rr.Model(), ids, now)
 	if err != nil {
-		log.Printf("stage2: reading rerank cache: %v", err)
+		slog.Warn("stage2: reading rerank cache", "err", err)
 		cached = map[int64]float64{}
 	}
 	scores := map[int]float64{}
@@ -171,7 +171,7 @@ func (r *Runner) rerankStage(ctx context.Context, pub *store.Publication, storie
 		res, err := rr.Rerank(ctx, query, docs, 0)
 		if err != nil {
 			// silent to the creator: off, cap, 429, timeout.
-			log.Printf("stage2: reranker unavailable, keeping stage-1 order: %v", err)
+			slog.Warn("stage2: reranker unavailable, keeping stage-1 order", "err", err)
 			if len(scores) == 0 {
 				return
 			}
@@ -186,7 +186,7 @@ func (r *Runner) rerankStage(ctx context.Context, pub *store.Publication, storie
 				fresh[earliestItem(&stories[i]).ID] = sc.Score
 			}
 			if serr := r.DB.SaveRerankScores(ctx, pub.ID, hash, rr.Model(), fresh, now); serr != nil {
-				log.Printf("stage2: saving rerank scores: %v", serr)
+				slog.Warn("stage2: saving rerank scores", "err", serr)
 			}
 		}
 	}

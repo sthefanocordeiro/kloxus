@@ -2,7 +2,7 @@ package voyage
 
 import (
 	"io"
-	"log"
+	"log/slog"
 )
 
-func newLogger(w io.Writer) *log.Logger { return log.New(w, "", 0) }
+func newLogger(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }

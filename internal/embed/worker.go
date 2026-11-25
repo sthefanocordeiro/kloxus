@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/voyage"
@@ -45,15 +45,21 @@ const DefaultDays = 7
 type Worker struct {
 	Store    Store
 	Embedder Embedder
-	Log      *log.Logger
+	Log      *slog.Logger
 	Days     int
 
 	kick chan struct{}
 }
 
-func (w *Worker) logf(f string, a ...any) {
+func (w *Worker) logInfo(msg string, args ...any) {
 	if w.Log != nil {
-		w.Log.Printf(f, a...)
+		w.Log.Info(msg, args...)
+	}
+}
+
+func (w *Worker) logWarn(msg string, args ...any) {
+	if w.Log != nil {
+		w.Log.Warn(msg, args...)
 	}
 }
 
@@ -98,12 +104,12 @@ func (w *Worker) Run(ctx context.Context) {
 		switch {
 		case err == nil:
 			if n > 0 {
-				w.logf("embed queue: %d items embedded", n)
+				w.logInfo("embed queue: items embedded", "count", n)
 			}
 		case errors.Is(err, ErrDisabled), errors.Is(err, voyage.ErrCapReached):
 			// fallback ranking takes over; the client logged the cap once
 		default:
-			w.logf("embed queue: stopped after %d items: %v", n, err)
+			w.logWarn("embed queue: stopped", "count", n, "err", err)
 		}
 	}
 }

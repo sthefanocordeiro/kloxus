@@ -9,7 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -25,7 +25,7 @@ type Scheduler struct {
 	pool      Store
 	feed      *FeedFetcher
 	tick      time.Duration // wake interval between due checks
-	log       *log.Logger
+	log       *slog.Logger
 	now       func() time.Time
 	lastPurge time.Time
 	// Daily polls Daily Journal's public API. Dormant since KLOX-114
@@ -41,7 +41,7 @@ type Scheduler struct {
 }
 
 // NewScheduler wires the feed fetcher + retention on the pool.
-func NewScheduler(p Store, ua string, logger *log.Logger) *Scheduler {
+func NewScheduler(p Store, ua string, logger *slog.Logger) *Scheduler {
 	throttle := &hostThrottle{last: map[string]time.Time{}}
 	hc := httpx.Client(30 * time.Second)
 	return &Scheduler{
@@ -103,7 +103,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 func (s *Scheduler) PollOnce(ctx context.Context) {
 	cat, err := s.pool.Catalog(ctx)
 	if err != nil {
-		s.logf("catalog load: %v", err)
+		s.logWarn("ingest: catalog load failed", "err", err)
 		return
 	}
 	for i := range cat {
@@ -118,7 +118,7 @@ func (s *Scheduler) PollOnce(ctx context.Context) {
 		case "rss":
 			o := s.feed.Fetch(ctx, cs)
 			if o.Status == "error" {
-				s.logf("%s: %s", cs.Slug, o.Detail)
+				s.logWarn("ingest: fetch failed", "source", cs.Slug, "detail", o.Detail)
 			}
 		case "api":
 			s.pollAPI(ctx, cs)
@@ -137,7 +137,7 @@ func (s *Scheduler) PollOnce(ctx context.Context) {
 func (s *Scheduler) SetupDailyJournal(ctx context.Context, ua string) {
 	cat, err := s.pool.Catalog(ctx)
 	if err != nil {
-		s.logf("daily-journal setup: %v", err)
+		s.logWarn("ingest: daily-journal setup failed", "err", err)
 		return
 	}
 	for i := range cat {
@@ -165,7 +165,7 @@ func (s *Scheduler) pollAPI(ctx context.Context, cs *store.CatalogSource) {
 	}
 	out := s.pollDailyJournal(ctx, cs)
 	if out.Status == "error" {
-		s.logf("%s: %s", cs.Slug, out.Detail)
+		s.logWarn("ingest: fetch failed", "source", cs.Slug, "detail", out.Detail)
 	}
 	// Detail backfill rides inside the same budget check: whatever
 	// requests the day still has left — minus the reserve held back for
@@ -193,10 +193,10 @@ func (s *Scheduler) pollDailyJournal(ctx context.Context, cs *store.CatalogSourc
 			detail = "HTTP 429 (retry-after " + rl.RetryAfter.String() + ")"
 		}
 		if lerr := s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error"); lerr != nil {
-			s.log.Printf("ingest: mark fetched failed: %v", lerr)
+			s.logWarn("ingest: mark fetched failed", "err", lerr)
 		}
 		if lerr := s.pool.LogFetch(ctx, cs.ID, "error", 0, len(items), 0, detail); lerr != nil {
-			s.log.Printf("ingest: log fetch failed: %v", lerr)
+			s.logWarn("ingest: log fetch failed", "err", lerr)
 		}
 		return FetchOutcome{Status: "error", Detail: detail}
 	}
@@ -207,22 +207,22 @@ func (s *Scheduler) pollDailyJournal(ctx context.Context, cs *store.CatalogSourc
 	added, changed, err := s.pool.SaveDJItems(ctx, cs.ID, raw)
 	if err != nil {
 		if lerr := s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error"); lerr != nil {
-			s.log.Printf("ingest: mark fetched failed: %v", lerr)
+			s.logWarn("ingest: mark fetched failed", "err", lerr)
 		}
 		if lerr := s.pool.LogFetch(ctx, cs.ID, "error", 0, len(raw), 0, err.Error()); lerr != nil {
-			s.log.Printf("ingest: log fetch failed: %v", lerr)
+			s.logWarn("ingest: log fetch failed", "err", lerr)
 		}
 		return FetchOutcome{Status: "error", Detail: err.Error()}
 	}
 	if lerr := s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "ok"); lerr != nil {
-		s.log.Printf("ingest: mark fetched failed: %v", lerr)
+		s.logWarn("ingest: mark fetched failed", "err", lerr)
 	}
 	detail := ""
 	if changed > 0 {
 		detail = fmt.Sprintf("%d updated", changed)
 	}
 	if lerr := s.pool.LogFetch(ctx, cs.ID, "ok", 200, len(raw), added, detail); lerr != nil {
-		s.log.Printf("ingest: log fetch failed: %v", lerr)
+		s.logWarn("ingest: log fetch failed", "err", lerr)
 	}
 	return FetchOutcome{Status: "ok", Items: len(raw), NewItems: added}
 }
@@ -259,9 +259,9 @@ func (s *Scheduler) backfillDetails(ctx context.Context, cs *store.CatalogSource
 				// so it leaves the pending queue and keep filling the
 				// rest: one dead slug at the head must never starve
 				// every item behind it.
-				s.logf("daily-journal detail %s: %v — marked gone", slug, err)
+				s.logWarn("ingest: daily-journal detail marked gone", "slug", slug, "err", err)
 				if lerr := s.pool.DJMarkDetailFailed(ctx, cs.ID, slug); lerr != nil {
-					s.log.Printf("ingest: mark detail failed: %v", lerr)
+					s.logWarn("ingest: mark detail failed", "err", lerr)
 				}
 				gone++
 				continue
@@ -271,12 +271,12 @@ func (s *Scheduler) backfillDetails(ctx context.Context, cs *store.CatalogSource
 		if it.Slug != slug {
 			// A record that isn't this slug's (error payload decoded
 			// as 200) must not be stored — skip it, retried next pass.
-			s.logf("daily-journal detail %s: endpoint returned %q", slug, it.Slug)
+			s.logWarn("ingest: daily-journal detail slug mismatch", "slug", slug, "got", it.Slug)
 			continue
 		}
 		raw := s.Daily.ToCatalogItem(*it)
 		if _, _, err := s.pool.SaveDJItems(ctx, cs.ID, []store.CatalogItem{raw}); err != nil {
-			s.logf("daily-journal detail %s: %v", slug, err)
+			s.logWarn("ingest: daily-journal detail save failed", "slug", slug, "err", err)
 			return
 		}
 		filled++
@@ -287,7 +287,7 @@ func (s *Scheduler) backfillDetails(ctx context.Context, cs *store.CatalogSource
 			detail = fmt.Sprintf("detail backfill, %d gone", gone)
 		}
 		if lerr := s.pool.LogFetch(ctx, cs.ID, "ok", 200, filled, 0, detail); lerr != nil {
-			s.log.Printf("ingest: log fetch failed: %v", lerr)
+			s.logWarn("ingest: log fetch failed", "err", lerr)
 		}
 	}
 }
@@ -299,12 +299,18 @@ func (s *Scheduler) purgeBodies(ctx context.Context) {
 	}
 	s.lastPurge = s.now()
 	if n, err := s.pool.PurgeOldBodies(ctx, s.now().Add(-30*24*time.Hour)); err == nil && n > 0 {
-		s.logf("retention: cleared %d item bodies", n)
+		s.logInfo("ingest: retention cleared item bodies", "count", n)
 	}
 }
 
-func (s *Scheduler) logf(format string, args ...any) {
+func (s *Scheduler) logWarn(msg string, args ...any) {
 	if s.log != nil {
-		s.log.Printf("ingest: "+format, args...)
+		s.log.Warn(msg, args...)
+	}
+}
+
+func (s *Scheduler) logInfo(msg string, args ...any) {
+	if s.log != nil {
+		s.log.Info(msg, args...)
 	}
 }
