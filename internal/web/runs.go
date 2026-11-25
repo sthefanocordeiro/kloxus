@@ -130,7 +130,9 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		st.blockRun(b)
 		return st
 	}
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
 		// A pipeline panic must fail this run, not take the process —
@@ -170,7 +172,7 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 				st.mu.Unlock()
 			},
 		}
-		ctx, cancel := context.WithTimeout(llm.WithRunScope(context.Background(), wsp.ID), s.runTimeout())
+		ctx, cancel := context.WithTimeout(llm.WithRunScope(s.bg, wsp.ID), s.runTimeout())
 		defer cancel()
 		res, err := runner.RunPhaseA(ctx, pub)
 		if err != nil {
