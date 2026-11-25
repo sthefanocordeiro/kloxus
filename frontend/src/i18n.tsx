@@ -25,9 +25,6 @@ export const dict = {
       exported: "Exported",
       blocked: "Blocked",
     },
-    run: {
-      noItems: "No items collected — check the Radar's sources",
-    },
     errors: {
       conflict: "The document changed — reloaded the latest version",
       read_only: "This brief was already exported — it is read-only",
@@ -249,9 +246,6 @@ export const dict = {
       sent: "Exportada",
       exported: "Exportada",
       blocked: "Bloqueada",
-    },
-    run: {
-      noItems: "Nada foi coletado — confira as fontes do Radar",
     },
     errors: {
       conflict: "O documento mudou — a versão mais recente foi carregada",
@@ -476,21 +470,6 @@ export function LangProvider({ children }: { children: ReactNode }) {
     document.documentElement.lang = lang === "pt" ? "pt-BR" : "en";
   }, [lang]);
   return <LangCtx.Provider value={{ lang, t: dict[lang] as T, setLang }}>{children}</LangCtx.Provider>;
-}
-
-// The sample publication's canonical section titles are Portuguese;
-// this map keeps legacy English-named sections (older workspaces,
-// API-created publications) reading correctly in the pt interface.
-const SECTIONS_PT: Record<string, string> = {
-  "The big one": "O destaque",
-  "Worth knowing": "Vale saber",
-  "Quick links": "Links rápidos",
-};
-
-// sectionTitle is display-only: refs, attrs and API values stay
-// canonical so readiness targets and e2e selectors keep working.
-export function sectionTitle(lang: Lang, title: string): string {
-  return lang === "pt" ? (SECTIONS_PT[title] ?? title) : title;
 }
 
 export function useT() {

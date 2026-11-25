@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import * as Tabs from "@radix-ui/react-tabs";
-import * as Popover from "@radix-ui/react-popover";
 import { cn } from "./lib/cn";
 import { useT } from "./i18n";
 
@@ -43,26 +41,3 @@ export function KDialog({
   );
 }
 
-export const KTabs = Tabs;
-
-// KPopoverClose wraps a menu item so activating it also dismisses the
-// popover — Radix popovers otherwise stay open behind the dialog or
-// mutation the item triggers.
-export const KPopoverClose = Popover.Close;
-
-export function KPopover({ trigger, children, align = "end" }: { trigger: ReactNode; children: ReactNode; align?: "start" | "center" | "end" }) {
-  return (
-    <Popover.Root>
-      <Popover.Trigger asChild>{trigger}</Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          align={align}
-          sideOffset={8}
-          className="z-50 w-80 rounded-[var(--radius-card)] border border-line bg-paper-raised p-4 shadow-lg"
-        >
-          {children}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  );
-}
