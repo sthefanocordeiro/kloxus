@@ -80,6 +80,12 @@ type Server struct {
 	sampleOnce sync.Once
 	sampleV    *config.Publication
 	sampleErr  error
+	// bg is the base context for pipeline runs detached from their
+	// request; Shutdown cancels it. wg tracks those goroutines so
+	// Shutdown can drain them before the process exits.
+	bg       context.Context
+	bgCancel context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 type ctxKey int
@@ -92,6 +98,7 @@ const (
 // New builds a Server.
 func New(d Deps) *Server {
 	s := &Server{d: d, mux: http.NewServeMux()}
+	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	m := s.mux
 	m.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(mustSub(webFS, "static"))))
 	m.HandleFunc("GET /healthz", s.healthz)
@@ -219,6 +226,24 @@ func mustSub(fsys embed.FS, dir string) fs.FS {
 		panic(err)
 	}
 	return sub
+}
+
+// Shutdown stops the pipeline runs handlers detached into the
+// background: it cancels their base context so in-flight steps abort,
+// then waits for the goroutines to finish. The drain is bounded by ctx.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.bgCancel()
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // ServeHTTP resolves the request workspace (cookie in hosted mode), caps
@@ -631,7 +656,9 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		}
 		wsp.Runs.Store(pub.ID, st)
 	}
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
 		runner := &pipeline.Runner{
@@ -655,7 +682,7 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 				st.mu.Unlock()
 			},
 		}
-		res, err := runner.RunPhaseA(context.Background(), pub)
+		res, err := runner.RunPhaseA(s.bg, pub)
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		st.st.Done = true

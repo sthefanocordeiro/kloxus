@@ -495,11 +495,17 @@ func (db *DB) SetProgress(ctx context.Context, key string) error {
 }
 
 // Reset wipes all demo data (used by "Reset demo").
-func (db *DB) Reset(ctx context.Context) error {
-	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+func (db *DB) Reset(ctx context.Context) (err error) {
+	if _, err = db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
 		return err
 	}
-	defer db.Exec(`PRAGMA foreign_keys = ON`)
+	defer func() {
+		// A failed re-enable must surface: it would leave the connection
+		// without FK enforcement.
+		if _, uerr := db.Exec(`PRAGMA foreign_keys = ON`); uerr != nil && err == nil {
+			err = uerr
+		}
+	}()
 	tables := []string{
 		"story_items", "issue_items", "dossiers", "decisions", "runs", "jobs",
 		"subscriptions", "readers", "payment_accounts", "editorial_guides",

@@ -1571,7 +1571,9 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		wsp.Runs.Store(key, st)
 	}
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
 		runner := &pipeline.Runner{
@@ -1590,7 +1592,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 				st.mu.Unlock()
 			},
 		}
-		res, err := runner.RunPhaseB(context.Background(), pub, iss.ID)
+		res, err := runner.RunPhaseB(s.bg, pub, iss.ID)
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		st.st.Done = true

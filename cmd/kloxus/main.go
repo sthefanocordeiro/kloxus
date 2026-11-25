@@ -11,10 +11,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-
+	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
@@ -215,7 +216,25 @@ func serveUI(cfg *config.Config, db *store.DB, fetcher sources.Fetcher, provider
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	return httpSrv.ListenAndServe()
+	stop, stopNotify := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopNotify()
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.ListenAndServe() }()
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop.Done():
+		fmt.Println("shutting down…")
+	}
+	// One shared deadline covers both drains: the HTTP server stops
+	// listening and waits out in-flight requests while the detached
+	// pipeline runs get cancelled and waited on.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Shutdown(ctx) }()
+	err = httpSrv.Shutdown(ctx)
+	return errors.Join(err, <-runDone)
 }
 
 func openBrowser(url string) {

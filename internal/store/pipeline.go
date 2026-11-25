@@ -129,16 +129,23 @@ func (s Story) Outlets() []string {
 // Old issue_items keep a dangling story_id by design: their rendered
 // content lives in dossiers and the issue body, not in the stories table.
 // FK checks are suspended only for the duration of this delete.
-func (db *DB) ClearStories(ctx context.Context, pubID int64) error {
-	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+func (db *DB) ClearStories(ctx context.Context, pubID int64) (err error) {
+	if _, err = db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
 		return err
 	}
-	defer db.Exec(`PRAGMA foreign_keys = ON`)
-	if _, err := db.ExecContext(ctx,
+	defer func() {
+		// A failed re-enable must surface: it would leave the connection
+		// without FK enforcement. It only masks an earlier error when
+		// there is none.
+		if _, uerr := db.Exec(`PRAGMA foreign_keys = ON`); uerr != nil && err == nil {
+			err = uerr
+		}
+	}()
+	if _, err = db.ExecContext(ctx,
 		`DELETE FROM story_items WHERE story_id IN (SELECT id FROM stories WHERE publication_id = ?)`, pubID); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `DELETE FROM stories WHERE publication_id = ?`, pubID)
+	_, err = db.ExecContext(ctx, `DELETE FROM stories WHERE publication_id = ?`, pubID)
 	return err
 }
 
