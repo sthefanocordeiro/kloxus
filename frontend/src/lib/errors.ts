@@ -10,3 +10,9 @@ export function errText(t: T, e: unknown): string {
   }
   return dict.generic;
 }
+
+// A 429 carries an optional Retry-After (KLOX-194) — callers swap the
+// raw error line for the friendly "try again later" state with a retry.
+export function isRateLimited(e: unknown): e is ApiRequestError {
+  return e instanceof ApiRequestError && e.status === 429;
+}

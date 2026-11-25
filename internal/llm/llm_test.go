@@ -59,12 +59,42 @@ func TestRequestKeyed(t *testing.T) {
 	for _, p := range []Provider{
 		Anthropic{},
 		Recorder{},
+		Retrier{},
+		&Guard{},
+		None{},
 		Func(func(context.Context, Request) (Response, error) { return Response{}, nil }),
 		nil,
 	} {
 		if RequestKeyed(p) {
 			t.Errorf("%T should not be request-keyed", p)
 		}
+	}
+}
+
+// TestPricePerMillionCurrentPrices pins the table to the Anthropic list
+// prices verified 2026-11-16 (effective 2026-10-07, KLOX-54): the run
+// models haiku-5-5/sonnet-5-5 must cost what the provider actually
+// bills — a stale mapping must fail here, not on the owner's bill.
+// Haiku prices are the ≤100k-input-token tier; CheckSize caps every
+// call at 40k, so no request ever reaches the $0.50/$2.50 tier.
+func TestPricePerMillionCurrentPrices(t *testing.T) {
+	cases := []struct {
+		model   string
+		in, out float64
+	}{
+		{"claude-haiku-5-5", 0.10, 0.50},
+		{"claude-sonnet-5-5", 2.00, 10.00},
+		{"claude-opus-5-5", 4.00, 20.00},
+	}
+	for _, c := range cases {
+		in, out := PricePerMillion(c.model)
+		if in != c.in || out != c.out {
+			t.Errorf("PricePerMillion(%q) = (%v, %v), want (%v, %v) — verify current Anthropic pricing",
+				c.model, in, out, c.in, c.out)
+		}
+	}
+	if in, out := PricePerMillion("unknown-model"); in <= 0 || out <= 0 {
+		t.Error("unknown models must keep a conservative nonzero estimate")
 	}
 }
 
