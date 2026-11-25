@@ -20,9 +20,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/rerank"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 //go:embed prompts
@@ -48,6 +51,11 @@ type Runner struct {
 	// draft/citecheck (stable fixture keys) while the stored body and
 	// flags are built from active items only.
 	DemoMode bool
+	// Deterministic runs the no-model pipeline (KLOXUS_LLM_MODE=off):
+	// triage, storylist, dossier, deepdive, draft and citecheck use the
+	// deterministic implementations in rank.go and no model call is
+	// ever made — call() refuses outright.
+	Deterministic bool
 	// OnStep, if set, is called as each step starts (progress reporting).
 	OnStep func(step string)
 	// OnEvent, if set, is called as each step finishes with the step's
@@ -56,6 +64,19 @@ type Runner struct {
 	// OnIssue, if set, is called the moment Phase A creates the issue
 	// row — lets run tracking expose issue_id before the run finishes.
 	OnIssue func(issueID int64)
+	// Research, when set, lets ComposeSkeleton prefill each pauta from
+	// the shared cached research (KLOX-67 §7.2): a story with research
+	// arrives with an AI-written, author-editable draft body; the
+	// degraded path keeps the manual slot. Nil means the deterministic
+	// skeleton exactly as before.
+	Research *Researcher
+	// Embedder embeds the publication profile for stage-1 ranking
+	// (KLOX-109); nil uses DefaultEmbedder, and no embedder at all ranks
+	// by the FTS fallback.
+	Embedder QueryEmbedder
+	// Reranker scores the stage-1 shortlist once per run (KLOX-110); nil
+	// uses DefaultReranker, and none keeps the stage-1 order.
+	Reranker rerank.Reranker
 }
 
 // StepEvent reports a finished pipeline step with its real counts — never
@@ -136,15 +157,55 @@ func decodeJSON(text string, out any) error {
 	return json.Unmarshal([]byte(s[start:end+1]), out)
 }
 
+// complete invokes the provider behind a panic guard: a provider that
+// panics fails this step (and the run) instead of taking the process
+// down. Every model call in a pipeline step goes through here (D32),
+// and every one passes the prompt-size cap first — an over-cap request
+// is refused before the provider sees it (KLOX-44).
+func (r *Runner) complete(ctx context.Context, req llm.Request) (resp llm.Response, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("template %s: model call panicked: %v", req.Template, p)
+		}
+	}()
+	if err := llm.CheckSize(req); err != nil {
+		return llm.Response{}, err
+	}
+	return r.LLM.Complete(ctx, req)
+}
+
+// stepMaxTokens sets the output ceiling each prompt template needs —
+// every model call carries max_tokens (KLOX-44). Long-form steps keep
+// the 32k ceiling real-feed runs proved they need: an 8k cap truncated
+// a dossier on ~20 real stories mid-JSON, and truncation lands as
+// invalid JSON the repair retry cannot fix.
+var stepMaxTokens = map[string]int{
+	"triage":    8192,
+	"storylist": 8192,
+	"dossier":   32768,
+	"deepdive":  32768,
+	"draft":     32768,
+	"citecheck": 8192,
+}
+
 // call renders a prompt, calls the model and decodes JSON output,
 // retrying once on invalid JSON.
 func (r *Runner) call(ctx context.Context, model, name string, data any, out any) (llm.Response, error) {
+	if r.Deterministic {
+		// Defense in depth: deterministic mode must never reach a model
+		// call — fail loudly even if a code path misses its branch.
+		return llm.Response{}, fmt.Errorf("template %s: %w", name, llm.ErrDisabled)
+	}
 	user, err := RenderPrompt(name, data)
 	if err != nil {
 		return llm.Response{}, err
 	}
-	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: 8192}
-	resp, err := r.LLM.Complete(ctx, req)
+	maxTok := stepMaxTokens[name]
+	if maxTok == 0 {
+		maxTok = 8192
+	}
+	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: maxTok}
+	resp, err := r.complete(ctx, req)
 	if err != nil {
 		return resp, err
 	}
@@ -154,7 +215,7 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 			return resp, fmt.Errorf("template %s: %w", name, err)
 		}
 		req.User = user + "\n\nYour previous reply was not valid JSON (" + err.Error() + "). Reply with ONLY the JSON."
-		resp2, err2 := r.LLM.Complete(ctx, req)
+		resp2, err2 := r.complete(ctx, req)
 		if err2 != nil {
 			return resp2, err2
 		}
@@ -203,8 +264,8 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 		return nil, err
 	}
 	for _, ii := range items {
-		if ii.Status == "pending" {
-			if err := r.DB.SetIssueItemStatus(ctx, ii.ID, "approved"); err != nil {
+		if ii.Status == store.ItemPending {
+			if err := r.DB.SetIssueItemStatus(ctx, ii.ID, store.ItemApproved); err != nil {
 				return nil, err
 			}
 		}
@@ -229,699 +290,35 @@ func (r *Runner) stepStart(name string) {
 	}
 }
 
-// RunPhaseA runs collect → dedupe → triage → storylist → dossier →
-// deepdive, producing the issue and its items for review.
-func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result, error) {
-	res := &Result{}
-
-	// --- collect ---
-	r.stepStart("collect")
-	start := time.Now()
-	srcs, err := r.DB.Sources(ctx, pub.ID)
-	if err != nil {
-		return nil, err
-	}
-	for _, s := range srcs {
-		if r.DemoMode && !strings.HasPrefix(s.URL, "fixtures/") {
-			// Visitor-added sources are never fetched on the hosted demo
-			// (SSRF surface); they are stored but skipped at collect time.
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "simulated in demo mode: sources are not fetched")
-			continue
-		}
-		raw, err := r.Fetcher.Fetch(ctx, s.Type, s.URL)
-		if err != nil {
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+truncate(err.Error(), 120))
-			continue // one bad source must not abort the run
-		}
-		n, err := r.DB.SaveItems(ctx, s.ID, raw, dedupe.Canonical)
-		if err != nil {
-			return nil, err
-		}
-		outlet := ""
-		if len(raw) > 0 {
-			outlet = raw[0].Outlet
-		}
-		r.DB.MarkSourceFetched(ctx, s.ID, outlet, fmt.Sprintf("ok: %d items, %d new", len(raw), n))
-		res.Items += len(raw)
-		res.New += n
-	}
-	if res.New == 0 {
-		if _, err := r.DB.LatestIssue(ctx, pub.ID); err == nil {
-			r.emit("collect", map[string]int{"items_read": res.Items, "new_items": res.New})
-			res.NoNewItems = true
-			return res, nil
-		}
-		if res.Items == 0 {
-			return nil, fmt.Errorf("no items collected — check the publication's sources")
-		}
-	}
-	r.emit("collect", map[string]int{"items_read": res.Items, "new_items": res.New})
-	r.record(ctx, pub.ID, 0, "collect", "", start, llm.Response{})
-
-	// --- dedupe ---
-	r.stepStart("dedupe")
-	start = time.Now()
-	items, err := r.DB.ItemsForPublication(ctx, pub.ID)
-	if err != nil {
-		return nil, err
-	}
-	urls := make([]string, len(items))
-	texts := make([]string, len(items))
-	for i, it := range items {
-		urls[i] = it.URL
-		texts[i] = it.Title + "\n" + it.ContentText
-	}
-	clusters := dedupe.Assign(urls, texts)
-	if err := r.DB.ClearStories(ctx, pub.ID); err != nil {
-		return nil, err
-	}
-	groups := map[int][]store.Item{}
-	for i, it := range items {
-		groups[clusters[i]] = append(groups[clusters[i]], it)
-	}
-	ordered := make([][]store.Item, 0, len(groups))
-	for _, g := range groups {
-		ordered = append(ordered, g)
-	}
-	sort.Slice(ordered, func(a, b int) bool { return ordered[a][0].ID < ordered[b][0].ID })
-	for _, g := range ordered {
-		title := g[0].Title
-		for _, it := range g {
-			if len(it.Title) > len(title) {
-				title = it.Title
-			}
-		}
-		storyID, err := r.DB.CreateStory(ctx, pub.ID, title, int64(dedupe.SimHash(g[0].Title+"\n"+g[0].ContentText)))
-		if err != nil {
-			return nil, err
-		}
-		for _, it := range g {
-			if err := r.DB.AddStoryItem(ctx, storyID, it.ID); err != nil {
-				return nil, err
-			}
-		}
-	}
-	stories, err := r.DB.StoriesWithItems(ctx, pub.ID)
-	if err != nil {
-		return nil, err
-	}
-	res.Stories = len(stories)
-	r.emit("dedupe", map[string]int{"stories": res.Stories, "duplicates_merged": len(items) - res.Stories})
-	r.record(ctx, pub.ID, 0, "dedupe", "", start, llm.Response{})
-
-	// create the issue now so all model steps attach to it
-	number, err := r.DB.NextIssueNumber(ctx, pub.ID)
-	if err != nil {
-		return nil, err
-	}
-	res.Number = number
-	issueID, err := r.DB.CreateIssue(ctx, pub.ID, number,
-		fmt.Sprintf("%s — issue %d", pub.Name, number), "")
-	if err != nil {
-		return nil, err
-	}
-	res.IssueID = issueID
-	r.DB.AttachRuns(ctx, pub.ID, issueID)
-	if r.OnIssue != nil {
-		r.OnIssue(issueID)
-	}
-
-	// --- triage ---
-	r.stepStart("triage")
-	start = time.Now()
-	type triStory struct {
-		Ref     int
-		Title   string
-		Outlets string
-		Snippet string
-	}
-	ts := make([]triStory, len(stories))
-	for i, s := range stories {
-		snip := ""
-		if len(s.Items) > 0 {
-			snip = truncate(s.Items[0].ContentText, 400)
-		}
-		ts[i] = triStory{Ref: i + 1, Title: s.Title, Outlets: strings.Join(s.Outlets(), ", "), Snippet: snip}
-	}
-	var triage []struct {
-		Ref    int     `json:"ref"`
-		Score  float64 `json:"score"`
-		Reason string  `json:"reason"`
-	}
-	resp, err := r.call(ctx, r.TriageModel, "triage", map[string]any{
-		"Publication":   pub.Name,
-		"Audience":      pub.Audience,
-		"Language":      pub.Language,
-		"EditorialLine": pub.EditorialLine,
-		"Guide":         r.guide(ctx, pub.ID),
-		"Stories":       ts,
-	}, &triage)
-	if err != nil {
-		return nil, fmt.Errorf("triage: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("triage", map[string]int{"ranked": len(triage)})
-	r.record(ctx, pub.ID, issueID, "triage", r.TriageModel, start, resp)
-	scoreByRef := map[int]struct {
-		score  float64
-		reason string
-	}{}
-	for i, t := range triage {
-		scoreByRef[t.Ref] = struct {
-			score  float64
-			reason string
-		}{t.Score, t.Reason}
-		if t.Ref-1 >= 0 && t.Ref-1 < len(stories) {
-			r.DB.SetStoryTriage(ctx, stories[t.Ref-1].ID, t.Score, t.Reason)
-		}
-		_ = i
-	}
-
-	// --- storylist ---
-	r.stepStart("storylist")
-	start = time.Now()
-	type slStory struct {
-		Ref    int
-		Score  float64
-		Title  string
-		Reason string
-	}
-	ss := make([]slStory, len(stories))
-	for i, s := range stories {
-		sr := scoreByRef[i+1]
-		ss[i] = slStory{Ref: i + 1, Score: sr.score, Title: s.Title, Reason: sr.reason}
-	}
-	var picked struct {
-		Items []struct {
-			Refs    []int  `json:"refs"`
-			Title   string `json:"title"`
-			Theme   string `json:"theme"`
-			Why     string `json:"why"`
-			Section string `json:"section"`
-		} `json:"items"`
-	}
-	resp, err = r.call(ctx, r.TriageModel, "storylist", map[string]any{
-		"Publication":   pub.Name,
-		"Audience":      pub.Audience,
-		"Sections":      pub.Sections,
-		"EditorialLine": pub.EditorialLine,
-		"Guide":         r.guide(ctx, pub.ID),
-		"Stories":       ss,
-	}, &picked)
-	if err != nil {
-		return nil, fmt.Errorf("storylist: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
-	res.Selected = len(picked.Items)
-	r.emit("storylist", map[string]int{"selected": res.Selected})
-	r.record(ctx, pub.ID, issueID, "storylist", r.TriageModel, start, resp)
-
-	// --- create issue items, merging same-event stories ---
-
-	entries := []entry{}
-	for idx, p := range picked.Items {
-		if len(p.Refs) == 0 {
-			continue
-		}
-		primaryIdx := p.Refs[0] - 1
-		if primaryIdx < 0 || primaryIdx >= len(stories) {
-			return nil, fmt.Errorf("storylist: ref %d out of range", p.Refs[0])
-		}
-		primary := stories[primaryIdx]
-		var merges []int64
-		memberItems := append([]store.Item{}, primary.Items...)
-		for _, ref := range p.Refs[1:] {
-			if ref-1 < 0 || ref-1 >= len(stories) {
-				continue
-			}
-			sec := stories[ref-1]
-			merges = append(merges, sec.ID)
-			memberItems = append(memberItems, sec.Items...)
-		}
-		if len(merges) > 0 {
-			if err := r.DB.MergeStories(ctx, primary.ID, merges); err != nil {
-				return nil, err
-			}
-		}
-		sc := scoreByRef[p.Refs[0]]
-		iiID, err := r.DB.CreateIssueItem(ctx, store.IssueItem{
-			IssueID: issueID,
-			StoryID: primary.ID,
-			Section: p.Section,
-			Score:   sc.score,
-			Reason:  p.Why,
-			Status:  "pending",
-		})
-		if err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry{
-			iiID: iiID, storyID: primary.ID, ref: idx + 1,
-			title: p.Title, section: p.Section, why: p.Why,
-			score: sc.score, sources: memberItems,
-		})
-	}
-
-	// --- dossier ---
-	r.stepStart("dossier")
-	start = time.Now()
-	type dSrc struct {
-		Ref  int
-		URL  string
-		Text string
-	}
-	type dItem struct {
-		Ref     int
-		Title   string
-		Sources []dSrc
-	}
-	dItems := make([]dItem, len(entries))
-	for i, e := range entries {
-		for j, it := range e.sources {
-			dItems[i].Sources = append(dItems[i].Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
-		}
-		dItems[i].Ref = e.ref
-		dItems[i].Title = e.title
-	}
-	var dossiers []Dossier
-	resp, err = r.call(ctx, r.DraftModel, "dossier", map[string]any{
-		"Publication": pub.Name,
-		"Language":    pub.Language,
-		"Items":       dItems,
-	}, &dossiers)
-	if err != nil {
-		return nil, fmt.Errorf("dossier: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("dossier", map[string]int{"dossiers": len(dossiers)})
-	r.record(ctx, pub.ID, issueID, "dossier", r.DraftModel, start, resp)
-	dossierByRef := map[int]*Dossier{}
-	for i := range dossiers {
-		dossierByRef[dossiers[i].Ref] = &dossiers[i]
-	}
-	for i, e := range entries {
-		d, ok := dossierByRef[e.ref]
-		if !ok {
-			return nil, fmt.Errorf("dossier: missing item %d", e.ref)
-		}
-		d.Title = e.title
-		d.fillSources(e.sources)
-		data, _ := json.Marshal(d)
-		if err := r.DB.SaveDossier(ctx, e.iiID, string(data)); err != nil {
-			return nil, err
-		}
-		entries[i].sources = e.sources // keep for later steps
-	}
-
-	// --- deepdive (top N by score) ---
-	r.stepStart("deepdive")
-	start = time.Now()
-	topN := r.MaxDeepDives
-	if topN <= 0 || topN > 3 {
-		topN = 3
-	}
-	sorted := append([]entry{}, entries...)
-	sort.Slice(sorted, func(a, b int) bool { return sorted[a].score > sorted[b].score })
-	if len(sorted) > topN {
-		sorted = sorted[:topN]
-	}
-	type ddItem struct {
-		Ref     int
-		Title   string
-		Dossier string
-		Sources []dSrc
-	}
-	var ddItems []ddItem
-	for _, e := range sorted {
-		d := *dossierByRef[e.ref]
-		d.Title = ""
-		dj, _ := json.Marshal(d)
-		di := ddItem{Ref: e.ref, Title: e.title, Dossier: string(dj)}
-		for j, it := range e.sources {
-			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
-		}
-		ddItems = append(ddItems, di)
-	}
-	var deep []struct {
-		Ref       int `json:"ref"`
-		DeepFacts []struct {
-			Text string `json:"text"`
-			Ref  int    `json:"ref"`
-		} `json:"deep_facts"`
-		ExtraUnknowns []string `json:"extra_unknowns"`
-	}
-	resp, err = r.call(ctx, r.DraftModel, "deepdive", map[string]any{
-		"Publication": pub.Name,
-		"Language":    pub.Language,
-		"Items":       ddItems,
-	}, &deep)
-	if err != nil {
-		return nil, fmt.Errorf("deepdive: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("deepdive", map[string]int{"items": len(ddItems)})
-	r.record(ctx, pub.ID, issueID, "deepdive", r.DraftModel, start, resp)
-	for _, dd := range deep {
-		d, ok := dossierByRef[dd.Ref]
-		if !ok {
-			continue
-		}
-		for _, f := range dd.DeepFacts {
-			d.DeepFacts = append(d.DeepFacts, DossierFact{Text: f.Text, Ref: f.Ref})
-		}
-		d.Unknowns = append(d.Unknowns, dd.ExtraUnknowns...)
-	}
-	for _, e := range entries {
-		data, _ := json.Marshal(dossierByRef[e.ref])
-		if err := r.DB.SaveDossier(ctx, e.iiID, string(data)); err != nil {
-			return nil, err
-		}
-	}
-	if err := r.DB.SetIssueStatus(ctx, res.IssueID, "reviewing"); err != nil {
-		return nil, err
-	}
-	return res, nil
-}
-
-// loadEntries rebuilds the entry list for an existing issue from the DB:
-// issue items, their dossiers and story titles.
-//
-// canonical=true returns every Phase A item regardless of review status —
-// the stable input that keeps demo-mode draft/citecheck replay keys
-// fixed. canonical=false returns only approved items (plus pending? no —
-// the draft contains approved items only), which is what actually ships.
-func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool) ([]entry, map[int]*Dossier, error) {
-	iis, err := r.DB.IssueItems(ctx, issueID)
-	if err != nil {
-		return nil, nil, err
-	}
-	// issue items were inserted in picked order; ref numbers were assigned
-	// positionally then, but dossiers store their own ref, so reload in id order
-	sort.Slice(iis, func(a, b int) bool { return iis[a].ID < iis[b].ID })
-	var entries []entry
-	dossierByRef := map[int]*Dossier{}
-	for _, ii := range iis {
-		if canonical {
-			// Only the AI-picked items belong to the recorded
-			// canonical input — alternatives and manual adds would
-			// change the replay keys.
-			if ii.Origin != "phaseA" {
-				continue
-			}
-		} else if ii.Status != "approved" {
-			continue
-		}
-		djson, err := r.DB.Dossier(ctx, ii.ID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("issue_item %d: no dossier", ii.ID)
-		}
-		var d Dossier
-		if err := json.Unmarshal([]byte(djson), &d); err != nil {
-			return nil, nil, fmt.Errorf("issue_item %d: %w", ii.ID, err)
-		}
-		title := d.Title
-		if title == "" {
-			title, _ = r.DB.StoryTitle(ctx, ii.StoryID)
-		}
-		section := ii.Section
-		if canonical && ii.OrigSection != "" {
-			// replay input must look exactly like the recorded Phase A
-			// output — board moves mutate Section, OrigSection holds the
-			// pick
-			section = ii.OrigSection
-		}
-		entries = append(entries, entry{
-			iiID: ii.ID, storyID: ii.StoryID, ref: d.Ref,
-			title: title, section: section, why: ii.Reason, score: ii.Score,
-			position: ii.Position,
-		})
-		dd := d
-		dossierByRef[d.Ref] = &dd
-	}
-	return entries, dossierByRef, nil
-}
-
-// ensureDossiers generates dossiers for lineup items that lack one —
-// stories the creator added on the board get theirs at draft time,
-// so the draft run can pick up any board composition.
-func (r *Runner) ensureDossiers(ctx context.Context, pub *store.Publication, issueID int64) error {
-	iis, err := r.DB.IssueItems(ctx, issueID)
-	if err != nil {
-		return err
-	}
-	maxRef := 0
-	var missing []store.IssueItem
-	for _, ii := range iis {
-		if dj, err := r.DB.Dossier(ctx, ii.ID); err == nil {
-			var d Dossier
-			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
-				maxRef = d.Ref
-			}
-			continue
-		}
-		if ii.Status == "approved" || ii.Status == "pending" {
-			missing = append(missing, ii)
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	r.stepStart("dossier")
-	for _, ii := range missing {
-		cand, err := r.DB.StoryWithItems(ctx, ii.StoryID)
-		if err != nil {
-			return err
-		}
-		maxRef++
-		d := r.alternativeDossier(ctx, pub, cand, maxRef)
-		data, _ := json.Marshal(d)
-		if err := r.DB.SaveDossier(ctx, ii.ID, string(data)); err != nil {
-			return err
-		}
-	}
-	r.emit("dossier", map[string]int{"dossiers": len(missing)})
-	return nil
-}
-
-// RunPhaseB runs draft → assemble → citecheck on an issue produced by
-// RunPhaseA (and reviewed): the stored body carries approved items only.
-func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
-	res := &Result{IssueID: issueID}
-	if err := r.ensureDossiers(ctx, pub, issueID); err != nil {
-		return nil, err
-	}
-	entries, dossierByRef, err := r.loadEntries(ctx, issueID, false)
-	if err != nil {
-		return nil, err
-	}
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("no approved items — approve at least one story before drafting")
-	}
-	res.Selected = len(entries)
-	modelEntries, modelDossiers := entries, dossierByRef
-	if r.DemoMode {
-		modelEntries, modelDossiers, err = r.loadEntries(ctx, issueID, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// --- draft ---
-	r.stepStart("draft")
-	start := time.Now()
-	type drItem struct {
-		Ref            int
-		Section        string
-		Score          float64
-		Title          string
-		Summary        string
-		Facts          []DossierFact
-		DeepFacts      []DossierFact
-		Interpretation []string
-	}
-	drItems := make([]drItem, len(modelEntries))
-	for i, e := range modelEntries {
-		d, ok := modelDossiers[e.ref]
-		if !ok {
-			return nil, fmt.Errorf("draft: no dossier for item ref %d", e.ref)
-		}
-		drItems[i] = drItem{
-			Ref: e.ref, Section: e.section, Score: e.score, Title: e.title,
-			Summary: d.Summary, Facts: d.Facts, DeepFacts: d.DeepFacts,
-			Interpretation: d.Interpretation,
-		}
-	}
-	var drafted struct {
-		Entries []struct {
-			Ref      int    `json:"ref"`
-			Headline string `json:"headline"`
-			BodyMD   string `json:"body_md"`
-		} `json:"entries"`
-	}
-	resp, err := r.call(ctx, r.DraftModel, "draft", map[string]any{
-		"Publication": pub.Name,
-		"Audience":    pub.Audience,
-		"Language":    pub.Language,
-		"Tone":        pub.Tone,
-		"Items":       drItems,
-	}, &drafted)
-	if err != nil {
-		return nil, fmt.Errorf("draft: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("draft", map[string]int{"entries": len(drafted.Entries)})
-	r.record(ctx, pub.ID, issueID, "draft", r.DraftModel, start, resp)
-	draftByRef := map[int]struct {
-		headline, body string
-	}{}
-	for _, de := range drafted.Entries {
-		draftByRef[de.Ref] = struct {
-			headline, body string
-		}{de.Headline, de.BodyMD}
-	}
-	// Alternative items are never part of the canonical draft input, so
-	// they have no model-drafted body: synthesize one from the dossier
-	// (summary carries [n] citations, so it passes the citation rules).
-	for _, e := range entries {
-		if _, ok := draftByRef[e.ref]; !ok {
-			d := dossierByRef[e.ref]
-			body := strings.TrimSpace(d.Summary)
-			for _, f := range d.Facts {
-				if s := strings.TrimSpace(f.Text); s != "" && !strings.Contains(body, s) {
-					body += " " + ensureRefSuffix(s, f.Ref)
-				}
-			}
-			draftByRef[e.ref] = struct {
-				headline, body string
-			}{e.title, body}
-		}
-	}
-
-	// --- assemble issue markdown ---
-	// honor the board's slot order inside each section
-	sort.SliceStable(entries, func(a, b int) bool { return entries[a].position < entries[b].position })
-	number := res.Number
-	if number == 0 {
-		if iss, err := r.DB.GetIssue(ctx, issueID); err == nil {
-			number = iss.Number
-		}
-	}
-	sectionOrder := []string{}
-	for _, s := range pub.Sections {
-		sectionOrder = append(sectionOrder, s.Title)
-	}
-	body := assembleIssue(pub, number, entries, draftByRef, dossierByRef, sectionOrder)
-	checkBody := body
-	checkEntries := entries
-	checkDossiers := dossierByRef
-	if r.DemoMode {
-		checkBody = assembleIssue(pub, number, modelEntries, draftByRef, modelDossiers, sectionOrder)
-		checkEntries = modelEntries
-		checkDossiers = modelDossiers
-	}
-
-	// --- citecheck ---
-	r.stepStart("citecheck")
-	start = time.Now()
-	sents := extractSentences(checkBody)
-	type cSent struct {
-		ID   int
-		Item int
-		Refs string
-		Text string
-	}
-	type cItem struct {
-		Ref     int
-		Sources []struct {
-			Ref int
-			URL string
-		}
-	}
-	cs := []cSent{}
-	ci := []cItem{}
-	for _, e := range checkEntries {
-		d, ok := checkDossiers[e.ref]
-		if !ok {
-			return nil, fmt.Errorf("citecheck: no dossier for item ref %d", e.ref)
-		}
-		c := cItem{Ref: e.ref}
+// sourceTexts batch-loads the stored body of every item a dossier
+// cites, keyed by item id — the corpus the citation floor and the
+// originality rule check against.
+func (r *Runner) sourceTexts(ctx context.Context, dossiers map[int]*Dossier) (map[int64]string, error) {
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, d := range dossiers {
 		for _, s := range d.Sources {
-			c.Sources = append(c.Sources, struct {
-				Ref int
-				URL string
-			}{s.Ref, s.URL})
+			if s.ItemID != 0 && !seen[s.ItemID] {
+				seen[s.ItemID] = true
+				ids = append(ids, s.ItemID)
+			}
 		}
-		ci = append(ci, c)
 	}
-	for _, s := range sents {
-		cs = append(cs, cSent{ID: s.id, Item: s.itemRef, Refs: s.refs, Text: s.text})
+	out := map[int64]string{}
+	if len(ids) == 0 {
+		return out, nil
 	}
-	var checks []struct {
-		ID      int    `json:"id"`
-		Verdict string `json:"verdict"`
-		Note    string `json:"note"`
-	}
-	resp, err = r.call(ctx, r.TriageModel, "citecheck", map[string]any{
-		"Publication": pub.Name,
-		"Sentences":   cs,
-		"Items":       ci,
-	}, &checks)
+	items, err := r.DB.GetItems(ctx, ids)
 	if err != nil {
-		return nil, fmt.Errorf("citecheck: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
-	r.record(ctx, pub.ID, issueID, "citecheck", r.TriageModel, start, resp)
-
-	sentByID := map[int]sentRec{}
-	for _, s := range sents {
-		sentByID[s.id] = s
-	}
-	seen := map[string]bool{}
-	addFlag := func(item int64, sentence, note string) {
-		k := fmt.Sprintf("%d|%s", item, sentence)
-		if seen[k] {
-			return
-		}
-		seen[k] = true
-		res.Flagged = append(res.Flagged, Flagged{Item: item, Sentence: sentence, Note: note})
-	}
-	activeRef := map[int]bool{}
-	for _, e := range entries {
-		activeRef[e.ref] = true
-	}
-	for _, c := range checks {
-		if c.Verdict != "unsupported" {
-			continue
-		}
-		s, ok := sentByID[c.ID]
-		if !ok || !activeRef[s.itemRef] {
-			continue
-		}
-		addFlag(int64(s.itemRef), s.text, c.Note)
-	}
-	// deterministic rules: a body sentence with no citation, or an entry
-	// with no citation at all, is flagged without needing the model.
-	for _, s := range extractSentences(body) {
-		if s.refs == "" {
-			addFlag(int64(s.itemRef), s.text, "sentence has no citation")
-		}
-	}
-	for _, e := range entries {
-		de, ok := draftByRef[e.ref]
-		if ok && !refRe.MatchString(de.body) {
-			addFlag(int64(e.ref), truncate(de.body, 120), "entry has no citations")
-		}
-	}
-	flagsJSON, _ := json.Marshal(res.Flagged)
-	if res.Flagged == nil {
-		flagsJSON = []byte("[]")
-	}
-	if err := r.DB.UpdateIssue(ctx, issueID, "drafted", body, string(flagsJSON)); err != nil {
 		return nil, err
 	}
-	r.emit("citecheck", map[string]int{"checked": len(sents), "flagged": len(res.Flagged)})
-	res.Number = number
-	return res, nil
+	for id, it := range items {
+		// The headline counts as support (KLOX-100): a sentence echoing
+		// the article's own title or standfirst is grounded in the
+		// source, not a fabrication.
+		out[id] = it.Title + "\n" + it.ContentText
+	}
+	return out, nil
 }
 
 // finish writes the stored issue body to outDir and returns the result.
@@ -943,7 +340,8 @@ func (r *Runner) finish(ctx context.Context, res *Result, outDir string) (*Resul
 // Dossier is the per-item research record stored as JSON.
 type Dossier struct {
 	Ref            int             `json:"ref"`
-	Title          string          `json:"title,omitempty"` // storylist-picked title, set at save time
+	Title          string          `json:"title,omitempty"`  // storylist-picked title, set at save time
+	Origin         string          `json:"origin,omitempty"` // "manual" when built without a model
 	Summary        string          `json:"summary"`
 	Facts          []DossierFact   `json:"facts"`
 	DeepFacts      []DossierFact   `json:"deep_facts,omitempty"`
@@ -971,6 +369,21 @@ type DossierSource struct {
 	URL    string `json:"url"` // canonical (fictional) article URL
 	ItemID int64  `json:"item_id,omitempty"`
 	Name   string `json:"name,omitempty"` // outlet name
+}
+
+// promptJSON marshals the dossier for embedding in a prompt: the same
+// shape as the stored JSON minus database-local item ids, so replay keys
+// stay stable when items land on different rows (reused databases,
+// second publications, shared Postgres ids).
+func (d *Dossier) promptJSON() []byte {
+	c := *d
+	c.Sources = make([]DossierSource, len(d.Sources))
+	for i, s := range d.Sources {
+		s.ItemID = 0
+		c.Sources[i] = s
+	}
+	data, _ := json.Marshal(c)
+	return data
 }
 
 // fillSources rebuilds the source list from member items so [n] refs in
@@ -1059,15 +472,32 @@ func lastToken(s string) string {
 // accepted at terminal punctuation followed by whitespace when the next
 // rune can start a sentence and the previous token is not a common
 // abbreviation (avoids splitting on "Dr.", "e.g.", decimals, etc.).
-// citeLeadRe matches a citation marker at the start of a text run — a
-// "[n]" left dangling after a sentence-final period belongs to the
-// sentence that precedes it, not to whatever comes next.
-var citeLeadRe = regexp.MustCompile(`^\[\d+\]`)
+// citeLeadRe matches the citation markers at the start of a text run —
+// the "[n] [m]" left dangling after a sentence-final period all belong
+// to the sentence that precedes them, not to whatever comes next. Every
+// consecutive marker must be consumed: dropping a trailing one would
+// orphan it (and any flag keyed on the full stored line).
+var citeLeadRe = regexp.MustCompile(`^(\[\d+\]\s*)+`)
 
 func SplitSentences(line string) []string {
 	var out []string
 	start := 0
+	// a quotation stays in one piece: splitting at a period inside
+	// "…" broke an inserted quote into unquoted fragments that then
+	// failed the copy rule's short-quote exception (KLOX-124)
+	quotes := quoteRe.FindAllStringIndex(line, -1)
 	for _, m := range sentEndRe.FindAllStringIndex(line, -1) {
+		inQuote := false
+		for _, q := range quotes {
+			// a period right before the closing mark still ends the quote
+			if m[0] > q[0] && m[0] < q[1]-1 && m[1] < q[1] {
+				inQuote = true
+				break
+			}
+		}
+		if inQuote {
+			continue
+		}
 		if m[0] <= start {
 			// Boundary already inside the emitted span (e.g. the ". "
 			// right after an attached citation): drop it.
@@ -1133,6 +563,21 @@ func extractSentences(body string) []sentRec {
 	return out
 }
 
+// docMarkupRe removes the tokens that would read as document structure
+// inside a stored line: closed comments (`<!-- /item -->`), an unclosed
+// comment opener, and the embed-fence tags.
+var docMarkupRe = regexp.MustCompile(`<!--.*?-->|<!--|</?klox-embed>?`)
+
+// oneLine flattens feed-supplied strings (story titles, dossier source
+// names, picked section titles) to a single line and strips document
+// markup: a newline, a `<!--` or a `<klox-embed` inside a stored
+// heading would splice raw structural lines into the generated body —
+// the same guard the composer's insertItemBlock applies (KLOX-73).
+func oneLine(s string) string {
+	s = docMarkupRe.ReplaceAllString(s, "")
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // assembleIssue builds the stored issue markdown. The stored body is the
 // canonical reader draft: headlines, cited bodies and linked sources,
 // with <!-- item N --> markers kept so the citation check can attribute
@@ -1140,11 +585,13 @@ func extractSentences(body string) []sentRec {
 // the disclosure line never enter the stored body — delivery.ReaderBody
 // renders the reader-facing version (commentary, disclosure, absolute
 // links) from it.
-func assembleIssue(pub *store.Publication, number int, entries []entry, drafts map[int]struct {
-	headline, body string
-}, dossiers map[int]*Dossier, sectionOrder []string) string {
+func assembleIssue(pub *store.Publication, number int, entries []entry, drafts map[int]draftEntry, dossiers map[int]*Dossier, sectionOrder []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s — issue %d\n\n", pub.Name, number)
+	word := "issue"
+	if ptLang(pub.Language) {
+		word = "edição"
+	}
+	fmt.Fprintf(&b, "# %s — %s %d\n\n", pub.Name, word, number)
 	bySection := map[string][]entry{}
 	for _, e := range entries {
 		bySection[e.section] = append(bySection[e.section], e)
@@ -1156,13 +603,13 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 		if headline == "" {
 			headline = e.title
 		}
-		fmt.Fprintf(&b, "### %s <!-- item %d -->\n\n", headline, e.ref)
+		fmt.Fprintf(&b, "### %s <!-- item %d -->\n\n", oneLine(headline), e.ref)
 		b.WriteString(de.body + "\n\n")
 		if len(d.Sources) > 0 {
 			b.WriteString("**Sources:** ")
 			parts := []string{}
 			for _, s := range d.Sources {
-				name := s.Name
+				name := oneLine(s.Name)
 				if name == "" {
 					name = "source"
 				}
@@ -1171,28 +618,61 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 			b.WriteString(strings.Join(parts, " · ") + "\n\n")
 		}
 	}
-	for _, sec := range sectionOrder {
-		list, ok := bySection[sec]
-		if !ok {
-			continue
+	// The newsletter's stored template (KLOX-72) arranges the edition:
+	// fixed blocks are copied in verbatim, "section" slots emit their
+	// `##` heading plus this week's pautas — a slot keeps its place
+	// even when the section has no items yet, so the edition opens
+	// already shaped like the template. Sections the template does
+	// not name fall back to the legacy tail order.
+	emitted := map[string]bool{}
+	writeSection := func(sec string, forceHeading bool) {
+		list := bySection[sec]
+		if emitted[sec] || (!forceHeading && len(list) == 0) {
+			return
 		}
-		fmt.Fprintf(&b, "## %s\n\n", sec)
+		fmt.Fprintf(&b, "## %s\n\n", oneLine(sec))
 		for _, e := range list {
 			writeItem(e)
 		}
+		emitted[sec] = true
 	}
-	for sec, list := range bySection {
-		found := false
-		for _, s := range sectionOrder {
-			if s == sec {
-				found = true
+	inSnapshot := map[string]bool{}
+	for _, sec := range sectionOrder {
+		inSnapshot[sec] = true
+	}
+	// needsEndItem mirrors the composer's boundary rule: a divider,
+	// link, image or text block landing right after an item would fold
+	// into that item's span without the `<!-- /item -->` marker —
+	// heading and embed blocks close an item on their own.
+	needsEndItem := map[string]bool{"divider": true, "link": true, "image": true, "text": true}
+	fixedAfterItem := false
+	writeFixed := func(kind, line string) {
+		if fixedAfterItem && needsEndItem[kind] {
+			b.WriteString("<!-- /item -->\n\n")
+		}
+		b.WriteString(line + "\n\n")
+		fixedAfterItem = false
+	}
+	for _, tb := range pub.Template {
+		switch tb.Kind {
+		case "section":
+			if !inSnapshot[tb.Section] || emitted[tb.Section] {
+				continue
+			}
+			writeSection(tb.Section, true)
+			fixedAfterItem = len(bySection[tb.Section]) > 0
+		default:
+			if line, ok := delivery.BlockLine(tb.Kind, tb.Text, tb.URL); ok {
+				writeFixed(tb.Kind, line)
 			}
 		}
-		if !found {
-			fmt.Fprintf(&b, "## %s\n\n", sec)
-			for _, e := range list {
-				writeItem(e)
-			}
+	}
+	for _, sec := range sectionOrder {
+		writeSection(sec, false)
+	}
+	for sec, list := range bySection {
+		if !emitted[sec] && len(list) > 0 {
+			writeSection(sec, false)
 		}
 	}
 	return b.String()
@@ -1226,7 +706,7 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 		Section: old.Section,
 		Score:   cand.TriageScore,
 		Reason:  cand.TriageReason,
-		Status:  "pending",
+		Status:  store.ItemPending,
 		Origin:  "alternative",
 	})
 	if err != nil {
@@ -1237,9 +717,12 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 	if err := r.DB.SaveDossier(ctx, newID, string(data)); err != nil {
 		return nil, err
 	}
-	if err := r.DB.SetIssueItemStatus(ctx, old.ID, "alternative"); err != nil {
+	if err := r.DB.SetIssueItemStatus(ctx, old.ID, store.ItemAlternative); err != nil {
 		return nil, err
 	}
+	// a swap means the creator declined the old story: it is rejected
+	// feedback for the Rocchio profile (KLOX-112).
+	RecordFeedback(ctx, r.DB, pub.ID, old.ID, store.FeedbackReject)
 	return r.DB.GetIssueItem(ctx, newID)
 }
 
@@ -1247,14 +730,22 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 // mode asks the model; demo mode falls back to a deterministic dossier
 // synthesized from the story's items when no replay fixture exists.
 func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication, cand *store.Story, ref int) *Dossier {
+	interpretation := "Picked by the editor as an alternative to the previous item."
+	if ptLang(pub.Language) {
+		interpretation = "Escolhida pelo editor como alternativa à pauta anterior."
+	}
+	items := capEntrySources(cand.Items)
+	if r.Deterministic {
+		return synthDossier(ref, cand.Title, interpretation, items)
+	}
 	type dSrc struct {
 		Ref  int
 		URL  string
 		Text string
 	}
 	var srcs []dSrc
-	for j, it := range cand.Items {
-		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+	for j, it := range items {
+		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, 1200)})
 	}
 	var dossiers []Dossier
 	resp, err := r.call(ctx, r.DraftModel, "dossier", map[string]any{
@@ -1267,7 +758,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 			if dossiers[i].Ref == ref {
 				d := &dossiers[i]
 				d.Title = cand.Title
-				d.fillSources(cand.Items)
+				d.fillSources(items)
 				return d
 			}
 		}
@@ -1275,49 +766,425 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	_ = resp
 	// Synthetic dossier: every claim comes from a member item, so citations
 	// stay valid without a model call.
-	var facts []DossierFact
-	var summary string
-	for i, it := range cand.Items {
-		sents := SplitSentences(it.ContentText)
-		if len(sents) > 0 {
-			first := strings.TrimRight(strings.TrimSpace(sents[0]), ". ")
-			summary += first + fmt.Sprintf(" [%d]. ", i+1)
+	return synthDossier(ref, cand.Title, interpretation, items)
+}
+
+// ensureManualDossiers creates deterministic dossiers for lineup items
+// that lack one — the compose flow's version of ensureDossiers, except
+// it never calls the model.
+func (r *Runner) ensureManualDossiers(ctx context.Context, issueID int64) error {
+	return EnsureManualDossiers(ctx, r.DB, issueID)
+}
+
+// EnsureManualDossiers is the package-level form of
+// ensureManualDossiers — the block-insert path uses it to give a pauta
+// block dropped into a drafted edition its reference dossier without
+// any model call (KLOX-66).
+func EnsureManualDossiers(ctx context.Context, db *store.DB, issueID int64) error {
+	iis, err := db.IssueItems(ctx, issueID)
+	if err != nil {
+		return err
+	}
+	maxRef := 0
+	var missing []store.IssueItem
+	for _, ii := range iis {
+		if dj, err := db.Dossier(ctx, ii.ID); err == nil {
+			var d Dossier
+			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
+				maxRef = d.Ref
+			}
+			continue
 		}
-		for _, s := range sents[1:] {
-			facts = append(facts, DossierFact{Text: strings.TrimSpace(s), Ref: i + 1})
-			if len(facts) >= 4 {
-				break
+		if ii.Status == store.ItemApproved || ii.Status == store.ItemPending {
+			missing = append(missing, ii)
+		}
+	}
+	for _, ii := range missing {
+		cand, err := db.StoryWithItems(ctx, ii.StoryID)
+		if err != nil {
+			return err
+		}
+		maxRef++
+		// Origin "manual" marks the dossier as editor-facing reference
+		// material: its sentences were never model-written, so edits on
+		// them use the deterministic citation check, not a model call.
+		d := synthDossier(maxRef, cand.Title, "", cand.Items)
+		d.Interpretation = nil
+		d.Origin = "manual"
+		data, _ := json.Marshal(d)
+		if err := db.SaveDossier(ctx, ii.ID, string(data)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureResearch fills the missing dossiers from the shared research
+// cache — generating one Haiku call per new story (a §7.3 paid action)
+// and marking each AI-filled pauta ai_draft. A story the research
+// cannot serve (cap, kill switch, provider failure) gets no research
+// dossier at all — owner D4 hides the unavailable element instead of
+// labeling it: ensureManualDossiers then fills the slot with the same
+// deterministic dossier compose uses with the model off, so the pauta
+// keeps real sourced facts and stays a manual slot — empty body, no
+// ai_draft marker, edits checked by the deterministic rule only.
+// draftByRef receives the item bodies for assembleIssue.
+func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef map[int]draftEntry) {
+	iis, err := r.DB.IssueItems(ctx, issueID)
+	if err != nil {
+		return
+	}
+	maxRef := 0
+	var missing []store.IssueItem
+	for _, ii := range iis {
+		if dj, err := r.DB.Dossier(ctx, ii.ID); err == nil {
+			var d Dossier
+			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
+				maxRef = d.Ref
+			}
+			continue
+		}
+		if ii.Status == store.ItemApproved || ii.Status == store.ItemPending {
+			missing = append(missing, ii)
+		}
+	}
+	for _, ii := range missing {
+		story, err := r.DB.StoryWithItems(ctx, ii.StoryID)
+		if err != nil {
+			return
+		}
+		res, outcome, err := r.Research.ForStory(ctx, r.DB, story)
+		if err != nil {
+			return // store failure — let ensureManualDossiers take over
+		}
+		if outcome == researchDegraded {
+			continue // no research dossier — the deterministic fill owns this slot
+		}
+		maxRef++
+		d := res.ToDossier(maxRef)
+		data, _ := json.Marshal(d)
+		if err := r.DB.SaveDossier(ctx, ii.ID, string(data)); err != nil {
+			return
+		}
+		if strings.TrimSpace(res.DraftBody) != "" {
+			draftByRef[maxRef] = draftEntry{body: res.DraftBody}
+			if err := r.DB.SetIssueItemAIDraft(ctx, ii.ID, true); err != nil {
+				return
 			}
 		}
 	}
-	d := &Dossier{
-		Ref: ref, Title: cand.Title,
-		Summary:        strings.TrimSpace(summary),
-		Facts:          facts,
-		Interpretation: []string{"Picked by the editor as an alternative to the previous item."},
-	}
-	d.fillSources(cand.Items)
-	return d
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+// ComposeSkeleton writes the issue body for the board's lineup. With a
+// Researcher wired (AI on) each pauta arrives prefilled with the cached
+// AI draft — claims carrying [n] citations, marked ai_draft until the
+// author edits — while a story the research could not serve keeps the
+// same deterministic dossier and empty slot it would have with the
+// model off (owner D4: nothing renders an "unavailable" placeholder).
+// With no Researcher the manual skeleton is exactly what it was:
+// headlines + source lists only, no AI text.
+func (r *Runner) ComposeSkeleton(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
+	res := &Result{IssueID: issueID}
+	draftByRef := map[int]draftEntry{}
+	if r.Research != nil {
+		r.ensureResearch(ctx, issueID, draftByRef)
 	}
-	return s[:n] + "…"
+	if err := r.ensureManualDossiers(ctx, issueID); err != nil {
+		return nil, err
+	}
+	entries, dossierByRef, err := r.loadEntries(ctx, issueID, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no approved items — approve at least one story before composing")
+	}
+	res.Selected = len(entries)
+	sort.SliceStable(entries, func(a, b int) bool { return entries[a].position < entries[b].position })
+	number := res.Number
+	if number == 0 {
+		if iss, err := r.DB.GetIssue(ctx, issueID); err == nil {
+			number = iss.Number
+		}
+	}
+	sectionOrder := []string{}
+	for _, s := range pub.Sections {
+		sectionOrder = append(sectionOrder, s.Title)
+	}
+	body := assembleIssue(pub, number, entries, draftByRef, dossierByRef, sectionOrder)
+	if err := r.DB.UpdateIssue(ctx, issueID, store.IssueDrafted, body, "[]"); err != nil {
+		return nil, err
+	}
+	res.Number = number
+	return res, nil
 }
 
 // RunHeadless is the CLI entry: build a runner for the given mode and run it.
-// demo=true makes PhaseB use canonical replay input (see Runner.DemoMode).
-func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int, demo bool) (*Result, error) {
+// demo=true makes PhaseB use canonical replay input (see Runner.DemoMode);
+// det=true runs the deterministic no-model pipeline (KLOXUS_LLM_MODE=off).
+func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int, demo, det bool) (*Result, error) {
 	r := &Runner{
-		DB:           db,
-		LLM:          provider,
-		Fetcher:      fetcher,
-		TriageModel:  triageModel,
-		DraftModel:   draftModel,
-		MaxDeepDives: maxDeep,
-		DemoMode:     demo,
+		DB:            db,
+		LLM:           provider,
+		Fetcher:       fetcher,
+		TriageModel:   triageModel,
+		DraftModel:    draftModel,
+		MaxDeepDives:  maxDeep,
+		DemoMode:      demo,
+		Deterministic: det,
 	}
 	return r.Run(ctx, pub, outDir)
+}
+
+// maxTriageStories bounds the one prompt whose answer size scales with
+// the catalog — everything else is fixed-shape or section-bounded.
+const maxTriageStories = 80
+
+// triageOrder ranks story indexes for the bounded triage prompt:
+// article-bearing clusters first (signal-only groups can't be drafted),
+// then corroborated ones (more member items), then freshest.
+func triageOrder(stories []store.Story) []int {
+	idx := make([]int, len(stories))
+	for i := range idx {
+		idx[i] = i
+	}
+	newest := make([]string, len(stories))
+	hasArticle := make([]bool, len(stories))
+	for i, s := range stories {
+		for _, it := range s.Items {
+			if !it.Signal() {
+				hasArticle[i] = true
+			}
+			if it.PublishedAt > newest[i] {
+				newest[i] = it.PublishedAt
+			}
+		}
+	}
+	sort.Slice(idx, func(a, b int) bool {
+		i, j := idx[a], idx[b]
+		if hasArticle[i] != hasArticle[j] {
+			return hasArticle[i]
+		}
+		if len(stories[i].Items) != len(stories[j].Items) {
+			return len(stories[i].Items) > len(stories[j].Items)
+		}
+		if newest[i] != newest[j] {
+			return newest[i] > newest[j]
+		}
+		return stories[i].ID < stories[j].ID
+	})
+	return idx
+}
+
+// evidenceItems drops signal rows (links-only HN entries) from a
+// story's member list for LLM and citation use: signals rank and
+// attribute but are never evidence (D30). Story membership in the DB
+// still includes them so the UI can show "via <source>".
+func evidenceItems(items []store.Item) []store.Item {
+	out := items[:0:0]
+	for _, it := range items {
+		if !it.Signal() {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// maxEntrySources bounds the evidence items one issue entry may cite —
+// at 3 sources × 1,200 chars each, a giant cluster can no longer turn
+// one dossier/deepdive call into an oversized prompt (KLOX-44).
+const maxEntrySources = 3
+
+// capEntrySources picks up to maxEntrySources evidence items: the
+// newest item of each unseen outlet first, then the remaining slots by
+// recency. The picks keep their original member order so entries with
+// few sources see no change at all.
+func capEntrySources(items []store.Item) []store.Item {
+	if len(items) <= maxEntrySources {
+		return items
+	}
+	idx := make([]int, len(items))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		ta, oka := parsePublished(items[idx[a]].PublishedAt)
+		tb, okb := parsePublished(items[idx[b]].PublishedAt)
+		if oka != okb {
+			return oka // dated items rank above undated ones
+		}
+		if oka && !ta.Equal(tb) {
+			return ta.After(tb) // newest first
+		}
+		return items[idx[a]].ID < items[idx[b]].ID
+	})
+	outlet := func(i int) string {
+		if items[i].SourceName != "" {
+			return items[i].SourceName
+		}
+		return outletLabel(items[i].URL)
+	}
+	seen := map[string]bool{}
+	picked := map[int]bool{}
+	var pick []int
+	for _, i := range idx {
+		if seen[outlet(i)] {
+			continue
+		}
+		seen[outlet(i)] = true
+		picked[i] = true
+		pick = append(pick, i)
+		if len(pick) == maxEntrySources {
+			break
+		}
+	}
+	for _, i := range idx { // fill leftover slots by recency
+		if len(pick) == maxEntrySources {
+			break
+		}
+		if !picked[i] {
+			pick = append(pick, i)
+		}
+	}
+	sort.Ints(pick)
+	out := make([]store.Item, len(pick))
+	for j, i := range pick {
+		out[j] = items[i]
+	}
+	return out
+}
+
+// mergeCitedGroups folds a signal's cluster into the cluster holding an
+// article the signal cites — a signal item's cited links point at the
+// same reporting our launch feeds carried, so the signal attaches to
+// that story instead of clustering alone. Merges respect the same
+// MaxClusterSize cap as SimHash clusters: a merge that would overflow
+// the cap is skipped and the signal keeps its own story. Cluster ids
+// are processed in sorted order so cap decisions are deterministic.
+func mergeCitedGroups(groups map[int][]store.Item) map[int][]store.Item {
+	ids := make([]int, 0, len(groups))
+	for id := range groups {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	owner := map[string]int{}
+	for _, id := range ids {
+		for _, it := range groups[id] {
+			if !it.Signal() && it.CanonicalURL != "" {
+				if _, ok := owner[it.CanonicalURL]; !ok {
+					owner[it.CanonicalURL] = id
+				}
+			}
+		}
+	}
+	// union-find over cluster ids, with a per-root member count so a
+	// merge that would push a story past MaxClusterSize never happens.
+	parent := map[int]int{}
+	size := map[int]int{}
+	for _, id := range ids {
+		size[id] = len(groups[id])
+	}
+	var find func(int) int
+	find = func(x int) int {
+		p, ok := parent[x]
+		if !ok || p == x {
+			return x
+		}
+		parent[x] = find(p)
+		return parent[x]
+	}
+	union := func(a, b int) {
+		ra, rb := find(a), find(b)
+		if ra != rb && size[ra]+size[rb] <= dedupe.MaxClusterSize {
+			parent[rb] = ra
+			size[ra] += size[rb]
+		}
+	}
+	for _, id := range ids {
+		for _, it := range groups[id] {
+			if !it.Signal() {
+				continue
+			}
+			for _, u := range it.Meta.CitedURLs {
+				if tgt, ok := owner[u]; ok {
+					union(id, tgt)
+				}
+			}
+		}
+	}
+	if len(parent) == 0 {
+		return groups
+	}
+	merged := map[int][]store.Item{}
+	for id, g := range groups {
+		merged[find(id)] = append(merged[find(id)], g...)
+	}
+	return merged
+}
+
+// mergeEventGroups folds clusters whose headlines cover the same event
+// from different outlets (KLOX-121) — SimHash only catches republished
+// bodies, not five outlets reporting one launch. Merges are bounded by
+// the 72 h window and MaxClusterSize, and never chain past the cap.
+func mergeEventGroups(groups map[int][]store.Item) map[int][]store.Item {
+	ids := make([]int, 0, len(groups))
+	for id := range groups {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	when := func(it store.Item) time.Time {
+		if t, ok := parsePublished(it.PublishedAt); ok {
+			return t
+		}
+		t, _ := parsePublished(it.FetchedAt)
+		return t
+	}
+	parent := map[int]int{}
+	size := map[int]int{}
+	for _, id := range ids {
+		size[id] = len(groups[id])
+	}
+	find := func(x int) int {
+		for {
+			p, ok := parent[x]
+			if !ok || p == x {
+				return x
+			}
+			x = p
+		}
+	}
+	same := func(a, b []store.Item) bool {
+		for _, x := range a {
+			for _, y := range b {
+				tx, ty := when(x), when(y)
+				if tx.IsZero() || ty.IsZero() || tx.Sub(ty) > dedupe.MaxMergeAge || ty.Sub(tx) > dedupe.MaxMergeAge {
+					continue
+				}
+				if dedupe.TitleSameEvent(x.Title, y.Title) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for i, a := range ids {
+		for _, b := range ids[i+1:] {
+			ra, rb := find(a), find(b)
+			if ra == rb || size[ra]+size[rb] > dedupe.MaxClusterSize {
+				continue
+			}
+			if same(groups[a], groups[b]) {
+				parent[rb] = ra
+				size[ra] += size[rb]
+			}
+		}
+	}
+	if len(parent) == 0 {
+		return groups
+	}
+	merged := map[int][]store.Item{}
+	for _, id := range ids {
+		merged[find(id)] = append(merged[find(id)], groups[id]...)
+	}
+	return merged
 }
