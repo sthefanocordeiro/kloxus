@@ -9,12 +9,13 @@ test.skip(
   "needs the publishing flag off (E2E_PUBLISHING=off)",
 );
 
-test("publishing off: Hoje · Pautas · Radar · Configurações, no send/readers copy, /p 404", async ({ page }) => {
+test("publishing off: Hoje · Pautas · Radar, no send/readers copy, /p 404", async ({ page }) => {
   await onboard(page);
 
-  // sidebar is exactly the four entries
+  // sidebar is exactly the three entries (Configurações merged into
+  // Radar — KLOX-207)
   const side = page.getByRole("navigation", { name: "Radar" }).first();
-  await expect(side.getByRole("link")).toHaveText(["Today", "Briefs", "Radar", "Settings"]);
+  await expect(side.getByRole("link")).toHaveText(["Today", "Briefs", "Radar"]);
 
   // reader-facing routes are gone from the server
   for (const path of ["/p/radar", "/p/radar/1", "/unsub", "/confirm-sub"]) {
@@ -24,7 +25,7 @@ test("publishing off: Hoje · Pautas · Radar · Configurações, no send/reader
 
   // no screen the creator can reach mentions readers, sending or price
   const banned = /\b(readers?|subscribers?|paywall|outbox|send test|schedule send|price)\b/i;
-  for (const name of ["Briefs", "Radar", "Settings"]) {
+  for (const name of ["Briefs", "Radar"]) {
     await side.getByRole("link", { name, exact: true }).click();
     await expect(page.locator("main")).not.toContainText(banned);
     await expect(page.locator("aside")).not.toContainText(banned);

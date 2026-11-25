@@ -1,7 +1,7 @@
-// KLOX-123 slice 2: Hoje lists the day's pauta with Sim/Não and
-// Escrever, and the pieces in progress with their status.
+// KLOX-123 slice 2: Hoje lists the day's pauta — clicking a card ticks
+// it (KLOX-200), thumbs train the radar — and the pieces in progress.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { api, ApiRequestError, type PautaCard, type TodayData } from "../api";
@@ -56,16 +56,20 @@ describe("Hoje (KLOX-123)", () => {
     vi.mocked(api.calibrationAnswer).mockResolvedValue({ ok: true });
   });
 
-  it("ranks cards, trains on Não (card leaves) and Sim (card stays marked)", async () => {
+  it("ranks cards, trains on 👎 (card leaves) and 👍 (card stays marked)", async () => {
     renderToday();
     expect(await screen.findByText("Story 1")).toBeVisible();
     const first = screen.getAllByTestId("today-card")[0];
-    fireEvent.click(first.querySelectorAll("button")[1]); // Não
+    fireEvent.click(within(first).getByRole("button", { name: /Less of this/ }));
     await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith("7", 1, "no"));
     await waitFor(() => expect(screen.queryByText("Story 1")).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+    // a thumb only trains the radar — it must not tick the card
+    fireEvent.click(screen.getByRole("button", { name: /More of this: Story 2/ }));
     await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith("7", 2, "yes"));
-    expect(await screen.findByRole("button", { name: /✓ Yes/ })).toBeDisabled();
+    expect(screen.queryByText(/selected/)).toBeNull();
+    const liked = screen.getByRole("button", { name: /More of this: Story 2/ });
+    expect(liked).toBeDisabled();
+    expect(liked).toHaveAttribute("aria-pressed", "true");
   });
 
   it("ticks stories in order, shows the numbering and builds the pauta", async () => {
@@ -82,14 +86,22 @@ describe("Hoje (KLOX-123)", () => {
     expect(api.pautaCreate).toHaveBeenCalledWith("7", [2, 1]);
   });
 
-  // KLOX-162: "Write" on a card marks it in this choose step
-  it("marks the card from its Write button and builds the pauta", async () => {
+  // KLOX-200: clicking anywhere on the card ticks/unticks it
+  it("ticks and unticks a card by clicking it, then builds the pauta", async () => {
     vi.mocked(api.pautaCreate).mockResolvedValue({ issue_id: 55 });
     renderToday();
     await screen.findByText("Story 1");
-    fireEvent.click(screen.getByRole("button", { name: "Write: Story 1" }));
+    const first = screen.getAllByTestId("today-card")[0];
+    fireEvent.click(first);
     expect(screen.getByText("1 story selected")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Write: Story 1" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Story 1/ })).toBeChecked();
+    // clicking again unticks and hides the action bar
+    fireEvent.click(first);
+    expect(screen.queryByRole("region", { name: "Build brief →" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /Story 1/ })).not.toBeChecked();
+    // its own checkbox still works without double-toggling
+    fireEvent.click(screen.getByRole("checkbox", { name: /Story 1/ }));
+    expect(screen.getByText("1 story selected")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Build brief →" }));
     expect(await screen.findByText("pauta screen")).toBeVisible();
     expect(api.pautaCreate).toHaveBeenCalledWith("7", [1]);

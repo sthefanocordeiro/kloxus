@@ -7,6 +7,7 @@ package web
 // operator's fetch-log surface — gated by KLOXUS_MASTER_KEY.
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/store"
@@ -22,9 +23,10 @@ func (s *Server) apiRealCatalog(w http.ResponseWriter, r *http.Request, pub *sto
 	for _, src := range mustSources(r, pub.ID) {
 		existing[src.URL] = true
 	}
+	ordered := offeredOrder(cat, existing)
 	offered := []map[string]any{}
-	for i := range cat {
-		cs := &cat[i]
+	for i := range ordered {
+		cs := &ordered[i]
 		if !pickable(cs) {
 			// hold/blocked are never fetched — and never listed as
 			// user-facing source options (KLOX-45).
@@ -47,6 +49,41 @@ func (s *Server) apiRealCatalog(w http.ResponseWriter, r *http.Request, pub *sto
 		offered = append(offered, row)
 	}
 	apiJSON(w, 200, map[string]any{"offered": offered})
+}
+
+// offeredOrder ranks the catalog for the suggested-sources list by
+// adherence to what the radar already reads: a source scores the sum,
+// over each onboarding desk it belongs to, of that desk's already-added
+// sources — a fintech radar sees finance feeds before tech ones
+// (KLOX-207, teste-final §5.13). Ties keep the catalog's order.
+func offeredOrder(cat []store.CatalogSource, added map[string]bool) []store.CatalogSource {
+	byURL := map[string]string{}
+	for i := range cat {
+		byURL[cat[i].URL] = cat[i].Slug
+	}
+	addedSlugs := map[string]bool{}
+	for u := range added {
+		if slug, ok := byURL[u]; ok {
+			addedSlugs[slug] = true
+		}
+	}
+	score := map[string]int{}
+	for _, desk := range nicheSources {
+		n := 0
+		for _, slug := range desk {
+			if addedSlugs[slug] {
+				n++
+			}
+		}
+		for _, slug := range desk {
+			score[slug] += n
+		}
+	}
+	out := append([]store.CatalogSource(nil), cat...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return score[out[i].Slug] > score[out[j].Slug]
+	})
+	return out
 }
 
 // realCatalogPreview serves stored items for a catalog source's site URL.
