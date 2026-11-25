@@ -42,6 +42,7 @@ const en = {
   saveError: "Couldn't save — retrying",
   copy: "Copy",
   copied: "Copied",
+  copyFailed: "Couldn't copy — the text is selected; press Ctrl+C",
   copyRich: "Copy to paste",
   copyHtml: "Copy HTML",
   downloadHtml: "Download .html",
@@ -85,6 +86,7 @@ const pt: Strings = {
   saveError: "Não salvou — tentando de novo",
   copy: "Copiar",
   copied: "Copiado",
+  copyFailed: "Não deu para copiar — selecione o texto e use Ctrl+C",
   copyRich: "Copiar p/ colar",
   copyHtml: "Copiar HTML",
   downloadHtml: "Baixar .html",
@@ -138,6 +140,23 @@ async function copyRich(html: string) {
   await navigator.clipboard.writeText(abs);
 }
 
+// KLOX-202: when the browser refuses the clipboard write (e.g. tab
+// without focus), the fallback message says Ctrl+C — this leaves the
+// text already selected so the shortcut just works.
+function selectEl(el: HTMLElement | null) {
+  if (!el) return;
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+    el.focus();
+    el.select();
+    return;
+  }
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(r);
+}
+
 // KLOX-184: copying or downloading a rendition marks the piece
 // "Exportada" — fire-and-forget so a failed mark never breaks the copy.
 function useExportMark(issueID: number, format: RenditionFormat) {
@@ -153,20 +172,28 @@ function useExportMark(issueID: number, format: RenditionFormat) {
   };
 }
 
+// useCopied returns [copiedKey, failed, run]. A refused clipboard
+// write must not stay silent (KLOX-202): run takes an optional
+// select() that leaves the text selected for a manual Ctrl+C.
 function useCopied() {
   const [done, setDone] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const timer = useRef<number>(0);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   return [
     done,
-    async (key: string, fn: () => Promise<void>) => {
+    failed,
+    async (key: string, fn: () => Promise<void>, select?: () => void) => {
       try {
         await fn();
         setDone(key);
+        setFailed(false);
         window.clearTimeout(timer.current);
         timer.current = window.setTimeout(() => setDone(null), 1800);
       } catch {
         setDone(null);
+        setFailed(true);
+        select?.();
       }
     },
   ] as const;
@@ -278,8 +305,10 @@ function PlainEditor({
   const [text, setText] = useState(() =>
     r.format === "x" ? dropLegacySeparators(r.body_text) : r.body_text);
   const save = useAutosave(issueID, r.id, onSaved);
-  const [copied, copy] = useCopied();
+  const [copied, copyFailed, copy] = useCopied();
   const markExported = useExportMark(issueID, r.format);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const postRefs = useRef<(HTMLElement | null)[]>([]);
   const linkedin = r.format === "linkedin";
   const fold = linkedin ? foldIndex(text) : -1;
   const posts = useMemo(() => (linkedin ? [] : splitForX(text)), [linkedin, text]);
@@ -289,11 +318,13 @@ function PlainEditor({
       <div className="flex flex-wrap items-center gap-3">
         <Counter n={count} max={linkedin ? LINKEDIN_LIMIT : X_LIMIT} s={s} />
         <SaveBadge state={save.state} s={s} />
-        <Button size="sm" className="ml-auto" onClick={() => copy("text", async () => { await copyText(text); markExported(); })}>
+        <Button size="sm" className="ml-auto" onClick={() => copy("text", async () => { await copyText(text); markExported(); }, () => selectEl(textRef.current))}>
           {copied === "text" ? s.copied : s.copy}
         </Button>
       </div>
+      {copyFailed && <p role="alert" className="text-sm text-danger">{s.copyFailed}</p>}
       <textarea
+        ref={textRef}
         aria-label={s.formats[r.format].name}
         value={text}
         onChange={(e) => { setText(e.target.value); save.push(e.target.value); }}
@@ -315,10 +346,10 @@ function PlainEditor({
           <p className="text-xs text-muted">{s.splitTitle} — {s.splitNote(posts.length)}</p>
           {posts.map((p, i) => (
             <div key={i} className="rounded-[var(--radius-card)] border border-line bg-paper-raised p-3">
-              <p className="whitespace-pre-wrap text-sm">{p}</p>
+              <p ref={(el) => { postRefs.current[i] = el; }} className="whitespace-pre-wrap text-sm">{p}</p>
               <div className="mt-2 flex items-center gap-3">
                 <span className="text-xs tabular-nums text-muted">{s.chars(xCount(p), X_LIMIT)}</span>
-                <Button size="sm" variant="outline" className="ml-auto" onClick={() => copy(`p${i}`, async () => { await copyText(p); markExported(); })}>
+                <Button size="sm" variant="outline" className="ml-auto" onClick={() => copy(`p${i}`, async () => { await copyText(p); markExported(); }, () => selectEl(postRefs.current[i]))}>
                   {copied === `p${i}` ? s.copied : s.copy}
                 </Button>
               </div>
@@ -337,14 +368,15 @@ function MarkdownEditor({
 }: { r: Rendition; issueID: number; s: Strings; onSaved: (r: Rendition) => void }) {
   const [md, setMd] = useState(r.body_md);
   const save = useAutosave(issueID, r.id, onSaved);
-  const [copied, copy] = useCopied();
+  const [copied, copyFailed, copy] = useCopied();
   const markExported = useExportMark(issueID, r.format);
+  const mdRef = useRef<HTMLTextAreaElement>(null);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <SaveBadge state={save.state} s={s} />
         <div className="ml-auto flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => copy("md", async () => { await copyText(md); markExported(); })}>
+          <Button size="sm" onClick={() => copy("md", async () => { await copyText(md); markExported(); }, () => selectEl(mdRef.current))}>
             {copied === "md" ? s.copied : s.copy}
           </Button>
           <Button size="sm" variant="outline" onClick={() => { download("peca.md", "text/markdown", md); markExported(); }}>
@@ -352,8 +384,10 @@ function MarkdownEditor({
           </Button>
         </div>
       </div>
+      {copyFailed && <p role="alert" className="text-sm text-danger">{s.copyFailed}</p>}
       <div className="grid gap-3 md:grid-cols-2">
         <textarea
+          ref={mdRef}
           aria-label="Markdown"
           value={md}
           onChange={(e) => { setMd(e.target.value); save.push(e.target.value); }}
@@ -387,7 +421,7 @@ function HtmlEditor({
   r, issueID, s, onSaved,
 }: { r: Rendition; issueID: number; s: Strings; onSaved: (r: Rendition) => void }) {
   const save = useAutosave(issueID, r.id, onSaved);
-  const [copied, copy] = useCopied();
+  const [copied, copyFailed, copy] = useCopied();
   const markExported = useExportMark(issueID, r.format);
   const [err, setErr] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -471,10 +505,10 @@ function HtmlEditor({
       <div className="flex flex-wrap items-center gap-2">
         <SaveBadge state={save.state} s={s} />
         <div className="ml-auto flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => copy("rich", async () => { await copyRich(html()); markExported(); })}>
+          <Button size="sm" onClick={() => copy("rich", async () => { await copyRich(html()); markExported(); }, () => editor.chain().focus().selectAll().run())}>
             {copied === "rich" ? s.copied : s.copyRich}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => copy("html", async () => { await copyText(absolutizeHtml(html(), window.location.origin)); markExported(); })}>
+          <Button size="sm" variant="outline" onClick={() => copy("html", async () => { await copyText(absolutizeHtml(html(), window.location.origin)); markExported(); }, () => editor.chain().focus().selectAll().run())}>
             {copied === "html" ? s.copied : s.copyHtml}
           </Button>
           <Button
@@ -513,6 +547,7 @@ function HtmlEditor({
         </div>
         <EditorContent editor={editor} className="rendition-html" />
       </div>
+      {copyFailed && <p role="alert" className="text-sm text-danger">{s.copyFailed}</p>}
       {err && <p role="alert" className="text-xs text-danger">{err}</p>}
     </div>
   );

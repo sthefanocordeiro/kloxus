@@ -121,4 +121,21 @@ describe("DestinationStep", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
     await waitFor(() => expect(mark).toHaveBeenCalledWith(1, "linkedin"));
   });
+
+  // KLOX-202: a refused clipboard write must not fail silently — warn
+  // and leave the text selected so Ctrl+C works.
+  it("warns and pre-selects the text when copy is refused", async () => {
+    const mark = vi.spyOn(api, "markExported").mockResolvedValue({ exported: true, formats: [] });
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    setup([mk(1, "linkedin", { body_text: "oi" })]);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Couldn't copy/);
+    const ta = screen.getByRole("textbox", { name: /LinkedIn/ }) as HTMLTextAreaElement;
+    expect(ta.selectionStart).toBe(0);
+    expect(ta.selectionEnd).toBe(2);
+    expect(mark).not.toHaveBeenCalled();
+  });
 });
