@@ -248,3 +248,13 @@ nightly dump if an old build cannot read the migrated schema).
   cookies — visitors get fresh workspaces.
 - Free allowances: two small `shared-cpu-1x` 256 MB machines and two 1 GB
   volumes across both apps stay inside Fly's free usage for a personal org.
+
+## Troubleshooting
+
+- **The demo URL bounces or shows a blank page after an earlier visit:**
+  the app moved from `/app/` to the site root during development, and
+  browsers cache the old permanent redirects (`/` → `/app/` and back),
+  which can loop forever. Nothing the server sends can clear a cached
+  301 — **clear site data** for `kloxus-demo.fly.dev` (or open a private
+  window) and reload once. Current builds never issue a 301 on app
+  paths, so a fresh visit cannot get stuck again.
