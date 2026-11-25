@@ -110,6 +110,49 @@ describe("DestinationStep", () => {
     expect(await screen.findByRole("button", { name: "Update this version?" })).toBeTruthy();
   });
 
+  // KLOX-213: the dialog closed the instant Remover was clicked — a
+  // failed delete vanished with no error anywhere. It closes only on
+  // success now, and the error renders inside the dialog.
+  it("keeps the remove dialog open with the error when deletion fails", async () => {
+    const del = vi.spyOn(api, "renditionDelete")
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValue(undefined);
+    setup([mk(1, "markdown", { body_md: "# md" })]);
+    const box = await screen.findByRole("checkbox", { name: /Markdown/ });
+    await waitFor(() => expect(box).toBeEnabled());
+
+    fireEvent.click(box);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Something went wrong");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    // the same button retries — only a success closes the dialog
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(del).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the refresh error inside its dialog when updating fails", async () => {
+    const refresh = vi.spyOn(api, "renditionRefresh").mockRejectedValue(new Error("boom"));
+    setup([mk(1, "markdown", { body_md: "# md", stale: true })]);
+    fireEvent.click(await screen.findByRole("button", { name: "Update this version?" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Something went wrong");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the create error under the destinations when forking fails", async () => {
+    const { create } = setup([]);
+    create.mockRejectedValueOnce(new Error("boom"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Markdown/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  });
+
   // KLOX-184: copying or downloading marks the piece "Exportada".
   it("marks the piece exported when the author copies", async () => {
     const mark = vi.spyOn(api, "markExported").mockResolvedValue({ exported: true, formats: ["linkedin"] });

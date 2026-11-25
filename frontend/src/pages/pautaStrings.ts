@@ -29,6 +29,7 @@ const pt = {
   exportTitle: "Exportar",
   missing1: "1 notícia está sem texto. Você pode exportar assim mesmo.",
   missingN: "{n} notícias estão sem texto. Você pode exportar assim mesmo.",
+  retry: "Tentar de novo",
 };
 
 const en: typeof pt = {
@@ -59,6 +60,7 @@ const en: typeof pt = {
   exportTitle: "Export",
   missing1: "1 story has no text. You can export anyway.",
   missingN: "{n} stories have no text. You can export anyway.",
+  retry: "Try again",
 };
 
 export function usePautaStrings() {

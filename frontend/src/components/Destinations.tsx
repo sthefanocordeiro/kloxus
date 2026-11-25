@@ -5,6 +5,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { api, type Rendition, type RenditionFormat } from "../api";
 import { useT } from "../i18n";
+import { errText } from "../lib/errors";
 import { Button } from "../ui";
 import { KDialog } from "../ui-overlays";
 import { Markdown } from "../markdown";
@@ -558,7 +559,7 @@ function HtmlEditor({
 export function DestinationStep({
   issueID, stories,
 }: { issueID: number; stories: { headline: string }[] }) {
-  const { lang } = useT();
+  const { t, lang } = useT();
   const s = lang === "pt" ? pt : en;
   const qc = useQueryClient();
   const key = ["renditions", issueID];
@@ -580,11 +581,13 @@ export function DestinationStep({
   });
   const del = useMutation({
     mutationFn: (r: Rendition) => api.renditionDelete(issueID, r.id),
-    onSuccess: () => { setActive(null); qc.invalidateQueries({ queryKey: key }); },
+    // the confirm dialog closes only here — closing on click hid a
+    // failed delete behind nothing (no onError, no rendered error)
+    onSuccess: () => { setActive(null); setConfirmRemove(null); qc.invalidateQueries({ queryKey: key }); },
   });
   const refresh = useMutation({
     mutationFn: (r: Rendition) => api.renditionRefresh(issueID, r.id),
-    onSuccess: (r) => { put(r); setRefreshing((n) => n + 1); },
+    onSuccess: (r) => { put(r); setRefreshing((n) => n + 1); setConfirmRefresh(false); },
   });
 
   const toggle = (f: RenditionFormat) => {
@@ -631,6 +634,9 @@ export function DestinationStep({
               );
             })}
           </div>
+          {create.isError && (
+            <p className="mt-3 text-sm text-danger" role="alert">{errText(t, create.error)}</p>
+          )}
           {social && (
             <p role="note" className="mt-3 rounded-[var(--radius-btn)] bg-warn-soft/60 px-3 py-2 text-xs text-warn">
               {s.manyStories(stories.length, stories[0]?.headline ?? "")}
@@ -694,19 +700,22 @@ export function DestinationStep({
 
       <KDialog
         open={removing !== undefined}
-        onOpenChange={(o) => { if (!o) setConfirmRemove(null); }}
+        onOpenChange={(o) => { if (!o) { setConfirmRemove(null); del.reset(); } }}
         title={s.removeTitle}
       >
         <p className="text-sm text-muted">{s.removeConfirm}</p>
+        {del.isError && (
+          <p className="mt-3 text-sm text-danger" role="alert">{errText(t, del.error)}</p>
+        )}
         <div className="mt-5 flex gap-3">
           <Button
             variant="danger"
             disabled={del.isPending}
-            onClick={() => { if (removing) del.mutate(removing); setConfirmRemove(null); }}
+            onClick={() => { if (removing) del.mutate(removing); }}
           >
             {s.remove}
           </Button>
-          <Button variant="outline" onClick={() => setConfirmRemove(null)}>
+          <Button variant="outline" onClick={() => { setConfirmRemove(null); del.reset(); }}>
             {s.cancel}
           </Button>
         </div>
@@ -714,18 +723,21 @@ export function DestinationStep({
 
       <KDialog
         open={confirmRefresh}
-        onOpenChange={setConfirmRefresh}
+        onOpenChange={(o) => { setConfirmRefresh(o); if (!o) refresh.reset(); }}
         title={s.refresh}
       >
         <p className="text-sm text-muted">{s.refreshConfirm}</p>
+        {refresh.isError && (
+          <p className="mt-3 text-sm text-danger" role="alert">{errText(t, refresh.error)}</p>
+        )}
         <div className="mt-5 flex gap-3">
           <Button
             disabled={refresh.isPending}
-            onClick={() => { if (current) refresh.mutate(current); setConfirmRefresh(false); }}
+            onClick={() => { if (current) refresh.mutate(current); }}
           >
             {s.update}
           </Button>
-          <Button variant="outline" onClick={() => setConfirmRefresh(false)}>
+          <Button variant="outline" onClick={() => { setConfirmRefresh(false); refresh.reset(); }}>
             {s.cancel}
           </Button>
         </div>

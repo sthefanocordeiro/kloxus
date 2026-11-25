@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type PautaState } from "../api";
 import { LangProvider } from "../i18n";
-import { PautaPage } from "../pages/PautaPage";
+import { PautaPage, PautaExport } from "../pages/PautaPage";
 
 vi.mock("../api", async (orig) => {
   const real = await orig<typeof import("../api")>();
@@ -17,6 +17,7 @@ vi.mock("../api", async (orig) => {
       pautaFinish: vi.fn(),
       issue: vi.fn(),
       today: vi.fn(),
+      renditions: vi.fn(),
     },
   };
 });
@@ -143,5 +144,51 @@ describe("Escrever (KLOX-168)", () => {
     fireEvent.change(screen.getByLabelText(/Opening/), { target: { value: "oi" } });
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
     expect(vi.mocked(api.pautaSave).mock.calls.at(-1)![1].title).toBeUndefined();
+  });
+});
+
+// KLOX-213: pautaFinish is a POST — as a queryFn StrictMode fired it
+// twice and a failure left the step silently empty. It is a mutation
+// fired once on mount now, with an error branch and a retry.
+describe("Exportar finish mutation (KLOX-213)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.setItem("kloxus.lang", "en");
+    vi.mocked(api.pauta).mockResolvedValue(state());
+    vi.mocked(api.pautaFinish).mockResolvedValue({ ready: true, missing_text: 0 });
+    vi.mocked(api.renditions).mockResolvedValue({ renditions: [], stories: 2 });
+  });
+
+  function renderExport() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <LangProvider>
+          <MemoryRouter initialEntries={["/pauta/5/export"]}>
+            <Routes>
+              <Route path="/pauta/:id/export" element={<PautaExport />} />
+            </Routes>
+          </MemoryRouter>
+        </LangProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("fires finish once and opens the destinations", async () => {
+    renderExport();
+    await waitFor(() => expect(api.pautaFinish).toHaveBeenCalledTimes(1));
+    expect(api.pautaFinish).toHaveBeenCalledWith(5);
+    expect(await screen.findByText("Where is it going?")).toBeTruthy();
+  });
+
+  it("shows the finish error with a retry instead of a silent empty step", async () => {
+    vi.mocked(api.pautaFinish).mockRejectedValueOnce(new Error("boom"));
+    renderExport();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+    expect(screen.queryByText("Where is it going?")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(api.pautaFinish).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Where is it going?")).toBeTruthy();
   });
 });

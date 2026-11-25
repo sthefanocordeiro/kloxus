@@ -320,6 +320,10 @@ function Drop({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // a menu link navigates without an outside click — close on the new
+  // pathname or the open menu stayed floating over the next screen
+  const { pathname } = useLocation();
+  useEffect(() => { setOpen(false); }, [pathname]);
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {

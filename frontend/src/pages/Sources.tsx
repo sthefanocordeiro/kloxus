@@ -326,7 +326,6 @@ export function SourcesPage() {
         <Card className="mt-8 border-danger/40 p-4">
           <h2 className="font-display text-base font-bold text-danger">{t.sourcesPage.dangerTitle}</h2>
           <p className="mt-1 text-sm text-muted">{t.sourcesPage.dangerBody}</p>
-          {del.error && <p className="mt-2 text-xs text-danger">{errText(t, del.error)}</p>}
           <div className="mt-4">
             <Button variant="dangerGhost" onClick={() => setConfirmingDelete(true)}>
               {t.sourcesPage.deleteAction}
@@ -337,10 +336,13 @@ export function SourcesPage() {
 
       <KDialog
         open={confirmingDelete}
-        onOpenChange={setConfirmingDelete}
+        onOpenChange={(o) => { setConfirmingDelete(o); if (!o) del.reset(); }}
         title={t.sourcesPage.deleteConfirmTitle}
       >
         <p className="text-sm text-muted">{p && t.sourcesPage.deleteConfirmBody(p.name)}</p>
+        {/* the error lived on the card behind the open dialog — a failed
+            Apagar looked like a dead button. It renders here now */}
+        {del.isError && <p className="mt-3 text-sm text-danger" role="alert">{errText(t, del.error)}</p>}
         <div className="mt-5 flex gap-3">
           <Button
             variant="danger"
@@ -349,7 +351,7 @@ export function SourcesPage() {
           >
             {del.isPending ? t.sourcesPage.deleting : t.sourcesPage.deleteConfirmAction}
           </Button>
-          <Button variant="outline" onClick={() => setConfirmingDelete(false)}>
+          <Button variant="outline" onClick={() => { setConfirmingDelete(false); del.reset(); }}>
             {t.sourcesPage.cancel}
           </Button>
         </div>

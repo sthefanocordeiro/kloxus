@@ -343,15 +343,21 @@ export function PautaPage() {
 export function PautaExport() {
   const { id } = useParams();
   const issueID = Number(id);
+  const { t } = useT();
   const s = usePautaStrings();
   const [params] = useSearchParams();
   const missing = Number(params.get("sem_texto") ?? 0);
   const q = useQuery({ queryKey: ["pauta", issueID, "export"], queryFn: () => api.pauta(issueID) });
-  const ready = useQuery({
-    queryKey: ["pauta-finish", issueID],
-    queryFn: () => api.pautaFinish(issueID),
-    staleTime: Infinity,
-  });
+  // finish is a POST (marks the pauta ready) — a mutation fired once on
+  // mount, never a queryFn: as a query StrictMode fired it twice and a
+  // failure left the step silently empty, with no error and no retry
+  const finish = useMutation({ mutationFn: () => api.pautaFinish(issueID) });
+  const fired = useRef(false);
+  useEffect(() => {
+    if (fired.current) return;
+    fired.current = true;
+    finish.mutate();
+  }, [finish]);
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-6">
       {/* the shell topbar already renders this page's h1 ("Export") —
@@ -362,7 +368,15 @@ export function PautaExport() {
           {(missing === 1 ? s.missing1 : s.missingN).replace("{n}", String(missing))}
         </p>
       )}
-      {q.data && ready.isSuccess && (
+      {finish.isError && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded border border-danger/40 bg-danger-soft p-3 text-sm text-danger" role="alert">
+          <span>{errText(t, finish.error)}</span>
+          <Button size="sm" variant="outline" disabled={finish.isPending} onClick={() => finish.mutate()}>
+            {s.retry}
+          </Button>
+        </div>
+      )}
+      {q.data && finish.isSuccess && (
         <DestinationStep issueID={issueID} stories={q.data.entries.map((e) => ({ headline: e.title }))} />
       )}
     </div>
