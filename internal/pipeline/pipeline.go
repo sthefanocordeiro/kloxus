@@ -253,60 +253,14 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	issueID := st.issueID
 
-	// --- triage ---
-	r.stepStart("triage")
-	start := time.Now()
-	type triStory struct {
-		Ref     int
-		Title   string
-		Outlets string
-		Snippet string
+	if err := r.stageTriage(ctx, pub, st); err != nil {
+		return nil, err
 	}
-	ts := make([]triStory, len(stories))
-	for i, s := range stories {
-		snip := ""
-		if len(s.Items) > 0 {
-			snip = truncate(s.Items[0].ContentText, 400)
-		}
-		ts[i] = triStory{Ref: i + 1, Title: s.Title, Outlets: strings.Join(s.Outlets(), ", "), Snippet: snip}
-	}
-	var triage []struct {
-		Ref    int     `json:"ref"`
-		Score  float64 `json:"score"`
-		Reason string  `json:"reason"`
-	}
-	resp, err := r.call(ctx, r.TriageModel, "triage", map[string]any{
-		"Publication":   pub.Name,
-		"Audience":      pub.Audience,
-		"Language":      pub.Language,
-		"EditorialLine": pub.EditorialLine,
-		"Guide":         r.guide(ctx, pub.ID),
-		"Stories":       ts,
-	}, &triage)
-	if err != nil {
-		return nil, fmt.Errorf("triage: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.TriageModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("triage", map[string]int{"ranked": len(triage)})
-	r.record(ctx, pub.ID, issueID, "triage", r.TriageModel, start, resp)
-	scoreByRef := map[int]struct {
-		score  float64
-		reason string
-	}{}
-	for i, t := range triage {
-		scoreByRef[t.Ref] = struct {
-			score  float64
-			reason string
-		}{t.Score, t.Reason}
-		if t.Ref-1 >= 0 && t.Ref-1 < len(stories) {
-			r.DB.SetStoryTriage(ctx, stories[t.Ref-1].ID, t.Score, t.Reason)
-		}
-		_ = i
-	}
+	scoreByRef := st.scoreByRef
 
 	// --- storylist ---
 	r.stepStart("storylist")
-	start = time.Now()
+	start := time.Now()
 	type slStory struct {
 		Ref    int
 		Score  float64
@@ -327,7 +281,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			Section string `json:"section"`
 		} `json:"items"`
 	}
-	resp, err = r.call(ctx, r.TriageModel, "storylist", map[string]any{
+	resp, err := r.call(ctx, r.TriageModel, "storylist", map[string]any{
 		"Publication":   pub.Name,
 		"Audience":      pub.Audience,
 		"Sections":      pub.Sections,
