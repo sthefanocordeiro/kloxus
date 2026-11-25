@@ -101,7 +101,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		runner := &pipeline.Runner{
 			DB: db(r), LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
-			DemoMode: s.d.Cfg.Mode == "demo", Deterministic: s.d.Cfg.LLMOff(),
+			PaceStep: s.stepPacer(), Deterministic: s.d.Cfg.LLMOff(),
 		}
 		newII, err := runner.SubstituteAlternative(ctx, pub, iss, ii)
 		if err == sql.ErrNoRows {

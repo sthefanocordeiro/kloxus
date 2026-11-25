@@ -201,7 +201,9 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		apiJSON(w, 202, map[string]any{"run": runView(st)})
 		return
 	}
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
 		// Same panic guard as prepare runs (review F5).
@@ -218,7 +220,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			MaxDeepDives:  s.d.Cfg.MaxDeepDives,
-			DemoMode:      s.d.Cfg.Mode == "demo",
+			PaceStep:      s.stepPacer(),
 			Deterministic: s.d.Cfg.LLMOff(),
 			OnStep: func(step string) {
 				st.mu.Lock()
@@ -231,7 +233,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 				st.mu.Unlock()
 			},
 		}
-		ctx, cancel := context.WithTimeout(llm.WithRunScope(context.Background(), wsp.ID), s.runTimeout())
+		ctx, cancel := context.WithTimeout(llm.WithRunScope(s.bg, wsp.ID), s.runTimeout())
 		defer cancel()
 		res, err := runner.RunPhaseB(ctx, pubWithIssueSections(iss, pub), iss.ID)
 		st.mu.Lock()

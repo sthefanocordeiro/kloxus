@@ -2,13 +2,14 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
@@ -35,16 +36,19 @@ func (r *Runner) stageCollect(ctx context.Context, pub *store.Publication, st *p
 			r.DB.MarkSourceFetched(ctx, s.ID, s.Name, "ok: shared catalog")
 			continue
 		}
-		if r.DemoMode && !strings.HasPrefix(s.URL, "fixtures/") {
-			// Visitor-added sources are never fetched on the hosted demo
-			// (SSRF surface); they are stored but skipped at collect time.
-			if err := r.DB.MarkSourceFetched(ctx, s.ID, "", "simulated in demo mode: sources are not fetched"); err != nil {
-				slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
-			}
-			continue
-		}
 		raw, err := r.Fetcher.Fetch(ctx, s.Type, s.URL)
 		if err != nil {
+			var skip *sources.SkipError
+			if errors.As(err, &skip) {
+				// The fetcher declined this source — the fixture
+				// fetcher never fetches visitor-added URLs on the
+				// hosted demo (SSRF surface). Record the skip, not
+				// an error.
+				if err := r.DB.MarkSourceFetched(ctx, s.ID, "", skip.Error()); err != nil {
+					slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
+				}
+				continue
+			}
 			if err := r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+strutil.Cut(err.Error(), fetchErrorMaxLen)); err != nil {
 				slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
 			}

@@ -107,6 +107,16 @@ type runProgress struct {
 	events []pipeline.StepEvent
 }
 
+// stepPacer returns the per-step pause wired on demo deployments —
+// fixture replays finish in milliseconds, so a short delay keeps the
+// live progress display readable. Real mode runs unpaced.
+func (s *Server) stepPacer() func(string) {
+	if s.d.Cfg.Mode != "demo" {
+		return nil
+	}
+	return pipeline.PacedStep(500 * time.Millisecond)
+}
+
 // startRun launches a Phase A run for the publication, reusing an
 // in-flight run when one exists.
 func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *runProgress {
@@ -130,7 +140,9 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 		st.blockRun(b)
 		return st
 	}
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		wsp.Activity.RLock()
 		defer wsp.Activity.RUnlock()
 		// A pipeline panic must fail this run, not take the process —
@@ -152,7 +164,7 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			MaxDeepDives:  s.d.Cfg.MaxDeepDives,
-			DemoMode:      s.d.Cfg.Mode == "demo",
+			PaceStep:      s.stepPacer(),
 			Deterministic: s.d.Cfg.LLMOff(),
 			OnStep: func(step string) {
 				st.mu.Lock()
@@ -170,7 +182,7 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 				st.mu.Unlock()
 			},
 		}
-		ctx, cancel := context.WithTimeout(llm.WithRunScope(context.Background(), wsp.ID), s.runTimeout())
+		ctx, cancel := context.WithTimeout(llm.WithRunScope(s.bg, wsp.ID), s.runTimeout())
 		defer cancel()
 		res, err := runner.RunPhaseA(ctx, pub)
 		if err != nil {

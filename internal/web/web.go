@@ -76,6 +76,12 @@ type Server struct {
 	sampleV    *config.Publication
 	sampleErr  error
 	waitlistRL waitlistLimiter
+	// bg is the base context for pipeline runs detached from their
+	// request; Shutdown cancels it. wg tracks those goroutines so
+	// Shutdown can drain them before the process exits.
+	bg       context.Context
+	bgCancel context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 type ctxKey int
@@ -88,6 +94,7 @@ const (
 // New builds a Server.
 func New(d Deps) *Server {
 	s := &Server{d: d, mux: http.NewServeMux()}
+	s.bg, s.bgCancel = context.WithCancel(context.Background())
 	s.registerPublicRoutes()
 	s.registerAPIRoutes()
 	s.registerIssueRoutes()
@@ -257,6 +264,24 @@ const reqTimeout = 3 * time.Minute
 // every job it runs serially — so a dead conn can't wedge the single
 // dispatcher goroutine for good.
 const dispatchTimeout = 10 * time.Minute
+
+// Shutdown stops the pipeline runs handlers detached into the
+// background: it cancels their base context so in-flight steps abort,
+// then waits for the goroutines to finish. The drain is bounded by ctx.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.bgCancel()
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // ServeHTTP resolves the request workspace (cookie in hosted mode), caps
 // request bodies, assigns a request id, then dispatches.

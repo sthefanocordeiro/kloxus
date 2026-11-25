@@ -38,12 +38,26 @@ type Fetcher interface {
 	Fetch(ctx context.Context, typ, url string) ([]RawItem, error)
 }
 
+// SkipError is returned by a Fetcher that deliberately declines a
+// source — FixtureFetcher refuses URLs outside the fixture set because
+// fetching visitor-typed URLs on the hosted demo is an SSRF surface.
+// Callers record the skip instead of reporting a fetch failure.
+type SkipError struct {
+	URL    string
+	Reason string
+}
+
+func (e *SkipError) Error() string { return e.Reason }
+
 // FixtureFetcher reads demo fixtures from an fs.FS. Source URLs are paths
 // inside that FS (e.g. "fixtures/feeds/radar-tech.xml").
 type FixtureFetcher struct{ FS fs.FS }
 
 // Fetch implements Fetcher for fixture files.
 func (f FixtureFetcher) Fetch(_ context.Context, typ, url string) ([]RawItem, error) {
+	if !strings.HasPrefix(url, "fixtures/") {
+		return nil, &SkipError{URL: url, Reason: "simulated in demo mode: sources are not fetched"}
+	}
 	switch typ {
 	case "rss":
 		return f.fetchRSS(url)
@@ -61,9 +75,19 @@ func (f FixtureFetcher) Fetch(_ context.Context, typ, url string) ([]RawItem, er
 // and model input match the original recorded run.
 type CapturedFetcher struct{ FS fs.FS }
 
-// Fetch implements Fetcher against the recorded captures.
-func (f CapturedFetcher) Fetch(ctx context.Context, typ, url string) ([]RawItem, error) {
-	return FixtureFetcher{FS: f.FS}.Fetch(ctx, typ, "feeds/"+FeedFixtureName(typ, url))
+// Fetch implements Fetcher against the recorded captures. Captures live
+// outside fixtures/, so this bypasses FixtureFetcher's demo-mode guard.
+func (f CapturedFetcher) Fetch(_ context.Context, typ, url string) ([]RawItem, error) {
+	ff := FixtureFetcher{FS: f.FS}
+	name := "feeds/" + FeedFixtureName(typ, url)
+	switch typ {
+	case "rss":
+		return ff.fetchRSS(name)
+	case "page":
+		return ff.fetchPage(name)
+	default:
+		return nil, fmt.Errorf("unknown source type %q", typ)
+	}
 }
 
 func (f FixtureFetcher) fetchRSS(url string) ([]RawItem, error) {

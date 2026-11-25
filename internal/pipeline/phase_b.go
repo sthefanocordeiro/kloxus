@@ -7,13 +7,14 @@ import (
 	"log/slog"
 	"sort"
 
+	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
 // phaseBState carries the draft-time working set. entries/dossierByRef
 // are the approved items that actually ship; modelEntries/modelDossiers
-// are the model-facing input — the canonical Phase A set in demo mode
-// so the replay fixture keys stay stable. done is the draft stage's
+// are the model-facing input — the canonical Phase A set under fixture
+// replay so the fixture keys stay stable. done is the draft stage's
 // early exit: a spend-capped model composes the skeleton and returns
 // instead of running citecheck.
 type phaseBState struct {
@@ -57,7 +58,9 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	st.res.Selected = len(entries)
 	st.entries, st.dossierByRef = entries, dossierByRef
 	st.modelEntries, st.modelDossiers = entries, dossierByRef
-	if r.DemoMode {
+	if llm.RequestKeyed(r.LLM) {
+		// Fixture replay: draft/citecheck must see the recorded
+		// canonical input set, not the board's current selection.
 		st.modelEntries, st.modelDossiers, err = r.loadEntries(ctx, issueID, true)
 		if err != nil {
 			return nil, err
@@ -79,7 +82,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 
 // assembleBodies builds the stored issue markdown — honoring the
 // board's slot order inside each section — plus the citecheck input:
-// the canonical draft in demo mode, the shipping body otherwise.
+// the canonical draft under fixture replay, the shipping body otherwise.
 func (r *Runner) assembleBodies(ctx context.Context, pub *store.Publication, st *phaseBState) {
 	// honor the board's slot order inside each section
 	sort.SliceStable(st.entries, func(a, b int) bool { return st.entries[a].position < st.entries[b].position })
@@ -97,7 +100,7 @@ func (r *Runner) assembleBodies(ctx context.Context, pub *store.Publication, st 
 	st.checkBody = st.body
 	st.checkEntries = st.entries
 	st.checkDossiers = st.dossierByRef
-	if r.DemoMode {
+	if llm.RequestKeyed(r.LLM) {
 		st.checkBody = assembleIssue(pub, st.number, st.modelEntries, st.draftByRef, st.modelDossiers, sectionOrder)
 		st.checkEntries = st.modelEntries
 		st.checkDossiers = st.modelDossiers
@@ -108,7 +111,7 @@ func (r *Runner) assembleBodies(ctx context.Context, pub *store.Publication, st 
 // issue items, their dossiers and story titles.
 //
 // canonical=true returns every Phase A item regardless of review status —
-// the stable input that keeps demo-mode draft/citecheck replay keys
+// the stable input that keeps fixture-replay draft/citecheck keys
 // fixed. canonical=false returns only approved items (plus pending? no —
 // the draft contains approved items only), which is what actually ships.
 func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool) ([]entry, map[int]*Dossier, error) {

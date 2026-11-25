@@ -12,7 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,7 +73,7 @@ type Client struct {
 	BaseURL string
 	HTTP    *http.Client
 	Ledger  Ledger // optional; nil keeps spend in memory only
-	Log     *log.Logger
+	Log     *slog.Logger
 
 	Limits map[Group]Limits  // per-group RPM/TPM (half the account limits)
 	Caps   map[Group]float64 // per-group daily USD cap; <=0 disables
@@ -107,9 +107,17 @@ func (c *Client) sleep(ctx context.Context, d time.Duration) error {
 	return sleepCtx(ctx, d)
 }
 
-func (c *Client) logf(f string, a ...any) {
+// logWarn/logInfo emit through the injected logger; a nil Log keeps the
+// client silent (callers and tests opt in).
+func (c *Client) logWarn(msg string, args ...any) {
 	if c.Log != nil {
-		c.Log.Printf(f, a...)
+		c.Log.Warn(msg, args...)
+	}
+}
+
+func (c *Client) logInfo(msg string, args ...any) {
+	if c.Log != nil {
+		c.Log.Info(msg, args...)
 	}
 }
 
@@ -173,7 +181,7 @@ func (c *Client) checkCap(ctx context.Context, g Group) error {
 	if s.usd >= limit {
 		if !s.logged {
 			s.logged = true
-			c.logf("voyage: %s daily cap $%.4f reached - using fallbacks until 00:00 UTC", g, limit)
+			c.logWarn("voyage: daily cap reached - using fallbacks until 00:00 UTC", "group", string(g), "cap_usd", limit)
 		}
 		return ErrCapReached
 	}
@@ -189,7 +197,7 @@ func (c *Client) record(ctx context.Context, g Group, model string, tokens int) 
 	c.mu.Unlock()
 	if c.Ledger != nil {
 		if err := c.Ledger.VoyageUsage(ctx, string(g), model, tokens, cost); err != nil {
-			c.logf("voyage: ledger write failed: %v", err)
+			c.logWarn("voyage: ledger write failed", "err", err)
 		}
 	}
 }
@@ -240,7 +248,7 @@ func (c *Client) do(ctx context.Context, g Group, path string, est int, body any
 			if s, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil && s >= 0 {
 				wait = time.Duration(s) * time.Second
 			}
-			c.logf("voyage: 429 on %s, retry %d/%d in %s", path, attempt+1, maxRetries, wait)
+			c.logInfo("voyage: 429, retrying", "path", path, "attempt", attempt+1, "max_retries", maxRetries, "wait", wait)
 			if err := c.sleep(ctx, wait); err != nil {
 				return 0, err
 			}

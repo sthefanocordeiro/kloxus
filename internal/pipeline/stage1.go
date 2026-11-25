@@ -12,7 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -118,7 +118,7 @@ func (r *Runner) loadProfile(ctx context.Context, pub *store.Publication, emb em
 		}
 		vecs, eerr := emb.Embed(ctx, texts, embed.Query)
 		if eerr != nil || len(vecs) != len(texts) {
-			log.Printf("stage1: profile embedding unavailable, ranking by FTS: %v", eerr)
+			slog.Warn("stage1: profile embedding unavailable, ranking by FTS", "err", eerr)
 			return rank.Profiles{}, false
 		}
 		next := &store.PublicationProfile{ThemeVec: vecs[0]}
@@ -128,7 +128,7 @@ func (r *Runner) loadProfile(ctx context.Context, pub *store.Publication, emb em
 			skipLit = embed.Literal(vecs[1])
 		}
 		if serr := r.DB.SavePublicationProfile(ctx, pub.ID, embed.Literal(vecs[0]), skipLit, hash); serr != nil {
-			log.Printf("stage1: saving profile: %v", serr)
+			slog.Warn("stage1: saving profile", "err", serr)
 		}
 		// keep feedback means when a stored row existed
 		if cur != nil {
@@ -193,7 +193,7 @@ func (r *Runner) rankStage1(ctx context.Context, pub *store.Publication, stories
 	if haveProfile {
 		v, err := r.DB.ItemVectors(ctx, emb.Model(), ids)
 		if err != nil {
-			log.Printf("stage1: loading vectors: %v", err)
+			slog.Warn("stage1: loading vectors", "err", err)
 		} else {
 			vecs = v
 		}
@@ -220,7 +220,7 @@ func (r *Runner) rankStage1(ctx context.Context, pub *store.Publication, stories
 	if needFTS {
 		raw, err := r.DB.FTSRank(ctx, ids, ftsTerms(pub))
 		if err != nil {
-			log.Printf("stage1: fts: %v", err)
+			slog.Warn("stage1: fts ranking", "err", err)
 		}
 		rawStory := make([]float64, len(stories))
 		for i := range stories {
@@ -311,7 +311,7 @@ func (r *Runner) loadSectionVecs(ctx context.Context, pub *store.Publication, em
 	}
 	cached, err := r.DB.SectionProfiles(ctx, pub.ID)
 	if err != nil {
-		log.Printf("stage1: section profiles: %v", err)
+		slog.Warn("stage1: loading section profiles", "err", err)
 		return nil
 	}
 	out := map[int][]float32{}
@@ -331,13 +331,13 @@ func (r *Runner) loadSectionVecs(ctx context.Context, pub *store.Publication, em
 		}
 		vecs, eerr := emb.Embed(ctx, texts, embed.Query)
 		if eerr != nil || len(vecs) != len(texts) {
-			log.Printf("stage1: section embedding unavailable: %v", eerr)
+			slog.Warn("stage1: section embedding unavailable", "err", eerr)
 		} else {
 			for k, i := range stale {
 				out[i] = vecs[k]
 				sec := pub.Sections[i]
 				if serr := r.DB.SaveSectionProfile(ctx, pub.ID, sec.ID, vecs[k], sectionHash(sec.Topic, emb.Model())); serr != nil {
-					log.Printf("stage1: saving section profile: %v", serr)
+					slog.Warn("stage1: saving section profile", "err", serr)
 				}
 			}
 		}
@@ -355,6 +355,6 @@ func RecordFeedback(ctx context.Context, db *store.DB, pubID, issueItemID int64,
 		return
 	}
 	if err := db.FeedbackForItem(ctx, pubID, issueItemID, emb.Model(), kind); err != nil {
-		log.Printf("feedback: %v", err)
+		slog.Warn("feedback: record failed", "err", err)
 	}
 }

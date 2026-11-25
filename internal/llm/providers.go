@@ -84,6 +84,19 @@ func (r Replay) Complete(ctx context.Context, req Request) (Response, error) {
 	return Response{Text: f.Text, InputTokens: f.InputTokens, OutputTokens: f.OutputTokens}, nil
 }
 
+// RequestKeyed reports whether p serves responses keyed to the exact
+// request — fixture replay. A keyed provider cannot answer a mutated
+// retry prompt, and its fixtures were recorded against the canonical
+// Phase-A item set; callers use this to pick replay-stable inputs and
+// skip retries.
+func RequestKeyed(p Provider) bool {
+	switch p.(type) {
+	case Replay, *Replay:
+		return true
+	}
+	return false
+}
+
 const (
 	// anthropicDefaultBaseURL is the production Messages API endpoint;
 	// Anthropic.BaseURL overrides it (tests, gateways, proxies).

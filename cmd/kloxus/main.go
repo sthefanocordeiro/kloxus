@@ -8,16 +8,18 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
@@ -244,7 +246,7 @@ func cmdDemo(args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, true, cfg.LLMOff())
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.LLMOff())
 	if err != nil {
 		return err
 	}
@@ -351,7 +353,7 @@ func openWorkspaceManager(cfg *config.Config, pool *store.Pool, db *store.DB, se
 func startIngest(ctx context.Context, cfg *config.Config, pool *store.Pool, provider llm.Provider) {
 	// Daily Journal left the catalog again (KLOX-114); its client stays
 	// opt-in via the env flag.
-	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
+	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, slog.Default())
 	if cfg.DailyJournalEnabled {
 		sched.SetupDailyJournal(ctx, ingest.DefaultUserAgent)
 	}
@@ -370,7 +372,7 @@ func startIngest(ctx context.Context, cfg *config.Config, pool *store.Pool, prov
 	var embedWorker *embed.Worker
 	if emb := newEmbedder(cfg, pool); emb != nil {
 		pipeline.DefaultEmbedder = emb // stage-1 profile embedding (KLOX-109)
-		embedWorker = &embed.Worker{Store: pool, Embedder: emb, Log: log.Default()}
+		embedWorker = &embed.Worker{Store: pool, Embedder: emb, Log: slog.Default()}
 		embedWorker.Start()
 		go embedWorker.Run(ctx)
 	}
@@ -381,15 +383,15 @@ func startIngest(ctx context.Context, cfg *config.Config, pool *store.Pool, prov
 	sched.AfterPoll = func(ctx context.Context) {
 		defer embedWorker.Kick() // nil-safe; non-blocking
 		if n, err := sem.Sweep(ctx, 200); err != nil {
-			log.Printf("semantic sweep: %v", err)
+			slog.Warn("semantic sweep failed", "err", err)
 		} else if n > 0 {
-			log.Printf("semantic sweep: %d items embedded+classified", n)
+			slog.Info("semantic sweep: items embedded+classified", "count", n)
 		}
 		if enr != nil {
 			if n, err := enr.Sweep(ctx, 200); err != nil {
-				log.Printf("enrich sweep: %v", err)
+				slog.Warn("enrich sweep failed", "err", err)
 			} else if n > 0 {
-				log.Printf("enrich sweep: %d items classified", n)
+				slog.Info("enrich sweep: items classified", "count", n)
 			}
 		}
 	}
@@ -408,16 +410,20 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		Monitor: deps.monitor, Scraper: deps.scraper, Mailer: deps.mailer, Seed: seed, Pool: pool,
 		Pay: deps.pay,
 	})
-	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
+	// The schedulers share the shutdown signal so a detached sweep
+	// can't outlive the process's decision to exit.
+	stop, stopNotify := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopNotify()
+	go srv.RunScheduler(stop, pool, 20*time.Second)
 	// The daily pauta sweep (KLOX-123 Block 2): builds each active
 	// radar's "pauta de hoje" at 06:30 America/Sao_Paulo and mails the
 	// "sua pauta de hoje está pronta" note to claimed radars at 07:00.
-	go srv.RunDailyPauta(context.Background(), pool, time.Minute)
+	go srv.RunDailyPauta(stop, pool, time.Minute)
 	// one pooled conn stays warm so the remote pooler never reaps
 	// every handle between requests (KLOX-47 p95 latency criteria)
-	go pool.KeepAlive(context.Background(), time.Minute)
+	go pool.KeepAlive(stop, time.Minute)
 	if cfg.IngestEnabled {
-		startIngest(context.Background(), cfg, pool, provider)
+		startIngest(stop, cfg, pool, provider)
 	}
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)
@@ -430,7 +436,23 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	return httpSrv.ListenAndServe()
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.ListenAndServe() }()
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop.Done():
+		fmt.Println("shutting down…")
+	}
+	// One shared deadline covers both drains: the HTTP server stops
+	// listening and waits out in-flight requests while the detached
+	// pipeline runs get cancelled and waited on.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Shutdown(ctx) }()
+	err = httpSrv.Shutdown(ctx)
+	return errors.Join(err, <-runDone)
 }
 
 func openBrowser(url string) {
@@ -502,7 +524,7 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.Mode == "demo", cfg.LLMOff())
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.LLMOff())
 	if err != nil {
 		return err
 	}
@@ -791,7 +813,7 @@ func cmdRecord(args []string) error {
 		Inner: llm.Retrier{Inner: llm.Anthropic{APIKey: cfg.AnthropicAPIKey}},
 		Dir:   *dir,
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, false, cfg.LLMOff())
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.LLMOff())
 	if err != nil {
 		return err
 	}
@@ -824,7 +846,7 @@ func cmdIngest(args []string) error {
 	}
 	defer pool.Close()
 	ctx := context.Background()
-	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, log.Default())
+	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, slog.Default())
 	if cfg.DailyJournalEnabled {
 		sched.SetupDailyJournal(ctx, ingest.DefaultUserAgent)
 	}
@@ -909,16 +931,16 @@ func cmdIngestStatus() error {
 // off or no key is set (stage-1 order then stands).
 func newReranker(cfg *config.Config, pool *store.Pool) rerank.Reranker {
 	if strings.EqualFold(cfg.RerankProvider, "off") {
-		log.Printf("rerank: provider off - stage-1 order stands")
+		slog.Info("rerank: provider off - stage-1 order stands")
 		return nil
 	}
 	if cfg.VoyageKey == "" {
-		log.Printf("rerank: VOYAGE_API_SECRET not set - stage-1 order stands")
+		slog.Info("rerank: VOYAGE_API_SECRET not set - stage-1 order stands")
 		return nil
 	}
 	rr, err := rerank.New(rerank.Config{Provider: cfg.RerankProvider, Model: cfg.RerankModel}, newVoyageClient(cfg, pool))
 	if err != nil {
-		log.Printf("rerank: %v - stage-1 order stands", err)
+		slog.Warn("rerank: setup failed - stage-1 order stands", "err", err)
 		return nil
 	}
 	return rr
@@ -928,7 +950,7 @@ func newVoyageClient(cfg *config.Config, pool *store.Pool) *voyage.Client {
 	return &voyage.Client{
 		Key:    cfg.VoyageKey,
 		Ledger: pool,
-		Log:    log.Default(),
+		Log:    slog.Default(),
 		Limits: map[voyage.Group]voyage.Limits{
 			voyage.GroupEmbed:  {RPM: cfg.VoyageEmbedRPM, TPM: cfg.VoyageEmbedTPM},
 			voyage.GroupRerank: {RPM: cfg.VoyageRerankRPM, TPM: cfg.VoyageRerankTPM},
@@ -942,17 +964,17 @@ func newVoyageClient(cfg *config.Config, pool *store.Pool) *voyage.Client {
 
 func newEmbedder(cfg *config.Config, pool *store.Pool) embed.Embedder {
 	if strings.EqualFold(cfg.EmbedProvider, "off") {
-		log.Printf("embeddings: provider off - ranking uses the FTS fallback")
+		slog.Info("embeddings: provider off - ranking uses the FTS fallback")
 		return nil
 	}
 	if cfg.VoyageKey == "" {
-		log.Printf("embeddings: VOYAGE_API_SECRET not set - ranking uses the FTS fallback")
+		slog.Info("embeddings: VOYAGE_API_SECRET not set - ranking uses the FTS fallback")
 		return nil
 	}
 	client := &voyage.Client{
 		Key:    cfg.VoyageKey,
 		Ledger: pool,
-		Log:    log.Default(),
+		Log:    slog.Default(),
 		Limits: map[voyage.Group]voyage.Limits{
 			voyage.GroupEmbed:  {RPM: cfg.VoyageEmbedRPM, TPM: cfg.VoyageEmbedTPM},
 			voyage.GroupRerank: {RPM: cfg.VoyageRerankRPM, TPM: cfg.VoyageRerankTPM},
@@ -964,7 +986,7 @@ func newEmbedder(cfg *config.Config, pool *store.Pool) embed.Embedder {
 	}
 	emb, err := embed.New(embed.Config{Provider: cfg.EmbedProvider, Model: cfg.EmbedModel}, client)
 	if err != nil {
-		log.Printf("embeddings: %v - ranking uses the FTS fallback", err)
+		slog.Warn("embeddings: setup failed - ranking uses the FTS fallback", "err", err)
 		return nil
 	}
 	return emb
@@ -988,7 +1010,7 @@ func cmdEmbedBackfill(args []string) error {
 	if emb == nil {
 		return errors.New("embeddings are off or VOYAGE_API_SECRET is not set")
 	}
-	w := &embed.Worker{Store: pool, Embedder: emb, Log: log.Default()}
+	w := &embed.Worker{Store: pool, Embedder: emb, Log: slog.Default()}
 	_, err = w.Backfill(context.Background(), *days, func(m string) { fmt.Println(m) })
 	return err
 }

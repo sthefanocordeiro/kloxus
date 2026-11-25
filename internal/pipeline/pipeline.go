@@ -47,10 +47,11 @@ type Runner struct {
 	TriageModel  string
 	DraftModel   string
 	MaxDeepDives int
-	// DemoMode makes PhaseB send the canonical all-selected item set to
-	// draft/citecheck (stable fixture keys) while the stored body and
-	// flags are built from active items only.
-	DemoMode bool
+	// PaceStep, if set, runs at each step boundary before OnStep — demo
+	// deployments wire a short sleep (PacedStep) so fixture replays,
+	// which finish in milliseconds, stay visible on progress displays.
+	// Production leaves it nil: pacing is presentation, not pipeline work.
+	PaceStep func(step string)
 	// Deterministic runs the no-model pipeline (KLOXUS_LLM_MODE=off):
 	// triage, storylist, dossier, deepdive, draft and citecheck use the
 	// deterministic implementations in rank.go and no model call is
@@ -244,7 +245,7 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 		return resp, err
 	}
 	if err := decodeJSON(resp.Text, out); err != nil {
-		if r.DemoMode {
+		if llm.RequestKeyed(r.LLM) {
 			// A retry would change the request and miss the fixture.
 			return resp, fmt.Errorf("template %s: %w", name, err)
 		}
@@ -313,17 +314,21 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	return r.finish(ctx, res, outDir)
 }
 
+// PacedStep returns a PaceStep hook that sleeps d at each step boundary.
+// Demo deployments wire it so fixture replays stay visible on progress
+// displays; production leaves PaceStep nil.
+func PacedStep(d time.Duration) func(step string) {
+	return func(string) { time.Sleep(d) }
+}
+
 func (r *Runner) stepStart(name string) {
-	if r.DemoMode {
-		// Demo replays finish in milliseconds; a short pause per step
-		// makes the live progress display on the run page visible.
-		time.Sleep(500 * time.Millisecond)
+	if r.PaceStep != nil {
+		r.PaceStep(name)
 	}
 	if r.OnStep != nil {
 		r.OnStep(name)
 	}
 }
-
 // sourceTexts batch-loads the stored body of every item a dossier
 // cites, keyed by item id — the corpus the citation floor and the
 // originality rule check against.
@@ -761,8 +766,8 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 }
 
 // alternativeDossier builds the dossier for an alternative story. Real
-// mode asks the model; demo mode falls back to a deterministic dossier
-// synthesized from the story's items when no replay fixture exists.
+// mode asks the model; fixture replay falls back to a deterministic
+// dossier synthesized from the story's items when no fixture exists.
 func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication, cand *store.Story, ref int) *Dossier {
 	interpretation := "Picked by the editor as an alternative to the previous item."
 	if ptLang(pub.Language) {
@@ -953,10 +958,11 @@ func (r *Runner) ComposeSkeleton(ctx context.Context, pub *store.Publication, is
 	return res, nil
 }
 
-// RunHeadless is the CLI entry: build a runner for the given mode and run it.
-// demo=true makes PhaseB use canonical replay input (see Runner.DemoMode);
-// det=true runs the deterministic no-model pipeline (KLOXUS_LLM_MODE=off).
-func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int, demo, det bool) (*Result, error) {
+// RunHeadless is the CLI entry: build a runner and run it. A
+// request-keyed provider (fixture replay) automatically gets the
+// recorded canonical Phase-B input (see llm.RequestKeyed); det=true
+// runs the deterministic no-model pipeline (KLOXUS_LLM_MODE=off).
+func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int, det bool) (*Result, error) {
 	r := &Runner{
 		DB:            db,
 		LLM:           provider,
@@ -964,7 +970,6 @@ func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outD
 		TriageModel:   triageModel,
 		DraftModel:    draftModel,
 		MaxDeepDives:  maxDeep,
-		DemoMode:      demo,
 		Deterministic: det,
 	}
 	return r.Run(ctx, pub, outDir)

@@ -147,7 +147,7 @@ func (s *Server) buildPautaDay(ctx context.Context, wdb *store.DB, pub *store.Pu
 	}
 	run := &pipeline.Runner{
 		DB: wdb, Fetcher: s.d.Fetcher,
-		DemoMode:      s.d.Cfg.Mode == "demo",
+		PaceStep:      s.stepPacer(),
 		Deterministic: true,
 	}
 	stories, err := run.BuildStories(ctx, pub)
