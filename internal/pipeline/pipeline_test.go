@@ -192,9 +192,7 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	}
 
 	draftText := `{"entries":[{"ref":1,"headline":"Um","body_md":"Fato um [1]."},{"ref":2,"headline":"Dois","body_md":"Fato dois [1]."}]}`
-	draftByRef := map[int]struct {
-		headline, body string
-	}{
+	draftByRef := map[int]draftEntry{
 		1: {headline: "Um", body: "Fato um [1]."},
 		2: {headline: "Dois", body: "Fato dois [1]."},
 	}
