@@ -10,13 +10,13 @@ test.describe("main flow (KLOX-168)", () => {
     const pubID = pubs.publications[0].id;
 
     await page.goto(`/publications/${pubID}/today`);
-    await expect(page.getByRole("heading", { name: "Today's news" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { name: "Today's stories" })).toBeVisible({ timeout: 30_000 });
     const boxes = page.getByRole("checkbox");
     await expect(boxes.first()).toBeVisible({ timeout: 30_000 });
     await boxes.nth(1).check();
     await boxes.nth(0).check();
     await expect(page.getByText("2 stories selected")).toBeVisible();
-    await page.getByRole("button", { name: "Build pauta →" }).click();
+    await page.getByRole("button", { name: "Build brief →" }).click();
 
     await page.waitForURL(/\/pauta\/\d+$/);
     await expect(page.getByTestId("pauta-entry")).toHaveCount(2);

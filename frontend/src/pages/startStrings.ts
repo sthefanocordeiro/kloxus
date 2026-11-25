@@ -54,7 +54,7 @@ const pt = {
 
 const en: typeof pt = {
   gateTitle: "Confirm your email to create your radar",
-  gateHint: "We send a magic link — no password. It is also how you get on the launch invitation list.",
+  gateHint: "We send a magic link — no password.",
   step: ["Create Radar", "Match", "Done!"],
   aboutTitle: "Create your Radar",
   aboutHint: "Give it a name and list the topics. Sources are picked for you.",
@@ -62,7 +62,7 @@ const en: typeof pt = {
   namePlaceholder: "Fintech for bankers",
   aboutLabel: "Topics (comma separated)",
   aboutPlaceholder: "Pix, open finance, Drex, central bank rules",
-  nichesLabel: "Sections (optional)",
+  nichesLabel: "Beats (optional)",
   niches: {
     politica: "Politics", economia: "Economy", "mercado-financeiro": "Financial markets and investing",
     "financas-pessoais": "Personal finance", negocios: "Business and companies", startups: "Startups and innovation",
@@ -77,7 +77,7 @@ const en: typeof pt = {
   calibHint: "Real stories from the last 48 h. Say whether this story interests you — each answer teaches the Radar.",
   loadingDeck: "Fetching real stories…",
   loadingSlow: "This can take a few seconds — stories show up here as soon as they arrive.",
-  doneLoading: "Picking today's news for you…",
+  doneLoading: "Picking today's stories for you…",
   yes: "Yes",
   no: "No",
   skip: "Skip",

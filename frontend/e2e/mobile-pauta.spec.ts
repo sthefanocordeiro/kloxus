@@ -2,7 +2,7 @@ import { expect, test, type Locator } from "@playwright/test";
 import { onboard } from "./onboard.ts";
 
 // KLOX-180 — the 24/11 owner's e2e P0 on the phone layout: the fixed
-// action bars ("Build pauta →" on Hoje, "Go to export" on Escrever)
+// action bars ("Build brief →" on Hoje, "Go to export" on Escrever)
 // rendered at bottom-0 under the z-40 global nav — the two bars stacked
 // at ~755px and a tap on the button opened Settings instead. Both bars
 // are now pinned above the nav; a Playwright click doubles as the
@@ -16,7 +16,7 @@ const expectAboveNav = async (bar: Locator, nav: Locator) => {
   expect(box.y + box.height).toBeLessThanOrEqual(nv.y + 1);
 };
 
-test("mobile 375px: Build pauta and Go to export sit above the bottom nav", async ({ page }) => {
+test("mobile 375px: Build brief and Go to export sit above the bottom nav", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await onboard(page);
   const pubs = await (await page.request.get("/api/v1/publications")).json();
@@ -30,10 +30,10 @@ test("mobile 375px: Build pauta and Go to export sit above the bottom nav", asyn
   await expect(boxes.first()).toBeVisible({ timeout: 30_000 });
   await boxes.first().check();
 
-  const buildBar = page.getByRole("region", { name: "Build pauta →" });
+  const buildBar = page.getByRole("region", { name: "Build brief →" });
   await expect(buildBar).toBeVisible();
   await expectAboveNav(buildBar, globalNav);
-  await buildBar.getByRole("button", { name: "Build pauta →" }).click();
+  await buildBar.getByRole("button", { name: "Build brief →" }).click();
 
   // Escrever — the export bar is always on this page
   await page.waitForURL(/\/pauta\/\d+$/);

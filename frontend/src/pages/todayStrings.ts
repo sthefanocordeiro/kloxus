@@ -25,9 +25,9 @@ const pt = {
 };
 
 const en: typeof pt = {
-  title: "Today's news",
+  title: "Today's stories",
   hint: "Tick the stories you want in your text. Yes and No teach the radar.",
-  loading: "Fetching the news…",
+  loading: "Fetching the stories…",
   empty: "No new stories right now — come back later or review your sources in Radar.",
   select: "Select story",
   write: "Write",
@@ -37,11 +37,11 @@ const en: typeof pt = {
   hoursAgo: "{n} h ago",
   selected: "{n} stories selected",
   selected1: "1 story selected",
-  build: "Build pauta →",
+  build: "Build brief →",
   building: "Building…",
-  piecesTitle: "Pautas in progress",
-  noPieces: "No pautas yet. Tick stories and click Build pauta.",
-  piece: "Pauta {n}",
+  piecesTitle: "Briefs in progress",
+  noPieces: "No briefs yet. Tick stories and click Build brief.",
+  piece: "Brief {n}",
   status: { draft: "Draft", reviewed: "Ready", exported: "Exported" },
   stale: "The story list changed — review your picks and try again.",
 };

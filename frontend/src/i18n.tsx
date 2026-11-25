@@ -97,13 +97,13 @@ export const dict = {
       eyebrow: "For people who publish every day",
       headline: "The research is ready. The writing is yours.",
       subhead:
-        "Every day, the news that matters to your niche arrives organized, with a link to every story. You pick the angle and write in your own voice, to publish where your audience is.",
+        "Every day, the stories that matter to your niche arrive organized, with a link to every story. You pick the angle and write in your own voice, to publish where your audience is.",
       emailNote:
-        "You confirm your email by magic link as you create your Radar — that is also how you get the launch invitation.",
+        "You confirm your email by magic link as you create your Radar.",
       waitlistSupport:
         "No AI writing for you. Just the boring work of finding and checking what happened, done before you open the editor.",
-      alreadyCreator: "Already a creator? Sign in",
-      shotAlt: "Kloxus: a news list with ticked boxes and the editor with two linked stories",
+      alreadyCreator: "Already have an account? Sign in",
+      shotAlt: "Kloxus: a story list with ticked boxes and the editor with two linked stories",
       howTitle: "How it works",
       howSteps: [
         { title: "Say what you cover", body: "Your topics and sources." },
@@ -127,18 +127,18 @@ export const dict = {
         },
         {
           q: "Does the AI write for me?",
-          a: "No. It finds and summarizes the news. The writing is yours.",
+          a: "No. It finds and summarizes the stories. The writing is yours.",
         },
         {
           q: "Which sources can I use?",
           a: "Sources that allow automated reading. We respect each site's rules.",
         },
         {
-          q: "Who chooses the news?",
+          q: "Who chooses the stories?",
           a: "You do, never the AI. Kloxus only suggests.",
         },
       ],
-      closingTitle: "Your next story list starts here.",
+      closingTitle: "Your next brief starts here.",
       footerProduct: "Product",
       footerLegal: "Legal",
       footerTerms: "Terms",
@@ -147,7 +147,7 @@ export const dict = {
       menu: "Menu",
       sourcesStrip: "Works with the feeds you already read",
       mock: {
-        railTitle: "Today's news",
+        railTitle: "Today's stories",
         editorTitle: "Your text",
         editorHint: "Write here, in your own voice…",
         items: [
@@ -159,7 +159,7 @@ export const dict = {
     },
     create: {
       rejectTerms: "Never show",
-      rejectTermsHint: "Themes that never make it in — e.g. celular, games.",
+      rejectTermsHint: "Themes that never make it in — e.g. phones, games.",
       next: "Next",
     },
     sourcesPage: {
@@ -223,7 +223,7 @@ export const dict = {
       name: "Name",
       topic: "Topic",
       rejectTerms: "Never show",
-      rejectTermsHint: "Themes that never make it in — e.g. celular, games.",
+      rejectTermsHint: "Themes that never make it in — e.g. phones, games.",
       price: "Price",
       pricePlaceholder: "e.g. $10/month",
       save: "Save settings",
