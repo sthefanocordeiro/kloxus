@@ -151,7 +151,8 @@ func TestPautaName(t *testing.T) {
 	if p["title"] != firstTitle {
 		t.Fatalf("pauta title = %v, want %q", p["title"], firstTitle)
 	}
-	if got := apiGet(t, srv, "/api/v1/issues/"+iid)["title"]; got != firstTitle {
+	issueView := apiGet(t, srv, "/api/v1/issues/"+iid)["issue"].(map[string]any)
+	if got := issueView["title"]; got != firstTitle {
 		t.Fatalf("issue title = %v, want %q", got, firstTitle)
 	}
 
@@ -169,7 +170,7 @@ func TestPautaName(t *testing.T) {
 	if got := apiGet(t, srv, "/api/v1/issues/"+iid+"/pauta")["title"]; got != "Meu resumo da semana" {
 		t.Fatalf("pauta title after rename = %v", got)
 	}
-	iss := apiGet(t, srv, "/api/v1/issues/"+iid)
+	iss := apiGet(t, srv, "/api/v1/issues/"+iid)["issue"].(map[string]any)
 	if iss["title"] != "Meu resumo da semana" || iss["subject"] != "Meu resumo da semana" {
 		t.Fatalf("issue after rename = title %v subject %v", iss["title"], iss["subject"])
 	}

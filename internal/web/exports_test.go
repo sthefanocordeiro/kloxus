@@ -40,7 +40,7 @@ func issueByID(t *testing.T, issues []any, id int64) map[string]any {
 func TestIssueExportedMark(t *testing.T) {
 	srv, db, pub, _ := demoServer(t)
 	ctx := context.Background()
-	iid := approvedIssue(t, db, pub.ID, 91, "Radar de pauta")
+	iid := approvedIssue(t, db, pub.ID, 91, "Futuro Próximo — pauta 91")
 
 	// a story on the pauta names it in the lists
 	storyID, err := db.CreateStory(ctx, pub.ID, "Fim da escala 6×1 no Brasil", 1, "klox184-story")

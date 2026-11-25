@@ -151,7 +151,15 @@ func (s *Server) savePauta(ctx context.Context, d *store.DB, iss *store.Issue, p
 	if in.Title != nil {
 		subject := strings.TrimSpace(*in.Title)
 		if subject == "" {
-			subject = fmt.Sprintf("%s — pauta %d", pub.Name, iss.Number)
+			// clearing restores the automatic name: a subject that is
+			// still the creation placeholder keeps its own word
+			// ("edição"/"issue"); a renamed pauta goes back to the
+			// pauta-flow placeholder
+			if autoPautaSubject(iss) {
+				subject = iss.Subject
+			} else {
+				subject = fmt.Sprintf("%s — pauta %d", pub.Name, iss.Number)
+			}
 		}
 		if subject != iss.Subject {
 			if err := d.SetIssueSubject(ctx, iss.ID, subject); err != nil {
