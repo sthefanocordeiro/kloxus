@@ -1,18 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
 import { api } from "../api";
 import { useT } from "../i18n";
 import { errText, isRateLimited } from "../lib/errors";
 import { RateLimited } from "../components/RateLimited";
 import { Button, Card, SkeletonLine } from "../ui";
-import { ShellPrimary } from "../components/ShellPortal";
 
 export function Publications() {
   const { t } = useT();
   const qc = useQueryClient();
   const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
+  // Sources navigates here after "Apagar Radar" with the deleted name
+  // in location state — the banner confirms what just went away
+  // (KLOX-235)
+  const deleted = (useLocation().state as { deleted?: string } | null)?.deleted;
 
   // demo reset + new workspace mutate server-side state wholesale —
   // drop every cached query so nothing stale survives
@@ -29,16 +31,12 @@ export function Publications() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6">
       {/* one newsletter per account (KLOX-66) — the create action
-          exists only as the empty-state call to action */}
-      {pubs.data?.length === 0 && (
-        <ShellPrimary>
-          <Link to="/start">
-            <Button size="sm">
-              <Plus size={15} aria-hidden />
-              {t.nav.newNewsletter}
-            </Button>
-          </Link>
-        </ShellPrimary>
+          exists only as the empty-state card CTA; the duplicate "New
+          Radar" in the top bar and sidebar went away (KLOX-235) */}
+      {deleted && (
+        <p className="mb-4 rounded border border-teal/40 bg-teal-soft p-3 text-sm text-teal" role="status">
+          {t.sourcesPage.deleted(deleted)}
+        </p>
       )}
       {pubs.isLoading && <SkeletonLine />}
       {pubs.isError &&

@@ -5,7 +5,7 @@ import { api, type PreviewItem } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { usePublishing } from "../lib/publishing";
-import { NICHE_KEYS, useStart } from "./startStrings";
+import { NICHE_KEYS, NICHE_LABEL_PT, useStart } from "./startStrings";
 import { Badge, Button, Card, SkeletonLine } from "../ui";
 import { KDialog } from "../ui-overlays";
 
@@ -86,7 +86,9 @@ export function SourcesPage() {
     mutationFn: () => api.deletePublication(id!),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["publications"] });
-      nav("/publications", { replace: true });
+      // the empty state confirms the delete — the Radar the person
+      // just removed is named so the banner can't read as a stale toast
+      nav("/publications", { replace: true, state: { deleted: pub.data?.publication.name ?? "" } });
     },
   });
 
@@ -100,7 +102,11 @@ export function SourcesPage() {
   // with that URL exists
   const addedURLs = new Set((sources.data ?? []).map((s) => s.url));
   const offered = (catalog.data?.offered ?? []).filter((o) => !addedURLs.has(o.url));
-  const count = (sources.data?.length ?? 0) + offered.filter((o) => checked(o.url)).length;
+  // the action adds only the ticked suggestions — counting the
+  // already-added sources in the button ("Confirm 19 sources") read as
+  // if it re-added them all (KLOX-235)
+  const selCount = offered.filter((o) => checked(o.url)).length;
+  const count = (sources.data?.length ?? 0) + selCount;
   // while the catalog is in flight the lists are unknown — render a
   // loading line instead of flashing an empty state + "no sources"
   // hint that the arriving data contradicts a moment later (KLOX-56)
@@ -122,9 +128,30 @@ export function SourcesPage() {
   };
 
   const p = pub.data?.publication;
-  // the cadastro editorias, back in the cadastro's order — chips, never
-  // editable after signup (KLOX-207)
-  const niches = NICHE_KEYS.filter((k) => p?.niches?.includes(k));
+  // the editorias are derived from the theme text (KLOX-207): a chip is
+  // on while the theme names it, and ticking/unticking a chip edits the
+  // theme so the save keeps them in sync (KLOX-235)
+  const onNiches = new Set(
+    NICHE_KEYS.filter((k) =>
+      (adForm?.topic ?? "").toLowerCase().includes(NICHE_LABEL_PT[k].toLowerCase())),
+  );
+  const toggleNiche = (k: string) => {
+    if (!adForm) return;
+    const label = NICHE_LABEL_PT[k];
+    const idx = adForm.topic.toLowerCase().indexOf(label.toLowerCase());
+    let topic: string;
+    if (idx >= 0) {
+      topic = (adForm.topic.slice(0, idx) + adForm.topic.slice(idx + label.length))
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(", ");
+    } else {
+      const cur = adForm.topic.trim();
+      topic = cur ? `${cur}, ${label}` : label;
+    }
+    editAd({ topic });
+  };
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
@@ -157,16 +184,28 @@ export function SourcesPage() {
                 className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
               />
             </label>
-            {niches.length > 0 && (
-              <div>
-                <span className="text-xs font-medium text-muted">{t.sourcesPage.editorias}</span>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {niches.map((k) => (
-                    <Badge key={k} tone="chip">{start.niches[k]}</Badge>
-                  ))}
-                </div>
+            <div>
+              <span className="text-xs font-medium text-muted">{t.sourcesPage.editorias}</span>
+              <div className="mt-1 flex flex-wrap gap-2" role="group" aria-label={t.sourcesPage.editorias}>
+                {NICHE_KEYS.map((k) => {
+                  const on = onNiches.has(k);
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => toggleNiche(k)}
+                      className={
+                        "rounded-full border px-3 py-1 text-sm transition-colors " +
+                        (on ? "border-teal bg-teal font-semibold text-white shadow-sm hover:bg-ink-soft" : "border-line text-muted hover:border-ink/40")
+                      }
+                    >
+                      {start.niches[k]}
+                    </button>
+                  );
+                })}
               </div>
-            )}
+            </div>
             <label className="block">
               <span className="text-xs font-medium text-muted">{t.sourcesPage.rejectsLabel}</span>
               <input
@@ -254,9 +293,10 @@ export function SourcesPage() {
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{o.name || o.url}</span>
-                      {o.suspended && (
+                      {(o.suspended || o.paywall) && (
                         <span className="mt-0.5 flex items-center gap-2 text-xs text-muted">
-                          <Badge tone="warn">{t.sourcesPage.suspendedBadge}</Badge>
+                          {o.suspended && <Badge tone="warn">{t.sourcesPage.suspendedBadge}</Badge>}
+                          {o.paywall && <Badge tone="warn">{t.sourcesPage.paywallBadge}</Badge>}
                         </span>
                       )}
                       {o.note && <span className="mt-0.5 block text-xs text-muted">{o.note}</span>}
@@ -296,7 +336,7 @@ export function SourcesPage() {
         {!pub.data?.latest_issue ? (
           <>
             <span className="text-xs text-muted">
-              {count === 0 && !loading ? t.sourcesPage.empty : count > 0 ? t.sourcesPage.selected(count) : null}
+              {count === 0 && !loading ? t.sourcesPage.empty : selCount > 0 ? t.sourcesPage.selected(selCount) : null}
             </span>
             <div className="ml-auto flex items-center gap-3">
               <Button disabled={count === 0 || confirm.isPending} onClick={() => confirm.mutate()}>
@@ -307,11 +347,11 @@ export function SourcesPage() {
         ) : (
           <div className="ml-auto flex items-center gap-3">
             <Button
-              disabled={count === 0 || confirm.isPending}
+              disabled={selCount === 0 || confirm.isPending}
               onClick={() => confirm.mutate()}
               size="lg"
             >
-              {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(count)}
+              {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(selCount)}
             </Button>
             {count === 0 && !loading && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
           </div>

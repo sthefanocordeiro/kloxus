@@ -212,7 +212,9 @@ export function Today() {
                   ))}
                 </span>
               </span>
-              <Badge tone={p.status === "draft" ? "warn" : "teal"}>{s.status[p.status]}</Badge>
+              <Badge tone={p.stale_exports ? "warn" : p.status === "draft" ? "warn" : "teal"}>
+                {p.stale_exports ? s.statusEdited : s.status[p.status]}
+              </Badge>
             </Link>
           </li>
         ))}

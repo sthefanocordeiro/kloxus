@@ -39,6 +39,9 @@ func (s *Server) apiRealCatalog(w http.ResponseWriter, r *http.Request, pub *sto
 			"type": "rss", "url": cs.URL, "name": cs.Name,
 			"policy": cs.Policy, "kind": cs.Kind,
 		}
+		if paywalledSources[cs.Slug] {
+			row["paywall"] = true
+		}
 		if cs.Suspended {
 			row["suspended"] = true
 			row["note"] = "Paused: " + cs.SuspendReason
@@ -55,7 +58,9 @@ func (s *Server) apiRealCatalog(w http.ResponseWriter, r *http.Request, pub *sto
 // adherence to what the radar already reads: a source scores the sum,
 // over each onboarding desk it belongs to, of that desk's already-added
 // sources — a fintech radar sees finance feeds before tech ones
-// (KLOX-207, teste-final §5.13). Ties keep the catalog's order.
+// (KLOX-207, teste-final §5.13). Ties keep the catalog's order, and
+// paywalled sources always sit at the end (KLOX-235) — a suggestion the
+// reader cannot open is the weakest pick.
 func offeredOrder(cat []store.CatalogSource, added map[string]bool) []store.CatalogSource {
 	byURL := map[string]string{}
 	for i := range cat {
@@ -81,6 +86,9 @@ func offeredOrder(cat []store.CatalogSource, added map[string]bool) []store.Cata
 	}
 	out := append([]store.CatalogSource(nil), cat...)
 	sort.SliceStable(out, func(i, j int) bool {
+		if pw := paywalledSources[out[i].Slug]; pw != paywalledSources[out[j].Slug] {
+			return !pw
+		}
 		return score[out[i].Slug] > score[out[j].Slug]
 	})
 	return out

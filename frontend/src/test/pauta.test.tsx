@@ -61,10 +61,10 @@ describe("Escrever (KLOX-168)", () => {
     expect(link).toHaveAttribute("href", "https://a.test/1");
     expect(link).toHaveAttribute("target", "_blank");
 
-    // KLOX-162: the comment space stays closed until "Comment"
-    expect(screen.queryByLabelText("Your comment: Primeira")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Comment: Primeira" }));
-    fireEvent.change(screen.getByLabelText("Your comment: Primeira"), { target: { value: "Minha nota" } });
+    // KLOX-162: the comment space stays closed until "Write"
+    expect(screen.queryByLabelText("Your text: Primeira")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Write: Primeira" }));
+    fireEvent.change(screen.getByLabelText("Your text: Primeira"), { target: { value: "Minha nota" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Move story down" })[0]);
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
     const body = vi.mocked(api.pautaSave).mock.calls.at(-1)![1];
@@ -82,8 +82,8 @@ describe("Escrever (KLOX-168)", () => {
   it("saves on blur without waiting for the debounce", async () => {
     renderPage();
     await screen.findByRole("link", { name: "Primeira" });
-    fireEvent.click(screen.getByRole("button", { name: "Comment: Primeira" }));
-    const ta = screen.getByLabelText("Your comment: Primeira");
+    fireEvent.click(screen.getByRole("button", { name: "Write: Primeira" }));
+    const ta = screen.getByLabelText("Your text: Primeira");
     fireEvent.change(ta, { target: { value: "Minha nota" } });
     fireEvent.blur(ta);
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 1000 });
@@ -163,13 +163,13 @@ describe("Escrever (KLOX-168)", () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const first = renderPage(qc);
     await screen.findByRole("link", { name: "Primeira" });
-    fireEvent.click(screen.getByRole("button", { name: "Comment: Primeira" }));
-    fireEvent.change(screen.getByLabelText("Your comment: Primeira"), { target: { value: "Minha nota" } });
+    fireEvent.click(screen.getByRole("button", { name: "Write: Primeira" }));
+    fireEvent.change(screen.getByLabelText("Your text: Primeira"), { target: { value: "Minha nota" } });
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
 
     first.unmount();
     renderPage(qc);
-    expect(await screen.findByLabelText("Your comment: Primeira")).toHaveValue("Minha nota");
+    expect(await screen.findByLabelText("Your text: Primeira")).toHaveValue("Minha nota");
   });
 
   // KLOX-233: a reload (or a dismissed leave-warning) must not drop the

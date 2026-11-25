@@ -139,7 +139,9 @@ export function PautaPage() {
     dirty.current = true;
     setSaveState("saving");
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => void persistRef.current(), 800);
+    // 400 ms — at 800 the badge sat on "Saving…" for seconds on a fast
+    // typist (KLOX-235)
+    timer.current = setTimeout(() => void persistRef.current(), 400);
   }, []);
 
   // leaving the page never drops the last keystrokes

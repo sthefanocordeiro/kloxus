@@ -267,7 +267,9 @@ function useAutosave(issueID: number, id: number, onSaved: (r: Rendition) => voi
       pending.current = body;
       setState("saving");
       window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => void flushRef.current(), 800);
+      // 400 ms — at 800 the badge sat on "Saving…" for seconds on a
+      // fast typist (KLOX-235)
+      timer.current = window.setTimeout(() => void flushRef.current(), 400);
     },
     flush: () => void flushRef.current(),
   };
