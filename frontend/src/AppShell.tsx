@@ -208,7 +208,7 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        {pubs.data?.length === 0 && (
+        {pubs.data?.length === 0 && pathname !== "/start" && (
           <div className="border-t border-line p-3">
             <Link to="/start" className="flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium text-muted hover:bg-line/50 hover:text-ink">
               <Plus size={16} aria-hidden />
@@ -397,8 +397,8 @@ function LangSwitch({ lang, setLang, className }: { lang: Lang; setLang: (l: Lan
 
 function AccountMenu({ claimed, email }: { claimed?: boolean; email?: string }) {
   const { t } = useT();
-  // one Radar per account: a new Radar means signing out and starting
-  // fresh; the claimed account comes back with an e-mail link
+  // "Sair" ends the session — a claimed account comes back with an
+  // e-mail link
   const leave = async (to: string) => {
     try {
       await api.logout();
@@ -415,10 +415,6 @@ function AccountMenu({ claimed, email }: { claimed?: boolean; email?: string }) 
         <>
           <p className="text-sm text-ink">{t.nav.savedWith(email)}</p>
           <div className="grid gap-1 border-t border-line pt-2">
-            <button type="button" className={item} onClick={() => leave("/start")}>
-              <Plus size={16} aria-hidden className="text-muted" />
-              {t.nav.newNewsletter}
-            </button>
             <button type="button" className={item} onClick={() => leave("/")}>
               <LogOut size={16} aria-hidden className="text-muted" />
               {t.nav.signOut}

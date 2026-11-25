@@ -5,7 +5,7 @@
 // /publications/:id, 404s and never recovers — for as long as pubQ was
 // in flight, which on hosted latency is long enough to click.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { api, type IssueSummary, type Publication } from "../api";
@@ -69,6 +69,7 @@ function renderAt(path: string) {
         <MemoryRouter initialEntries={[path]}>
           <Routes>
             <Route element={<AppShell />}>
+              <Route path="/start" element={<div>start screen</div>} />
               <Route path="/publications" element={<div>pubs screen</div>} />
               <Route path="/publications/:id" element={<div>pub screen</div>} />
               <Route path="/publications/:id/:tail" element={<div>pub screen</div>} />
@@ -331,5 +332,50 @@ describe("AppShell nav before the first Radar (KLOX-187)", () => {
     }
     // the only way forward is creating the first Radar
     expect(screen.getByRole("link", { name: "New Radar" })).toHaveAttribute("href", "/start");
+  });
+});
+
+// KLOX-206: "New Radar" leaked where it cannot work — the API allows
+// one Radar per account (409 one_newsletter). On /start the sidebar
+// offered a link to the page the user is already on, and the claimed
+// account menu silently signed the user out to /start. The only entry
+// points left are the empty-state CTA and the sidebar block off /start.
+describe("AppShell 'New Radar' entry points (KLOX-206)", () => {
+  beforeEach(() => {
+    vi.mocked(api.workspace).mockResolvedValue({
+      id: "w1",
+      label: "w",
+      mode: "demo",
+      hosted: false,
+      llm_mode: "off",
+      publishing: true,
+      claimed: true,
+      owner_email: "ana@x.dev",
+    });
+    vi.mocked(api.publication).mockResolvedValue({ publication: pub });
+  });
+
+  it("does not offer New Radar on the sidebar during onboarding (/start)", async () => {
+    vi.mocked(api.publications).mockResolvedValue([]);
+    renderAt("/start");
+    await screen.findByText("start screen");
+
+    // pubs resolved empty — the nav items hid; the sidebar create link
+    // must not point back at the page the user is already on
+    await waitFor(() => {
+      expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+    });
+    expect(screen.queryByRole("link", { name: "New Radar" })).toBeNull();
+  });
+
+  it("shows only Sign out in a claimed account's menu", async () => {
+    vi.mocked(api.publications).mockResolvedValue([pub]);
+    renderAt("/publications/42");
+    await screen.findByText("pub screen");
+    await screen.findAllByRole("link", { name: "Settings" }); // queries settled
+
+    fireEvent.click(screen.getByRole("button", { name: "Account" }));
+    expect(await screen.findByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New Radar" })).toBeNull();
   });
 });
