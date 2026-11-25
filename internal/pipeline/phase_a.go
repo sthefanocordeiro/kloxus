@@ -33,6 +33,34 @@ type triageScore struct {
 	reason string
 }
 
+// RunPhaseA runs collect → dedupe → triage → storylist → dossier →
+// deepdive, producing the issue and its items for review.
+func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result, error) {
+	st := &phaseAState{res: &Result{}}
+	if err := r.stageCollect(ctx, pub, st); err != nil {
+		return nil, err
+	}
+	if st.res.NoNewItems {
+		// Nothing new to draft and the bench is empty — collect
+		// already emitted its counts.
+		return st.res, nil
+	}
+	stages := []func(context.Context, *store.Publication, *phaseAState) error{
+		r.stageDedupe,
+		r.createIssue, // create the issue now so all model steps attach to it
+		r.stageTriage,
+		r.stageStorylist,
+		r.stageDossier,
+		r.stageDeepdive,
+	}
+	for _, stage := range stages {
+		if err := stage(ctx, pub, st); err != nil {
+			return nil, err
+		}
+	}
+	return st.res, nil
+}
+
 // createIssue allocates the issue row mid-run so all model steps attach
 // their run records to it, then reports it to OnIssue. The subject uses
 // the publication's localized edition word and the issue snapshots the
