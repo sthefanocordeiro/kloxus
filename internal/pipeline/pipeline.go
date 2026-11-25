@@ -549,11 +549,6 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 // mode asks the model; demo mode falls back to a deterministic dossier
 // synthesized from the story's items when no replay fixture exists.
 func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication, cand *store.Story, ref int) *Dossier {
-	type dSrc struct {
-		Ref  int
-		URL  string
-		Text string
-	}
 	var srcs []dSrc
 	for j, it := range cand.Items {
 		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})

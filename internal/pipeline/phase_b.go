@@ -22,7 +22,6 @@ type phaseBState struct {
 	modelDossiers map[int]*Dossier
 	draftByRef    map[int]draftEntry
 	number        int
-	sectionOrder  []string
 	body          string
 	checkBody     string
 	checkEntries  []entry
