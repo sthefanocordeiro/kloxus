@@ -426,7 +426,7 @@ func (s *Server) checklist(r *http.Request, pub *store.Publication, iss *store.I
 		}
 		flagsDone = len(iss.Flags) == 0
 	}
-	sent := iss != nil && iss.Status == "sent"
+	sent := iss != nil && iss.Status == store.IssueSent
 	outboxSeen := d.Progress(ctx, "outbox_seen") != ""
 	readerFree := d.Progress(ctx, "reader_free") != ""
 	readerSub := d.Progress(ctx, "reader_sub") != ""
@@ -737,7 +737,7 @@ func (s *Server) cardFor(r *http.Request, ii store.IssueItem) reviewCard {
 		}
 	}
 	card := reviewCard{IssueItem: ii, Title: title, Outlets: strings.Join(names, ", ")}
-	if ii.Status == "rejected" {
+	if ii.Status == store.ItemRejected {
 		_, reason, err := db(r).LatestDecision(ctx, ii.ID)
 		if err == nil {
 			card.RejectWhy = reason
@@ -756,7 +756,7 @@ func (s *Server) issueReview(w http.ResponseWriter, r *http.Request) {
 	var rows []reviewCard
 	pending := 0
 	for _, ii := range items {
-		if ii.Status == "pending" {
+		if ii.Status == store.ItemPending {
 			pending++
 		}
 		rows = append(rows, s.cardFor(r, ii))
@@ -775,7 +775,7 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 	}
 	iid, _ := strconv.ParseInt(r.PathValue("iid"), 10, 64)
 	kind, reason := r.FormValue("kind"), strings.TrimSpace(r.FormValue("reason"))
-	status := map[string]string{"approve": "approved", "reject": "rejected"}[kind]
+	status := map[string]string{"approve": store.ItemApproved, "reject": store.ItemRejected}[kind]
 	inPlace := r.Header.Get("X-Requested-With") == "fetch"
 
 	finish := func(card reviewCard) {
@@ -792,7 +792,7 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "item")
 		return
 	}
-	if iss.Status == "sent" {
+	if iss.Status == store.IssueSent {
 		s.errPage(w, r, http.StatusConflict, "this issue was already sent — sent issues are read-only")
 		return
 	}
@@ -801,11 +801,11 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 	case "undo":
 		// Undo is only offered on a rejected card; it returns the item to
 		// the pending queue for a fresh decision.
-		if ii.Status != "rejected" {
+		if ii.Status != store.ItemRejected {
 			finish(s.cardFor(r, *ii))
 			return
 		}
-		if err := db(r).SetIssueItemStatus(r.Context(), iid, "pending"); err != nil {
+		if err := db(r).SetIssueItemStatus(r.Context(), iid, store.ItemPending); err != nil {
 			s.errPage(w, r, 500, "internal error")
 			return
 		}
@@ -814,7 +814,7 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 		if pub, err := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID))); err == nil && pub != nil {
 			editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
 		}
-		ii.Status = "pending"
+		ii.Status = store.ItemPending
 		card := s.cardFor(r, *ii)
 		finish(card)
 		return
@@ -870,7 +870,7 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 		s.errPage(w, r, 400, "kind must be approve|reject|alternative")
 		return
 	}
-	if iss.Status == "approved" {
+	if iss.Status == store.IssueApproved {
 		db(r).RevertIssueToDraft(r.Context(), iss.ID)
 	}
 	// The item row changed above; re-render the card with the new status
@@ -893,7 +893,9 @@ func (s *Server) itemDossier(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var d pipeline.Dossier
-	json.Unmarshal([]byte(djson), &d)
+	if err := json.Unmarshal([]byte(djson), &d); err != nil {
+		slog.Warn("dossier page: malformed dossier json", "item", iid, "err", err)
+	}
 	title, _ := db(r).StoryTitle(r.Context(), ii.StoryID)
 	iss, _ := db(r).GetIssue(r.Context(), ii.IssueID)
 	var pub *store.Publication
@@ -917,7 +919,7 @@ func (s *Server) draftRun(w http.ResponseWriter, r *http.Request) {
 	items, _ := db(r).IssueItems(r.Context(), iss.ID)
 	pending := 0
 	for _, ii := range items {
-		if ii.Status == "pending" {
+		if ii.Status == store.ItemPending {
 			pending++
 		}
 	}
@@ -999,7 +1001,7 @@ func (s *Server) commentary(w http.ResponseWriter, r *http.Request) {
 		s.dbErr(w, r, err, "issue")
 		return
 	}
-	if iss.Status == "sent" {
+	if iss.Status == store.IssueSent {
 		s.errPage(w, r, http.StatusConflict, "this issue was already sent — sent issues are read-only")
 		return
 	}
@@ -1012,7 +1014,7 @@ func (s *Server) commentary(w http.ResponseWriter, r *http.Request) {
 		s.errPage(w, r, 500, "internal error")
 		return
 	}
-	if iss.Status == "approved" {
+	if iss.Status == store.IssueApproved {
 		// Edits after approval revert to drafted and require re-approval.
 		db(r).RevertIssueToDraft(r.Context(), iss.ID)
 	}
@@ -1030,7 +1032,7 @@ func (s *Server) resolveFlag(r *http.Request, iss *store.Issue, idx int, kind, d
 		return err
 	}
 	db(r).RecordDecision(r.Context(), iss.PublicationID, 0, kind, detail)
-	if iss.Status == "approved" {
+	if iss.Status == store.IssueApproved {
 		db(r).RevertIssueToDraft(r.Context(), iss.ID)
 	}
 	return nil
@@ -1048,7 +1050,7 @@ func (s *Server) flagRemove(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r, "flag")
 		return
 	}
-	if iss.Status == "sent" {
+	if iss.Status == store.IssueSent {
 		s.errPage(w, r, http.StatusConflict, "this issue was already sent — sent issues are read-only")
 		return
 	}
@@ -1090,7 +1092,7 @@ func (s *Server) flagEdit(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimSpace(r.FormValue("text"))
 	mode := r.FormValue("mode")
 	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	if iss.Status == "sent" {
+	if iss.Status == store.IssueSent {
 		s.errPage(w, r, http.StatusConflict, "this issue was already sent — sent issues are read-only")
 		return
 	}
@@ -1324,7 +1326,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	if iss.Status != "approved" {
+	if iss.Status != store.IssueApproved {
 		s.renderDraft(w, r, iss, pub, http.StatusConflict, "")
 		return
 	}
@@ -1342,7 +1344,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	if kind == "issue" {
 		// a test send only records the outbox email — the issue stays
 		// approved so it can still go to readers
-		if err := db(r).SetIssueStatus(r.Context(), iss.ID, "sent"); err != nil {
+		if err := db(r).SetIssueStatus(r.Context(), iss.ID, store.IssueSent); err != nil {
 			s.errPage(w, r, 500, "issue sent but status update failed")
 			return
 		}
@@ -1387,7 +1389,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pub, _ := s.canonicalPub(db(r).GetPublication(r.Context(), fmt.Sprint(iss.PublicationID)))
-	if iss.Status != "approved" && iss.Status != "sent" {
+	if iss.Status != store.IssueApproved && iss.Status != store.IssueSent {
 		// Exports ship only approved output: show the draft with blockers.
 		s.renderDraft(w, r, iss, pub, http.StatusConflict, "")
 		return

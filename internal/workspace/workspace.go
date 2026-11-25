@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // CookieName is the workspace cookie sent to hosted-demo visitors.
@@ -547,10 +548,7 @@ func (m *Manager) cleanup() {
 }
 
 func labelOf(id string) string {
-	if len(id) > 4 {
-		return "demo session " + id[:4] + "…"
-	}
-	return "demo session " + id
+	return "demo session " + strutil.Truncate(id, 4)
 }
 
 func copyFile(src, dst string) error {

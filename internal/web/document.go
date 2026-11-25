@@ -17,10 +17,10 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // docEvidence is the supporting passage for one citation of a sentence:
@@ -293,7 +293,7 @@ func bestEvidence(d *pipeline.Dossier, ref int, sentence, fallback string) strin
 	if best == "" {
 		return fallback
 	}
-	return truncateStr(best, 320)
+	return strutil.Truncate(best, 320)
 }
 
 // buildIssueDocument parses the stored issue body into the structured
@@ -435,7 +435,7 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 					src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
 					if ds.ItemID != 0 {
 						if stored, err := d.GetItem(ctx, ds.ItemID); err == nil {
-							src.Excerpt = truncateStr(stored.ContentText, 320)
+							src.Excerpt = strutil.Truncate(stored.ContentText, 320)
 							src.Date = stored.PublishedAt
 							it.openings[ds.Ref] = src.Excerpt
 							if src.Name == "" {
@@ -544,15 +544,4 @@ func insertInItem(body string, item *docItem, idx int, raw string) (string, bool
 		raw += "\n"
 	}
 	return body[:item.spanStart] + head + raw + seg[pos:], true
-}
-
-// truncateStr shortens s to n runes for excerpts (rune-safe: never
-// splits a UTF-8 sequence).
-func truncateStr(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	r := []rune(s)
-	return string(r[:n]) + "…"
 }

@@ -15,6 +15,8 @@ import (
 
 	"github.com/mmcdole/gofeed"
 	"golang.org/x/net/html"
+
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
 )
 
 // RawItem is one collected item before deduplication.
@@ -173,7 +175,7 @@ func (f LiveFetcher) client() *http.Client {
 	if f.HTTP != nil {
 		return f.HTTP
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return httpx.Client(30 * time.Second)
 }
 
 // Fetch implements Fetcher over HTTP.

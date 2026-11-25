@@ -458,7 +458,7 @@ func (db *DB) UpdateIssue(ctx context.Context, issueID int64, status, bodyMD, fl
 	if err != nil {
 		return err
 	}
-	if status != "approved" {
+	if status != IssueApproved {
 		_, err = db.ExecContext(ctx, `DELETE FROM approval_receipts WHERE issue_id = ?`, issueID)
 	}
 	return err

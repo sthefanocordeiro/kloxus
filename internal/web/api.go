@@ -28,6 +28,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // --- error envelope ---
@@ -262,7 +263,7 @@ func publicationView(p *store.Publication) apiPublication {
 // apiIssueSummary is the issue resource in lists and detail.
 func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any {
 	ctx := r.Context()
-	counts := map[string]int{"pending": 0, "approved": 0, "rejected": 0, "alternative": 0}
+	counts := map[string]int{store.ItemPending: 0, store.ItemApproved: 0, store.ItemRejected: 0, store.ItemAlternative: 0}
 	if items, err := db(r).IssueItems(ctx, iss.ID); err == nil {
 		for _, ii := range items {
 			counts[ii.Status]++
@@ -304,7 +305,9 @@ func orEmpty[T any](s []T) []T {
 // receiptView renders a stored approval receipt for the API.
 func receiptView(rec *store.ApprovalReceipt) map[string]any {
 	checks := []apiCheck{}
-	json.Unmarshal([]byte(rec.ChecksJSON), &checks)
+	if err := json.Unmarshal([]byte(rec.ChecksJSON), &checks); err != nil {
+		slog.Warn("approval receipt: malformed checks_json", "issue", rec.IssueID, "err", err)
+	}
 	return map[string]any{
 		"issue_id": rec.IssueID, "number": rec.Number,
 		"document_version": rec.DocumentVersion,
@@ -354,7 +357,7 @@ func (s *Server) apiCardFor(r *http.Request, ii store.IssueItem) apiItem {
 	if card.Outlets == nil {
 		card.Outlets = []string{}
 	}
-	if ii.Status == "rejected" {
+	if ii.Status == store.ItemRejected {
 		if _, reason, err := db(r).LatestDecision(ctx, ii.ID); err == nil {
 			card.RejectWhy = reason
 		}
@@ -369,7 +372,7 @@ func pendingDecisions(r *http.Request, issueID int64) int {
 	}
 	n := 0
 	for _, ii := range items {
-		if ii.Status == "pending" {
+		if ii.Status == store.ItemPending {
 			n++
 		}
 	}
@@ -980,7 +983,7 @@ func (s *Server) apiIssueItems(w http.ResponseWriter, r *http.Request) {
 		out = append(out, s.apiCardFor(r, ii))
 	}
 	apiJSON(w, 200, map[string]any{
-		"items": out, "pending": pendingDecisions(r, iss.ID),
+		"items": out, store.ItemPending: pendingDecisions(r, iss.ID),
 	})
 }
 
@@ -1064,7 +1067,7 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate) 
 			cv.Status = c.Item.Status
 			cv.Origin = c.Item.Origin
 			cv.Position = c.Item.Position
-			cv.InIssue = c.Item.Status == "pending" || c.Item.Status == "approved"
+			cv.InIssue = c.Item.Status == store.ItemPending || c.Item.Status == store.ItemApproved
 			// any prior placement is a valid suggestion: a rejected or
 			// alternative story re-adds where it once sat
 			cv.SuggestedSection = c.Item.Section
@@ -1096,7 +1099,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -1172,10 +1175,10 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		positions[e.Section]++
 		pos := positions[e.Section] - 1
 		if ii, err := db(r).IssueItemByStory(ctx, iss.ID, e.StoryID); err == nil {
-			if ii.Status == "rejected" {
+			if ii.Status == store.ItemRejected {
 				reIncluded = true
 			}
-			if apiDBErr(w, r, db(r).SetIssueItemPlacement(ctx, ii.ID, e.Section, pos, "approved"), "item") {
+			if apiDBErr(w, r, db(r).SetIssueItemPlacement(ctx, ii.ID, e.Section, pos, store.ItemApproved), "item") {
 				return
 			}
 		} else {
@@ -1183,7 +1186,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 			if _, err := db(r).CreateIssueItem(ctx, store.IssueItem{
 				IssueID: iss.ID, StoryID: e.StoryID, Section: e.Section,
 				Score: c.Story.TriageScore, Reason: c.Story.TriageReason,
-				Status: "approved", Origin: "manual", Position: pos,
+				Status: store.ItemApproved, Origin: "manual", Position: pos,
 			}); apiDBErr(w, r, err, "item") {
 				return
 			}
@@ -1191,7 +1194,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 	}
 	items, _ := db(r).IssueItems(ctx, iss.ID)
 	for _, ii := range items {
-		if (ii.Status == "pending" || ii.Status == "approved") && !seen[ii.StoryID] {
+		if (ii.Status == store.ItemPending || ii.Status == store.ItemApproved) && !seen[ii.StoryID] {
 			if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, ii.ID, "removed"), "item") {
 				return
 			}
@@ -1235,7 +1238,7 @@ func (s *Server) apiStory(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]any{
 			"id": it.ID, "title": it.Title, "url": "/a/" + fmt.Sprint(it.ID),
 			"outlet": n, "published_at": it.PublishedAt,
-			"snippet": truncateStr(it.ContentText, 400),
+			"snippet": strutil.Truncate(it.ContentText, 400),
 		})
 	}
 	apiJSON(w, 200, map[string]any{
@@ -1286,7 +1289,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "item") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -1308,8 +1311,8 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			ii = ii2
 		}
 		resp := map[string]any{
-			"item":    s.apiCardFor(r, *ii),
-			"pending": pendingDecisions(r, iss.ID),
+			"item":            s.apiCardFor(r, *ii),
+			store.ItemPending: pendingDecisions(r, iss.ID),
 		}
 		if guide != nil {
 			resp["guide"] = guide
@@ -1319,11 +1322,11 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 
 	switch in.Kind {
 	case "undo":
-		if ii.Status != "rejected" {
+		if ii.Status != store.ItemRejected {
 			apiErr(w, 409, "not_rejected", "undo applies only to a rejected item")
 			return
 		}
-		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, "pending"), "item") {
+		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, store.ItemPending), "item") {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "undo", "")
@@ -1334,7 +1337,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		finish(iid)
 		return
 	case "approve":
-		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, "approved"), "item") {
+		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, store.ItemApproved), "item") {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "approve", in.Reason)
@@ -1346,7 +1349,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 					Target: &apiTarget{Kind: "item", Ref: fmt.Sprint(iid)}})
 			return
 		}
-		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, "rejected"), "item") {
+		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, store.ItemRejected), "item") {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "reject", in.Reason)
@@ -1378,7 +1381,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "kind must be approve|reject|alternative|undo")
 		return
 	}
-	if iss.Status == "approved" {
+	if iss.Status == store.IssueApproved {
 		// a decision after approval returns the issue to draft
 		db(r).RevertIssueToDraft(ctx, iss.ID)
 	}
@@ -1415,7 +1418,7 @@ type apiCheck struct {
 // factual sentence sourced, no flags, required commentary written.
 func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.Publication, doc *issueDocument) []apiCheck {
 	checks := []apiCheck{}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		checks = append(checks, apiCheck{Code: "read_only", OK: false,
 			Message: "this issue is sent or scheduled — locked issues are read-only"})
 	}
@@ -1521,7 +1524,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -1534,7 +1537,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 	lineup, _ := db(r).IssueItems(r.Context(), iss.ID)
 	filled := map[string]int{}
 	for _, ii := range lineup {
-		if ii.Status == "pending" || ii.Status == "approved" {
+		if ii.Status == store.ItemPending || ii.Status == store.ItemApproved {
 			filled[ii.Section]++
 		}
 	}
@@ -1551,8 +1554,8 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, ii := range lineup {
-		if ii.Status == "pending" {
-			if apiDBErr(w, r, db(r).SetIssueItemStatus(r.Context(), ii.ID, "approved"), "item") {
+		if ii.Status == store.ItemPending {
+			if apiDBErr(w, r, db(r).SetIssueItemStatus(r.Context(), ii.ID, store.ItemApproved), "item") {
 				return
 			}
 		}
@@ -1627,7 +1630,7 @@ func (s *Server) apiSentenceCtx(w http.ResponseWriter, r *http.Request) (*store.
 	if apiDBErr(w, r, err, "issue") {
 		return nil, nil, nil, false
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return nil, nil, nil, false
 	}
@@ -1669,7 +1672,7 @@ func dropFlag(r *http.Request, iss *store.Issue, itemRef int64, raw string) (boo
 // revertApproved returns an approved issue to drafted after an edit —
 // which also invalidates the stored approval receipt.
 func revertApproved(r *http.Request, iss *store.Issue) {
-	if iss.Status == "approved" {
+	if iss.Status == store.IssueApproved {
 		db(r).RevertIssueToDraft(r.Context(), iss.ID)
 		iss.Status = "drafted"
 	}
@@ -1880,7 +1883,7 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -2053,7 +2056,7 @@ func (s *Server) apiCommentary(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -2135,11 +2138,11 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 // approve returns the same receipt, never a new timestamp.
 func (s *Server) recordApproval(r *http.Request, iss *store.Issue, pub *store.Publication, checks []apiCheck) (*store.ApprovalReceipt, error) {
 	ctx := r.Context()
-	if iss.Status != "approved" {
-		if err := db(r).SetIssueStatus(ctx, iss.ID, "approved"); err != nil {
+	if iss.Status != store.IssueApproved {
+		if err := db(r).SetIssueStatus(ctx, iss.ID, store.IssueApproved); err != nil {
 			return nil, err
 		}
-		iss.Status = "approved" // the receipt attests to the approved document
+		iss.Status = store.IssueApproved // the receipt attests to the approved document
 		db(r).RecordDecision(ctx, iss.PublicationID, 0, "approve", "issue approved")
 	}
 	rec, err := db(r).ApprovalReceipt(ctx, iss.ID)
@@ -2196,7 +2199,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "scheduling applies to a reader send — a test send goes out now")
 		return
 	}
-	if iss.Status != "approved" {
+	if iss.Status != store.IssueApproved {
 		apiErr(w, 409, "blocked", "the issue must be approved before sending",
 			apiReason{Code: "not_approved", Message: "issue is not approved",
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
@@ -2242,7 +2245,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 	if kind == "issue" {
 		// a test send only records the outbox email — the issue stays
 		// approved so it can still go to readers
-		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
+		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, store.IssueSent), "issue") {
 			return
 		}
 		if fresh, _ := db(r).GetIssue(r.Context(), iss.ID); fresh != nil {
@@ -2263,7 +2266,7 @@ func (s *Server) apiHold(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status != "scheduled" {
+	if iss.Status != store.IssueScheduled {
 		apiErr(w, 409, "validation", "only a scheduled issue can be held")
 		return
 	}
@@ -2284,7 +2287,7 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	if iss.Status != "approved" && iss.Status != "sent" {
+	if iss.Status != store.IssueApproved && iss.Status != store.IssueSent {
 		apiErr(w, 409, "blocked", "exports ship only approved output — approve the issue first",
 			apiReason{Code: "not_approved", Message: "issue is not approved",
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
@@ -2512,7 +2515,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status != "sent" && iss.Status != "scheduled" {
+	if iss.Status != store.IssueSent && iss.Status != store.IssueScheduled {
 		apiErr(w, 404, "not_found", "issue not found")
 		return
 	}
@@ -2552,7 +2555,7 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	if iss.Status != "sent" && iss.Status != "scheduled" {
+	if iss.Status != store.IssueSent && iss.Status != store.IssueScheduled {
 		apiErr(w, 409, "blocked", "the public page exists once the issue is sent or scheduled",
 			apiReason{Code: "not_sent", Message: "issue is not sent",
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})

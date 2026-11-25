@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"strings"
 )
 
@@ -36,8 +37,12 @@ func (db *DB) scanIssue(row *sql.Row) (*Issue, error) {
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal([]byte(flags), &i.Flags)
-	json.Unmarshal([]byte(commentary), &i.Commentary)
+	if err := json.Unmarshal([]byte(flags), &i.Flags); err != nil {
+		slog.Warn("issue row: malformed flags json", "issue", i.ID, "err", err)
+	}
+	if err := json.Unmarshal([]byte(commentary), &i.Commentary); err != nil {
+		slog.Warn("issue row: malformed commentary json", "issue", i.ID, "err", err)
+	}
 	return &i, nil
 }
 
@@ -65,8 +70,12 @@ func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
 			&i.Subject, &i.BodyMD, &flags, &commentary, &i.CreatedAt, &i.ScheduledAt); err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(flags), &i.Flags)
-		json.Unmarshal([]byte(commentary), &i.Commentary)
+		if err := json.Unmarshal([]byte(flags), &i.Flags); err != nil {
+			slog.Warn("issue row: malformed flags json", "issue", i.ID, "err", err)
+		}
+		if err := json.Unmarshal([]byte(commentary), &i.Commentary); err != nil {
+			slog.Warn("issue row: malformed commentary json", "issue", i.ID, "err", err)
+		}
 		out = append(out, &i)
 	}
 	return out, rows.Err()

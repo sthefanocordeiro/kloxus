@@ -109,7 +109,7 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string) string {
 	}
 	flush(current)
 	body := strings.Join(out, "\n")
-	if iss.Status == "approved" || iss.Status == "sent" {
+	if iss.Status == store.IssueApproved || iss.Status == store.IssueSent {
 		if d := aiDisclosure(pub); d != "" {
 			if i := strings.Index(body, "\n"); i >= 0 {
 				body = body[:i+1] + "\n" + d + "\n" + body[i+1:]

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -151,8 +152,12 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 			&p.EditorialLine, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom); err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(sections), &p.Sections)
-		json.Unmarshal([]byte(paywall), &p.Paywall)
+		if err := json.Unmarshal([]byte(sections), &p.Sections); err != nil {
+			slog.Warn("publication row: malformed sections json", "publication", p.ID, "err", err)
+		}
+		if err := json.Unmarshal([]byte(paywall), &p.Paywall); err != nil {
+			slog.Warn("publication row: malformed paywall json", "publication", p.ID, "err", err)
+		}
 		out = append(out, &p)
 	}
 	return out, rows.Err()

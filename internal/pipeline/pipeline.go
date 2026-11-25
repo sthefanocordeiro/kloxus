@@ -9,6 +9,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,6 +24,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 //go:embed prompts
@@ -203,8 +205,8 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 		return nil, err
 	}
 	for _, ii := range items {
-		if ii.Status == "pending" {
-			if err := r.DB.SetIssueItemStatus(ctx, ii.ID, "approved"); err != nil {
+		if ii.Status == store.ItemPending {
+			if err := r.DB.SetIssueItemStatus(ctx, ii.ID, store.ItemApproved); err != nil {
 				return nil, err
 			}
 		}
@@ -245,12 +247,16 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		if r.DemoMode && !strings.HasPrefix(s.URL, "fixtures/") {
 			// Visitor-added sources are never fetched on the hosted demo
 			// (SSRF surface); they are stored but skipped at collect time.
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "simulated in demo mode: sources are not fetched")
+			if err := r.DB.MarkSourceFetched(ctx, s.ID, "", "simulated in demo mode: sources are not fetched"); err != nil {
+				slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
+			}
 			continue
 		}
 		raw, err := r.Fetcher.Fetch(ctx, s.Type, s.URL)
 		if err != nil {
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+truncate(err.Error(), 120))
+			if err := r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+strutil.Cut(err.Error(), 120)); err != nil {
+				slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
+			}
 			continue // one bad source must not abort the run
 		}
 		n, err := r.DB.SaveItems(ctx, s.ID, raw, dedupe.Canonical)
@@ -261,7 +267,9 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		if len(raw) > 0 {
 			outlet = raw[0].Outlet
 		}
-		r.DB.MarkSourceFetched(ctx, s.ID, outlet, fmt.Sprintf("ok: %d items, %d new", len(raw), n))
+		if err := r.DB.MarkSourceFetched(ctx, s.ID, outlet, fmt.Sprintf("ok: %d items, %d new", len(raw), n)); err != nil {
+			slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
+		}
 		res.Items += len(raw)
 		res.New += n
 	}
@@ -359,7 +367,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	for i, s := range stories {
 		snip := ""
 		if len(s.Items) > 0 {
-			snip = truncate(s.Items[0].ContentText, 400)
+			snip = strutil.Cut(s.Items[0].ContentText, 400)
 		}
 		ts[i] = triStory{Ref: i + 1, Title: s.Title, Outlets: strings.Join(s.Outlets(), ", "), Snippet: snip}
 	}
@@ -470,7 +478,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			Section: p.Section,
 			Score:   sc.score,
 			Reason:  p.Why,
-			Status:  "pending",
+			Status:  store.ItemPending,
 		})
 		if err != nil {
 			return nil, err
@@ -498,7 +506,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	dItems := make([]dItem, len(entries))
 	for i, e := range entries {
 		for j, it := range e.sources {
-			dItems[i].Sources = append(dItems[i].Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+			dItems[i].Sources = append(dItems[i].Sources, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, 1200)})
 		}
 		dItems[i].Ref = e.ref
 		dItems[i].Title = e.title
@@ -558,7 +566,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		dj, _ := json.Marshal(d)
 		di := ddItem{Ref: e.ref, Title: e.title, Dossier: string(dj)}
 		for j, it := range e.sources {
-			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, 1200)})
 		}
 		ddItems = append(ddItems, di)
 	}
@@ -597,7 +605,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 			return nil, err
 		}
 	}
-	if err := r.DB.SetIssueStatus(ctx, res.IssueID, "reviewing"); err != nil {
+	if err := r.DB.SetIssueStatus(ctx, res.IssueID, store.IssueReviewing); err != nil {
 		return nil, err
 	}
 	return res, nil
@@ -628,7 +636,7 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool)
 			if ii.Origin != "phaseA" {
 				continue
 			}
-		} else if ii.Status != "approved" {
+		} else if ii.Status != store.ItemApproved {
 			continue
 		}
 		djson, err := r.DB.Dossier(ctx, ii.ID)
@@ -641,7 +649,11 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool)
 		}
 		title := d.Title
 		if title == "" {
-			title, _ = r.DB.StoryTitle(ctx, ii.StoryID)
+			if t, err := r.DB.StoryTitle(ctx, ii.StoryID); err != nil {
+				slog.Warn("story title lookup failed", "story", ii.StoryID, "err", err)
+			} else {
+				title = t
+			}
 		}
 		section := ii.Section
 		if canonical && ii.OrigSection != "" {
@@ -679,7 +691,7 @@ func (r *Runner) ensureDossiers(ctx context.Context, pub *store.Publication, iss
 			}
 			continue
 		}
-		if ii.Status == "approved" || ii.Status == "pending" {
+		if ii.Status == store.ItemApproved || ii.Status == store.ItemPending {
 			missing = append(missing, ii)
 		}
 	}
@@ -909,7 +921,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	for _, e := range entries {
 		de, ok := draftByRef[e.ref]
 		if ok && !refRe.MatchString(de.body) {
-			addFlag(int64(e.ref), truncate(de.body, 120), "entry has no citations")
+			addFlag(int64(e.ref), strutil.Cut(de.body, 120), "entry has no citations")
 		}
 	}
 	flagsJSON, _ := json.Marshal(res.Flagged)
@@ -1226,7 +1238,7 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 		Section: old.Section,
 		Score:   cand.TriageScore,
 		Reason:  cand.TriageReason,
-		Status:  "pending",
+		Status:  store.ItemPending,
 		Origin:  "alternative",
 	})
 	if err != nil {
@@ -1237,7 +1249,7 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 	if err := r.DB.SaveDossier(ctx, newID, string(data)); err != nil {
 		return nil, err
 	}
-	if err := r.DB.SetIssueItemStatus(ctx, old.ID, "alternative"); err != nil {
+	if err := r.DB.SetIssueItemStatus(ctx, old.ID, store.ItemAlternative); err != nil {
 		return nil, err
 	}
 	return r.DB.GetIssueItem(ctx, newID)
@@ -1254,7 +1266,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	}
 	var srcs []dSrc
 	for j, it := range cand.Items {
-		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, 1200)})
 	}
 	var dossiers []Dossier
 	resp, err := r.call(ctx, r.DraftModel, "dossier", map[string]any{
@@ -1298,13 +1310,6 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	}
 	d.fillSources(cand.Items)
 	return d
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }
 
 // RunHeadless is the CLI entry: build a runner for the given mode and run it.
