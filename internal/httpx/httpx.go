@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+// Transport is the shared connection pool backing every Client. Use it
+// directly when a client needs extra fields beyond Timeout (a
+// CheckRedirect policy, a Jar) so its connections still pool with the
+// rest of the app's outbound traffic.
+var Transport = transport
+
 var transport = &http.Transport{
 	Proxy: http.ProxyFromEnvironment,
 	DialContext: (&net.Dialer{

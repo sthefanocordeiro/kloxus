@@ -28,12 +28,12 @@ Criadores independentes perdem horas toda semana monitorando feeds, filtrando du
 
 ## Hosted demo checklist
 
-1. Change `app = "kloxus-demo"` in `fly.toml` if the name is unavailable.
+1. Change `app = "kloxus-demo"` in `fly.demo.toml` if the name is unavailable.
 2. Run:
    ```bash
-   fly launch --copy-config
-   fly volumes create kloxus_data --region gru --size 1
-   fly deploy
+   fly launch --copy-config -c fly.demo.toml
+   fly volumes create kloxus_data --region gru --size 1 -a kloxus-demo
+   fly deploy -c fly.demo.toml
    ```
 3. Verify `GET /healthz` returns `ok`.
 4. Open the demo URL, click **Reset demo**, then run the judge flow once.
@@ -48,7 +48,7 @@ Keep item 1 selected if you want to show the planted unsupported-claim flag.
 3. Review story list; open one dossier; reject one lower-ranked item with a reason.
 4. Show that the rejection reason is appended to the editorial guide.
 5. Draft the issue; show the citation flag on item 1.
-6. Add required commentary in **The big one**, dismiss the flag after explaining it.
+6. Add required commentary in **O destaque**, dismiss the flag after explaining it.
 7. Approve; export Markdown/HTML or send to the local outbox.
 8. Paywall: simulate reader payment and compare unpaid/paid reader views.
 9. Optional: Sources page shows the simulated Firecrawl monitor badge and Check now.

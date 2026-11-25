@@ -4,6 +4,7 @@ package store
 // (see migrations/0001_init.sql).
 const (
 	IssueDraft     = "draft"
+	IssueDrafted   = "drafted"
 	IssueReviewing = "reviewing"
 	IssueApproved  = "approved"
 	IssueBlocked   = "blocked"
@@ -18,4 +19,5 @@ const (
 	ItemApproved    = "approved"
 	ItemRejected    = "rejected"
 	ItemAlternative = "alternative"
+	ItemRemoved     = "removed"
 )
