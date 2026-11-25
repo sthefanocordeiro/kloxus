@@ -60,16 +60,19 @@ type fixtureFile struct {
 }
 
 // PricePerMillion maps model name to (input, output) USD per million
-// tokens. Defaults are placeholders to be verified against current
-// pricing; unknown models use a conservative mid-range estimate.
+// tokens. Verified against Anthropic list prices effective 2026-10-07
+// (KLOX-54): haiku-5-5 $0.10/$0.50 for prompts up to 100k input tokens
+// — always our tier, since CheckSize caps every call at 40k input —
+// sonnet-5-5 $2/$10, opus-5-5 $4/$20. Unknown models use a conservative
+// mid-range estimate.
 func PricePerMillion(model string) (in, out float64) {
 	switch {
 	case strings.Contains(model, "haiku"):
-		return 1.00, 5.00
+		return 0.10, 0.50
 	case strings.Contains(model, "sonnet"):
-		return 3.00, 15.00
+		return 2.00, 10.00
 	case strings.Contains(model, "opus"):
-		return 15.00, 75.00
+		return 4.00, 20.00
 	default:
 		return 3.00, 15.00
 	}
