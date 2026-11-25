@@ -33,23 +33,16 @@ func (db *DB) ActivateSubscription(ctx context.Context, readerID int64, provider
 // ActivateSubscriptionUntil is ActivateSubscription with an expiry —
 // one-time checkouts grant a fixed window (D56); an empty paidUntil
 // keeps the subscription lifetime-scoped (fake provider, demo paths).
+// One row per reader (subscriptions_reader_key): the upsert is atomic so
+// concurrent activations can't write a second row (KLOX-220).
 func (db *DB) ActivateSubscriptionUntil(ctx context.Context, readerID int64, provider, ref, magicToken, paidUntil string) error {
-	var id int64
-	err := db.QueryRowContext(ctx,
-		`SELECT id FROM subscriptions WHERE workspace_id = $1 AND reader_id = $2`, db.ws, readerID).Scan(&id)
-	if err == sql.ErrNoRows {
-		_, err = db.ExecContext(ctx,
-			`INSERT INTO subscriptions (workspace_id, reader_id, status, provider, provider_ref, magic_token, paid_until)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7)`, db.ws, readerID, "active", provider, ref, magicToken, paidUntil)
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx,
-		`UPDATE subscriptions SET status = 'active', provider = $1, provider_ref = $2, magic_token = $3, paid_until = $4
-		 WHERE workspace_id = $5 AND reader_id = $6`,
-		provider, ref, magicToken, paidUntil, db.ws, readerID)
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO subscriptions (workspace_id, reader_id, status, provider, provider_ref, magic_token, paid_until)
+		 VALUES ($1,$2,'active',$3,$4,$5,$6)
+		 ON CONFLICT (workspace_id, reader_id) DO UPDATE SET
+		   status = 'active', provider = excluded.provider, provider_ref = excluded.provider_ref,
+		   magic_token = excluded.magic_token, paid_until = excluded.paid_until`,
+		db.ws, readerID, provider, ref, magicToken, paidUntil)
 	return err
 }
 

@@ -334,6 +334,10 @@ func TestIssueItemDossiersAndGetItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateStory: %v", err)
 	}
+	storyHi, err := db.CreateStory(ctx, pubID, "story hi", 2, "")
+	if err != nil {
+		t.Fatalf("CreateStory hi: %v", err)
+	}
 	lo, err := db.CreateIssueItem(ctx, IssueItem{
 		IssueID: issueID, StoryID: story, Section: "Lead",
 		Score: 10, Status: "pending", Position: 0,
@@ -342,7 +346,7 @@ func TestIssueItemDossiersAndGetItems(t *testing.T) {
 		t.Fatalf("CreateIssueItem lo: %v", err)
 	}
 	hi, err := db.CreateIssueItem(ctx, IssueItem{
-		IssueID: issueID, StoryID: story, Section: "Lead",
+		IssueID: issueID, StoryID: storyHi, Section: "Lead",
 		Score: 20, Status: "approved", Position: 1,
 	})
 	if err != nil {
@@ -446,6 +450,10 @@ func TestIssueDocBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateStory: %v", err)
 	}
+	storyHi, err := db.CreateStory(ctx, pubID, "story hi", 2, "")
+	if err != nil {
+		t.Fatalf("CreateStory hi: %v", err)
+	}
 	var cited int64
 	if err := db.QueryRowContext(ctx,
 		`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text, author)
@@ -468,7 +476,7 @@ func TestIssueDocBundle(t *testing.T) {
 		t.Fatalf("CreateIssueItem lo: %v", err)
 	}
 	hi, err := db.CreateIssueItem(ctx, IssueItem{
-		IssueID: issueID, StoryID: story, Section: "Lead",
+		IssueID: issueID, StoryID: storyHi, Section: "Lead",
 		Score: 20, Status: "approved", Position: 1,
 	})
 	if err != nil {

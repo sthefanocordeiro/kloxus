@@ -76,6 +76,12 @@ func (r *Runner) stageStorylist(ctx context.Context, pub *store.Publication, st 
 		if primaryIdx < 0 || primaryIdx >= len(stories) {
 			return fmt.Errorf("storylist: ref %d out of range", p.Refs[0])
 		}
+		if used[primaryIdx] {
+			// The model picked the same story twice (as a primary or
+			// inside an earlier merge) — skip it rather than violate
+			// issue_items' one-row-per-story constraint (KLOX-220).
+			continue
+		}
 		used[primaryIdx] = true
 		primary := stories[primaryIdx]
 		var merges []int64
