@@ -260,60 +260,14 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	}
 	entries := st.entries
 
-	// --- dossier ---
-	r.stepStart("dossier")
-	start := time.Now()
-	type dSrc struct {
-		Ref  int
-		URL  string
-		Text string
+	if err := r.stageDossier(ctx, pub, st); err != nil {
+		return nil, err
 	}
-	type dItem struct {
-		Ref     int
-		Title   string
-		Sources []dSrc
-	}
-	dItems := make([]dItem, len(entries))
-	for i, e := range entries {
-		for j, it := range e.sources {
-			dItems[i].Sources = append(dItems[i].Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
-		}
-		dItems[i].Ref = e.ref
-		dItems[i].Title = e.title
-	}
-	var dossiers []Dossier
-	resp, err := r.call(ctx, r.DraftModel, "dossier", map[string]any{
-		"Publication": pub.Name,
-		"Language":    pub.Language,
-		"Items":       dItems,
-	}, &dossiers)
-	if err != nil {
-		return nil, fmt.Errorf("dossier: %w", err)
-	}
-	res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
-	r.emit("dossier", map[string]int{"dossiers": len(dossiers)})
-	r.record(ctx, pub.ID, issueID, "dossier", r.DraftModel, start, resp)
-	dossierByRef := map[int]*Dossier{}
-	for i := range dossiers {
-		dossierByRef[dossiers[i].Ref] = &dossiers[i]
-	}
-	for i, e := range entries {
-		d, ok := dossierByRef[e.ref]
-		if !ok {
-			return nil, fmt.Errorf("dossier: missing item %d", e.ref)
-		}
-		d.Title = e.title
-		d.fillSources(e.sources)
-		data, _ := json.Marshal(d)
-		if err := r.DB.SaveDossier(ctx, e.iiID, string(data)); err != nil {
-			return nil, err
-		}
-		entries[i].sources = e.sources // keep for later steps
-	}
+	dossierByRef := st.dossierByRef
 
 	// --- deepdive (top N by score) ---
 	r.stepStart("deepdive")
-	start = time.Now()
+	start := time.Now()
 	topN := r.MaxDeepDives
 	if topN <= 0 || topN > 3 {
 		topN = 3
@@ -348,7 +302,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		} `json:"deep_facts"`
 		ExtraUnknowns []string `json:"extra_unknowns"`
 	}
-	resp, err = r.call(ctx, r.DraftModel, "deepdive", map[string]any{
+	resp, err := r.call(ctx, r.DraftModel, "deepdive", map[string]any{
 		"Publication": pub.Name,
 		"Language":    pub.Language,
 		"Items":       ddItems,
