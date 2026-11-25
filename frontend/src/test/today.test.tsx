@@ -76,12 +76,12 @@ describe("Hoje (KLOX-123)", () => {
     vi.mocked(api.pautaCreate).mockResolvedValue({ issue_id: 55 });
     renderToday();
     await screen.findByText("Story 1");
-    expect(screen.queryByRole("region", { name: "Build pauta →" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Build brief →" })).toBeNull();
     fireEvent.click(screen.getByRole("checkbox", { name: /Story 2/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Story 1/ }));
     expect(screen.getByText("2 stories selected")).toBeVisible();
     expect(screen.getAllByTestId("pick-order").map((n) => n.textContent)).toEqual(["2", "1"]);
-    fireEvent.click(screen.getByRole("button", { name: "Build pauta →" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build brief →" }));
     expect(await screen.findByText("pauta screen")).toBeVisible();
     expect(api.pautaCreate).toHaveBeenCalledWith("7", [2, 1]);
   });
@@ -97,12 +97,12 @@ describe("Hoje (KLOX-123)", () => {
     expect(screen.getByRole("checkbox", { name: /Story 1/ })).toBeChecked();
     // clicking again unticks and hides the action bar
     fireEvent.click(first);
-    expect(screen.queryByRole("region", { name: "Build pauta →" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Build brief →" })).toBeNull();
     expect(screen.getByRole("checkbox", { name: /Story 1/ })).not.toBeChecked();
     // its own checkbox still works without double-toggling
     fireEvent.click(screen.getByRole("checkbox", { name: /Story 1/ }));
     expect(screen.getByText("1 story selected")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Build pauta →" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build brief →" }));
     expect(await screen.findByText("pauta screen")).toBeVisible();
     expect(api.pautaCreate).toHaveBeenCalledWith("7", [1]);
   });
@@ -117,7 +117,7 @@ describe("Hoje (KLOX-123)", () => {
       await screen.findByText("Story 1");
       fireEvent.click(screen.getByRole("checkbox", { name: /Story 1/ }));
       fireEvent.click(screen.getByRole("checkbox", { name: /Story 2/ }));
-      fireEvent.click(screen.getByRole("button", { name: "Build pauta →" }));
+      fireEvent.click(screen.getByRole("button", { name: "Build brief →" }));
       expect(await screen.findByText("Putting the 2 stories together…")).toBeVisible();
       await act(async () => { vi.advanceTimersByTime(2600); });
       expect(await screen.findByText("Opening the editor…")).toBeVisible();
@@ -131,7 +131,7 @@ describe("Hoje (KLOX-123)", () => {
       pieces: [{ id: 3, number: 2, status: "reviewed" }, { id: 2, number: 1, status: "draft" }],
     }));
     renderToday();
-    expect(await screen.findByText("Pauta 2")).toBeVisible();
+    expect(await screen.findByText("Brief 2")).toBeVisible();
     expect(screen.getByText("Ready")).toBeVisible();
     expect(screen.getByText("Draft")).toBeVisible();
   });
@@ -165,13 +165,13 @@ describe("Hoje (KLOX-123)", () => {
     await screen.findByText("Story 1");
     fireEvent.click(screen.getByRole("checkbox", { name: /Story 1/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Story 2/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Build pauta →" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build brief →" }));
     expect(await screen.findByText(/story list changed/)).toBeVisible();
     // story 2 left the deck: only story 1 stays picked
     await waitFor(() => expect(screen.getByText("1 story selected")).toBeVisible());
     expect(await screen.findByText("Story 3")).toBeVisible();
     // the retry sends only live ids and goes through
-    fireEvent.click(screen.getByRole("button", { name: "Build pauta →" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build brief →" }));
     expect(await screen.findByText("pauta screen")).toBeVisible();
     expect(api.pautaCreate).toHaveBeenLastCalledWith("7", [1]);
   });
@@ -180,6 +180,6 @@ describe("Hoje (KLOX-123)", () => {
     vi.mocked(api.today).mockResolvedValue(data({ cards: [] }));
     renderToday();
     expect(await screen.findByText(/No new stories/)).toBeVisible();
-    expect(screen.getByText(/No pautas yet/)).toBeVisible();
+    expect(screen.getByText(/No briefs yet/)).toBeVisible();
   });
 });
