@@ -17,10 +17,11 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
+	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // docEvidence is the supporting passage for one citation of a sentence:
@@ -66,12 +67,25 @@ type docSource struct {
 
 // docItem is one story inside a section.
 type docItem struct {
-	Ref         int           `json:"ref"`
-	IssueItemID int64         `json:"issue_item_id"`
-	Headline    string        `json:"headline"`
-	Sentences   []docSentence `json:"sentences"`
-	Sources     []docSource   `json:"sources"`
-	Flags       []docItemFlag `json:"flags,omitempty"` // flags not matched to a sentence
+	Ref         int    `json:"ref"`
+	IssueItemID int64  `json:"issue_item_id"`
+	Headline    string `json:"headline"`
+	// Text is the item's written text as a single field: the stored
+	// fact lines verbatim — punctuation, line breaks and emojis kept —
+	// with only the [n] citation markers removed (KLOX-181). The
+	// sentence-split model loses the period at every '. ' boundary;
+	// pauta entries and exports read Text instead.
+	Text      string        `json:"text"`
+	Sentences []docSentence `json:"sentences"`
+	Sources   []docSource   `json:"sources"`
+	Flags     []docItemFlag `json:"flags,omitempty"` // flags not matched to a sentence
+	// AIDraft marks the pauta whose body arrived AI-written (KLOX-67);
+	// the composer shows the AI marker until the author's first edit.
+	AIDraft bool `json:"ai_draft,omitempty"`
+	// LinkOnly marks a pauta the editor sends as a bare link — no
+	// written text required and no citation prompt (KLOX-66 D2). The
+	// whole section may also imply it via the "links" format.
+	LinkOnly bool `json:"link_only,omitempty"`
 
 	// spanStart/spanEnd bound the item's block inside the stored body,
 	// so edits replace only inside their own item — an identical
@@ -87,11 +101,35 @@ type docCommentary struct {
 	Text string `json:"text"`
 }
 
-// docSection is one section of the issue document.
+// docBlock is one ordered unit inside a section (KLOX-66): a pauta
+// (kind "item") or an author-inserted heading / divider / link-list /
+// text block. The composer renders a section's blocks in order; block
+// ops address one by its index inside the section.
+type docBlock struct {
+	Kind string `json:"kind"`          // item | heading | divider | link | text
+	Ref  int    `json:"ref,omitempty"` // item → dossier ref
+	Text string `json:"text,omitempty"`
+	URL  string `json:"url,omitempty"` // link → href
+
+	// spanStart/spanEnd bound the block inside the stored body —
+	// insert/move/remove/edit ops rewrite only their own block.
+	spanStart, spanEnd int
+}
+
+// docSection is one section of the issue document. Format comes from
+// the edition's section snapshot — "links" sections carry the link as
+// their source and skip the written-text checks (KLOX-65).
 type docSection struct {
 	Title      string        `json:"title"`
+	Format     string        `json:"format,omitempty"`
 	Commentary docCommentary `json:"commentary"`
 	Items      []docItem     `json:"items"`
+	Blocks     []docBlock    `json:"blocks"`
+
+	// spanStart/spanEnd bound the section's body region (between its
+	// `## ` heading and the next one); -1 when the section only exists
+	// in the snapshot and the body has no heading for it yet.
+	spanStart, spanEnd int
 }
 
 // docCoverage is the always-visible coverage summary: ok counts fact
@@ -112,10 +150,16 @@ type issueDocument struct {
 	Version  string       `json:"version"`
 	Sections []docSection `json:"sections"`
 	Coverage docCoverage  `json:"coverage"`
+
+	// dctx and pub let a mutation handler re-render the response's
+	// fresh document without paying the dossier/item queries again —
+	// one document context load per request (KLOX-47).
+	dctx *docContext
+	pub  *store.Publication
 }
 
 var (
-	docItemRe    = regexp.MustCompile(`^### (.*?)\s*<!--\s*item\s+(\d+)\s*-->\s*$`)
+	docItemRe    = regexp.MustCompile(`^### (.*?)\s*<!--\s*item\s+(\d+)(?:\s+(link))?\s*-->\s*$`)
 	docSectionRe = regexp.MustCompile(`^## (.+?)\s*$`)
 	docCiteRe    = regexp.MustCompile(`\[(\d+)\]`)
 )
@@ -162,6 +206,28 @@ func citationRefs(raw string) []int {
 	return out
 }
 
+// docTextCiteRe removes the citation markers a stored fact line
+// carries, including the space they were attached with.
+var docTextCiteRe = regexp.MustCompile(`\s*\[\d+\]`)
+
+// joinItemText builds the item's single text field from its stored
+// fact lines: [n] markers out, the author's line breaks (including
+// blank-line paragraph breaks) preserved, only the padding around the
+// block trimmed.
+func joinItemText(lines []string) string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, strings.TrimSpace(docTextCiteRe.ReplaceAllString(l, "")))
+	}
+	for len(out) > 0 && out[0] == "" {
+		out = out[1:]
+	}
+	for len(out) > 0 && out[len(out)-1] == "" {
+		out = out[:len(out)-1]
+	}
+	return strings.Join(out, "\n")
+}
+
 // interpretationText unwraps a stored interpretation block
 // ("> _Interpretação: text_") to the editor's words.
 func interpretationText(line string) string {
@@ -178,6 +244,18 @@ func interpretationText(line string) string {
 type locatedSentence struct {
 	sentence *docSentence
 	item     *docItem
+}
+
+// findItem locates a document item by its dossier ref.
+func (doc *issueDocument) findItem(ref int) *docItem {
+	for si := range doc.Sections {
+		for ii := range doc.Sections[si].Items {
+			if doc.Sections[si].Items[ii].Ref == ref {
+				return &doc.Sections[si].Items[ii]
+			}
+		}
+	}
+	return nil
 }
 
 // findSentence locates a document sentence by its "item.hash" id.
@@ -207,14 +285,11 @@ func replaceInItem(body string, item *docItem, raw, repl string) (string, bool) 
 	return body[:item.spanStart] + strings.Replace(seg, raw, repl, 1) + body[item.spanEnd:], true
 }
 
-// removeInItem deletes a sentence within its item's span, taking along
-// any citation marker that trails it and tidying the leftover
-// whitespace — an identical sentence in another item is never touched.
-func removeInItem(body string, item *docItem, raw string) (string, bool) {
-	if item.spanStart < 0 || item.spanEnd > len(body) || item.spanStart >= item.spanEnd {
-		return body, false
-	}
-	seg := body[item.spanStart:item.spanEnd]
+// removeRaw deletes the first occurrence of raw inside a segment,
+// taking along any citation marker that trails it and tidying the
+// leftover whitespace — the segment-level core of removeInItem, shared
+// with the bulk remove-flagged path.
+func removeRaw(seg, raw string) (string, bool) {
 	re := regexp.MustCompile(regexp.QuoteMeta(raw) + `(?:\s*\[\d+\])*\s*[.!?]*`)
 	var newSeg string
 	if loc := re.FindStringIndex(seg); loc != nil {
@@ -222,7 +297,7 @@ func removeInItem(body string, item *docItem, raw string) (string, bool) {
 	} else if i := strings.Index(seg, raw); i >= 0 {
 		newSeg = seg[:i] + seg[i+len(raw):]
 	} else {
-		return body, false
+		return seg, false
 	}
 	newSeg = strings.ReplaceAll(newSeg, "  ", " ")
 	for strings.Contains(newSeg, "\n\n\n") {
@@ -231,32 +306,21 @@ func removeInItem(body string, item *docItem, raw string) (string, bool) {
 	// a sentence's terminal punctuation can survive as ". ." — collapse
 	newSeg = strings.ReplaceAll(newSeg, ". .", ".")
 	newSeg = strings.ReplaceAll(newSeg, " . ", " ")
-	return body[:item.spanStart] + newSeg + body[item.spanEnd:], true
+	return newSeg, true
 }
 
-// docItemSpan returns the byte span of one item's block inside the body
-// (from its ### heading to the next ### or ## line), so removals can be
-// scoped to the item that owns the sentence.
-func docItemSpan(body string, ref int64) (int, int) {
-	pos, start := 0, -1
-	for _, line := range strings.Split(body, "\n") {
-		t := strings.TrimSpace(line)
-		if docItemRe.MatchString(t) || docSectionRe.MatchString(t) {
-			if start >= 0 {
-				return start, pos
-			}
-			if m := docItemRe.FindStringSubmatch(t); m != nil {
-				if n, _ := strconv.Atoi(m[2]); int64(n) == ref {
-					start = pos
-				}
-			}
-		}
-		pos += len(line) + 1
+// removeInItem deletes a sentence within its item's span, taking along
+// any citation marker that trails it and tidying the leftover
+// whitespace — an identical sentence in another item is never touched.
+func removeInItem(body string, item *docItem, raw string) (string, bool) {
+	if item.spanStart < 0 || item.spanEnd > len(body) || item.spanStart >= item.spanEnd {
+		return body, false
 	}
-	if start < 0 {
-		return 0, len(body)
+	newSeg, ok := removeRaw(body[item.spanStart:item.spanEnd], raw)
+	if !ok {
+		return body, false
 	}
-	return start, len(body)
+	return body[:item.spanStart] + newSeg + body[item.spanEnd:], true
 }
 
 // bestEvidence returns the dossier fact carrying ref that best matches
@@ -293,7 +357,77 @@ func bestEvidence(d *pipeline.Dossier, ref int, sentence, fallback string) strin
 	if best == "" {
 		return fallback
 	}
-	return truncateStr(best, 320)
+	return strutil.Truncate(best, 320)
+}
+
+// docContext is everything the document parser needs from the store,
+// loaded in two queries for the whole issue: one join for every lineup
+// item and its dossier JSON, one batch load for every cited item —
+// replacing the per-item Dossier call and the per-source GetItem call
+// that made each document build N+1 against remote Postgres (KLOX-47).
+// docItemInfo links one dossier ref to its issue item and parsed dossier.
+type docItemInfo struct {
+	issueItemID int64
+	dossier     *pipeline.Dossier
+	aiDraft     bool
+}
+
+type docContext struct {
+	// item ref → issue item + dossier (the <!-- item N --> markers the
+	// assembler writes equal dossier refs).
+	byRef map[int]docItemInfo
+	// cited item id → stored item (source excerpt, date, outlet name)
+	items map[int64]*store.Item
+	// issue items whose board decision is still open — counted from the
+	// pairs the document already loaded, not a separate query
+	pending int
+}
+
+// dcFromPairs builds the document context from already-loaded
+// item/dossier pairs and cited items.
+func dcFromPairs(pairs []store.IssueItemDossier, items map[int64]*store.Item) *docContext {
+	dc := &docContext{byRef: map[int]docItemInfo{}, items: items}
+	if dc.items == nil {
+		dc.items = map[int64]*store.Item{}
+	}
+	for _, p := range pairs {
+		if p.Item.Status == store.ItemPending {
+			dc.pending++
+		}
+		var dd pipeline.Dossier
+		if p.Dossier == "" || json.Unmarshal([]byte(p.Dossier), &dd) != nil {
+			continue
+		}
+		dc.byRef[dd.Ref] = docItemInfo{issueItemID: p.Item.ID, dossier: &dd, aiDraft: p.Item.AIDraft}
+	}
+	return dc
+}
+
+// loadDocContext runs the document's only two store queries.
+func loadDocContext(ctx context.Context, d *store.DB, iss *store.Issue) (*docContext, error) {
+	pairs, err := d.IssueItemDossiers(ctx, iss.ID)
+	if err != nil {
+		return nil, err
+	}
+	var cited []int64
+	seen := map[int64]bool{}
+	for _, p := range pairs {
+		var dd pipeline.Dossier
+		if p.Dossier == "" || json.Unmarshal([]byte(p.Dossier), &dd) != nil {
+			continue
+		}
+		for _, ds := range dd.Sources {
+			if ds.ItemID != 0 && !seen[ds.ItemID] {
+				seen[ds.ItemID] = true
+				cited = append(cited, ds.ItemID)
+			}
+		}
+	}
+	items, err := d.GetItems(ctx, cited)
+	if err != nil {
+		return nil, err
+	}
+	return dcFromPairs(pairs, items), nil
 }
 
 // buildIssueDocument parses the stored issue body into the structured
@@ -303,29 +437,26 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 	if pub == nil {
 		return nil, fmt.Errorf("publication %d not found", iss.PublicationID)
 	}
+	dc, err := loadDocContext(ctx, d, iss)
+	if err != nil {
+		return nil, err
+	}
+	return parseIssueDocument(iss, pub, dc), nil
+}
+
+// parseIssueDocument renders the structured document from the stored
+// body — a pure transform over the issue and a preloaded context, so a
+// mutation handler can answer with the post-write document without a
+// second round of dossier/item queries.
+func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext) *issueDocument {
+	// The document — and every consumer holding doc.pub — works from
+	// the edition's own section snapshot, so builder edits made after
+	// the run never rewrite an in-progress issue (KLOX-65).
+	pub = pubWithIssueSections(iss, pub)
 	doc := &issueDocument{
 		IssueID: iss.ID, Number: iss.Number, Status: iss.Status, Subject: iss.Subject,
 		Version: docVersion(iss), Sections: []docSection{},
-	}
-
-	// item ref → issue item + dossier (the <!-- item N --> markers the
-	// assembler writes equal dossier refs).
-	type itemInfo struct {
-		issueItemID int64
-		dossier     *pipeline.Dossier
-	}
-	byRef := map[int]itemInfo{}
-	if iis, err := d.IssueItems(ctx, iss.ID); err == nil {
-		for _, ii := range iis {
-			dj, err := d.Dossier(ctx, ii.ID)
-			if err != nil {
-				continue
-			}
-			var dd pipeline.Dossier
-			if json.Unmarshal([]byte(dj), &dd) == nil {
-				byRef[dd.Ref] = itemInfo{issueItemID: ii.ID, dossier: &dd}
-			}
-		}
+		dctx: dc, pub: pub,
 	}
 
 	// flags by (item ref, raw sentence text), preserving flag order
@@ -340,8 +471,10 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 	}
 
 	secMode := map[string]string{}
+	secFormat := map[string]string{}
 	for _, sc := range pub.Sections {
 		secMode[sc.Title] = sc.Commentary
+		secFormat[sc.Title] = sc.Format
 	}
 	commentary := iss.Commentary
 	if commentary == nil {
@@ -350,16 +483,37 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 
 	var sec *docSection
 	var item *docItem
+	var textLines []string // stored fact lines of the running item
 	usedIDs := map[string]int{}
+	// liveFlags counts the stored flags that still describe the
+	// document: a flag keyed to a sentence is live while that sentence
+	// exists; an "entry has no citations" flag is live while the item
+	// still has an uncited fact. A flag matching nothing would block
+	// approval with no UI path to clear it — it is stale and must not
+	// count (KLOX-52).
+	liveFlags := 0
 	finishItem := func(end int) {
 		if item == nil {
 			return
 		}
 		item.spanEnd = end
-		// attach flags that matched no sentence to the item itself
+		item.Text = joinItemText(textLines)
+		textLines = nil
+		uncited := 0
+		for _, sn := range item.Sentences {
+			if sn.Kind == "fact" && len(sn.Citations) == 0 {
+				uncited++
+			}
+		}
+		// attach flags that matched no sentence to the item itself —
+		// only while they still hold (see liveFlags above)
 		for _, f := range flagOrder[int64(item.Ref)] {
-			if _, still := flags[int64(item.Ref)][f.Sentence]; still {
+			if _, still := flags[int64(item.Ref)][f.Sentence]; !still {
+				continue
+			}
+			if f.Note == "entry has no citations" && uncited > 0 {
 				item.Flags = append(item.Flags, docItemFlag{Sentence: f.Sentence, Note: f.Note})
+				liveFlags++
 			}
 		}
 		item = nil
@@ -399,21 +553,39 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 		if f, ok := flags[int64(item.Ref)][raw]; ok {
 			sn.Flag = &docFlag{Note: f.Note}
 			delete(flags[int64(item.Ref)], raw)
+			liveFlags++
+		} else if kind == "fact" && len(sn.Citations) == 0 {
+			// an uncited fact blocks approval whether or not a stored
+			// flag reached it (legacy bodies, restores without
+			// citations, drafts written before the flag rule) — give it
+			// the same flag treatment so the editor always has
+			// Edit / interpretation / Remove to clear it (KLOX-52)
+			sn.Flag = &docFlag{Note: "sentence has no citation"}
 		}
 		item.Sentences = append(item.Sentences, sn)
 	}
-	pos := 0 // byte offset of the current line inside the body
-	for _, line := range strings.Split(iss.BodyMD, "\n") {
+	pos := 0         // byte offset of the current line inside the body
+	textRun := false // previous line extended a section text block
+	lines := strings.Split(iss.BodyMD, "\n")
+	for li := 0; li < len(lines); li++ {
+		line := lines[li]
 		t := strings.TrimSpace(line)
+		wasText := textRun
+		textRun = false
 		if m := docSectionRe.FindStringSubmatch(t); m != nil {
 			finishItem(pos)
+			if sec != nil {
+				sec.spanEnd = pos
+			}
 			mode := secMode[m[1]]
 			if mode == "" {
 				mode = "none"
 			}
 			doc.Sections = append(doc.Sections, docSection{
-				Title: m[1], Commentary: docCommentary{Mode: mode, Text: commentary[m[1]]},
-				Items: []docItem{},
+				Title: m[1], Format: secFormat[m[1]],
+				Commentary: docCommentary{Mode: mode, Text: commentary[m[1]]},
+				Items:      []docItem{}, Blocks: []docBlock{},
+				spanStart: pos + len(line) + 1, spanEnd: -1,
 			})
 			sec = &doc.Sections[len(doc.Sections)-1]
 			pos += len(line) + 1
@@ -422,20 +594,22 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 		if m := docItemRe.FindStringSubmatch(t); m != nil {
 			finishItem(pos)
 			if sec == nil {
-				doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"}, Items: []docItem{}})
+				doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"},
+					Items: []docItem{}, Blocks: []docBlock{}, spanStart: 0, spanEnd: -1})
 				sec = &doc.Sections[len(doc.Sections)-1]
 			}
 			ref, _ := strconv.Atoi(m[2])
 			it := docItem{Ref: ref, Headline: m[1], spanStart: pos, openings: map[int]string{},
-				Sentences: []docSentence{}, Sources: []docSource{}}
-			if info, ok := byRef[ref]; ok {
+				LinkOnly: m[3] == "link", Sentences: []docSentence{}, Sources: []docSource{}}
+			if info, ok := dc.byRef[ref]; ok {
 				it.IssueItemID = info.issueItemID
 				it.dossier = info.dossier
+				it.AIDraft = info.aiDraft
 				for _, ds := range info.dossier.Sources {
 					src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
 					if ds.ItemID != 0 {
-						if stored, err := d.GetItem(ctx, ds.ItemID); err == nil {
-							src.Excerpt = truncateStr(stored.ContentText, 320)
+						if stored, ok := dc.items[ds.ItemID]; ok {
+							src.Excerpt = strutil.Truncate(stored.ContentText, 320)
 							src.Date = stored.PublishedAt
 							it.openings[ds.Ref] = src.Excerpt
 							if src.Name == "" {
@@ -448,16 +622,123 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 			}
 			sec.Items = append(sec.Items, it)
 			item = &sec.Items[len(sec.Items)-1]
+			sec.Blocks = append(sec.Blocks, docBlock{Kind: "item", Ref: ref,
+				spanStart: pos, spanEnd: pos})
+			pos += len(line) + 1
+			continue
+		}
+		// A `###`/`####` line without an item marker is an author
+		// heading block — it always closes the running item (KLOX-66).
+		if sec != nil && (strings.HasPrefix(t, "#### ") ||
+			(strings.HasPrefix(t, "### ") && docItemRe.FindStringSubmatch(t) == nil)) {
+			finishItem(pos)
+			hd := strings.TrimSpace(t[strings.Index(t, " ")+1:])
+			sec.Blocks = append(sec.Blocks, docBlock{Kind: "heading", Text: hd,
+				spanStart: pos, spanEnd: pos + len(line)})
+			pos += len(line) + 1
+			continue
+		}
+		// An `<!-- /item -->` marker closes the running item (KLOX-66):
+		// `> ` inside an item is an interpretation sentence, so an
+		// author text block that follows an item can only be told from
+		// one by an explicit boundary — the block ops write it. An
+		// embed fence opens a section-level block too — it closes a
+		// running item the same way, but the line itself still parses
+		// as a block below.
+		if sec != nil && item != nil && strings.HasPrefix(t, "<!--") {
+			finishItem(pos)
+			pos += len(line) + 1
+			continue
+		}
+		if sec != nil && item != nil && t == delivery.EmbedFenceOpen {
+			finishItem(pos)
+		}
+		// Section-level layout blocks (KLOX-66): divider, link-list,
+		// image, embed and author text live between items. Inside an
+		// item nothing changes — `> ` stays an interpretation sentence
+		// and other marks are folded into the item's span as before.
+		// Before the first `##` they land in the untitled leading
+		// section (KLOX-72) — template header blocks like the banner
+		// stay ordinary composer blocks addressed as (section="", i).
+		if item == nil {
+			// The untitled leading section (KLOX-72) is created lazily —
+			// only when the line actually opens a fence or parses as a
+			// block, so the `#` title line and structural noise before
+			// the first `##` never leave an empty section behind.
+			leadSection := func() {
+				if sec == nil {
+					doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"},
+						Items: []docItem{}, Blocks: []docBlock{}, spanStart: 0, spanEnd: -1})
+					sec = &doc.Sections[len(doc.Sections)-1]
+				}
+			}
+			if t == delivery.EmbedFenceOpen {
+				// multi-line embed block: sanitized HTML lives between
+				// the fence lines. An unclosed fence is stray markup —
+				// skip only its opening line.
+				liStart := li
+				cur := pos + len(line) + 1
+				var inner []string
+				closed := false
+				for li+1 < len(lines) {
+					li++
+					nl := lines[li]
+					if strings.TrimSpace(nl) == delivery.EmbedFenceClose {
+						closed = true
+						break
+					}
+					inner = append(inner, nl)
+					cur += len(nl) + 1
+				}
+				if closed {
+					// re-sanitize on read: a fence that reached the
+					// body past the write path (legacy bodies, a
+					// bypassed guard) is served sanitized too, so raw
+					// markup never reaches the composer canvas
+					leadSection()
+					sec.Blocks = append(sec.Blocks, docBlock{Kind: "embed",
+						Text:      delivery.SanitizeEmbed(strings.Join(inner, "\n")),
+						spanStart: pos, spanEnd: cur + len(lines[li])})
+					pos = cur + len(lines[li]) + 1
+				} else {
+					li = liStart
+					pos += len(line) + 1
+				}
+				continue
+			}
+			blk, isBlock := parseBlockLine(t)
+			if isBlock {
+				leadSection()
+				if blk.Kind == "text" && wasText && len(sec.Blocks) > 0 &&
+					sec.Blocks[len(sec.Blocks)-1].Kind == "text" {
+					// contiguous `> ` lines are one multi-paragraph
+					// text block — a blank line splits them
+					last := &sec.Blocks[len(sec.Blocks)-1]
+					last.Text += "\n" + blk.Text
+					last.spanEnd = pos + len(line)
+					textRun = true
+					pos += len(line) + 1
+					continue
+				}
+				blk.spanStart, blk.spanEnd = pos, pos+len(line)
+				sec.Blocks = append(sec.Blocks, blk)
+				textRun = blk.Kind == "text"
+			}
 			pos += len(line) + 1
 			continue
 		}
 		switch {
-		case t == "", strings.HasPrefix(t, "#"), strings.HasPrefix(t, "**"),
+		case t == "":
+			// the author's own line breaks: invisible to the
+			// sentence parser, preserved in the item's text
+			textLines = append(textLines, "")
+		case strings.HasPrefix(t, "#"), strings.HasPrefix(t, "**"),
 			strings.HasPrefix(t, "-"), strings.HasPrefix(t, "_"):
 			// headings, source lists, emphasis-only lines
 		case strings.HasPrefix(t, "> "):
 			addSentence(t, "interpretation")
 		default:
+			textLines = append(textLines, t)
 			for _, piece := range pipeline.SplitSentences(t) {
 				piece = strings.TrimSpace(piece)
 				if !strings.ContainsFunc(piece, unicode.IsLetter) {
@@ -469,6 +750,26 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 		pos += len(line) + 1
 	}
 	finishItem(len(iss.BodyMD))
+	if sec != nil {
+		sec.spanEnd = len(iss.BodyMD)
+	}
+	// align each item block's span with its item — the item's end is
+	// only known once finishItem ran for it.
+	for si := range doc.Sections {
+		sec := &doc.Sections[si]
+		bi := 0
+		for i := range sec.Items {
+			for bi < len(sec.Blocks) && sec.Blocks[bi].Kind != "item" {
+				bi++
+			}
+			if bi >= len(sec.Blocks) {
+				break
+			}
+			sec.Blocks[bi].spanStart = sec.Items[i].spanStart
+			sec.Blocks[bi].spanEnd = sec.Items[i].spanEnd
+			bi++
+		}
+	}
 
 	// sections with required commentary that carry no items still matter
 	// for the readiness checklist — include them even when the body has
@@ -482,8 +783,10 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 		}
 		if !found {
 			doc.Sections = append(doc.Sections, docSection{
-				Title: sc.Title, Commentary: docCommentary{Mode: sc.Commentary, Text: commentary[sc.Title]},
-				Items: []docItem{},
+				Title: sc.Title, Format: sc.Format,
+				Commentary: docCommentary{Mode: sc.Commentary, Text: commentary[sc.Title]},
+				Items:      []docItem{}, Blocks: []docBlock{},
+				spanStart: -1, spanEnd: -1,
 			})
 		}
 	}
@@ -504,23 +807,22 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 			}
 		}
 	}
-	doc.Coverage.Flagged = len(iss.Flags)
-	return doc, nil
+	doc.Coverage.Flagged = liveFlags
+	return doc
 }
 
-// insertInItem writes composed raw back into the item's span at the
-// index-th sentence position (appended before the span end when idx is
-// past the current count). Used by the sentence-restore endpoint.
-func insertInItem(body string, item *docItem, idx int, raw string) (string, bool) {
-	if item.spanStart < 0 || item.spanEnd > len(body) || item.spanStart >= item.spanEnd {
-		return body, false
-	}
-	seg := body[item.spanStart:item.spanEnd]
-	// find the byte offset inside seg where the idx-th sentence starts
+// insertRaw splices raw into a segment at the idx-th sentence position
+// (before raws[idx]; appended before the sources block when idx is past
+// the current count). raws is the segment's sentence sequence — callers
+// that splice several entries keep it in sync between inserts.
+func insertRaw(seg string, raws []string, idx int, raw string) string {
+	// find the byte offset inside seg where the idx-th sentence starts —
+	// walk each sentence in order so a duplicate raw earlier in the item
+	// cannot land the splice on the wrong occurrence
 	pos := 0
-	if idx < len(item.Sentences) {
-		target := item.Sentences[idx].raw
+	if idx < len(raws) {
 		for i := 0; i <= idx; i++ {
+			target := raws[i]
 			j := strings.Index(seg[pos:], target)
 			if j < 0 {
 				pos = len(seg)
@@ -534,25 +836,86 @@ func insertInItem(body string, item *docItem, idx int, raw string) (string, bool
 		}
 	} else {
 		pos = len(seg)
+		// appending past the last sentence still belongs to the item's
+		// body — land before the sources block, not after it
+		if i := strings.LastIndex(seg, "**Sources:**"); i >= 0 {
+			pos = i
+		}
 	}
-	// raw is a block of whole lines; splice it in on line boundaries
+	// raw is a block of whole lines; splice it in on sentence boundaries.
+	// The stored body keeps several sentences per line separated by
+	// '. ' — mid-line, that separator belongs to no raw. A '\n' between
+	// the separator and the next piece would leave 'X [1].' at line
+	// end, where SplitSentences re-attaches the '.' to the raw ('X [1]'
+	// becomes 'X [1].'), changing its text, id and flag match.
 	head := seg[:pos]
-	if head != "" && !strings.HasSuffix(head, "\n") {
-		raw = "\n" + raw
+	switch {
+	case pos == len(seg):
+		// append at the segment end: a fact rides the last line so no
+		// separator can re-attach; a '>' block still needs its own line
+		if head != "" && !strings.HasSuffix(head, "\n") {
+			if strings.HasPrefix(raw, ">") {
+				raw = "\n" + raw
+			} else if !strings.HasSuffix(head, " ") {
+				raw = " " + raw
+			}
+		}
+		return head + raw
+	case strings.HasPrefix(raw, ">") || punctTerminated(raw):
+		// interpretation blocks parse only at line start, and a raw that
+		// already ends '.', '!' or '?' must stay at line end to survive
+		// the round-trip — both splice on their own line
+		if head != "" && !strings.HasSuffix(head, "\n") {
+			raw = "\n" + raw
+		}
+		if !strings.HasSuffix(raw, "\n") {
+			raw += "\n"
+		}
+		return head + raw + seg[pos:]
+	case head == "" || strings.HasSuffix(head, "\n"):
+		// line boundary — the entry gets its own line
+		return head + raw + "\n" + seg[pos:]
+	case sentenceSepTail(head):
+		// the previous piece ended with a '. '/'! '/'? ' separator:
+		// splice inline so it keeps bounding the previous piece and a
+		// fresh '. ' bounds the entry — byte-identical to a segment
+		// where the sentence was never removed
+		return head + raw + ". " + seg[pos:]
+	default:
+		// a bare-space separator (post-citation split 'urbana. [1] next')
+		// leaves the '.' inside the previous raw — a line splice keeps
+		// every piece identical
+		raw = "\n" + raw + "\n"
+		return head + raw + seg[pos:]
 	}
-	if pos < len(seg) && !strings.HasSuffix(raw, "\n") {
-		raw += "\n"
-	}
-	return body[:item.spanStart] + head + raw + seg[pos:], true
 }
 
-// truncateStr shortens s to n runes for excerpts (rune-safe: never
-// splits a UTF-8 sequence).
-func truncateStr(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if utf8.RuneCountInString(s) <= n {
-		return s
+// punctTerminated reports whether a sentence raw ends in terminal
+// punctuation — such raws only parse identically at end of line.
+func punctTerminated(raw string) bool {
+	return strings.HasSuffix(raw, ".") || strings.HasSuffix(raw, "!") || strings.HasSuffix(raw, "?")
+}
+
+// sentenceSepTail reports whether head ends with a '. '/'! '/'? '
+// separator — the split point SplitSentences consumed between pieces.
+func sentenceSepTail(head string) bool {
+	return len(head) >= 2 && strings.ContainsRune(".!?", rune(head[len(head)-2])) &&
+		(head[len(head)-1] == ' ' || head[len(head)-1] == '\t')
+}
+
+// insertInItem writes composed raw back into the item's span at the
+// index-th sentence position (appended before the span end when idx is
+// past the current count). Used by the sentence-restore endpoint.
+func insertInItem(body string, item *docItem, idx int, raw string) (string, bool) {
+	if item.spanStart < 0 || item.spanEnd > len(body) || item.spanStart >= item.spanEnd {
+		return body, false
 	}
-	r := []rune(s)
-	return string(r[:n]) + "…"
+	seg := body[item.spanStart:item.spanEnd]
+	raws := make([]string, len(item.Sentences))
+	for i, sn := range item.Sentences {
+		raws[i] = sn.raw
+	}
+	// body[spanEnd:] carries the rest of the issue — next items and
+	// sections; dropping it here would silently truncate the document
+	return body[:item.spanStart] + insertRaw(seg, raws, idx, raw) + body[item.spanEnd:], true
 }
