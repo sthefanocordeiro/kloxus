@@ -154,14 +154,17 @@ test.describe("pt-BR landing copy", () => {
       "english strings leaked into the pt-BR chrome",
     ).toEqual([]);
 
-    // §1 structure: header CTA, footer legal links, footer language
-    // switch (KLOX-69), no anonymous-workspace banner
+    // §1 structure: header CTA, header language switch (KLOX-69 — the
+    // switch lives in the banner since the owner review, not the
+    // footer), footer legal links, no anonymous-workspace banner
     await expect(page.getByRole("button", { name: /Criar meu Radar/ }).first()).toBeVisible();
     await expect(page.getByText(/Este espaço é anônimo/i)).toHaveCount(0);
+    await expect(
+      page.getByRole("banner").getByRole("button", { name: "EN", exact: true }),
+    ).toBeVisible();
     const footer = page.getByRole("contentinfo");
     await expect(footer.getByText("Termos")).toBeVisible();
     await expect(footer.getByText("Privacidade")).toBeVisible();
-    await expect(footer.getByRole("button", { name: "EN" })).toBeVisible();
   });
 });
 
