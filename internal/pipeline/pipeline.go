@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -1583,7 +1584,9 @@ func oneLine(s string) string {
 // the disclosure line never enter the stored body — delivery.ReaderBody
 // renders the reader-facing version (commentary, disclosure, absolute
 // links) from it.
-func assembleIssue(pub *store.Publication, number int, entries []entry, drafts map[int]draftEntry, dossiers map[int]*Dossier, sectionOrder []string) string {
+func assembleIssue(pub *store.Publication, number int, entries []entry, drafts map[int]struct {
+	headline, body string
+}, dossiers map[int]*Dossier, sectionOrder []string) string {
 	var b strings.Builder
 	word := "issue"
 	if ptLang(pub.Language) {
