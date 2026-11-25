@@ -32,7 +32,11 @@ Status legend:
 | KLOX-188 — backend Go | `internal/` pipeline, web, LLM | 17 | 17 | 0 |
 | KLOX-189 — Postgres/DBA | `migrations/`, `internal/store` | 23 (4 high, 9 med, 10 low) | 6 | 17 |
 | KLOX-190 — frontend | `frontend/src` | 30 (3 high, 9 med, 18 low) | 9 | 21 |
-| KLOX-191 — tests | `frontend/e2e`, `src/test`, CI | 16 (1 high, 5 med, 10 low) | 5 | 11 |
+| KLOX-191 — tests | `frontend/e2e`, `src/test`, CI | 16 (1 high, 5 med, 10 low) | 5 | 11* |
+
+\* The KLOX-191 deferred/open count includes M3, which is **Partial**:
+helpers were unified and dead code removed; only the word-extraction
+helper still lives in both languages.
 
 ## KLOX-188 — backend Go (17/17 fixed)
 
@@ -57,7 +61,7 @@ notice first were the god-functions and the silenced errors.
 | 13 | two logging mechanisms (`log.Printf` + `slog` + own `logf`) | **Fixed** | KLOX-230 · [PR #169](https://github.com/sthefanocordeiro/kloxus/pull/169) · v260 |
 | 14 | `panic(err)` in `workspace.NewID` | **Fixed** | KLOX-230 · [PR #169](https://github.com/sthefanocordeiro/kloxus/pull/169) · v260 |
 | 15 | test files named by ticket (`klox67_test.go`…) | **Fixed** | KLOX-216 · [PR #158](https://github.com/sthefanocordeiro/kloxus/pull/158) · v247 |
-| 16 | `Claude outputs/` + `attachments/` audit reports at repo root | **Fixed** — moved to `docs/audits/` | KLOX-216 · [PR #158](https://github.com/sthefanocordeiro/kloxus/pull/158) · v247 |
+| 16 | `Claude outputs/` + `attachments/` audit reports at repo root | **Fixed** — moved to `docs/audits/`; briefly restored by a local-snapshot commit (`6e026034`), re-removed and `.gitignore`d in PR #179 | KLOX-216 · [PR #158](https://github.com/sthefanocordeiro/kloxus/pull/158) · v247 |
 | 17 | generic filenames in `internal/store` (`pipeline.go` 1211, `store.go` 815) | **Fixed** — split by aggregate (`issues.go`, `stories.go`, `catalog.go`…) | KLOX-216 + KLOX-230 · [PR #158](https://github.com/sthefanocordeiro/kloxus/pull/158), [PR #169](https://github.com/sthefanocordeiro/kloxus/pull/169) · v247, v260 |
 
 ## KLOX-189 — Postgres / DBA (6/23 fixed)
@@ -101,7 +105,7 @@ a POST inside `useQuery`, and pattern inconsistencies.
 | M1 | `pautaFinish` POST as a `useQuery` queryFn (double-fire, no error/retry) | **Fixed** (`useMutation` on mount + error + retry) | KLOX-213 · [PR #155](https://github.com/sthefanocordeiro/kloxus/pull/155) · v252 |
 | M2 | destination mutations never render errors; dialogs closed before completion | **Fixed** (`errText` rendered, dialogs close on `onSuccess`) | KLOX-213 · [PR #155](https://github.com/sthefanocordeiro/kloxus/pull/155) · v252 |
 | M3 | Radar-delete error rendered behind the open `KDialog` | **Fixed** (error moved inside the dialog) | KLOX-213 · [PR #155](https://github.com/sthefanocordeiro/kloxus/pull/155) · v252 |
-| M4 | ~45% of `api.ts` dead (≈50 methods + 26 interfaces) shipped in the landing bundle | **Fixed** (`api.ts` 859→~390 lines) | KLOX-212 · [PR #153](https://github.com/sthefanocordeiro/kloxus/pull/153) · v251 |
+| M4 | ~45% of `api.ts` dead (≈50 methods + 26 interfaces) shipped in the landing bundle | **Fixed** (`api.ts` 859→435 lines) | KLOX-212 · [PR #153](https://github.com/sthefanocordeiro/kloxus/pull/153) · v251 |
 | M5 | dead code elsewhere (`claims.ts`, `KTabs`/`KPopover`, `fmtUSD`, `todayWrite`…) | **Fixed** | KLOX-212 · [PR #153](https://github.com/sthefanocordeiro/kloxus/pull/153) · v251 |
 | M6 | local `gone`/`liked`/`picked` state duplicating server state without reconciliation | **Deferred** — still local-only (`frontend/src/pages/Today.tsx:35-38`); partially mitigated by server-side pauta filtering (KLOX-236 · [PR #175](https://github.com/sthefanocordeiro/kloxus/pull/175)) | — |
 | M7 | pauta autosave loses keystrokes on tab close; no retry after failed persist | **Fixed** (`beforeunload` + `error` state + retry, `internal` verification on `main`) | KLOX-196 · [PR #140](https://github.com/sthefanocordeiro/kloxus/pull/140) · v231 |

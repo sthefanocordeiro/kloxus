@@ -34,3 +34,6 @@ frontend/recordings/
 .local/
 .polish-shots/
 frontend/test-results/
+
+# local audit snapshots — reports live in docs/audits/ (KLOX-216, KLOX-239)
+Claude outputs/
