@@ -232,55 +232,19 @@ func (r *Runner) stepStart(name string) {
 // RunPhaseA runs collect → dedupe → triage → storylist → dossier →
 // deepdive, producing the issue and its items for review.
 func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result, error) {
-	res := &Result{}
+	st := &phaseAState{res: &Result{}}
+	res := st.res
 
-	// --- collect ---
-	r.stepStart("collect")
-	start := time.Now()
-	srcs, err := r.DB.Sources(ctx, pub.ID)
-	if err != nil {
+	if err := r.stageCollect(ctx, pub, st); err != nil {
 		return nil, err
 	}
-	for _, s := range srcs {
-		if r.DemoMode && !strings.HasPrefix(s.URL, "fixtures/") {
-			// Visitor-added sources are never fetched on the hosted demo
-			// (SSRF surface); they are stored but skipped at collect time.
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "simulated in demo mode: sources are not fetched")
-			continue
-		}
-		raw, err := r.Fetcher.Fetch(ctx, s.Type, s.URL)
-		if err != nil {
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+truncate(err.Error(), 120))
-			continue // one bad source must not abort the run
-		}
-		n, err := r.DB.SaveItems(ctx, s.ID, raw, dedupe.Canonical)
-		if err != nil {
-			return nil, err
-		}
-		outlet := ""
-		if len(raw) > 0 {
-			outlet = raw[0].Outlet
-		}
-		r.DB.MarkSourceFetched(ctx, s.ID, outlet, fmt.Sprintf("ok: %d items, %d new", len(raw), n))
-		res.Items += len(raw)
-		res.New += n
+	if res.NoNewItems {
+		return res, nil
 	}
-	if res.New == 0 {
-		if _, err := r.DB.LatestIssue(ctx, pub.ID); err == nil {
-			r.emit("collect", map[string]int{"items_read": res.Items, "new_items": res.New})
-			res.NoNewItems = true
-			return res, nil
-		}
-		if res.Items == 0 {
-			return nil, fmt.Errorf("no items collected — check the publication's sources")
-		}
-	}
-	r.emit("collect", map[string]int{"items_read": res.Items, "new_items": res.New})
-	r.record(ctx, pub.ID, 0, "collect", "", start, llm.Response{})
 
 	// --- dedupe ---
 	r.stepStart("dedupe")
-	start = time.Now()
+	start := time.Now()
 	items, err := r.DB.ItemsForPublication(ctx, pub.ID)
 	if err != nil {
 		return nil, err
