@@ -289,110 +289,11 @@ func (r *Runner) stepStart(name string) {
 	}
 }
 
-// loadEntries rebuilds the entry list for an existing issue from the DB:
-// issue items, their dossiers and story titles.
-//
-// canonical=true returns every Phase A item regardless of review status —
-// the stable input that keeps demo-mode draft/citecheck replay keys
-// fixed. canonical=false returns only approved items (plus pending? no —
-// the draft contains approved items only), which is what actually ships.
-func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool) ([]entry, map[int]*Dossier, error) {
-	iis, err := r.DB.IssueItems(ctx, issueID)
-	if err != nil {
-		return nil, nil, err
-	}
-	// issue items were inserted in picked order; ref numbers were assigned
-	// positionally then, but dossiers store their own ref, so reload in id order
-	sort.Slice(iis, func(a, b int) bool { return iis[a].ID < iis[b].ID })
-	var entries []entry
-	dossierByRef := map[int]*Dossier{}
-	for _, ii := range iis {
-		if canonical {
-			// Only the AI-picked items belong to the recorded
-			// canonical input — alternatives and manual adds would
-			// change the replay keys.
-			if ii.Origin != "phaseA" {
-				continue
-			}
-		} else if ii.Status != "approved" {
-			continue
-		}
-		djson, err := r.DB.Dossier(ctx, ii.ID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("issue_item %d: no dossier", ii.ID)
-		}
-		var d Dossier
-		if err := json.Unmarshal([]byte(djson), &d); err != nil {
-			return nil, nil, fmt.Errorf("issue_item %d: %w", ii.ID, err)
-		}
-		title := d.Title
-		if title == "" {
-			title, _ = r.DB.StoryTitle(ctx, ii.StoryID)
-		}
-		section := ii.Section
-		if canonical && ii.OrigSection != "" {
-			// replay input must look exactly like the recorded Phase A
-			// output — board moves mutate Section, OrigSection holds the
-			// pick
-			section = ii.OrigSection
-		}
-		entries = append(entries, entry{
-			iiID: ii.ID, storyID: ii.StoryID, ref: d.Ref,
-			title: title, section: section, why: ii.Reason, score: ii.Score,
-			position: ii.Position,
-		})
-		dd := d
-		dossierByRef[d.Ref] = &dd
-	}
-	return entries, dossierByRef, nil
-}
-
-// ensureDossiers generates dossiers for lineup items that lack one —
-// stories the creator added on the board get theirs at draft time,
-// so the draft run can pick up any board composition.
-func (r *Runner) ensureDossiers(ctx context.Context, pub *store.Publication, issueID int64) error {
-	iis, err := r.DB.IssueItems(ctx, issueID)
-	if err != nil {
-		return err
-	}
-	maxRef := 0
-	var missing []store.IssueItem
-	for _, ii := range iis {
-		if dj, err := r.DB.Dossier(ctx, ii.ID); err == nil {
-			var d Dossier
-			if json.Unmarshal([]byte(dj), &d) == nil && d.Ref > maxRef {
-				maxRef = d.Ref
-			}
-			continue
-		}
-		if ii.Status == "approved" || ii.Status == "pending" {
-			missing = append(missing, ii)
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	r.stepStart("dossier")
-	for _, ii := range missing {
-		cand, err := r.DB.StoryWithItems(ctx, ii.StoryID)
-		if err != nil {
-			return err
-		}
-		maxRef++
-		d := r.alternativeDossier(ctx, pub, cand, maxRef)
-		data, _ := json.Marshal(d)
-		if err := r.DB.SaveDossier(ctx, ii.ID, string(data)); err != nil {
-			return err
-		}
-	}
-	r.emit("dossier", map[string]int{"dossiers": len(missing)})
-	return nil
-}
-
 // RunPhaseB runs draft → assemble → citecheck on an issue produced by
 // RunPhaseA (and reviewed): the stored body carries approved items only.
 func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
-	res := &Result{IssueID: issueID}
+	st := &phaseBState{res: &Result{IssueID: issueID}, issueID: issueID}
+	res := st.res
 	if err := r.ensureDossiers(ctx, pub, issueID); err != nil {
 		return nil, err
 	}
@@ -411,95 +312,17 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 			return nil, err
 		}
 	}
+	st.entries, st.dossierByRef = entries, dossierByRef
+	st.modelEntries, st.modelDossiers = modelEntries, modelDossiers
 
-	// --- draft ---
-	r.stepStart("draft")
-	start := time.Now()
-	type drItem struct {
-		Ref            int
-		Section        string
-		Score          float64
-		Title          string
-		Summary        string
-		Facts          []DossierFact
-		DeepFacts      []DossierFact
-		Interpretation []string
+	if err := r.stageDraft(ctx, pub, st); err != nil {
+		return nil, err
 	}
-	drItems := make([]drItem, len(modelEntries))
-	for i, e := range modelEntries {
-		d, ok := modelDossiers[e.ref]
-		if !ok {
-			return nil, fmt.Errorf("draft: no dossier for item ref %d", e.ref)
-		}
-		drItems[i] = drItem{
-			Ref: e.ref, Section: e.section, Score: e.score, Title: e.title,
-			Summary: d.Summary, Facts: d.Facts, DeepFacts: d.DeepFacts,
-			Interpretation: d.Interpretation,
-		}
+	if st.done != nil {
+		return st.done, nil
 	}
-	draftByRef := map[int]struct {
-		headline, body string
-	}{}
-	aiDraftRefs := map[int]bool{}
-	if r.Deterministic {
-		// No-model draft = honest compose skeleton: headline + sources,
-		// empty body. Assembling source excerpts into prose would put
-		// words in the draft nobody wrote (KLOX-48).
-		for _, e := range entries {
-			draftByRef[e.ref] = struct {
-				headline, body string
-			}{e.title, ""}
-		}
-		r.emit("draft", map[string]int{"entries": len(entries)})
-		r.record(ctx, pub.ID, issueID, "draft", "deterministic", start, llm.Response{})
-	} else {
-		var drafted struct {
-			Entries []struct {
-				Ref      int    `json:"ref"`
-				Headline string `json:"headline"`
-				BodyMD   string `json:"body_md"`
-			} `json:"entries"`
-		}
-		resp, err := r.call(ctx, r.DraftModel, "draft", map[string]any{
-			"Publication": pub.Name,
-			"Audience":    pub.Audience,
-			"Language":    pub.Language,
-			"Tone":        pub.Tone,
-			"Items":       drItems,
-		}, &drafted)
-		if err != nil {
-			if _, ok := llm.AsBlocked(err); ok {
-				// Capped model = same honest fallback as model-off:
-				// store the compose skeleton, never excerpts (KLOX-48).
-				return r.ComposeSkeleton(ctx, pub, issueID)
-			}
-			return nil, fmt.Errorf("draft: %w", err)
-		}
-		res.CostUSD += llm.CostUSD(r.DraftModel, resp.InputTokens, resp.OutputTokens)
-		r.emit("draft", map[string]int{"entries": len(drafted.Entries)})
-		r.record(ctx, pub.ID, issueID, "draft", r.DraftModel, start, resp)
-		for _, de := range drafted.Entries {
-			draftByRef[de.Ref] = struct {
-				headline, body string
-			}{de.Headline, de.BodyMD}
-			// The pauta body arrived AI-written — mark it "Gerado por IA"
-			// until the author edits (KLOX-67). Synthesized alternative
-			// bodies below are deterministic assembly, not AI text.
-			if strings.TrimSpace(de.BodyMD) != "" {
-				aiDraftRefs[de.Ref] = true
-			}
-		}
-		// Alternative items are never part of the canonical draft input, so
-		// they have no model-drafted body: synthesize one from the dossier
-		// (summary carries [n] citations, so it passes the citation rules).
-		for _, e := range entries {
-			if _, ok := draftByRef[e.ref]; !ok {
-				draftByRef[e.ref] = struct {
-					headline, body string
-				}{e.title, synthBody(dossierByRef[e.ref])}
-			}
-		}
-	}
+	draftByRef := st.draftByRef
+	aiDraftRefs := st.aiDraftRefs
 
 	// --- assemble issue markdown ---
 	// honor the board's slot order inside each section
@@ -526,7 +349,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 
 	// --- citecheck ---
 	r.stepStart("citecheck")
-	start = time.Now()
+	start := time.Now()
 	sents := extractSentences(checkBody)
 	type cSent struct {
 		ID   int
@@ -986,9 +809,7 @@ func oneLine(s string) string {
 // the disclosure line never enter the stored body — delivery.ReaderBody
 // renders the reader-facing version (commentary, disclosure, absolute
 // links) from it.
-func assembleIssue(pub *store.Publication, number int, entries []entry, drafts map[int]struct {
-	headline, body string
-}, dossiers map[int]*Dossier, sectionOrder []string) string {
+func assembleIssue(pub *store.Publication, number int, entries []entry, drafts map[int]draftEntry, dossiers map[int]*Dossier, sectionOrder []string) string {
 	var b strings.Builder
 	word := "issue"
 	if ptLang(pub.Language) {
@@ -1232,9 +1053,7 @@ func EnsureManualDossiers(ctx context.Context, db *store.DB, issueID int64) erro
 // keeps real sourced facts and stays a manual slot — empty body, no
 // ai_draft marker, edits checked by the deterministic rule only.
 // draftByRef receives the item bodies for assembleIssue.
-func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef map[int]struct {
-	headline, body string
-}) {
+func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef map[int]draftEntry) {
 	iis, err := r.DB.IssueItems(ctx, issueID)
 	if err != nil {
 		return
@@ -1272,7 +1091,7 @@ func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef m
 			return
 		}
 		if strings.TrimSpace(res.DraftBody) != "" {
-			draftByRef[maxRef] = struct{ headline, body string }{body: res.DraftBody}
+			draftByRef[maxRef] = draftEntry{body: res.DraftBody}
 			if err := r.DB.SetIssueItemAIDraft(ctx, ii.ID, true); err != nil {
 				return
 			}
@@ -1290,9 +1109,7 @@ func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef m
 // headlines + source lists only, no AI text.
 func (r *Runner) ComposeSkeleton(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
 	res := &Result{IssueID: issueID}
-	draftByRef := map[int]struct {
-		headline, body string
-	}{}
+	draftByRef := map[int]draftEntry{}
 	if r.Research != nil {
 		r.ensureResearch(ctx, issueID, draftByRef)
 	}
