@@ -88,6 +88,15 @@ const (
 // New builds a Server.
 func New(d Deps) *Server {
 	s := &Server{d: d, mux: http.NewServeMux()}
+	s.registerPublicRoutes()
+	s.registerAPIRoutes()
+	s.registerIssueRoutes()
+	return s
+}
+
+// registerPublicRoutes wires the unauthenticated surface: health and
+// static probes, emailed claim/confirm links, webhooks and the SPA.
+func (s *Server) registerPublicRoutes() {
 	m := s.mux
 	m.HandleFunc("GET /healthz", s.healthz)
 	m.HandleFunc("GET /robots.txt", s.robots)
@@ -119,9 +128,13 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /app", s.appLegacyRedirect)
 	m.HandleFunc("GET /app/", s.appLegacyRedirect)
 	m.HandleFunc("GET /", s.appPage)
+}
 
-	// JSON API (v2 contract — see docs/api.md). Same workspace cookie,
-	// rate limits and isolation as the public routes.
+// registerAPIRoutes wires the workspace/publication/source/run surface
+// of the JSON API (v2 contract — see docs/api.md). Same workspace
+// cookie, rate limits and isolation as the public routes.
+func (s *Server) registerAPIRoutes() {
+	m := s.mux
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
 	m.HandleFunc("POST /api/v1/workspace/claim", s.apiClaimStart)
 	m.HandleFunc("POST /api/v1/logout", s.apiLogout)
@@ -170,6 +183,13 @@ func New(d Deps) *Server {
 	m.HandleFunc("GET /api/v1/publications/{id}/costs", s.apiCosts)
 	m.HandleFunc("GET /api/v1/runs/{id}", s.apiRun)
 	m.HandleFunc("GET /api/v1/runs/{id}/events", s.apiRunEvents)
+}
+
+// registerIssueRoutes wires the issue-editing surface of the JSON API:
+// review decisions, document/sentence/block edits, approvals and
+// exports, media, admin and the API catch-all.
+func (s *Server) registerIssueRoutes() {
+	m := s.mux
 	m.HandleFunc("GET /api/v1/issues/{id}", s.apiIssue)
 	m.HandleFunc("GET /api/v1/issues/{id}/readiness", s.apiReadiness)
 	m.HandleFunc("GET /api/v1/issues/{id}/items", s.apiIssueItems)
@@ -224,7 +244,6 @@ func New(d Deps) *Server {
 	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
 		m.HandleFunc(method+" /api/v1/", s.apiNotFound)
 	}
-	return s
 }
 
 // reqTimeout bounds each request's work — chiefly its Postgres round

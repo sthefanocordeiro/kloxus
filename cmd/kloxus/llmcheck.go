@@ -35,17 +35,35 @@ var howItWorks = []string{
 	"Frases sem fonte não chegam aos leitores.",
 }
 
-func cmdLLMCheck(args []string) error {
+// llmCheckOpts are the parsed llm-check flags.
+type llmCheckOpts struct {
+	live    bool
+	pubRef  string
+	defFile string
+	outFile string
+	wsName  string
+}
+
+func llmCheckFlags(args []string) (*llmCheckOpts, error) {
 	fs := flag.NewFlagSet("llm-check", flag.ContinueOnError)
-	live := fs.Bool("live", false, "fetch the sample publication's live feeds instead of the recorded captures")
-	pubRef := fs.String("publication", "", "check an existing publication instead of the recorded sample (implies --live)")
-	defFile := fs.String("def", "", "publication definition YAML instead of the embedded sample def")
-	outFile := fs.String("out", "", "write the drafted issue markdown here (default: <out>/llm-check-issue-N.md)")
-	wsName := fs.String("workspace", localWorkspace, "workspace to run in (a fresh one re-sees all items)")
+	o := &llmCheckOpts{}
+	fs.BoolVar(&o.live, "live", false, "fetch the sample publication's live feeds instead of the recorded captures")
+	fs.StringVar(&o.pubRef, "publication", "", "check an existing publication instead of the recorded sample (implies --live)")
+	fs.StringVar(&o.defFile, "def", "", "publication definition YAML instead of the embedded sample def")
+	fs.StringVar(&o.outFile, "out", "", "write the drafted issue markdown here (default: <out>/llm-check-issue-N.md)")
+	fs.StringVar(&o.wsName, "workspace", localWorkspace, "workspace to run in (a fresh one re-sees all items)")
 	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+func cmdLLMCheck(args []string) error {
+	o, err := llmCheckFlags(args)
+	if err != nil {
 		return err
 	}
-	cfg, pool, db, err := openDB(*wsName)
+	cfg, pool, db, err := openDB(o.wsName)
 	if err != nil {
 		return err
 	}
@@ -54,46 +72,9 @@ func cmdLLMCheck(args []string) error {
 		return errors.New("llm-check needs ANTHROPIC_API_KEY in .env or the environment")
 	}
 	ctx := context.Background()
-
-	// Resolve the publication and fetcher: an existing publication or
-	// --live goes over real HTTP; the default replays the recorded
-	// sample's captured feeds for deterministic inputs.
-	var pub *store.Publication
-	var fetcher sources.Fetcher
-	switch {
-	case *pubRef != "":
-		pub, err = db.GetPublication(ctx, *pubRef)
-		if err != nil {
-			return err
-		}
-		fetcher = sources.LiveFetcher{}
-	default:
-		var def *config.Publication
-		if *defFile != "" {
-			data, err := os.ReadFile(*defFile)
-			if err != nil {
-				return err
-			}
-			if def, err = config.ParsePublication(data); err != nil {
-				return err
-			}
-		} else {
-			if def, err = realsample.Def(); err != nil {
-				return err
-			}
-		}
-		if *live {
-			fetcher = sources.LiveFetcher{}
-		} else {
-			fetcher = sources.CapturedFetcher{FS: realsample.FS}
-		}
-		id, err := db.SeedPublication(ctx, def)
-		if err != nil {
-			return err
-		}
-		if pub, err = db.GetPublication(ctx, fmt.Sprint(id)); err != nil {
-			return err
-		}
+	pub, fetcher, err := llmCheckTarget(ctx, db, o)
+	if err != nil {
+		return err
 	}
 
 	provider := &tokCounter{inner: llm.Retrier{Inner: llm.Anthropic{APIKey: cfg.AnthropicAPIKey}}}
@@ -117,7 +98,55 @@ func cmdLLMCheck(args []string) error {
 	if res.NoNewItems {
 		return errors.New("the publication produced no new items — nothing to check (try --live or a different publication)")
 	}
+	return reportLLMCheck(ctx, cfg, db, pub, provider, res, done, dur, o.outFile)
+}
 
+// llmCheckTarget resolves the publication and fetcher: an existing
+// publication or --live goes over real HTTP; the default replays the
+// recorded sample's captured feeds for deterministic inputs.
+func llmCheckTarget(ctx context.Context, db *store.DB, o *llmCheckOpts) (*store.Publication, sources.Fetcher, error) {
+	if o.pubRef != "" {
+		pub, err := db.GetPublication(ctx, o.pubRef)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pub, sources.LiveFetcher{}, nil
+	}
+	var def *config.Publication
+	if o.defFile != "" {
+		data, err := os.ReadFile(o.defFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		if def, err = config.ParsePublication(data); err != nil {
+			return nil, nil, err
+		}
+	} else {
+		var err error
+		if def, err = realsample.Def(); err != nil {
+			return nil, nil, err
+		}
+	}
+	var fetcher sources.Fetcher = sources.CapturedFetcher{FS: realsample.FS}
+	if o.live {
+		fetcher = sources.LiveFetcher{}
+	}
+	id, err := db.SeedPublication(ctx, def)
+	if err != nil {
+		return nil, nil, err
+	}
+	pub, err := db.GetPublication(ctx, fmt.Sprint(id))
+	if err != nil {
+		return nil, nil, err
+	}
+	return pub, fetcher, nil
+}
+
+// reportLLMCheck prints the three gate reports — every model step
+// produced valid JSON, citecheck flagged a planted unsourced sentence,
+// the pt-BR draft on disk for human review — and fails the command when
+// any check did not pass.
+func reportLLMCheck(ctx context.Context, cfg *config.Config, db *store.DB, pub *store.Publication, provider *tokCounter, res *pipeline.Result, done map[string]bool, dur time.Duration, outFile string) error {
 	// Report 1: every model step produced valid JSON — a malformed reply
 	// fails the step, so completion is the proof.
 	fmt.Println("\nmodel steps (valid JSON):")
@@ -145,7 +174,7 @@ func cmdLLMCheck(args []string) error {
 	}
 
 	// Report 3: the pt-BR draft lands on disk for human review.
-	draftPath := *outFile
+	draftPath := outFile
 	if draftPath == "" {
 		draftPath = filepath.Join(cfg.OutDir, fmt.Sprintf("llm-check-issue-%d.md", res.Number))
 	}
