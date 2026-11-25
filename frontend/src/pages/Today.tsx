@@ -41,7 +41,7 @@ export function Today() {
   const [stale, setStale] = useState(false);
 
   const answer = useMutation({
-    mutationFn: (v: { c: PautaCard; a: "yes" | "no" }) => api.calibrationAnswer(id!, v.c.story_id, v.a),
+    mutationFn: (v: { c: PautaCard; a: "yes" | "no" }) => api.calibrationAnswer(id!, v.c, v.a),
     onSuccess: (_r, v) => {
       if (v.a === "no") {
         setGone((p) => new Set(p).add(v.c.story_id));

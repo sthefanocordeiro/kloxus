@@ -190,7 +190,7 @@ function Calibrate({ pubID, s, onDone }: { pubID: number; s: StartStrings; onDon
   }, [deck]);
 
   const answer = useMutation({
-    mutationFn: (v: { id: number; a: "yes" | "no" }) => api.calibrationAnswer(pubID, v.id, v.a),
+    mutationFn: (v: { c: PautaCard; a: "yes" | "no" }) => api.calibrationAnswer(pubID, v.c, v.a),
   });
   const skip = useMutation({ mutationFn: (topic: string) => api.skipTopic(pubID, topic) });
 
@@ -199,7 +199,7 @@ function Calibrate({ pubID, s, onDone }: { pubID: number; s: StartStrings; onDon
     (a: "yes" | "no") => {
       if (!cards || !cards[i]) return;
       const c = cards[i];
-      answer.mutate({ id: c.story_id, a });
+      answer.mutate({ c, a });
       if (a === "no") {
         for (const raw of c.topics) {
           // "outro" is the §7.2 internal tag for unclassified stories —

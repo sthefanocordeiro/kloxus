@@ -103,6 +103,10 @@ func (s *Server) apiToday(w http.ResponseWriter, r *http.Request) {
 		if cards, err := json.Marshal(views); err == nil {
 			_ = db(r).SavePautaDay(ctx, pub.ID, pautaDayOf(time.Now()), string(cards))
 		}
+	} else {
+		// a snapshot outlives the build that wrote it: a "Não" answered
+		// since must still hide the story here (KLOX-236)
+		views = visiblePautaCards(ctx, db(r), pub.ID, views)
 	}
 	issues, err := db(r).ListIssues(r.Context(), pub.ID)
 	if apiDBErr(w, r, err, "pieces") {

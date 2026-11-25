@@ -30,9 +30,8 @@ const state = (): PautaState => ({
   ],
 });
 
-function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+function renderPage(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  return render(
     <QueryClientProvider client={qc}>
       <LangProvider>
         <MemoryRouter initialEntries={["/pauta/5"]}>
@@ -144,6 +143,46 @@ describe("Escrever (KLOX-168)", () => {
     fireEvent.change(screen.getByLabelText(/Opening/), { target: { value: "oi" } });
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
     expect(vi.mocked(api.pautaSave).mock.calls.at(-1)![1].title).toBeUndefined();
+  });
+
+  // KLOX-233: editor → export → Briefs → reopen remounts the editor on a
+  // stale cache — a written story came back empty and the next whole-
+  // pauta save would have wiped its text on the server
+  it("still shows saved text after navigating away and back", async () => {
+    const saved = state();
+    vi.mocked(api.pauta).mockImplementation(async () => JSON.parse(JSON.stringify(saved)) as PautaState);
+    vi.mocked(api.pautaSave).mockImplementation(async (_id, body) => {
+      saved.opening = body.opening;
+      for (const e of body.entries) {
+        const it = saved.entries.find((x) => x.story_id === e.story_id);
+        if (it) it.text = e.text;
+      }
+      return { saved: true };
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = renderPage(qc);
+    await screen.findByRole("link", { name: "Primeira" });
+    fireEvent.click(screen.getByRole("button", { name: "Comment: Primeira" }));
+    fireEvent.change(screen.getByLabelText("Your comment: Primeira"), { target: { value: "Minha nota" } });
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+
+    first.unmount();
+    renderPage(qc);
+    expect(await screen.findByLabelText("Your comment: Primeira")).toHaveValue("Minha nota");
+  });
+
+  // KLOX-233: a reload (or a dismissed leave-warning) must not drop the
+  // last keystrokes — pagehide flushes them with a keepalive save
+  it("flushes pending text with keepalive on pagehide", async () => {
+    renderPage();
+    await screen.findByRole("link", { name: "Primeira" });
+    fireEvent.change(screen.getByLabelText(/Opening/), { target: { value: "oi" } });
+    window.dispatchEvent(new Event("pagehide"));
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+    const last = vi.mocked(api.pautaSave).mock.calls.at(-1)!;
+    expect(last[1].opening).toBe("oi");
+    expect(last[2]).toBe(true);
   });
 });
 

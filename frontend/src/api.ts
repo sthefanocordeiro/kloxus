@@ -194,13 +194,16 @@ export function parseRetryAfter(v: string | null): number | undefined {
 
 // request is the single fetch path: JSON in, JSON out, envelope errors
 // become ApiRequestError. Conflict responses may carry the fresh
-// document — callers use it to resync.
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+// document — callers use it to resync. keepalive lets a save fired on
+// pagehide outlive the page itself (KLOX-233); bodies are capped at
+// ~64 KB by the browser.
+export async function request<T>(method: string, path: string, body?: unknown, keepalive = false): Promise<T> {
   const mutating = method !== "GET" && method !== "HEAD";
   const res = await fetch(path, {
     method,
     headers: mutating ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    keepalive,
   });
   const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -244,6 +247,10 @@ export interface PautaCard {
   topics: string[];
   url: string;
   age_hours: number | null;
+  // stable feedback ids echoed back on Sim/Não — the answer still
+  // lands when the stories table was rebuilt since the card was
+  // dealt (KLOX-236)
+  feedback_keys?: string[];
 }
 
 export type RenditionFormat = "linkedin" | "x" | "html" | "markdown";
@@ -311,8 +318,8 @@ export const api = {
   pautaCreate: (pubID: number | string, storyIDs: number[]) =>
     request<{ issue_id: number }>("POST", `/api/v1/publications/${pubID}/pauta`, { story_ids: storyIDs }),
   pauta: (issueID: number | string) => request<PautaState>("GET", `/api/v1/issues/${issueID}/pauta`),
-  pautaSave: (issueID: number | string, body: PautaSave) =>
-    request<{ saved: boolean }>("PUT", `/api/v1/issues/${issueID}/pauta`, body),
+  pautaSave: (issueID: number | string, body: PautaSave, keepalive = false) =>
+    request<{ saved: boolean }>("PUT", `/api/v1/issues/${issueID}/pauta`, body, keepalive),
   pautaFinish: (issueID: number | string) =>
     request<{ ready: boolean; missing_text: number }>("POST", `/api/v1/issues/${issueID}/pauta/finish`, {}),
   logout: () =>
@@ -393,8 +400,9 @@ export const api = {
     request<{ publication: Publication; sources: SourceRow[] }>("POST", "/api/v1/radar", { name, about: topics, niches }),
   calibration: (pubID: number | string) =>
     request<{ cards: PautaCard[]; window_hours: number }>("POST", `/api/v1/publications/${pubID}/calibration`).then((r) => r.cards),
-  calibrationAnswer: (pubID: number | string, storyID: number, answer: "yes" | "no") =>
-    request<{ ok: boolean }>("POST", `/api/v1/publications/${pubID}/calibration/answer`, { story_id: storyID, answer }),
+  calibrationAnswer: (pubID: number | string, card: Pick<PautaCard, "story_id" | "title"> & { feedback_keys?: string[] }, answer: "yes" | "no") =>
+    request<{ ok: boolean }>("POST", `/api/v1/publications/${pubID}/calibration/answer`,
+      { story_id: card.story_id, answer, feedback_keys: card.feedback_keys, title: card.title }),
   skipTopic: (pubID: number | string, topic: string) =>
     request<{ publication: Publication }>("POST", `/api/v1/publications/${pubID}/skip`, { topic }),
   updatePublication: (id: string | number, p: Partial<Omit<Proposal, "sources">>) =>

@@ -113,7 +113,7 @@ describe("onboarding from zero (KLOX-123)", () => {
 
     expect(await screen.findByText("Story 1")).toBeVisible();
     fireEvent.keyDown(window, { key: "ArrowLeft" });
-    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, 1, "no"));
+    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, card(1, ["games"]), "no"));
     expect(screen.queryByRole("alertdialog")).toBeNull();
 
     expect(await screen.findByText("Story 2")).toBeVisible();
@@ -125,7 +125,7 @@ describe("onboarding from zero (KLOX-123)", () => {
 
     expect(await screen.findByText("Story 3")).toBeVisible();
     fireEvent.keyDown(window, { key: "ArrowRight" });
-    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, 3, "yes"));
+    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, card(3, ["fintech"]), "yes"));
 
     // step 3: Done
     expect(await screen.findByRole("heading", { name: "Done!" })).toBeVisible();
@@ -149,12 +149,12 @@ describe("onboarding from zero (KLOX-123)", () => {
 
     expect(await screen.findByText("Story 1")).toBeVisible();
     fireEvent.keyDown(window, { key: "ArrowLeft" });
-    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, 1, "no"));
+    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, card(1, ["outro"]), "no"));
     expect(screen.queryByRole("alertdialog")).toBeNull();
 
     expect(await screen.findByText("Story 2")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /No/ }));
-    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, 2, "no"));
+    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, card(2, ["outro"]), "no"));
 
     expect(await screen.findByText("Story 3")).toBeVisible();
     expect(screen.queryByRole("alertdialog")).toBeNull();
