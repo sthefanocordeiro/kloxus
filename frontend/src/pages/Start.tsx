@@ -201,7 +201,12 @@ function Calibrate({ pubID, s, onDone }: { pubID: number; s: StartStrings; onDon
       const c = cards[i];
       answer.mutate({ id: c.story_id, a });
       if (a === "no") {
-        for (const topic of c.topics) {
+        for (const raw of c.topics) {
+          // "outro" is the §7.2 internal tag for unclassified stories —
+          // no readable label, and hiding it would silence every
+          // unclassified story, so it never counts toward the prompt.
+          const topic = raw.trim();
+          if (topic === "" || topic === "outro") continue;
           noTopics.current[topic] = (noTopics.current[topic] ?? 0) + 1;
           if (noTopics.current[topic] >= 2 && !decided.current.has(topic) && asking === null) {
             decided.current.add(topic);
