@@ -1,28 +1,54 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
+@import "@fontsource-variable/manrope";
 @import "@fontsource-variable/source-serif-4";
 
-/* "Editorial ink" — a calm, rigorous newsroom: warm paper for reading,
-   ink blue for decisions. Tokens are the single source; components use
-   them, never raw hex. */
+/* "Floresta e lima" — palette direction A (KLOX-61 §4.1): deep forest
+   green carries the brand and the primary action; lime works as the
+   highlighter accent and the citation-chip tint. White page, light
+   green-grey surfaces. All pairs measured WCAG AA.
+   Tokens are the single source; components use them, never raw hex. */
 @theme {
-  --color-ink: #172033;
-  --color-ink-soft: #2a3450;
-  --color-paper: #faf8f3;
-  --color-paper-raised: #fffef9;
-  --color-muted: #556070;
-  --color-line: #e3ddd0;
-  --color-teal: #0f766e;
-  --color-teal-soft: #e6f4f2;
+  --color-ink: #111814;
+  --color-ink-soft: #0a2c22;
+  --color-paper: #ffffff;
+  --color-paper-raised: #ffffff;
+  --color-surface: #f4f6f3;
+  --color-muted: #5b6660;
+  --color-line: #dde4dc;
+  --color-teal: #0e3b2e;
+  --color-teal-soft: #e9f7c8;
+  --color-accent: #c8f169;
+  --color-chip: #2f5a0a;
   --color-danger: #b42318;
   --color-danger-soft: #fdecea;
   --color-warn: #854d0e;
   --color-warn-soft: #fef3c7;
 
   --font-ui: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Manrope Variable", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-doc: "Source Serif 4 Variable", ui-serif, Georgia, serif;
 
+  /* Type scale (§4.2): 14 / 16 / 18 / 22 / 28 / 36 / 48 / 64. */
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.45;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.45;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.3;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 2.25rem;
+  --text-3xl--line-height: 1.2;
+  --text-4xl: 3rem;
+  --text-4xl--line-height: 1.12;
+  --text-5xl: 4rem;
+  --text-5xl--line-height: 1.05;
+
   --radius-input: 6px;
+  --radius-btn: 10px;
   --radius-card: 10px;
   --radius-panel: 16px;
   --radius-dialog: 24px;
@@ -34,6 +60,19 @@ html {
   background: var(--color-paper);
 }
 
+/* Page and UI headings are Manrope (§4.2); Source Serif 4 (font-doc)
+   covers the editor document, reader page and emails — and, per the
+   owner review (KLOX-69), the display headings on the public pages.
+   In @layer base so the font-doc utility can override it per element. */
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+  }
+}
+
 /* Visible focus everywhere (WCAG): keyboard users always see the ring. */
 :focus-visible {
   outline: 2px solid var(--color-teal);
@@ -41,7 +80,7 @@ html {
   border-radius: 2px;
 }
 
-/* Short, functional motion only. */
+/* Short, functional motion only — 150–200 ms state changes (§4.4). */
 .flash {
   animation: flash-bg 1.2s ease-out;
 }
@@ -63,7 +102,7 @@ html {
 /* board cards slide up into place when the board lands (or a story
    changes columns) — gated on the reduced-motion setting */
 .card-in {
-  animation: card-in 0.35s ease-out both;
+  animation: card-in 0.2s ease-out both;
 }
 @keyframes card-in {
   from {
@@ -80,3 +119,16 @@ html {
     animation: none;
   }
 }
+
+/* Renditions HTML editor (KLOX-125): Tailwind's preflight flattens
+   headings/lists, so the rich body restores document typography. */
+.rendition-html .tiptap-body { font-family: "Source Serif 4 Variable", Georgia, serif; line-height: 1.65; }
+.rendition-html .tiptap-body h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 .75rem; }
+.rendition-html .tiptap-body h2 { font-size: 1.4rem; font-weight: 700; margin: 1.25rem 0 .5rem; }
+.rendition-html .tiptap-body h3 { font-size: 1.15rem; font-weight: 600; margin: 1rem 0 .4rem; }
+.rendition-html .tiptap-body p { margin: 0 0 .75rem; }
+.rendition-html .tiptap-body a { color: var(--color-teal, #0e3b2e); text-decoration: underline; }
+.rendition-html .tiptap-body ul { list-style: disc; padding-left: 1.5rem; margin: 0 0 .75rem; }
+.rendition-html .tiptap-body ol { list-style: decimal; padding-left: 1.5rem; margin: 0 0 .75rem; }
+.rendition-html .tiptap-body blockquote { border-left: 3px solid #c8f169; padding-left: .9rem; color: #555; margin: 0 0 .75rem; }
+.rendition-html .tiptap-body img { max-width: 100%; height: auto; border-radius: 6px; }
