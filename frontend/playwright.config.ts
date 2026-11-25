@@ -37,6 +37,8 @@ export default defineConfig({
   testDir: "./e2e",
   // Live-safe is the explicit read-only subset — collect no other spec.
   testMatch: liveSafeHosted ? "live-safe.spec.ts" : undefined,
+  // a stray test.only must fail CI, never silently narrow the suite
+  forbidOnly: !!process.env.CI,
   // Hosted targets run the same journey against remote Postgres — two
   // pipeline runs plus editor ops need a much larger budget than local,
   // and the real app fetches live feeds on top of that.
@@ -51,6 +53,9 @@ export default defineConfig({
   use: {
     baseURL,
     locale: "en-US",
+    // failure evidence only — green runs stay light
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
   webServer:
     mode === "hosted"

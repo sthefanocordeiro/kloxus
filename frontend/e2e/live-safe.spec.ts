@@ -115,6 +115,56 @@ test("claim gate: creating a Radar is refused before any claim", async ({
   );
 });
 
+// KLOX-215: the KLOX68_LIVE_CHECKS landing audit folded in here — what
+// used to console.log its hits now asserts. A banned word or an English
+// string on the pt-BR landing fails the read-only run like any other
+// posture break.
+const BANNED = [
+  /determin[íi]stic/i,
+  /dossi[eê]/i,
+  /\breivindic/i,
+  /\bsina(?:l|is)\b/i,
+  /evid[êe]ncia/i,
+  /\bcusto\b/i,
+  /\btokens?\b/i,
+  /\bworkspace\b/i,
+  /\bmotor\b/i,
+  /indispon[íi]vel/i,
+  /\bem desenvolvimento\b/i,
+  /Continuar para/,
+  /Tecnologia e patrocinadores/i,
+  /IA ASSISTE/i,
+  /exemplo citado/i,
+];
+
+test.describe("pt-BR landing copy", () => {
+  test.use({ locale: "pt-BR" });
+
+  test("structure, banned words, no english leak", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
+    const body = await page.locator("body").innerText();
+
+    const banned = BANNED.filter((re) => re.test(body)).map((re) => re.source);
+    expect(banned, "banned copy on the pt-BR landing").toEqual([]);
+
+    const en = ["Create your Radar", "How it works", "Questions", "Try it without signing up"];
+    expect(
+      en.filter((s) => body.includes(s)),
+      "english strings leaked into the pt-BR chrome",
+    ).toEqual([]);
+
+    // §1 structure: header CTA, footer legal links, footer language
+    // switch (KLOX-69), no anonymous-workspace banner
+    await expect(page.getByRole("button", { name: /Criar meu Radar/ }).first()).toBeVisible();
+    await expect(page.getByText(/Este espaço é anônimo/i)).toHaveCount(0);
+    const footer = page.getByRole("contentinfo");
+    await expect(footer.getByText("Termos")).toBeVisible();
+    await expect(footer.getByText("Privacidade")).toBeVisible();
+    await expect(footer.getByRole("button", { name: "EN" })).toBeVisible();
+  });
+});
+
 test("publishing-off surface stays hidden", async ({ page }) => {
   // The shipped posture (KLOX-122 pivot) hides the reader-facing
   // surface: send, outbox and /p pages must 404 before any workspace is
