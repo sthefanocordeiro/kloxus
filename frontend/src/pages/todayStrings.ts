@@ -21,6 +21,7 @@ const pt = {
   noPieces: "Nenhuma pauta ainda. Marque notícias e clique em Montar pauta.",
   piece: "Pauta {n}",
   status: { draft: "Rascunho", reviewed: "Pronta", exported: "Exportada" } as Record<string, string>,
+  stale: "A lista de notícias mudou — revise sua seleção e tente de novo.",
 };
 
 const en: typeof pt = {
@@ -42,6 +43,7 @@ const en: typeof pt = {
   noPieces: "No pautas yet. Tick stories and click Build pauta.",
   piece: "Pauta {n}",
   status: { draft: "Draft", reviewed: "Ready", exported: "Exported" },
+  stale: "The story list changed — review your picks and try again.",
 };
 
 export function useToday() {

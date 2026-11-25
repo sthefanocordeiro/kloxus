@@ -35,6 +35,9 @@ export function Today() {
   const [liked, setLiked] = useState<Set<number>>(new Set());
   // story ids in the order they were ticked
   const [picked, setPicked] = useState<number[]>([]);
+  // set when pautaCreate 404s: the deck was rebuilt and picks were
+  // pruned — the user must hear about it (KLOX-197)
+  const [stale, setStale] = useState(false);
 
   const answer = useMutation({
     mutationFn: (v: { c: PautaCard; a: "yes" | "no" }) => api.calibrationAnswer(id!, v.c.story_id, v.a),
@@ -52,9 +55,21 @@ export function Today() {
       qc.invalidateQueries({ queryKey: key });
       nav(`/pauta/${r.issue_id}`);
     },
-    onError: (err) => {
-      // the deck was rebuilt since these cards were served
-      if (err instanceof ApiRequestError && err.status === 404) qc.invalidateQueries({ queryKey: key });
+    onMutate: () => setStale(false),
+    onError: async (err) => {
+      // the deck was rebuilt since these cards were served: drop the
+      // picks the new deck no longer has so a retry can't repeat the
+      // same 404, and flag it — the error must not stay invisible
+      if (!(err instanceof ApiRequestError && err.status === 404)) return;
+      try {
+        const fresh = await qc.fetchQuery({ queryKey: key, queryFn: () => api.today(id!) });
+        const live = new Set(fresh.cards.map((c) => c.story_id));
+        setPicked((p) => p.filter((x) => live.has(x)));
+        setLiked((p) => new Set([...p].filter((x) => live.has(x))));
+        setGone((p) => new Set([...p].filter((x) => live.has(x))));
+      } finally {
+        setStale(true);
+      }
     },
   });
 
@@ -81,6 +96,7 @@ export function Today() {
         ) : (
           <p className="mt-6 text-sm text-danger" role="alert">{errText(t, q.error)}</p>
         ))}
+      {stale && <p className="mt-4 text-sm text-danger" role="alert">{s.stale}</p>}
       {build.isError && !(build.error instanceof ApiRequestError && build.error.status === 404) &&
         (isRateLimited(build.error) ? (
           <RateLimited className="mt-4" error={build.error} busy={build.isPending} onRetry={() => build.mutate()} />

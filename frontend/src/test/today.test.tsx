@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { api, type PautaCard, type TodayData } from "../api";
+import { api, ApiRequestError, type PautaCard, type TodayData } from "../api";
 import { LangProvider } from "../i18n";
 import { Today } from "../pages/Today";
 
@@ -119,6 +119,30 @@ describe("Hoje (KLOX-123)", () => {
     expect(await screen.findByText("Fim da escala 6×1")).toBeVisible();
     expect(screen.getByText("Exported")).toBeVisible();
     expect(screen.getByText("X")).toBeVisible();
+  });
+
+  // KLOX-197: a rebuilt deck makes pautaCreate 404 — picks the new
+  // deck no longer has must be pruned and the user told, not looped
+  it("prunes gone picks and explains when the deck changed (404)", async () => {
+    vi.mocked(api.today)
+      .mockResolvedValueOnce(data({ cards: [card(1), card(2)] }))
+      .mockResolvedValue(data({ cards: [card(1), card(3)] }));
+    vi.mocked(api.pautaCreate)
+      .mockRejectedValueOnce(new ApiRequestError(404, { code: "pauta", message: "story not found" }))
+      .mockResolvedValue({ issue_id: 55 });
+    renderToday();
+    await screen.findByText("Story 1");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Story 1/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Story 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Build pauta →" }));
+    expect(await screen.findByText(/story list changed/)).toBeVisible();
+    // story 2 left the deck: only story 1 stays picked
+    await waitFor(() => expect(screen.getByText("1 story selected")).toBeVisible());
+    expect(await screen.findByText("Story 3")).toBeVisible();
+    // the retry sends only live ids and goes through
+    fireEvent.click(screen.getByRole("button", { name: "Build pauta →" }));
+    expect(await screen.findByText("pauta screen")).toBeVisible();
+    expect(api.pautaCreate).toHaveBeenLastCalledWith("7", [1]);
   });
 
   it("explains an empty pauta", async () => {
