@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -36,18 +36,27 @@ export function PautaPage() {
   const { t, lang } = useT();
   const s = usePautaStrings();
   const nav = useNavigate();
+  const qc = useQueryClient();
   const q = useQuery({ queryKey: ["pauta", issueID], queryFn: () => api.pauta(issueID), staleTime: Infinity });
   const issueQ = useQuery({ queryKey: ["issue", issueID], queryFn: () => api.issue(issueID) });
   const pubID = issueQ.data?.publication_id;
 
   const [opening, setOpening] = useState("");
   const [entries, setEntries] = useState<PautaEntry[]>([]);
+  // KLOX-199: the pauta name — the same name the lists show. undefined
+  // until the author renames, so untouched pautas never freeze the
+  // "first story title" name into a fixed one
+  const [name, setName] = useState("");
+  const [draftName, setDraftName] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const editingRef = useRef(false);
+  const nameSent = useRef<string | undefined>(undefined);
   const [ready, setReady] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [adding, setAdding] = useState(false);
   const [openComments, setOpenComments] = useState<Set<number>>(new Set());
-  const latest = useRef({ opening, entries });
-  latest.current = { opening, entries };
+  const latest = useRef({ opening, entries, title: nameSent.current });
+  latest.current = { opening, entries, title: nameSent.current };
   const dirty = useRef(false);
   const flight = useRef<Promise<void> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -59,6 +68,13 @@ export function PautaPage() {
       setReady(true);
     }
   }, [q.data, ready]);
+
+  // the resolved name follows refetches (initial load, and the one a
+  // rename save triggers) — mid-edit it stays put so the input keeps
+  // what the author typed
+  useEffect(() => {
+    if (q.data?.title !== undefined && !editingRef.current) setName(q.data.title);
+  }, [q.data?.title]);
 
   const persistRef = useRef<() => Promise<void>>(async () => {});
   const persist = useCallback(async () => {
@@ -75,6 +91,7 @@ export function PautaPage() {
     const req = api.pautaSave(issueID, {
       opening: cur.opening,
       entries: cur.entries.map((e) => ({ story_id: e.story_id, text: e.text })),
+      ...(cur.title !== undefined ? { title: cur.title } : {}),
     });
     flight.current = req.then(() => undefined, () => undefined);
     try {
@@ -89,8 +106,15 @@ export function PautaPage() {
       // edits that landed mid-flight still need to go out, in order;
       // on error dirty stays set and the next touch/blur retries
       if (ok && dirty.current) timer.current = setTimeout(() => void persistRef.current(), 400);
+      // a saved rename refreshes the shell title (issue query) and the
+      // resolved name (pauta query — a cleared name picks the first
+      // story's title back up)
+      if (ok && cur.title !== undefined) {
+        void qc.invalidateQueries({ queryKey: ["issue", issueID] });
+        void qc.invalidateQueries({ queryKey: ["pauta", issueID] });
+      }
     }
-  }, [issueID]);
+  }, [issueID, qc]);
   persistRef.current = persist;
 
   const touch = useCallback(() => {
@@ -117,6 +141,19 @@ export function PautaPage() {
 
   const edit = (fn: (e: PautaEntry[]) => PautaEntry[]) => {
     setEntries((p) => fn(p));
+    touch();
+  };
+
+  // KLOX-199: committing a name goes out with the regular save — a
+  // cleared name sends "" and the pauta goes back to being named by
+  // its first story (the refetch fills the resolved name in)
+  const commitName = () => {
+    editingRef.current = false;
+    setEditingName(false);
+    const next = draftName.trim();
+    if (next === name) return;
+    nameSent.current = next;
+    setName(next || entries[0]?.title || name);
     touch();
   };
   const move = (i: number, d: number) =>
@@ -150,7 +187,31 @@ export function PautaPage() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6 pb-28">
       <div className="mt-4 flex items-baseline justify-between gap-3">
-        <h1 className="font-display text-2xl font-bold">{s.title}</h1>
+        <h1 className="min-w-0 font-display text-2xl font-bold">
+          {editingName ? (
+            <input
+              autoFocus
+              className="w-full rounded border border-line bg-paper-raised px-2 py-1 font-display text-2xl font-bold"
+              aria-label={s.nameLabel}
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitName();
+                if (e.key === "Escape") { editingRef.current = false; setEditingName(false); }
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className="block max-w-full text-left hover:text-teal"
+              title={s.nameHint}
+              onClick={() => { setDraftName(name); editingRef.current = true; setEditingName(true); }}
+            >
+              {name || s.title}
+            </button>
+          )}
+        </h1>
         <span className="text-xs text-muted" role="status" aria-live="polite">
           {saveState === "saving" ? s.saving : saveState === "saved" ? s.saved : saveState === "error" ? s.saveError : ""}
         </span>

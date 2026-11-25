@@ -32,10 +32,10 @@ import (
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
-	"github.com/sthefanocordeiro/kloxus/internal/opml"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
+	"github.com/sthefanocordeiro/kloxus/internal/opml"
 	"github.com/sthefanocordeiro/kloxus/internal/payments"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
@@ -416,7 +416,7 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	// KLOX-184: lists name the pauta by its content — first story
 	// title, opening line or subject — and remember which formats the
 	// author already copied or downloaded ("Exportada").
-	m["title"] = s.pautaTitle(r, iss, pub, items)
+	m["title"] = s.pautaTitle(ctx, db(r), iss, pub, items)
 	if formats, err := db(r).IssueExports(ctx, iss.ID); err == nil && len(formats) > 0 {
 		m["exported"] = true
 		m["exported_formats"] = formats
@@ -434,10 +434,14 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	return m
 }
 
-// pautaTitle names a pauta in lists (KLOX-184): the first story's
-// title, the opening line when there is no story, else the stored
-// subject — never the bare "pauta N".
-func (s *Server) pautaTitle(r *http.Request, iss *store.Issue, pub *store.Publication, items []store.IssueItem) string {
+// pautaTitle names a pauta in lists (KLOX-184): an author-set name
+// first (KLOX-199), then the first story's title, the opening line
+// when there is no story, else the stored subject — never the bare
+// "pauta N".
+func (s *Server) pautaTitle(ctx context.Context, d *store.DB, iss *store.Issue, pub *store.Publication, items []store.IssueItem) string {
+	if t := strings.TrimSpace(iss.Subject); t != "" && !autoPautaSubject(iss) {
+		return t
+	}
 	var first *store.IssueItem
 	for i := range items {
 		ii := &items[i]
@@ -455,7 +459,7 @@ func (s *Server) pautaTitle(r *http.Request, iss *store.Issue, pub *store.Public
 		if title := strings.TrimSpace(first.Title); title != "" {
 			return title
 		}
-		if title, err := db(r).StoryTitle(r.Context(), first.StoryID); err == nil && strings.TrimSpace(title) != "" {
+		if title, err := d.StoryTitle(ctx, first.StoryID); err == nil && strings.TrimSpace(title) != "" {
 			return strings.TrimSpace(title)
 		}
 	}
@@ -465,6 +469,19 @@ func (s *Server) pautaTitle(r *http.Request, iss *store.Issue, pub *store.Public
 		}
 	}
 	return iss.Subject
+}
+
+// autoPautaSubject reports whether the stored subject is still the
+// creation-time placeholder ("{radar} — pauta N" or the pipeline's
+// "— issue/edição N"): anything else is a name the author typed in the
+// editor (KLOX-199) and it beats the derived title.
+func autoPautaSubject(iss *store.Issue) bool {
+	for _, word := range []string{"pauta", "issue", "edição"} {
+		if strings.HasSuffix(iss.Subject, fmt.Sprintf(" — %s %d", word, iss.Number)) {
+			return true
+		}
+	}
+	return false
 }
 
 // issueSections returns the section definitions an edition works with:
@@ -655,7 +672,7 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 		"claimed":  owner != "", "owner_email": owner, "mail": mail,
 		"mail_transport": transport, "mail_webhook": mailWebhook,
 		"mail_stale_sent": staleSent,
-		"publishing": s.d.Cfg.PublishingEnabled,
+		"publishing":      s.d.Cfg.PublishingEnabled,
 	})
 }
 

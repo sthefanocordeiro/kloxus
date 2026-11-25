@@ -294,6 +294,37 @@ describe("AppShell header trail on pauta screens (KLOX-187)", () => {
       "/pauta/7",
     );
   });
+
+  // KLOX-199: the header names the pauta like the lists do — the
+  // content title, "Brief N" only while the issue fetch is pending
+  it("shows the pauta title once the issue lands", async () => {
+    const d = deferred<IssueSummary>();
+    vi.mocked(api.issue).mockReturnValue(d.promise);
+    renderAt("/pauta/7");
+    await screen.findByText("issue screen");
+
+    // loading — the numbered label fills in only until the title arrives
+    expect(screen.getByRole("heading", { name: "Brief" })).toBeInTheDocument();
+
+    d.resolve({ ...issue, title: "A semana do Pix" });
+    expect(await screen.findByRole("heading", { name: "A semana do Pix" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(crumbLinks()).toEqual([["Radar", "/publications/42"]]);
+    });
+  });
+
+  it("names the export crumb by the pauta title", async () => {
+    vi.mocked(api.issue).mockResolvedValue({ ...issue, title: "A semana do Pix" });
+    renderAt("/pauta/7/export");
+    await screen.findByText("export screen");
+
+    await waitFor(() => {
+      expect(crumbLinks()).toEqual([
+        ["Radar", "/publications/42"],
+        ["A semana do Pix", "/pauta/7"],
+      ]);
+    });
+  });
 });
 
 // KLOX-187: before the first Radar exists the nav's destinations all
