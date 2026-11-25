@@ -183,3 +183,41 @@ func TestPubMediaUpload(t *testing.T) {
 		t.Fatalf("media url = %q, want /m/ path", url)
 	}
 }
+
+// TestMediaDiesWithPublication: deleting a Radar removes its media rows
+// at the origin — a /m/ URL that served bytes before the delete returns
+// 404 after it. Caches can still hold a previously fetched copy: shared
+// caches are barred by `private` (D69), the viewer's own browser is the
+// accepted residual.
+func TestMediaDiesWithPublication(t *testing.T) {
+	srv, _, pub, _ := demoServer(t)
+	png := append([]byte("\x89PNG\r\n\x1a\n"), []byte("fakepngdata")...)
+	rr := apiCall(t, srv, "POST",
+		fmt.Sprintf("/api/v1/publications/%d/media", pub.ID),
+		map[string]any{
+			"content_type": "image/png",
+			"data_b64":     base64.StdEncoding.EncodeToString(png),
+			"name":         "banner.png",
+		})
+	if rr.Code != 201 {
+		t.Fatalf("pub media upload = %d: %s", rr.Code, shortBody(rr))
+	}
+	url := apiJSON(t, rr)["media"].(map[string]any)["url"].(string)
+
+	before := apiCall(t, srv, "GET", url, nil)
+	if before.Code != 200 || before.Body.Len() == 0 {
+		t.Fatalf("GET %s before delete = %d (%d bytes)", url, before.Code, before.Body.Len())
+	}
+	if cc := before.Header().Get("Cache-Control"); !strings.Contains(cc, "private") {
+		t.Fatalf("media Cache-Control = %q, want private so shared caches drop deleted media", cc)
+	}
+
+	if rr := apiCall(t, srv, "DELETE",
+		fmt.Sprintf("/api/v1/publications/%d", pub.ID),
+		map[string]any{"confirm": true}); rr.Code != 204 {
+		t.Fatalf("DELETE publication = %d: %s", rr.Code, shortBody(rr))
+	}
+	if rr := apiCall(t, srv, "GET", url, nil); rr.Code != 404 {
+		t.Fatalf("GET %s after delete = %d, want 404", url, rr.Code)
+	}
+}

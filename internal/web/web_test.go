@@ -71,7 +71,8 @@ func testServer(t *testing.T, seedIt bool, opt func(*web.Deps)) (*web.Server, *s
 		OutDir:      filepath.Join(base, "out"),
 		ModelTriage: "claude-haiku-5-5", ModelDraft: "claude-sonnet-5-5", MaxDeepDives: 3,
 	}
-	db := testdb.WS(t)
+	pool := testdb.Pool(t)
+	db := testdb.WSOn(t, pool)
 
 	seed := func(ctx context.Context, sdb *store.DB) error {
 		data, err := examples.FS.ReadFile("publications/futuro-proximo.yaml")
@@ -98,7 +99,7 @@ func testServer(t *testing.T, seedIt bool, opt func(*web.Deps)) (*web.Server, *s
 	}
 
 	deps := web.Deps{
-		WS: workspace.OpenLocal(db, seed), Cfg: cfg,
+		WS: workspace.OpenLocal(db, seed), Cfg: cfg, Pool: pool,
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
 		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir(filepath.Join(cfg.OutDir, "llm-dump"))},
 		Monitor: sources.FakeMonitor{},
@@ -276,7 +277,8 @@ func TestDemoIssueLifecycle(t *testing.T) {
 }
 
 // TestSourceAddValidation covers the demo-mode simulation (visitor URLs
-// are stored but never fetched) and the real-mode URL validation.
+// are stored but never fetched) and the real-mode catalog gate (pasted
+// URLs outside source_catalog are an SSRF surface, KLOX-11+).
 func TestSourceAddValidation(t *testing.T) {
 	srv, _, pub, _ := demoServer(t)
 	base := "/api/v1/publications/" + fmt.Sprint(pub.ID) + "/sources"
@@ -294,21 +296,23 @@ func TestSourceAddValidation(t *testing.T) {
 		t.Fatalf("fixture source add = %d", rr.Code)
 	}
 
-	// real mode validates URL syntax without fetching
+	// real mode gates pasted URLs on catalog membership: malformed and
+	// well-formed off-catalog URLs alike get catalog_only; a listed
+	// catalog feed is the only way in.
 	srv2, _, pub2, cfg := demoServer(t)
 	cfg.Mode = "real"
 	base2 := "/api/v1/publications/" + fmt.Sprint(pub2.ID) + "/sources"
 	add2 := func(typ, u string) *httptest.ResponseRecorder {
 		return apiCall(t, srv2, "POST", base2, map[string]string{"type": typ, "url": u})
 	}
-	if rr := add2("rss", "notaurl"); apiErrCode(t, rr) != "invalid_source" {
-		t.Fatal("real mode should reject malformed source URLs")
+	if rr := add2("rss", "notaurl"); apiErrCode(t, rr) != "catalog_only" {
+		t.Fatal("real mode should reject URLs outside the source catalog")
 	}
-	if rr := add2("rss", "ftp://example.com/feed"); apiErrCode(t, rr) != "invalid_source" {
-		t.Fatal("real mode should reject non-http(s) schemes")
+	if rr := add2("rss", "https://example.com/news"); apiErrCode(t, rr) != "catalog_only" {
+		t.Fatal("real mode should reject well-formed URLs outside the catalog")
 	}
-	if rr := add2("page", "https://example.com/news"); rr.Code != 201 {
-		t.Fatalf("valid real-mode source add = %d", rr.Code)
+	if rr := add2("rss", "https://www.infomoney.com.br/feed/"); rr.Code != 201 {
+		t.Fatalf("catalog source add = %d", rr.Code)
 	}
 }
 
