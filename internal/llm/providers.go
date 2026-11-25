@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,7 +13,25 @@ import (
 	"path"
 	"path/filepath"
 	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
+
+// ErrDisabled is returned by None when a code path reaches the model in
+// deterministic mode (KLOXUS_LLM_MODE=off) — a loud failure that proves
+// no outbound call can happen.
+var ErrDisabled = errors.New("llm: model calls are disabled (KLOXUS_LLM_MODE=off)")
+
+// None refuses every call. It is the inner provider of the deterministic
+// run mode: defense in depth so that a missed call site fails loudly
+// instead of reaching a paid API.
+type None struct{}
+
+// Complete implements Provider.
+func (None) Complete(context.Context, Request) (Response, error) {
+	return Response{}, ErrDisabled
+}
 
 // Replay serves recorded responses from a fixture FS (demo mode). A missing
 // key fails with ErrMissingFixture and, when DumpDir is set, writes the full
@@ -23,10 +42,28 @@ type Replay struct {
 	DumpDir string // optional local dir for missing-request dumps
 }
 
+// legacyModelAliases are the model ids pre-KLOX-67 fixtures were
+// recorded under. KLOX-67 made every step Haiku-only; rather than
+// re-record the fixture set under the new model id (the owner freeze
+// forbids paid calls), Replay re-keys a Haiku request against these
+// aliases when the Haiku-keyed fixture is missing. The response text
+// does not depend on the id that recorded it.
+var legacyModelAliases = []string{"claude-sonnet-5-5"}
+
 // Complete implements Provider.
 func (r Replay) Complete(ctx context.Context, req Request) (Response, error) {
 	key := Key(req)
 	data, err := fs.ReadFile(r.FS, path.Join(r.Dir, key+".json"))
+	if err != nil && req.Model == AllowedModel {
+		for _, alias := range legacyModelAliases {
+			alt := req
+			alt.Model = alias
+			if d, aerr := fs.ReadFile(r.FS, path.Join(r.Dir, Key(alt)+".json")); aerr == nil {
+				data, err = d, nil
+				break
+			}
+		}
+	}
 	if err != nil {
 		if r.DumpDir != "" {
 			if mkErr := os.MkdirAll(r.DumpDir, 0o755); mkErr == nil {
@@ -46,6 +83,39 @@ func (r Replay) Complete(ctx context.Context, req Request) (Response, error) {
 	}
 	return Response{Text: f.Text, InputTokens: f.InputTokens, OutputTokens: f.OutputTokens}, nil
 }
+
+// RequestKeyed reports whether p serves responses keyed to the exact
+// request — fixture replay. A keyed provider cannot answer a mutated
+// retry prompt, and its fixtures were recorded against the canonical
+// Phase-A item set; callers use this to pick replay-stable inputs and
+// skip retries.
+func RequestKeyed(p Provider) bool {
+	switch p.(type) {
+	case Replay, *Replay:
+		return true
+	}
+	return false
+}
+
+const (
+	// anthropicDefaultBaseURL is the production Messages API endpoint;
+	// Anthropic.BaseURL overrides it (tests, gateways, proxies).
+	anthropicDefaultBaseURL = "https://api.anthropic.com"
+
+	// anthropicVersionHeader names the required API-version header and
+	// anthropicAPIVersion pins its value — Anthropic rejects calls
+	// without it, so a version bump is a deliberate, tested change.
+	anthropicVersionHeader = "anthropic-version"
+	anthropicAPIVersion    = "2023-06-01"
+
+	// anthropicTimeout bounds a single API call: completions can take a
+	// while, but a hung request must not stall a whole run.
+	anthropicTimeout = 120 * time.Second
+
+	// errBodyMaxLen caps how much of a non-200 response body is copied
+	// into the returned error message.
+	errBodyMaxLen = 400
+)
 
 // Anthropic calls the Anthropic messages API (real mode).
 type Anthropic struct {
@@ -77,14 +147,18 @@ type anthropicResponse struct {
 	} `json:"usage"`
 }
 
-// Complete implements Provider.
+// Complete implements Provider. The Haiku-only rule is enforced at this
+// edge (KLOX-67): a non-Haiku request can never become a paid call.
 func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) {
 	if a.APIKey == "" {
 		return Response{}, fmt.Errorf("ANTHROPIC_API_KEY is not set")
 	}
+	if err := CheckModel(req); err != nil {
+		return Response{}, err
+	}
 	base := a.BaseURL
 	if base == "" {
-		base = "https://api.anthropic.com"
+		base = anthropicDefaultBaseURL
 	}
 	body, err := json.Marshal(anthropicRequest{
 		Model:     req.Model,
@@ -101,10 +175,10 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 	}
 	httpReq.Header.Set("content-type", "application/json")
 	httpReq.Header.Set("x-api-key", a.APIKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set(anthropicVersionHeader, anthropicAPIVersion)
 	client := a.HTTP
 	if client == nil {
-		client = &http.Client{Timeout: 120 * time.Second}
+		client = httpx.Client(anthropicTimeout)
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -116,7 +190,7 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 		return Response{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Response{}, fmt.Errorf("anthropic: status %d: %s", resp.StatusCode, truncate(string(raw), 400))
+		return Response{}, &StatusError{Provider: "anthropic", Status: resp.StatusCode, Body: strutil.Truncate(string(raw), errBodyMaxLen)}
 	}
 	var ar anthropicResponse
 	if err := json.Unmarshal(raw, &ar); err != nil {
@@ -130,13 +204,6 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 		}
 	}
 	return Response{Text: text, InputTokens: ar.Usage.InputTokens, OutputTokens: ar.Usage.OutputTokens}, nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "…"
-	}
-	return s
 }
 
 // Recorder wraps a Provider and writes each response as a replay fixture
