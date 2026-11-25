@@ -128,12 +128,19 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 500, "internal", "could not save the claim link")
 		return
 	}
-	link := s.publicBase(r) + "/claim?t=" + url.QueryEscape(token)
-	stamp := claimStamp(time.Now())
+	// the link always carries the interface language it was asked from
+	// (KLOX-232): /claim renders in it and the confirmed session lands
+	// on /start?lang= — without it an EN sender on a PT browser got the
+	// app back in Portuguese.
+	lang := "en"
+	if ptLang(in.Lang) {
+		lang = "pt"
+	}
+	link := s.publicBase(r) + "/claim?t=" + url.QueryEscape(token) + "&lang=" + lang
+	stamp := claimStamp(time.Now(), lang == "pt")
 	subject, md := "Your Kloxus link — "+stamp,
 		fmt.Sprintf("Confirm this email to create your Radar.\n\n[Create my Radar](%s)\n\nThe link works once and expires in 15 minutes.\n\nIf you didn't ask for this, ignore this email.", link)
-	if ptLang(in.Lang) {
-		link += "&lang=pt"
+	if lang == "pt" {
 		subject, md = "Seu link do Kloxus — "+stamp,
 			fmt.Sprintf("Confirme este e-mail para criar seu Radar.\n\n[Criar meu Radar](%s)\n\nO link funciona uma vez e expira em 15 minutos.\n\nSe você não pediu, ignore este e-mail.", link)
 	}
@@ -248,6 +255,7 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 	hash := hashToken(token)
 	now := store.NowUTC()
 	var wsID, email string
+	var claimed *store.DB
 	if pool := s.d.WS.Pool(); pool != nil {
 		id, em, err := pool.ConsumeMagicLink(r.Context(), hash, now)
 		if err != nil {
@@ -265,6 +273,7 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 		if err := pool.AddWaitlist(r.Context(), email, "claim"); err != nil {
 			slog.Warn("launch invite registration failed", "err", err, "rid", reqIDFromCtx(r.Context()))
 		}
+		claimed = pool.For(wsID)
 	} else if l := s.d.WS.Local(); l != nil {
 		em, err := l.DB.ConsumeMagicLink(r.Context(), hash, now)
 		if err != nil {
@@ -276,6 +285,7 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal error", 500)
 			return
 		}
+		claimed = l.DB
 	} else {
 		claimFail(w, lang)
 		return
@@ -285,9 +295,20 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 		// claimed workspace.
 		s.d.WS.SetCookie(w, r, wsID)
 	}
+	target := "/start"
+	// the language the link carried follows the confirmed session into
+	// the app — the account keeps it and the SPA picks it off the URL
+	// (KLOX-232). /claim never resolves a request workspace, so the
+	// save goes through the workspace the token claimed, not db(r).
+	if lang == "en" || lang == "pt" {
+		if err := claimed.SetUILang(r.Context(), lang); err != nil {
+			slog.Warn("ui_lang save failed", "err", err, "rid", reqIDFromCtx(r.Context()))
+		}
+		target += "?lang=" + lang
+	}
 	// straight on to "Criar seu Radar" (/start) — the screen forwards to
 	// the existing Radar when the owner already has one
-	http.Redirect(w, r, "/start", http.StatusSeeOther)
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 // claimFail renders the single failure state for a bad, spent or
@@ -455,6 +476,28 @@ func (s *Server) requireClaimed(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
+// apiWorkspaceLang saves the interface language on the account
+// (KLOX-232): the toggle writes it so a fresh browser — or the next
+// magic link — lands in the same language. Only "en"/"pt" are saved.
+func (s *Server) apiWorkspaceLang(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Lang string `json:"lang"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if in.Lang != "en" && in.Lang != "pt" {
+		apiErr(w, 400, "validation", "lang must be en or pt")
+		return
+	}
+	if err := db(r).SetUILang(r.Context(), in.Lang); err != nil {
+		apiErr(w, 500, "internal", "could not save the language")
+		return
+	}
+	apiJSON(w, 200, map[string]any{"ok": true})
+}
+
 // apiLogout signs the browser out: it only expires the cookie. A claimed
 // workspace comes back with a new magic link; an unclaimed one has no
 // way back, so it is refused rather than orphaned.
@@ -466,9 +509,13 @@ func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{"ok": true})
 }
 
-// claimStamp renders the send time in BRT ("19h18") so each magic-link email
-// has a unique subject and Gmail does not thread old, already-used links.
-func claimStamp(t time.Time) string {
+// claimStamp renders the send time in BRT ("19h18" / "7:18 PM") so each
+// magic-link email has a unique subject and Gmail does not thread old,
+// already-used links. The English mail gets the 12 h clock (KLOX-232).
+func claimStamp(t time.Time, pt bool) string {
 	loc := time.FixedZone("BRT", -3*3600)
-	return t.In(loc).Format("15h04")
+	if pt {
+		return t.In(loc).Format("15h04")
+	}
+	return t.In(loc).Format("3:04 PM")
 }

@@ -11,7 +11,7 @@ import { Markdown } from "../markdown";
 import { cn } from "../lib/cn";
 import { errText } from "../lib/errors";
 import {
-  LINKEDIN_LIMIT, X_LIMIT, absolutizeHtml, charCount, foldIndex, htmlToPlain, splitForX,
+  LINKEDIN_LIMIT, X_LIMIT, absolutizeHtml, charCount, downloadName, foldIndex, htmlToPlain, splitForX,
   standaloneHtml, xCount,
 } from "../lib/renditions";
 
@@ -53,6 +53,7 @@ const en = {
   chars: (n: number, max: number) => `${n.toLocaleString("en-US")} / ${max.toLocaleString("en-US")}`,
   over: "Over the limit",
   fold: "“See more” cuts here in the feed (~210 characters)",
+  foldMark: "… see more",
   splitTitle: "Suggested thread",
   splitNote: (n: number) => `${n} posts — copy each one separately.`,
   preview: "Preview",
@@ -99,6 +100,7 @@ const pt: Strings = {
   chars: (n, max) => `${n.toLocaleString("pt-BR")} / ${max.toLocaleString("pt-BR")}`,
   over: "Acima do limite",
   fold: "“Ver mais” corta aqui no feed (~210 caracteres)",
+  foldMark: "… ver mais",
   splitTitle: "Sugestão de thread",
   splitNote: (n) => `${n} posts — copie um de cada vez.`,
   preview: "Prévia",
@@ -348,7 +350,7 @@ function PlainEditor({
           <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">{s.fold}</p>
           <p className="whitespace-pre-wrap" data-testid="fold-preview">
             {text.slice(0, fold)}
-            <span className="font-medium text-teal"> … ver mais</span>
+            <span className="font-medium text-teal"> {s.foldMark}</span>
           </p>
         </div>
       )}
@@ -390,7 +392,7 @@ function MarkdownEditor({
           <Button size="sm" onClick={() => copy("md", async () => { await copyText(md); markExported(); }, () => selectEl(mdRef.current))}>
             {copied === "md" ? s.copied : s.copy}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => { download("peca.md", "text/markdown", md); markExported(); }}>
+          <Button size="sm" variant="outline" onClick={() => { download(downloadName(md.split("\n")[0] ?? "", "md"), "text/markdown", md); markExported(); }}>
             {s.downloadMd}
           </Button>
         </div>
@@ -431,6 +433,7 @@ function fileToB64(file: File): Promise<string> {
 function HtmlEditor({
   r, issueID, s, onSaved,
 }: { r: Rendition; issueID: number; s: Strings; onSaved: (r: Rendition) => void }) {
+  const { lang } = useT();
   const save = useAutosave(issueID, r.id, onSaved);
   const [copied, copyFailed, copy] = useCopied();
   const markExported = useExportMark(issueID, r.format);
@@ -525,8 +528,12 @@ function HtmlEditor({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => { download("pauta.html", "text/html", standaloneHtml(
-              editor.getText().split("\n")[0] || "Pauta", absolutizeHtml(html(), window.location.origin))); markExported(); }}
+            onClick={() => {
+              const title = editor.getText().split("\n")[0] || "Pauta";
+              download(downloadName(title, "html"), "text/html", standaloneHtml(
+                title, absolutizeHtml(html(), window.location.origin), lang === "pt" ? "pt-BR" : "en"));
+              markExported();
+            }}
           >
             {s.downloadHtml}
           </Button>

@@ -143,6 +143,7 @@ func (s *Server) registerPublicRoutes() {
 func (s *Server) registerAPIRoutes() {
 	m := s.mux
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
+	m.HandleFunc("POST /api/v1/workspace/lang", s.apiWorkspaceLang)
 	m.HandleFunc("POST /api/v1/workspace/claim", s.apiClaimStart)
 	m.HandleFunc("POST /api/v1/logout", s.apiLogout)
 	m.HandleFunc("POST /api/v1/p/{slug}/subscribe", s.apiSubscribe)

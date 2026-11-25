@@ -1,4 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { api } from "./api";
+import { hasSessionMarker } from "./lib/session";
 
 // The interface ships in English and Brazilian Portuguese: it follows
 // the browser language and offers a switch. Publication content stays
@@ -460,14 +462,58 @@ const LangCtx = createContext<{ lang: Lang; t: T; setLang: (l: Lang) => void }>(
   setLang: () => {},
 });
 
+// KLOX-232: the language choice survives reloads — it is kept in
+// localStorage and saved on the account (POST /api/v1/workspace/lang).
+// A magic link carries ?lang=, which wins over both.
+export const LANG_KEY = "kloxus.lang";
+
+const asLang = (v: string | null | undefined): Lang | null =>
+  v === "en" || v === "pt" ? v : null;
+
+const urlLang = (): Lang | null => {
+  try {
+    return asLang(new URLSearchParams(window.location.search).get("lang"));
+  } catch {
+    return null;
+  }
+};
+
+const savedLang = (): Lang | null => {
+  try {
+    return asLang(localStorage.getItem(LANG_KEY));
+  } catch {
+    return null;
+  }
+};
+
 export function LangProvider({ children }: { children: ReactNode }) {
-  const [lang, setLang] = useState<Lang>(() =>
-    (navigator.language || "").toLowerCase().startsWith("pt") ? "pt" : "en",
+  const [lang, setLangState] = useState<Lang>(
+    () => urlLang() ?? savedLang() ?? ((navigator.language || "").toLowerCase().startsWith("pt") ? "pt" : "en"),
   );
+  // the toggle and the account-seeded value both funnel here; the
+  // ?lang= param is consumed once and stripped so a shared URL does not
+  // pin the next reader's language.
+  const setLang = useCallback((l: Lang) => {
+    setLangState(l);
+    // the account write only fires for a real session — a landing
+    // visitor's toggle must not mint a workspace (KLOX-193)
+    if (hasSessionMarker()) void api.saveLang(l).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!urlLang()) return;
+    const u = new URL(window.location.href);
+    u.searchParams.delete("lang");
+    window.history.replaceState(null, "", u);
+  }, []);
   // <html lang> follows the interface language, not the static
   // index.html attribute (KLOX-56).
   useEffect(() => {
     document.documentElement.lang = lang === "pt" ? "pt-BR" : "en";
+    try {
+      localStorage.setItem(LANG_KEY, lang);
+    } catch {
+      // private mode can refuse storage — the in-memory choice still holds
+    }
   }, [lang]);
   return <LangCtx.Provider value={{ lang, t: dict[lang] as T, setLang }}>{children}</LangCtx.Provider>;
 }

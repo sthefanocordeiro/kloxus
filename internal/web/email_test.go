@@ -1253,7 +1253,8 @@ func TestClaimConfirmGoesStraightToCreateRadar(t *testing.T) {
 		t.Fatalf("claim page not styled / localized: %d %s", page.Code, body)
 	}
 	rr = apiCall(t, srv, "POST", "/claim?t="+tok+"&lang=pt", nil)
-	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/start" {
-		t.Fatalf("POST /claim = %d → %q, want 303 → /start", rr.Code, rr.Header().Get("Location"))
+	// the language the link carried rides into the SPA (KLOX-232)
+	if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != "/start?lang=pt" {
+		t.Fatalf("POST /claim = %d → %q, want 303 → /start?lang=pt", rr.Code, rr.Header().Get("Location"))
 	}
 }
