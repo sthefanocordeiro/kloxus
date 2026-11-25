@@ -5,7 +5,7 @@ import { useT } from "../i18n";
 // module, so it stays out of the landing chunk (KLOX-16 budget).
 const pt = {
   gateTitle: "Confirme seu e-mail para criar o radar",
-  gateHint: "Enviamos um link mágico — sem senha. É também assim que você entra na lista do convite do lançamento.",
+  gateHint: "Enviamos um link mágico — sem senha.",
   step: ["Criar Radar", "Dar match", "Pronto!"],
   aboutTitle: "Criar seu Radar",
   aboutHint: "Dê um nome e liste os temas. As fontes são escolhidas automaticamente.",
