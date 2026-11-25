@@ -303,7 +303,7 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	}
 	unsubLink := base + "/daily-mail/unsub?t=" + url.QueryEscape(unsubToken)
 	unsubLabel := "Não quero mais este e-mail"
-	if linkLang == "en" {
+	if lang == "en" {
 		unsubLabel = "I don't want this email anymore"
 	}
 
