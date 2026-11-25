@@ -9,7 +9,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ItemEnrichment is the shared per-item AI classification written once
@@ -45,7 +48,8 @@ func (e *ItemEnrichment) Excluded() bool {
 }
 
 // SaveEnrichments upserts enrichment rows (idempotent: a second write
-// for the same item stores the same data).
+// for the same item stores the same data). An item deleted between the
+// sweep's SELECT and this write is skipped like SaveEmbeddings.
 func (p *Pool) SaveEnrichments(ctx context.Context, list []ItemEnrichment) error {
 	for _, e := range list {
 		topics := []byte("[]")
@@ -58,16 +62,30 @@ func (p *Pool) SaveEnrichments(ctx context.Context, list []ItemEnrichment) error
 		}
 		if _, err := p.db.ExecContext(ctx,
 			`INSERT INTO item_enrichment (item_id, ai_kind, promotional, topics_json, summary_pt, language, model)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7)
+			 SELECT $1,$2,$3,$4,$5,$6,$7
+			 WHERE EXISTS (SELECT 1 FROM items WHERE id = $1)
 			 ON CONFLICT (item_id) DO UPDATE SET
 			   ai_kind = excluded.ai_kind, promotional = excluded.promotional,
 			   topics_json = excluded.topics_json, summary_pt = excluded.summary_pt,
 			   language = excluded.language, model = excluded.model`,
 			e.ItemID, e.Kind, e.Promotional, string(topics), e.SummaryPT, e.Language, e.Model); err != nil {
+			if itemDeleted(err) {
+				continue
+			}
 			return err
 		}
 	}
 	return nil
+}
+
+// itemDeleted reports a foreign-key violation on items(id): the sweep
+// selected the row, then a concurrent writer deleted the item before
+// the INSERT landed — the write no-ops instead of failing the batch
+// (KLOX-253). item_embedding/item_enrichment reference only items, so
+// 23503 from these statements means exactly that.
+func itemDeleted(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
 // EnrichmentsForItems batch-loads enrichment rows for the given item

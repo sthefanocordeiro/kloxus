@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/embedding"
 )
 
 // seedWsItem inserts a workspace-source article and returns its id.
@@ -85,6 +87,40 @@ func TestEnrichmentRoundTrip(t *testing.T) {
 	}
 	if (&ItemEnrichment{Kind: "analise"}).Excluded() {
 		t.Error("analise is editorial — never excluded")
+	}
+}
+
+// TestSavesTolerateDeletedItem (KLOX-253): on the shared DATABASE_URL a
+// suite can delete its catalog items after the sweep's SELECT but
+// before the save lands — the writes must no-op, not fail with 23503.
+func TestSavesTolerateDeletedItem(t *testing.T) {
+	pool := openPool(t)
+	db := openOn(t, pool)
+	ctx := context.Background()
+
+	pubID, err := db.SeedPublication(ctx, testPub())
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	srcs, _ := db.Sources(ctx, pubID)
+	itemID := seedWsItem(t, db, srcs[0].ID, "gone-1", "Deleted mid-sweep")
+
+	// The owning suite finishes and removes the item first.
+	if _, err := pool.db.ExecContext(ctx, `DELETE FROM items WHERE id = $1`, itemID); err != nil {
+		t.Fatalf("delete item: %v", err)
+	}
+	if err := pool.SaveEmbeddings(ctx, []ItemEmbedding{
+		{ItemID: itemID, Vector: embedding.Format(embedding.Embed("t")), Model: embedding.Model},
+	}); err != nil {
+		t.Fatalf("SaveEmbeddings on deleted item: %v", err)
+	}
+	if err := pool.SaveEnrichments(ctx, []ItemEnrichment{
+		{ItemID: itemID, Kind: "noticia", Model: embedding.ClassifyModel},
+	}); err != nil {
+		t.Fatalf("SaveEnrichments on deleted item: %v", err)
+	}
+	if m, err := pool.EnrichmentsForItems(ctx, []int64{itemID}); err != nil || len(m) != 0 {
+		t.Fatalf("deleted item kept a row: %v err=%v", m, err)
 	}
 }
 

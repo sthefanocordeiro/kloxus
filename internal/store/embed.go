@@ -51,7 +51,9 @@ func (p *Pool) VectorEnabled(ctx context.Context) bool {
 
 // SaveEmbeddings upserts embedding rows. Replaying the same item list
 // stores the same vectors — the embedder is deterministic, so the
-// sweep is idempotent by construction.
+// sweep is idempotent by construction. An item deleted between the
+// sweep's SELECT and this write (another suite's catalog cleanup on
+// the shared DATABASE_URL, KLOX-253) is skipped: the row is gone.
 func (p *Pool) SaveEmbeddings(ctx context.Context, rows []ItemEmbedding) error {
 	cast := ""
 	if p.probeVector(ctx) {
@@ -60,11 +62,15 @@ func (p *Pool) SaveEmbeddings(ctx context.Context, rows []ItemEmbedding) error {
 	for _, e := range rows {
 		if _, err := p.db.ExecContext(ctx,
 			`INSERT INTO item_embedding (item_id, embedding, model)
-			 VALUES ($1, $2`+cast+`, $3)
+			 SELECT $1, $2`+cast+`, $3
+			 WHERE EXISTS (SELECT 1 FROM items WHERE id = $1)
 			 ON CONFLICT (item_id) DO UPDATE SET
 			   embedding = EXCLUDED.embedding, model = EXCLUDED.model,
 			   embedded_at = now_utc()`,
 			e.ItemID, e.Vector, e.Model); err != nil {
+			if itemDeleted(err) {
+				continue
+			}
 			return err
 		}
 	}
