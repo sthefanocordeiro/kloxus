@@ -12,8 +12,8 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
-	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
 	"github.com/sthefanocordeiro/kloxus/internal/web"
 )
 

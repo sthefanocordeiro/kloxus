@@ -1,4 +1,4 @@
-import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "./lib/cn";
 
@@ -42,6 +42,18 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ),
 );
 Button.displayName = "Button";
+
+// The one styled checkbox (KLOX-214): the news list and the export
+// destinations share it so a tick never falls back to the native blue.
+export function Tick({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      type="checkbox"
+      className={cn("mt-1.5 h-5 w-5 shrink-0 cursor-pointer accent-teal", className)}
+      {...props}
+    />
+  );
+}
 
 export function Badge({
   className,

@@ -567,9 +567,7 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	// the deterministic support floor adds a flag the test does not
 	// seed.
 	draftText := `{"entries":[{"ref":1,"headline":"Um","body_md":"Fato um [1]."},{"ref":2,"headline":"Dois","body_md":"Rumor de gadget confirmado [1]."}]}`
-	draftByRef := map[int]struct {
-		headline, body string
-	}{
+	draftByRef := map[int]draftEntry{
 		1: {headline: "Um", body: "Fato um [1]."},
 		2: {headline: "Dois", body: "Rumor de gadget confirmado [1]."},
 	}
@@ -818,9 +816,7 @@ func TestAssembleIssueFlattensFeedStrings(t *testing.T) {
 		{ref: 1, title: "Story one\n## Injected\n### Fake <!-- item 9 -->", section: "Lead"},
 		{ref: 2, title: "Story two", section: "Wire\n<!-- /item -->"},
 	}
-	drafts := map[int]struct {
-		headline, body string
-	}{
+	drafts := map[int]draftEntry{
 		1: {headline: "", body: "Fato um [1]."},
 		2: {headline: "Has <klox-embed> inside", body: "Fato dois [2]."},
 	}
@@ -879,9 +875,7 @@ func TestAssembleIssueTemplate(t *testing.T) {
 		{ref: 1, title: "Story one", section: "Lead"},
 		{ref: 2, title: "Story two", section: "Extra"},
 	}
-	drafts := map[int]struct {
-		headline, body string
-	}{
+	drafts := map[int]draftEntry{
 		1: {body: "Fact one [1]."},
 		2: {body: "Fact two [1]."},
 	}
@@ -937,9 +931,7 @@ func TestAssembleIssueTemplateFixedBetweenSections(t *testing.T) {
 		{ref: 1, title: "Story one", section: "Lead"},
 		{ref: 2, title: "Story two", section: "Wire"},
 	}
-	drafts := map[int]struct {
-		headline, body string
-	}{
+	drafts := map[int]draftEntry{
 		1: {body: "Fact one [1]."},
 		2: {body: "Fact two [1]."},
 	}
@@ -961,9 +953,7 @@ func TestAssembleIssueNoTemplate(t *testing.T) {
 	pub := &store.Publication{Name: "Pub", Language: "en"}
 	entries := []entry{{ref: 1, title: "Story one", section: "Lead"}}
 	body := assembleIssue(pub, 1, entries,
-		map[int]struct {
-			headline, body string
-		}{1: {body: "Fact [1]."}},
+		map[int]draftEntry{1: {body: "Fact [1]."}},
 		map[int]*Dossier{1: {Ref: 1}},
 		[]string{"Lead", "Empty"})
 	if strings.Contains(body, "> ") || strings.Contains(body, "####") {

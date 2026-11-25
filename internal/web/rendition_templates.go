@@ -254,8 +254,8 @@ func renderX(d *rdDoc) string {
 	stories := groupStories(d)
 	posts := xPosts(stories, xLimit)
 	if len(posts) > 1 {
-		// The export appends a " n/N" counter to every post; keep room
-		// for it so a numbered post still fits.
+		// The export appends an "n/N" counter on its own line to every
+		// post; keep room for it so a numbered post still fits.
 		posts = xPosts(stories, xLimit-xNumRoom)
 	}
 	if len(posts) == 0 {

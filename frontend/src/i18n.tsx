@@ -30,7 +30,7 @@ export const dict = {
     },
     errors: {
       conflict: "The document changed — reloaded the latest version",
-      read_only: "This brief was already exported — it is read-only",
+      read_only: "This brief was already sent — it is read-only",
       validation: "Something in the request is not valid",
       not_found: "This page doesn't exist or belongs to another account.",
       blocked: "Blocked — fix the open items first",
@@ -255,7 +255,7 @@ export const dict = {
     },
     errors: {
       conflict: "O documento mudou — a versão mais recente foi carregada",
-      read_only: "Esta pauta já foi exportada — é somente leitura",
+      read_only: "Esta pauta já foi enviada — é somente leitura",
       validation: "Há algo inválido no pedido",
       not_found: "Esta página não existe ou é de outra conta.",
       blocked: "Bloqueado — resolva as pendências primeiro",
