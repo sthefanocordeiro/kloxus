@@ -403,3 +403,37 @@ describe("AppShell 'New Radar' entry points (KLOX-206)", () => {
     expect(screen.queryByRole("button", { name: "New Radar" })).toBeNull();
   });
 });
+
+// KLOX-213: a menu link navigates without an outside click — the open
+// menu stayed floating over the next screen. Drop closes on the
+// pathname change now.
+describe("AppShell menus close on navigation (KLOX-213)", () => {
+  beforeEach(() => {
+    vi.mocked(api.workspace).mockResolvedValue({
+      id: "w1",
+      label: "w",
+      mode: "demo",
+      hosted: false,
+      llm_mode: "off",
+      publishing: true,
+    });
+    vi.mocked(api.publications).mockResolvedValue([pub]);
+    vi.mocked(api.publication).mockResolvedValue({ publication: pub });
+  });
+
+  it("closes the More menu after a destination is picked", async () => {
+    renderAt("/publications/42");
+    await screen.findByText("pub screen");
+    await screen.findAllByRole("link", { name: "Radar" }); // queries settled
+
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    const menu = await screen.findByRole("navigation", { name: "More" });
+    // both menu links are named "Radar" (t.publications === t.nav.radar)
+    // — [0] is the /sources one
+    fireEvent.click(within(menu).getAllByRole("link", { name: "Radar" })[0]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("navigation", { name: "More" })).toBeNull();
+    });
+  });
+});

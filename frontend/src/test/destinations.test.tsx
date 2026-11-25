@@ -125,6 +125,42 @@ describe("DestinationStep", () => {
     expect(await screen.findByRole("button", { name: "Update this version?" })).toBeTruthy();
   });
 
+  // KLOX-213: a failed delete used to vanish behind a closing confirm
+  // dialog. The instant-delete flow (KLOX-214) surfaces it on the
+  // action error line — and offers no undo toast for a rendition
+  // that still exists.
+  it("shows the delete error when removing a destination fails", async () => {
+    const del = vi.spyOn(api, "renditionDelete").mockRejectedValue(new Error("boom"));
+    setup([mk(1, "markdown", { body_md: "# md" })]);
+    const box = await screen.findByRole("checkbox", { name: /Markdown/ });
+    await waitFor(() => expect(box).toBeEnabled());
+
+    fireEvent.click(box);
+    await waitFor(() => expect(del).toHaveBeenCalledWith(1, 1));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /Markdown/ })).toBeChecked();
+  });
+
+  it("shows the refresh error inside its dialog when updating fails", async () => {
+    const refresh = vi.spyOn(api, "renditionRefresh").mockRejectedValue(new Error("boom"));
+    setup([mk(1, "markdown", { body_md: "# md", stale: true })]);
+    fireEvent.click(await screen.findByRole("button", { name: "Update this version?" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Something went wrong");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the create error under the destinations when forking fails", async () => {
+    const { create } = setup([]);
+    create.mockRejectedValueOnce(new Error("boom"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Markdown/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  });
+
   // KLOX-184: copying or downloading marks the piece "Exportada".
   it("marks the piece exported when the author copies", async () => {
     const mark = vi.spyOn(api, "markExported").mockResolvedValue({ exported: true, formats: ["linkedin"] });

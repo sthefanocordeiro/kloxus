@@ -608,7 +608,7 @@ export function DestinationStep({
   });
   const refresh = useMutation({
     mutationFn: (r: Rendition) => api.renditionRefresh(issueID, r.id),
-    onSuccess: (r) => { put(r); setRefreshing((n) => n + 1); },
+    onSuccess: (r) => { put(r); setRefreshing((n) => n + 1); setConfirmRefresh(false); },
   });
 
   const toggle = (f: RenditionFormat) => {
@@ -671,6 +671,9 @@ export function DestinationStep({
               );
             })}
           </div>
+          {create.isError && (
+            <p className="mt-3 text-sm text-danger" role="alert">{errText(t, create.error)}</p>
+          )}
           {social && !noteClosed && (
             <p role="note" className="mt-3 flex items-start gap-2 rounded-[var(--radius-btn)] bg-warn-soft/60 px-3 py-2 text-xs text-warn">
               <span className="flex-1">{s.manyStories(stories.length, stories[0]?.headline ?? "")}</span>
@@ -761,18 +764,21 @@ export function DestinationStep({
 
       <KDialog
         open={confirmRefresh}
-        onOpenChange={setConfirmRefresh}
+        onOpenChange={(o) => { setConfirmRefresh(o); if (!o) refresh.reset(); }}
         title={s.refresh}
       >
         <p className="text-sm text-muted">{s.refreshConfirm}</p>
+        {refresh.isError && (
+          <p className="mt-3 text-sm text-danger" role="alert">{errText(t, refresh.error)}</p>
+        )}
         <div className="mt-5 flex gap-3">
           <Button
             disabled={refresh.isPending}
-            onClick={() => { if (current) refresh.mutate(current); setConfirmRefresh(false); }}
+            onClick={() => { if (current) refresh.mutate(current); }}
           >
             {s.update}
           </Button>
-          <Button variant="outline" onClick={() => setConfirmRefresh(false)}>
+          <Button variant="outline" onClick={() => { setConfirmRefresh(false); refresh.reset(); }}>
             {s.cancel}
           </Button>
         </div>
