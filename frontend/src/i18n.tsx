@@ -106,7 +106,7 @@ export const dict = {
       shotAlt: "Kloxus: a story list with ticked boxes and the editor with two linked stories",
       howTitle: "How it works",
       howSteps: [
-        { title: "Say what you cover", body: "Your topics and sources." },
+        { title: "Say what you cover", body: "Your topics. We pick the sources." },
         {
           title: "Pick today's stories",
           body: "Kloxus picks what matters. You choose.",
@@ -320,18 +320,18 @@ export const dict = {
       cta: "Criar meu Radar",
       starting: "Abrindo sua sessão…",
       eyebrow: "Para quem publica todo dia",
-      headline: "A pauta pronta. A escrita é sua.",
+      headline: "A pauta pronta. A\u00a0escrita é sua.",
       subhead:
-        "Todo dia, as notícias que importam pro seu nicho chegam organizadas, com o link de cada matéria. Você escolhe o ângulo e escreve do seu jeito, na sua voz. Pra publicar onde sua audiência está.",
+        "Todo dia, as notícias que importam para o seu nicho chegam organizadas, com o link de cada matéria. Você escolhe o ângulo e escreve do seu jeito, na sua voz. Para publicar onde sua audiência está.",
       emailNote:
-        "Você confirma seu e-mail por link mágico ao criar o Radar — é também assim que recebe o convite do lançamento.",
+        "Você confirma seu e-mail por link mágico ao criar o Radar.",
       waitlistSupport:
-        "Sem IA escrevendo por você. Só o trabalho chato de achar e conferir o que aconteceu, feito antes de você abrir o editor.",
-      alreadyCreator: "Já sou criador? Entrar",
+        "Sem IA escrevendo por você. Só o trabalho chato de achar e organizar o que aconteceu, feito antes de você abrir o editor.",
+      alreadyCreator: "Já tenho conta · Entrar",
       shotAlt: "O Kloxus: lista de notícias com caixas marcadas e o editor com duas notícias linkadas",
       howTitle: "Como funciona",
       howSteps: [
-        { title: "Diga do que você fala", body: "Seus temas e fontes." },
+        { title: "Diga do que você fala", body: "Seus temas. As fontes, a gente escolhe." },
         {
           title: "Escolha as notícias do dia",
           body: "O Kloxus separa o que vale. Você escolhe.",

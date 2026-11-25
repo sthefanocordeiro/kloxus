@@ -171,11 +171,12 @@ export function Landing() {
 const PICKED = [0, 1];
 
 const SOURCES = [
-  "Tecnoblog",
-  "Olhar Digital",
-  "MacMagazine",
-  "Meio Bit",
-  "Startups.com.br",
+  "g1",
+  "InfoMoney",
+  "Agência Brasil",
+  "Finsiders",
+  "Mundo RH",
+  "Money Times",
 ];
 
 // A simplified product illustration inside a clean browser frame
