@@ -1,214 +1,160 @@
 # Kloxus
 
-**The editorial back office for independent publishers.**
+**The research is ready. The writing is yours.**
 
-> ### Live demo: https://kloxus-demo.fly.dev
+> ### Live app: https://kloxus.fly.dev
 >
-> No install, no signup, no API keys. Each visitor gets an isolated demo
-> workspace (fixture-backed, fully offline-capable code). Try the whole
-> editorial loop: run the pipeline, review the story list, resolve citation
-> flags, write the commentary, approve, send, then open the outbox and the
-> reader/paywall views.
+> Sign up with your email — a magic link, no password — and create your
+> Radar in about a minute. A deterministic fixture build stays deployed
+> at https://kloxus-demo.fly.dev as the offline-capable fallback.
 
-Kloxus is an AI agent that reads the sources a creator follows, filters out
-the noise, and prepares the next issue of their publication: a ranked story
-list, a source-backed dossier for each item, and a structured draft with
-slots for the creator's own commentary. The creator reviews, writes what
-only they can write, and sends.
+Kloxus is the editorial back office for people who publish every day.
+You say what you cover once; Kloxus keeps watching your sources, ranks
+the stories that matter to your niche, and lines them up every morning —
+each with a link to the original article. You pick the stories, write
+the piece in your own voice, and export it to wherever your audience is.
 
-> **Project status: becoming the hosted real app.** Submitted to
-> **HackBrazil 2026**, track **Culture and Creative Economy**. The UI is a
-> single React app over `/api/v1`; the backend is moving to real providers
-> (Postgres, Resend, real feeds — `docs/decisions.md` D27–D34). Demo mode —
-> fictional fixture sources, replayed model calls, simulated email outbox
-> and paywall — stays as the test bed and deployed fallback
-> (`demo-fixture-v2` tag).
+The AI never writes your text. It does the boring work — reading,
+deduplicating, ranking — before you open the editor.
+
+> **HackBrazil 2026** submission, track **Culture and Creative Economy**.
 
 ---
 
 ## Table of contents
 
-- [The problem](#the-problem)
-- [The solution](#the-solution)
-- [Editorial principles](#editorial-principles)
-- [How it works](#how-it-works)
-- [What the demo enforces](#what-the-demo-enforces)
-- [Running the project](#running-the-project)
+- [The product](#the-product)
+- [The flow, end to end](#the-flow-end-to-end)
+- [Product rules](#product-rules)
+- [Stack](#stack)
+- [Running locally](#running-locally)
+- [Testing](#testing)
 - [Deploying](#deploying)
-- [Implementation architecture](#implementation-architecture)
-- [Estimated costs](#estimated-costs)
-- [Troubleshooting](#troubleshooting)
-- [Open questions](#open-questions)
-- [Roadmap](#roadmap)
+- [Documentation](#documentation)
 - [License](#license)
 
 ---
 
-## The problem
+## The product
 
-Running an independent publication takes far more than writing. Before the
-first sentence, a creator has to:
+Independent creators lose the invisible hours before writing: monitoring
+feeds, discarding duplicates, deciding what matters, hunting links.
+Kloxus does that work and stops exactly where authorship begins.
 
-1. Monitor dozens of websites, feeds and newsletters.
-2. Spot what actually matters to their audience.
-3. Throw away duplicates (the same story republished across many outlets) and noise.
-4. Decide what goes into the issue, in what order, and why.
-5. Collect links and check facts.
+- **One Radar per account.** Your email is the account — confirmed by a
+  magic link, no password.
+- **18 editorial beats (editorias).** Pick any of the 18 built-in desks —
+  Política, Economia, Mercado financeiro, Finanças pessoais, Negócios,
+  Startups, Carreira, Tecnologia, Agronegócio, Internacional,
+  Brasil e cidades, Justiça e direito, Saúde, Educação, Ciência,
+  Meio ambiente, Cultura, Estilo de vida — plus your own topics, and
+  Kloxus maps them to a curated catalog of sources (G1, InfoMoney,
+  Agência Brasil, Finsiders, Mundo RH, Money Times, and more) audited
+  for automated-reading rules. Import your own feeds via OPML.
+- **Notícias de hoje.** Every day, a deck of ranked stories — deduplicated
+  across outlets, scored against your Radar's profile and everything your
+  Sim/Não feedback taught it. You always choose; the thumbs only teach.
+- **Escrever.** The picked stories become a pauta: an opening plus one
+  text slot per story, autosaved as you type, every story linking back
+  to its source.
+- **Exportar, 4 formats.** Each destination gets its own editable copy:
+  **Post LinkedIn** (plain text, 3,000 chars), **Post X** (automatic
+  280-char thread split), **Newsletter / blog / intranet** (rich HTML),
+  **Markdown** (Ghost, Notion, Obsidian). Copy or download — the piece
+  is marked exported per format, and editing it afterwards flags the
+  older copies as stale until refreshed.
 
-Only then does the writing begin. For a solo creator with a day job, this
-invisible preparation is a likely reason issues slip, frequency drops, and
-publications quietly stop.
+## The flow, end to end
 
-Existing tools cover pieces of this:
-
-| Tool type | What it does | What it does not do |
-| --- | --- | --- |
-| Feed readers (e.g. Feedly) | Collect, filter and summarize sources | Build or send an issue |
-| Newsletter platforms (e.g. Substack, beehiiv) | Write, send, charge readers; some include AI writing help | Watch your external sources and build a story list |
-| General chatbots with scheduled tasks | Produce a recurring briefing from a prompt | Keep a per-publication editorial memory, link every claim to a source, deliver to readers |
-| AI newsletter generators | Curate sources and draft issues in the author's voice | Mostly English-only and aimed at marketing newsletters |
-
-Kloxus does not claim to be first. It aims to be the option built for
-Portuguese-language independent creators, with source traceability and
-author control as core features.
-
-## The solution
-
-Kloxus works as a small editorial team behind the scenes, while the creator
-keeps authorship, voice and final say.
-
-For each publication, the creator defines name, topic, audience, editorial
-line, sources and sections. Kloxus then runs this pipeline for each issue:
-
-| Step | What the creator gets |
+| | |
 | --- | --- |
-| Collect | New items from every source since the last issue |
-| Deduplicate | One entry per story, listing every outlet that covered it |
-| Triage | A 0 to 10 relevance score for each item, with a one-line reason |
-| Story list | 5 to 10 items grouped by theme, each with "why it matters" |
-| Dossier | An original summary, facts with links, a short quote, and what is still unknown |
-| Draft | The issue laid out in the creator's sections |
-| Citation check | A blocking flag on any factual sentence without a source |
-| Review | Approve, reject with a reason, or ask for an alternative |
-| Commentary | One slot per section, written by the editor, rendered once at the end of the section |
-| Delivery | Simulated email outbox, plus HTML and Markdown export for Substack or beehiiv |
-| Paywall (optional) | Paid sections unlocked for subscribers via a magic link |
+| ![Landing — "A pauta pronta. A escrita é sua."](docs/screenshots/01-landing.png) | ![Criar seu Radar — name, topics and the 18 editorias](docs/screenshots/03-cadastro-radar.png) |
+| ![Notícias de hoje — ranked deck, pick your stories](docs/screenshots/07-today-picks.png) | ![Escrever — opening plus one slot per story, autosaved](docs/screenshots/08-escrever.png) |
+| ![Exportar — LinkedIn, X, HTML and Markdown destinations](docs/screenshots/09-exportar.png) | ![Dar match — Sim/Não calibration teaches the Radar](docs/screenshots/04-match.png) |
 
-Every rejection (with its reason) is condensed into a short **editorial
-guide** the creator can read and edit; it feeds the next run.
+More shots in [docs/screenshots/](docs/screenshots/).
 
-## Editorial principles
+## Product rules
 
-- **Authorship belongs to the creator.** Kloxus prepares the material. The commentary is always written by the person who signs the issue.
-- **Nothing ships without approval.** Export and send are refused until the issue is approved — and approval is refused while blockers remain.
-- **Every factual claim has a source.** Each factual sentence links to its origin. Unlinked sentences block sending until the editor removes or fixes them.
-- **Facts and interpretation are visibly separated** in every dossier.
-- **Curation is not reproduction.** Original summaries, short attributed quotes, and only sources Kloxus is allowed to read.
-- **Readers' money goes to the creator.** Kloxus never receives or holds reader payments.
-- **Creator data is not used to train models.**
+- **Authorship belongs to the creator.** Kloxus researches and organizes;
+  every word of the piece is written by the person who signs it.
+- **The human always picks the stories.** The ranking suggests; the deck
+  is yours to accept, skip, or hide a whole topic from.
+- **Every story links to its source.** Each pauta entry carries the
+  original article link — in the editor and in every export.
+- **Publisher rules are respected.** Sources enter the catalog only after
+  an audit of their robots.txt and terms; stories that opt out are never
+  fetched.
+- **Nothing leaves without you.** Export is copy/download by the author;
+  there is no auto-publish.
+- **Spend is capped in code.** Per-run and per-day token/USD ceilings
+  plus a kill switch guard every paid call — the deterministic pipeline
+  runs with zero model spend (`KLOXUS_LLM_MODE=off`).
 
-## How it works
+## Stack
 
-```
-Collect → Deduplicate → Triage → Story list → Dossier → Draft → Citation check
-                                                                          │
-                                                                          ▼
-           Paying reader ← Paywall ← Delivery ← ─ ─ ─ ─ ─ ─ Human review (approve / reject / alternative)
-                                                                          │
-                                                                          ▼
-                                          decisions + editorial guide → next run
-```
+| Layer | What it is |
+| --- | --- |
+| Backend | Go 1.25+ (`net/http`), one binary, no CDN — the whole app embeds with `go:embed` |
+| Frontend | React 19 + TypeScript + Vite, TipTap editor, Tailwind 4 — built to `internal/web/appdist` |
+| Data | Postgres (`pgx`), embedded migrations under `migrations/` — Supabase in production |
+| Ranking | Voyage embeddings (stage 1) + reranker (stage 2) over a Rocchio profile built from your feedback; deterministic FTS fallback when no key/cap |
+| LLM | Anthropic, behind per-run/per-day cost caps and a kill switch; `Replay` provider replays recorded calls in tests |
+| Mail | Resend (magic-link sign-in); outbox `.eml` transport in demo/dev |
+| Hosting | Fly.io (`gru`) — `kloxus` is the real app, `kloxus-demo` the fixture fallback |
 
-Most of the pipeline is plain automation; language models are used only
-where judgment is needed (clustering, triage, story list, dossier, draft,
-citation check). Costs attach to the issue and are shown on the Costs page.
+The deep dive — pipeline diagram, data model, ranking engine, spend
+guards and the decision log behind each choice — lives in
+[docs/architecture.md](docs/architecture.md) and
+[docs/decisions.md](docs/decisions.md).
 
-## What the demo enforces
+## Running locally
 
-The hosted demo is not a screenshot tour — the product rules are enforced
-end to end:
-
-- **Commentary:** one slot per section (`required|optional|none` in the publication YAML), rendered once at the end of the section, flowing into preview, both exports, the email and the reader view. Helper text never appears in reader-facing output.
-- **Citation flags:** each flagged sentence can be *removed* or *edited*; an edit is rechecked deterministically and must cite an existing `[n]` source or be marked interpretation. Every resolution is recorded in `decisions`.
-- **Gating:** export and send are refused before approval; approval is refused while required commentary is missing, flags are unresolved, or items are still pending.
-- **Output hygiene:** approved output contains no score/reason lines, no placeholders, no internal metadata, and exactly one link per source.
-- **Isolation:** each visitor gets a signed-cookie workspace — a `workspace_id` tenant slice of the shared Postgres database; every query is workspace-scoped; a reset affects only that workspace; idle workspaces are deleted on schedule and workspace creation is rate-limited.
-- **Safety:** the hosted build is demo-only — visitor-added sources are stored but never fetched (no SSRF), and all fixture people, institutions and outlets are fictional on reserved `.example` domains served by the app itself.
-
-## Running the project
-
-Requires Go 1.25+ and Node 20.19+ (Vite 7):
+Requires **Go 1.25+**, **Node 20.19+** and a **Postgres** database
+(local Postgres, Docker, Supabase — anything that speaks the protocol).
 
 ```bash
-(cd frontend && npm ci && npm run build)  # React app → internal/web/appdist, embedded by Go
-go run ./cmd/kloxus demo                  # UI at http://localhost:8080 (starts empty — walk onboarding)
-go run ./cmd/kloxus demo --headless       # pipeline only, writes ./out/issue-N.md
-go test ./...                             # full Go suite, fully offline
+(cd frontend && npm ci && npm run build)   # React app → internal/web/appdist
+export DATABASE_URL=postgres://postgres:postgres@localhost:5432/kloxus
+go run ./cmd/kloxus demo                   # seeded UI at http://localhost:8080
 ```
 
-Frontend iteration without rebuilding: `npm run dev` in `frontend/` (Vite
-dev server, proxies `/api` to :8080). Typecheck, lint and unit tests
-(`npm run typecheck|lint|test`) run in CI.
+`kloxus demo` runs the full product offline: fixture sources, replayed
+model calls, `.eml` outbox for the magic link — no API keys needed.
+`kloxus serve` is the deployed entrypoint; it picks demo or real runtime
+from `KLOXUS_MODE` and `.env` (see [.env.example](.env.example)).
 
-Local mode runs a single shared workspace. Hosted (multi-workspace) mode is
-enabled by `KLOXUS_DATA_DIR` — see [docs/deploy.md](docs/deploy.md).
-Real mode (Anthropic + Resend + AbacatePay + Firecrawl) is configured via
-`.env`; see `.env.example`. It is not needed for the demo.
+## Testing
+
+```bash
+go test ./...                              # Go suite (Postgres-backed tests need DATABASE_URL)
+(cd frontend && npm test)                  # Vitest unit tests
+(cd frontend && npx playwright test)       # e2e: drives the real flow against kloxus demo
+```
+
+`scripts/smoke.sh <base-url>` runs the production smoke checklist
+against a deployed target. Postgres-backed tests skip when
+`DATABASE_URL` is unset — CI always provides a disposable database.
 
 ## Deploying
 
-The demo deploys to Fly.io with one always-on machine, a `/data` volume and
-an HTTP health check. Step-by-step in [docs/deploy.md](docs/deploy.md).
+The real app deploys to Fly.io (`fly.toml`, app `kloxus`); the fixture
+demo is a separate app (`fly.demo.toml`, `kloxus-demo`). Migrations are
+embedded and checksum-verified on boot. Step-by-step, secrets and the
+backup routine: [docs/deploy.md](docs/deploy.md).
 
-## Implementation architecture
+## Documentation
 
-Go (`net/http`) + React 19 / TypeScript / Vite + Postgres on Supabase
-(`github.com/jackc/pgx`), one binary, no CDN. Packages:
-
-| Package | Role |
+| Doc | What it covers |
 | --- | --- |
-| `cmd/kloxus` | CLI entrypoint (`demo`, `serve`, `run`, `record`, `issue export/send`, `sources check`, `costs`) |
-| `internal/pipeline` | collect → dedupe → triage → storylist → dossier → deepdive → draft → citecheck; phase A (review prep) / phase B (draft+check) split; alternative substitution |
-| `internal/sources` | `Fetcher` interface: `FixtureFetcher` (demo), `LiveFetcher` (real); `MonitorProvider` for Firecrawl watches |
-| `internal/llm` | `Provider` interface: `Anthropic` (real), `Replay` (recorded fixtures keyed by prompt hash), `Recorder` (writes fixtures) |
-| `internal/editorial` | rejection-reason → editorial-guide condensation (model call + deterministic fallback) |
-| `internal/delivery` | reader-facing body composition, Markdown→HTML renderer, DB-backed outbox with `.eml` export |
-| `internal/store` | Postgres repositories (`pgx`), workspace-scoped; embedded migrations under `migrations/` |
-| `internal/workspace` | per-visitor workspaces: signed cookie, one `workspaces` row per visitor in shared Postgres, idle cleanup, create rate limit |
-| `internal/web` | `net/http`: JSON API under `/api/v1`, embedded React SPA, reader/paywall pages, unsubscribe, webhooks, outbox `.eml` |
-| `frontend/` | the only UI — React app built to `internal/web/appdist` and embedded with `go:embed` |
-| `examples/` | embedded demo data: fictional feeds/pages, replayed LLM fixtures, `futuro-proximo.yaml` publication |
-
-## Estimated costs
-
-Demo mode replays recorded calls and reports an *estimated* USD cost per
-step on the Costs page — about **$0.18** for a full issue at list prices.
-Real mode reports actual token usage. Fixture regeneration requires an
-Anthropic key: `kloxus record --publication futuro-proximo`.
-
-## Troubleshooting
-
-- **The demo URL bounces or shows a blank page after an earlier visit:**
-  the app moved from `/app/` to the site root during development, and
-  browsers cache the old permanent redirects (`/` → `/app/` and back),
-  which can loop forever. Nothing the server sends can clear a cached
-  301 — **clear site data** for `kloxus-demo.fly.dev` (or open a private
-  window) and reload once. Current builds never issue a 301 on app
-  paths, so a fresh visit cannot get stuck again.
-
-## Open questions
-
-- Which source types do creators actually need beyond RSS? (Validating via interviews.)
-- Does the editorial guide meaningfully reduce review time after a few issues?
-- Fair per-creator pricing once hosted usage incurs real model costs?
-
-## Roadmap
-
-- Scheduler + background runs (runs are currently on demand)
-- OPML import and richer source types
-- Real-mode polish: AbacatePay checkout, Resend delivery, Firecrawl monitors
-- Multi-user auth and per-creator publications (post-pilot SaaS)
+| [docs/architecture.md](docs/architecture.md) | Pipeline diagram, package map, ranking engine, spend guards — the "why" behind the build |
+| [docs/code-review-quality.md](docs/code-review-quality.md) | Consolidated quality review: findings from four code reviews and their resolution |
+| [docs/decisions.md](docs/decisions.md) | The running decision log (D1–D69+) — every trade-off, dated |
+| [docs/roadmap.md](docs/roadmap.md) | Milestones and the HackBrazil submission plan |
+| [docs/api.md](docs/api.md) | The `/api/v1` JSON contract |
+| [docs/deploy.md](docs/deploy.md) | Fly.io deploy, secrets, backups, demo app |
+| [docs/eval/](docs/eval/) | Ranking evaluation labels used to tune the engine |
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE.md).
