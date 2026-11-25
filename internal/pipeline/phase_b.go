@@ -36,6 +36,67 @@ type draftEntry struct {
 	body     string
 }
 
+// RunPhaseB runs draft → assemble → citecheck on an issue produced by
+// RunPhaseA (and reviewed): the stored body carries approved items only.
+func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID int64) (*Result, error) {
+	st := &phaseBState{res: &Result{IssueID: issueID}, issueID: issueID}
+	if err := r.ensureDossiers(ctx, pub, issueID); err != nil {
+		return nil, err
+	}
+	entries, dossierByRef, err := r.loadEntries(ctx, issueID, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no approved items — approve at least one story before drafting")
+	}
+	st.res.Selected = len(entries)
+	st.entries, st.dossierByRef = entries, dossierByRef
+	st.modelEntries, st.modelDossiers = entries, dossierByRef
+	if r.DemoMode {
+		st.modelEntries, st.modelDossiers, err = r.loadEntries(ctx, issueID, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := r.stageDraft(ctx, pub, st); err != nil {
+		return nil, err
+	}
+	r.assembleBodies(ctx, pub, st)
+	if err := r.stageCitecheck(ctx, pub, st); err != nil {
+		return nil, err
+	}
+	return st.res, nil
+}
+
+// assembleBodies builds the stored issue markdown (approved items in the
+// board's slot order inside each section) and the body the citation
+// check reads — the canonical Phase A set in demo mode.
+func (r *Runner) assembleBodies(ctx context.Context, pub *store.Publication, st *phaseBState) {
+	// honor the board's slot order inside each section
+	sort.SliceStable(st.entries, func(a, b int) bool { return st.entries[a].position < st.entries[b].position })
+	number := st.res.Number
+	if number == 0 {
+		if iss, err := r.DB.GetIssue(ctx, st.issueID); err == nil {
+			number = iss.Number
+		}
+	}
+	sectionOrder := []string{}
+	for _, s := range pub.Sections {
+		sectionOrder = append(sectionOrder, s.Title)
+	}
+	st.body = assembleIssue(pub, number, st.entries, st.draftByRef, st.dossierByRef, sectionOrder)
+	st.checkBody = st.body
+	st.checkEntries = st.entries
+	st.checkDossiers = st.dossierByRef
+	if r.DemoMode {
+		st.checkBody = assembleIssue(pub, number, st.modelEntries, st.draftByRef, st.modelDossiers, sectionOrder)
+		st.checkEntries = st.modelEntries
+		st.checkDossiers = st.modelDossiers
+	}
+	st.number = number
+}
+
 // loadEntries rebuilds the entry list for an existing issue from the DB:
 // issue items, their dossiers and story titles.
 //
