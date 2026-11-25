@@ -259,6 +259,80 @@ func TestSlugify(t *testing.T) {
 	}
 }
 
+// TestEnvTable walks the declarative env→Config tables: with every key
+// empty each field lands on its declared fallback, no-fallback rows
+// stay empty, set values land, and unparseable int/float input falls
+// back instead of failing Load.
+func TestEnvTable(t *testing.T) {
+	clear := func(t *testing.T) {
+		t.Setenv("KLOXUS_NO_DOTENV", "1")
+		for _, e := range envStrings {
+			t.Setenv(e.key, "")
+		}
+		for _, e := range envInts {
+			t.Setenv(e.key, "")
+		}
+		for _, e := range envFloats {
+			t.Setenv(e.key, "")
+		}
+	}
+
+	t.Run("defaults", func(t *testing.T) {
+		clear(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		for _, e := range envStrings {
+			if got := *e.dst(cfg); got != e.def {
+				t.Errorf("%s = %q, want default %q", e.key, got, e.def)
+			}
+		}
+		for _, e := range envInts {
+			if got := *e.dst(cfg); got != e.def {
+				t.Errorf("%s = %d, want default %d", e.key, got, e.def)
+			}
+		}
+		for _, e := range envFloats {
+			if got := *e.dst(cfg); got != e.def {
+				t.Errorf("%s = %v, want default %v", e.key, got, e.def)
+			}
+		}
+	})
+
+	t.Run("env overrides", func(t *testing.T) {
+		clear(t)
+		t.Setenv("KLOXUS_PORT", "9090")
+		t.Setenv("KLOXUS_MASTER_KEY", "mk-1")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Port != 9090 {
+			t.Errorf("Port = %d, want 9090", cfg.Port)
+		}
+		if cfg.MasterKey != "mk-1" {
+			t.Errorf("MasterKey = %q, want mk-1", cfg.MasterKey)
+		}
+	})
+
+	t.Run("invalid parse falls back", func(t *testing.T) {
+		clear(t)
+		t.Setenv("KLOXUS_PORT", "not-a-number")
+		t.Setenv("KLOXUS_LLM_RUN_CAP_USD", "lots")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Port != 8080 {
+			t.Errorf("Port = %d, want fallback 8080", cfg.Port)
+		}
+		if cfg.LLMRunCap != 0.25 {
+			t.Errorf("LLMRunCap = %v, want fallback 0.25", cfg.LLMRunCap)
+		}
+	})
+}
+
 func TestPublishingFlagDefaultsOff(t *testing.T) {
 	t.Setenv("KLOXUS_NO_DOTENV", "1")
 	t.Setenv("KLOXUS_PUBLISHING", "")
