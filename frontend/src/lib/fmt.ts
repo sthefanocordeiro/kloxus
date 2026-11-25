@@ -11,12 +11,14 @@ function parseAPITime(iso: string): Date {
   return new Date(NAIVE_TS.test(s) ? s.replace(" ", "T") + "Z" : s);
 }
 
-// Reader-locale date formatting (pt-BR / en-US).
+// Reader-locale date formatting (pt-BR / en-US) — compact "24/11" like
+// the story cards, never the long "24 de nov. de 2026" (KLOX-207).
 export function fmtDate(iso: string, lang: Lang, withTime = false): string {
   const d = parseAPITime(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return new Intl.DateTimeFormat(lang === "pt" ? "pt-BR" : "en-US", {
-    dateStyle: "medium",
+    day: "2-digit",
+    month: "2-digit",
     ...(withTime ? { timeStyle: "short" as const } : {}),
   }).format(d);
 }

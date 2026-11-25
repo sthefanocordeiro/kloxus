@@ -50,6 +50,28 @@ var nicheSources = map[string][]string{
 
 var generalPortals = []string{"g1", "cnn-brasil", "metropoles", "folha"}
 
+// nicheOrder fixes the editorias' chip order — the cadastro's order.
+var nicheOrder = []string{
+	"politica", "economia", "mercado-financeiro", "financas-pessoais", "negocios", "startups", "carreira",
+	"tecnologia", "agronegocio", "internacional", "brasil-cidades", "justica-direito", "saude", "educacao",
+	"ciencia", "meio-ambiente", "cultura", "estilo-vida",
+}
+
+// nichesFromTopic recovers the editorias a radar's theme still names.
+// Cadastro folds each picked editoria's label into the topic
+// (apiRadarCreate), so the chips need no stored column — and radars
+// created before the field existed report theirs too (KLOX-207).
+func nichesFromTopic(topic string) []string {
+	low := strings.ToLower(topic)
+	out := []string{}
+	for _, k := range nicheOrder {
+		if strings.Contains(low, strings.ToLower(nicheLabels[k])) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // paywalledSources are catalog slugs behind a reader paywall: a radar only
 // gets them when the person asks for them (KLOX-169) — a pauta whose links
 // the reader cannot open is worse than a narrower one.

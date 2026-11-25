@@ -9,7 +9,6 @@ import {
   Newspaper,
   Plus,
   Rss,
-  Settings,
 } from "lucide-react";
 import { api, pautaPath } from "./api";
 import { useT, type Lang, type T } from "./i18n";
@@ -69,8 +68,7 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
     const tail = pathname.split("/").pop() ?? "";
     const map: Record<string, [string, string]> = {
       today: [t.nav.today, "today"],
-      sources: [t.sources, "sources"],
-      settings: [t.nav.settings, "settings"],
+      sources: [t.nav.radar, "radar"],
     };
     const [title, section] = map[tail] ?? [pubName ?? t.nav.editions, "editions"];
     const crumbs = tail === pub ? [] : [pubCrumb];
@@ -118,30 +116,21 @@ export function AppShell() {
   const pubBase = pubKey ? `/publications/${pubKey}` : "/publications";
   const editionTo = latest ? pautaPath(latest.id, latest.exported ? "exported" : latest.status) : pubBase;
 
-  // KLOXUS_PUBLISHING off (KLOX-122): Hoje · Pautas · Radar · Configurações.
+  // KLOXUS_PUBLISHING off (KLOX-122): Hoje · Pautas · Radar — one
+  // Radar screen holds the old Fontes + Configurações (KLOX-207).
   // Readers, send and the outbox are not reachable from the nav.
   const items = publishing
     ? [
         { to: editionTo, label: t.nav.edition, icon: Newspaper, section: "edition", end: true },
         { to: pubBase, label: t.nav.editions, icon: Layers, section: "editions", end: true },
-        { to: `${pubBase}/sources`, label: t.sources, icon: Rss, section: "sources" },
-        { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },
+        { to: `${pubBase}/sources`, label: t.nav.radar, icon: Rss, section: "radar" },
       ]
     : [
         { to: `${pubBase}/today`, label: t.nav.today, icon: Newspaper, section: "today", end: true },
         { to: pubBase, label: t.nav.editions, icon: Layers, section: "editions", end: true },
         { to: `${pubBase}/sources`, label: t.nav.radar, icon: Rss, section: "radar" },
-        { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings, section: "settings" },
       ];
-  // the Radar entry spans its configuration pages
-  const section = !publishing && ["sources"].includes(chrome.section) ? "radar" : chrome.section;
-  // the Radar tab strip belongs to the sources screen — /publications
-  // shares the "radar" section for highlighting but is not a tab page
-  const radarTabs = !publishing && section === "radar" && !!pubM
-    ? [
-        { to: `${pubBase}/sources`, label: t.sources, on: chrome.section === "sources" },
-      ]
-    : [];
+  const section = chrome.section;
 
   // KLOX-187: before the first Radar exists the nav's destinations all
   // 404 — hide the items (sidebar and bottom tabs) until there is one.
@@ -152,7 +141,7 @@ export function AppShell() {
 
   // top-level screens (the nav's own destinations) have no "← Voltar"
   const tail = pathname.split("/").pop() ?? "";
-  const topLevel = !!pubM && ["today", "sources", "readers", "sections", "settings"].includes(tail);
+  const topLevel = !!pubM && ["today", "sources", "readers", "sections"].includes(tail);
   const back = topLevel ? undefined : chrome.crumbs[chrome.crumbs.length - 1];
 
   return (
@@ -259,23 +248,6 @@ export function AppShell() {
           </div>
         </header>
 
-        {radarTabs.length > 0 && (
-          <nav aria-label={t.nav.radar} className="flex shrink-0 gap-1 border-b border-line bg-paper-raised px-4">
-            {radarTabs.map((tab) => (
-              <Link
-                key={tab.to}
-                to={tab.to}
-                aria-current={tab.on ? "page" : undefined}
-                className={cn(
-                  "inline-flex min-h-11 items-center border-b-2 px-3 text-sm font-medium md:min-h-10",
-                  tab.on ? "border-teal text-ink" : "border-transparent text-muted hover:text-ink",
-                )}
-              >
-                {tab.label}
-              </Link>
-            ))}
-          </nav>
-        )}
         <main className="min-h-0 flex-1 overflow-y-auto pb-20 md:pb-0">
           <Outlet />
         </main>
@@ -283,7 +255,10 @@ export function AppShell() {
         {/* mobile bottom tabs — first nav items + "Mais" overflow (§3.1) */}
         {navItems.length > 0 && (
         <nav
-          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-line bg-paper-raised md:hidden"
+          className={cn(
+            "fixed inset-x-0 bottom-0 z-40 grid border-t border-line bg-paper-raised md:hidden",
+            publishing ? "grid-cols-4" : "grid-cols-3",
+          )}
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           aria-label={t.publications}
         >
@@ -438,8 +413,7 @@ function AccountMenu({ claimed, email }: { claimed?: boolean; email?: string }) 
 function MoreMenu({ pubBase }: { pubBase: string }) {
   const { t, lang, setLang } = useT();
   const links = [
-    { to: `${pubBase}/sources`, label: t.sources, icon: Rss },
-    { to: `${pubBase}/settings`, label: t.nav.settings, icon: Settings },
+    { to: `${pubBase}/sources`, label: t.nav.radar, icon: Rss },
     { to: "/publications", label: t.publications, icon: Layers },
   ];
   return (

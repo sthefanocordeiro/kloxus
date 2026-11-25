@@ -51,6 +51,8 @@ export interface Publication {
   ai_disclosure: string;
   sections: NewsletterSection[];
   paywall: { enabled: boolean; paid_sections: string[]; price: string };
+  // the editorias the theme names (cadastro chips, KLOX-207)
+  niches?: string[];
 }
 
 export interface IssueSummary {
