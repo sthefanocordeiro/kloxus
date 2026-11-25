@@ -125,10 +125,13 @@ func (s *Server) sendScheduledIssue(ctx context.Context, pool *store.Pool, j sto
 		return wdb.SetIssueStatus(ctx, iss.ID, store.IssueApproved)
 	}
 	// Global cap already spent: queue the send for the next UTC day
-	// instead of refusing per-recipient and marking a non-delivery sent.
+	// instead of refusing per-recipient and marking a non-delivery
+	// sent. The bulk-send ceiling — cap minus the sign-in quarter —
+	// decides, so a scheduled send can never eat the login headroom
+	// (KLOX-256).
 	if n, err := pool.SendsTodayAll(ctx, today()); err != nil {
 		return err
-	} else if n >= s.d.Cfg.EmailDailyCap {
+	} else if globalCap, _ := s.capFor("issue"); n >= globalCap {
 		next := time.Now().UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
 		if _, err := wdb.EnqueueJob(ctx, j.Kind, j.RefID, json.RawMessage(j.PayloadJSON), next); err != nil {
 			return err

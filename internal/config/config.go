@@ -109,6 +109,12 @@ type Config struct {
 	// tables stay - this only hides the surface.
 	PublishingEnabled bool
 
+	// DailyPautaMail turns the 07:00 "stories ready" mail on
+	// (KLOXUS_DAILY_PAUTA_MAIL, KLOX-256). Off by default — the deployed
+	// app sets it on in fly.toml. The 06:30 build and transactional
+	// mail (magic links) run either way.
+	DailyPautaMail bool
+
 	// Ranking engine (KLOX-108). VoyageKey is the Fly secret
 	// VOYAGE_API_SECRET - never logged. Limits default to half the
 	// account's limits; caps are daily USD per model group.
@@ -292,6 +298,13 @@ func (c *Config) applyDerived() {
 	switch strings.ToLower(os.Getenv("KLOXUS_PUBLISHING")) {
 	case "on", "1", "true", "yes":
 		c.PublishingEnabled = true
+	}
+	// The morning mail is opt-in like publishing (KLOX-256): unset
+	// keeps it off everywhere; the hosted fly.toml sets it on.
+	c.DailyPautaMail = false
+	switch strings.ToLower(os.Getenv("KLOXUS_DAILY_PAUTA_MAIL")) {
+	case "on", "1", "true", "yes":
+		c.DailyPautaMail = true
 	}
 }
 

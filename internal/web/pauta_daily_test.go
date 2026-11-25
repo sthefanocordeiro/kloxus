@@ -42,6 +42,12 @@ func spDayOf(t time.Time) string { return t.In(spZone).Format("2006-01-02") }
 // pautaHosted is a hosted (cookie-per-visitor) demo server on the
 // shared pool, with the fixture fetcher so radars hold real stories.
 func pautaHosted(t *testing.T, mailer delivery.Sender) (*web.Server, *store.Pool, *workspace.Manager) {
+	return pautaHostedCfg(t, mailer, nil)
+}
+
+// pautaHostedCfg is pautaHosted with the test tweaking the config
+// (mail caps) before the server is built.
+func pautaHostedCfg(t *testing.T, mailer delivery.Sender, tweak func(*config.Config)) (*web.Server, *store.Pool, *workspace.Manager) {
 	t.Helper()
 	ctx := context.Background()
 	pool := testdb.Pool(t)
@@ -67,6 +73,9 @@ func pautaHosted(t *testing.T, mailer delivery.Sender) (*web.Server, *store.Pool
 		PublicURL:              "https://kloxus.test",
 		EmailDailyCap:          80,
 		EmailWorkspaceDailyCap: 25,
+	}
+	if tweak != nil {
+		tweak(cfg)
 	}
 	srv := web.New(web.Deps{
 		WS: mgr, Cfg: cfg,
@@ -360,5 +369,193 @@ func TestDailyPautaMailOncePerRecipient(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("mails to one owner across 3 radars = %d, want 1", n)
+	}
+}
+
+// pautaMailCard is one stored-pauta card JSON carrying the stable
+// feedback keys the no-new-stories diff reads.
+func pautaMailCard(storyID int64, title, outlet, key string) string {
+	return fmt.Sprintf(`{"story_id":%d,"title":%q,"outlet":%q,"outlets":1,"summary":"","topics":[],"url":"https://x.dev/a","feedback_keys":[%q]}`,
+		storyID, title, outlet, key)
+}
+
+// TestDailyPautaMailSkipsStalePauta (KLOX-256): a pauta that only
+// repeats the previous snapshot is not "notícias novas" — the 07:00
+// mail stays unsent and the day is stamped; a genuinely new card lets
+// the mail through again.
+func TestDailyPautaMailSkipsStalePauta(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+	now := spAt(2026, 12, 2, 7, 5)
+	day := spDayOf(now)
+	prevDay := spDayOf(now.Add(-24 * time.Hour))
+
+	cookie, db := pautaVisitor(t, mgr)
+	pautaRadar(t, srv, cookie)
+	pub := mustPubID(t, db)
+	owner := fmt.Sprintf("stale-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE workspaces SET last_seen_at = $1 WHERE id = $2`,
+		store.TSUTC(now.Add(-time.Hour)), db.Workspace()); err != nil {
+		t.Fatalf("touch workspace: %v", err)
+	}
+
+	same := "[" + pautaMailCard(1, "A", "X", "u:a") + "," + pautaMailCard(2, "B", "Y", "u:b") + "]"
+	if err := db.SavePautaDay(ctx, pub, prevDay, same); err != nil {
+		t.Fatalf("prev pauta: %v", err)
+	}
+	if err := db.SavePautaDay(ctx, pub, day, same); err != nil {
+		t.Fatalf("today pauta: %v", err)
+	}
+	srv.DailyPautaTick(ctx, pool, now)
+	for _, m := range fake.messages() {
+		t.Fatalf("repeat pauta mailed: %v", m.Subject)
+	}
+	if row, _ := db.PautaDay(ctx, pub, day); row == nil || row.EmailedAt == "" {
+		t.Fatal("skipped day was not stamped")
+	}
+
+	// A new story in the next snapshot makes the mail go out again.
+	fresh := "[" + pautaMailCard(1, "A", "X", "u:a") + "," + pautaMailCard(3, "C", "Z", "u:c") + "]"
+	if err := db.SavePautaDay(ctx, pub, day, fresh); err != nil {
+		t.Fatalf("fresh pauta: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE pauta_days SET emailed_at='' WHERE workspace_id=$1 AND publication_id=$2 AND day=$3`,
+		db.Workspace(), pub, day); err != nil {
+		t.Fatalf("unstamp: %v", err)
+	}
+	srv.DailyPautaTick(ctx, pool, now)
+	n := 0
+	for _, m := range fake.messages() {
+		for _, to := range m.To {
+			if to == owner {
+				n++
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("mails after new story = %d, want 1", n)
+	}
+}
+
+// TestDailyPautaMailSkipsEmptyPauta (KLOX-256): sem notícias no dia,
+// nenhum e-mail sai — an empty pauta is stamped handled, never mailed.
+func TestDailyPautaMailSkipsEmptyPauta(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+	now := spAt(2026, 12, 3, 7, 5)
+	day := spDayOf(now)
+
+	cookie, db := pautaVisitor(t, mgr)
+	pautaRadar(t, srv, cookie)
+	pub := mustPubID(t, db)
+	owner := fmt.Sprintf("empty-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE workspaces SET last_seen_at = $1 WHERE id = $2`,
+		store.TSUTC(now.Add(-time.Hour)), db.Workspace()); err != nil {
+		t.Fatalf("touch workspace: %v", err)
+	}
+	if err := db.SavePautaDay(ctx, pub, day, "[]"); err != nil {
+		t.Fatalf("empty pauta: %v", err)
+	}
+	srv.DailyPautaTick(ctx, pool, now)
+	for _, m := range fake.messages() {
+		t.Fatalf("empty pauta mailed: %v", m.Subject)
+	}
+	if row, _ := db.PautaDay(ctx, pub, day); row == nil || row.EmailedAt == "" {
+		t.Fatal("empty day was not stamped")
+	}
+}
+
+// TestDailyPautaMailLoginPriority (KLOX-256 / D33): magic links keep
+// the full daily cap — the morning mail yields the last quarter as
+// sign-in headroom, so a saturated mail day refuses the alert but
+// never the sign-in link. The shared test pool accumulates sends, so
+// the cap is set relative to today's count: with three more sends,
+// the day must be over the bulk-mail ceiling yet still inside the
+// login one.
+func TestDailyPautaMailLoginPriority(t *testing.T) {
+	ctx := context.Background()
+	probe := testdb.Pool(t)
+	already, err := probe.SendsTodayAll(ctx, time.Now().UTC().Format("2006-01-02"))
+	if err != nil {
+		t.Fatalf("SendsTodayAll: %v", err)
+	}
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHostedCfg(t, fake, func(c *config.Config) {
+		c.EmailDailyCap = already + 4
+	})
+	now := spAt(2026, 12, 4, 7, 5)
+	day := spDayOf(now)
+
+	cookie, db := pautaVisitor(t, mgr)
+	pautaRadar(t, srv, cookie)
+	pub := mustPubID(t, db)
+	owner := fmt.Sprintf("prio-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE workspaces SET last_seen_at = $1 WHERE id = $2`,
+		store.TSUTC(now.Add(-time.Hour)), db.Workspace()); err != nil {
+		t.Fatalf("touch workspace: %v", err)
+	}
+	// Three real sends: past the bulk ceiling (cap minus its quarter,
+	// here already+3) yet under the login cap itself (already+4).
+	for i := 0; i < 3; i++ {
+		if _, _, err := db.SaveMail(ctx, "issue", "r@x.dev", "s", "", "", "resend", "sent",
+			fmt.Sprintf("prio-seed-%s-%d", owner, i)); err != nil {
+			t.Fatalf("seed send %d: %v", i, err)
+		}
+	}
+	if err := db.SavePautaDay(ctx, pub, day,
+		"["+pautaMailCard(1, "A", "X", "u:a")+"]"); err != nil {
+		t.Fatalf("today pauta: %v", err)
+	}
+	srv.DailyPautaTick(ctx, pool, now)
+	for _, m := range fake.messages() {
+		t.Fatalf("over-cap pauta mail left the app: %v", m.Subject)
+	}
+	refused := false
+	for _, m := range mustOutbox(t, db) {
+		if m.Kind == "pauta" && m.Status == "refused" {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatal("pauta mail was not refused under the bulk ceiling")
+	}
+	if row, _ := db.PautaDay(ctx, pub, day); row == nil || row.EmailedAt == "" {
+		t.Fatal("refused day was not stamped")
+	}
+
+	// The same saturated day still delivers a magic link — login wins.
+	cookieB, _ := pautaVisitor(t, mgr)
+	email := fmt.Sprintf("login-%d@hackbrazil.dev", time.Now().UnixNano())
+	rr := pautaServe(t, srv, "POST", "/api/v1/workspace/claim", cookieB, map[string]string{"email": email})
+	if rr.Code != 200 {
+		t.Fatalf("claim = %d %s", rr.Code, rr.Body.String())
+	}
+	res := apiJSON(t, rr)
+	if res["sent"] != true {
+		t.Fatalf("magic link refused under the login cap: %v", res)
+	}
+	sent := false
+	for _, m := range fake.messages() {
+		if m.Kind == "magic_link" {
+			sent = true
+		}
+	}
+	if !sent {
+		t.Fatal("magic link did not reach the sender")
 	}
 }

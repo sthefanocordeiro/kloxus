@@ -77,7 +77,7 @@ func (s *Server) sendMail(ctx context.Context, wdb *store.DB, msg *delivery.Mess
 	}
 
 	if s.liveMail() {
-		if reason, err := s.capReason(ctx, wdb); err != nil {
+		if reason, err := s.capReason(ctx, wdb, msg.Kind); err != nil {
 			return nil, err
 		} else if reason != "" {
 			return s.refuseMail(ctx, wdb, msg, reason)
@@ -142,25 +142,45 @@ func (s *Server) refuseMail(ctx context.Context, wdb *store.DB, msg *delivery.Me
 	return &mailResult{Mail: m, Refused: reason}, nil
 }
 
+// capFor returns the effective daily ceilings for a mail kind
+// (KLOX-256, D33 priority). Magic links — the login path — always
+// keep the full configured caps; every other kind yields the top
+// quarter of each ceiling as sign-in headroom, so a saturated day
+// cuts the 07:00 alert or a bulk send first, never the owner's
+// login. At the defaults that reserves 20 sends of the global 80/day
+// and 6 of the workspace 25/day (a full hour of claims). Tiny caps
+// (<4) round the quarter to zero and all kinds share the cap.
+func (s *Server) capFor(kind string) (global, workspace int) {
+	global, workspace = s.d.Cfg.EmailDailyCap, s.d.Cfg.EmailWorkspaceDailyCap
+	if kind != "magic_link" {
+		global -= global / 4
+		workspace -= workspace / 4
+	}
+	return global, workspace
+}
+
 // capReason returns "" or why the send must be refused under the
-// persisted daily caps (global and per-workspace).
-func (s *Server) capReason(ctx context.Context, wdb *store.DB) (string, error) {
+// persisted daily caps (global and per-workspace), for the message's
+// kind — non-login kinds yield the last quarter to magic links
+// (KLOX-256).
+func (s *Server) capReason(ctx context.Context, wdb *store.DB, kind string) (string, error) {
 	day := today()
+	globalCap, wsCap := s.capFor(kind)
 	if pool := s.d.WS.Pool(); pool != nil {
 		n, err := pool.SendsTodayAll(ctx, day)
 		if err != nil {
 			return "", err
 		}
-		if n >= s.d.Cfg.EmailDailyCap {
-			return fmt.Sprintf("global daily email cap reached (%d/day)", s.d.Cfg.EmailDailyCap), nil
+		if n >= globalCap {
+			return fmt.Sprintf("global daily email cap reached (%d/day)", globalCap), nil
 		}
 	}
 	n, err := wdb.SendsToday(ctx, day)
 	if err != nil {
 		return "", err
 	}
-	if n >= s.d.Cfg.EmailWorkspaceDailyCap {
-		return fmt.Sprintf("workspace daily email cap reached (%d/day)", s.d.Cfg.EmailWorkspaceDailyCap), nil
+	if n >= wsCap {
+		return fmt.Sprintf("workspace daily email cap reached (%d/day)", wsCap), nil
 	}
 	return "", nil
 }

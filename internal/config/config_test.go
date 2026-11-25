@@ -348,3 +348,28 @@ func TestPublishingFlagDefaultsOff(t *testing.T) {
 		t.Fatal("KLOXUS_PUBLISHING=on must enable publishing")
 	}
 }
+
+// TestDailyPautaMailFlag (KLOX-256): the 07:00 mail is opt-in — unset
+// keeps it off in code, and the on/1/true/yes spellings turn it on
+// (the hosted fly.toml uses "on").
+func TestDailyPautaMailFlag(t *testing.T) {
+	t.Setenv("KLOXUS_NO_DOTENV", "1")
+	t.Setenv("KLOXUS_DAILY_PAUTA_MAIL", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DailyPautaMail {
+		t.Fatal("DailyPautaMail must default to off")
+	}
+	for _, v := range []string{"on", "1", "true", "yes"} {
+		t.Setenv("KLOXUS_DAILY_PAUTA_MAIL", v)
+		if cfg, err = Load(); err != nil || !cfg.DailyPautaMail {
+			t.Fatalf("KLOXUS_DAILY_PAUTA_MAIL=%q: DailyPautaMail=%v err=%v", v, cfg.DailyPautaMail, err)
+		}
+	}
+	t.Setenv("KLOXUS_DAILY_PAUTA_MAIL", "0")
+	if cfg, _ = Load(); cfg.DailyPautaMail {
+		t.Fatal("=0 must keep DailyPautaMail off")
+	}
+}

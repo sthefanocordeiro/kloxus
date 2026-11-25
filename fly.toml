@@ -24,6 +24,10 @@ KLOXUS_NEW_SESSIONS_PER_IP_HOUR = "30"
 # file is the single source of truth (fly secrets unset
 # KLOXUS_LLM_MODE -a kloxus).
 KLOXUS_LLM_MODE = "auto"
+# KLOX-256: the 07:00 "your stories are ready" mail — one per saved
+# account per day, skipped when the radar's pauta has nothing new.
+# Magic links keep priority under the daily email caps.
+KLOXUS_DAILY_PAUTA_MAIL = "on"
 
 [http_service]
 internal_port = 8080
