@@ -1,7 +1,7 @@
 // KLOX-123 slice 2: Hoje lists the day's pauta — clicking a card ticks
 // it (KLOX-200), thumbs train the radar — and the pieces in progress.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { api, ApiRequestError, type PautaCard, type TodayData } from "../api";
@@ -105,6 +105,25 @@ describe("Hoje (KLOX-123)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Build brief →" }));
     expect(await screen.findByText("pauta screen")).toBeVisible();
     expect(api.pautaCreate).toHaveBeenCalledWith("7", [1]);
+  });
+
+  // KLOX-202: pautaCreate takes ~9 s — the button narrates short
+  // steps instead of a bare "Building…".
+  it("narrates the build in short steps while it runs", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.pautaCreate).mockImplementation(() => new Promise(() => {}));
+      renderToday();
+      await screen.findByText("Story 1");
+      fireEvent.click(screen.getByRole("checkbox", { name: /Story 1/ }));
+      fireEvent.click(screen.getByRole("checkbox", { name: /Story 2/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Build brief →" }));
+      expect(await screen.findByText("Putting the 2 stories together…")).toBeVisible();
+      await act(async () => { vi.advanceTimersByTime(2600); });
+      expect(await screen.findByText("Opening the editor…")).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lists pieces in progress with their status", async () => {

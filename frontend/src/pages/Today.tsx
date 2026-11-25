@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ThumbsDown, ThumbsUp } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiRequestError, pautaPath, type PautaCard, type PieceRow } from "../api";
 import { useT } from "../i18n";
@@ -73,6 +73,16 @@ export function Today() {
       }
     },
   });
+
+  // KLOX-202: pautaCreate can take ~9 s — narrate it in short steps
+  // instead of a bare "Building…" that says nothing.
+  const [buildStep, setBuildStep] = useState(0);
+  useEffect(() => {
+    if (!build.isPending) return;
+    setBuildStep(0);
+    const t = window.setInterval(() => setBuildStep(1), 2500);
+    return () => window.clearInterval(t);
+  }, [build.isPending]);
 
   const toggle = (sid: number) =>
     setPicked((p) => (p.includes(sid) ? p.filter((x) => x !== sid) : [...p, sid]));
@@ -223,7 +233,13 @@ export function Today() {
               {picked.length === 1 ? s.selected1 : s.selected.replace("{n}", String(picked.length))}
             </p>
             <Button disabled={build.isPending} onClick={() => build.mutate()}>
-              {build.isPending ? s.building : s.build}
+              {build.isPending
+                ? buildStep > 0
+                  ? s.buildingEditor
+                  : picked.length === 1
+                    ? s.building1
+                    : s.building.replace("{n}", String(picked.length))
+                : s.build}
             </Button>
           </div>
         </div>

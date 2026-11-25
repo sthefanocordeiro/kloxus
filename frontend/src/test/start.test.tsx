@@ -135,6 +135,32 @@ describe("onboarding from zero (KLOX-123)", () => {
     expect(await screen.findByText("today screen")).toBeVisible();
   });
 
+  // KLOX-201: "outro" is the internal tag for unclassified stories — two
+  // "Não" on cards sharing only it must not offer "Hide outro?", and
+  // skipTopic must never be called with the sentinel.
+  it("never offers to hide the internal 'outro' label", async () => {
+    vi.mocked(api.calibration).mockResolvedValue([
+      card(1, ["outro"]), card(2, ["outro"]), card(3, ["fintech"]),
+    ]);
+    renderStart();
+    fireEvent.change(await screen.findByLabelText("Radar name"), { target: { value: "R" } });
+    fireEvent.change(screen.getByLabelText("Topics (comma separated)"), { target: { value: "startups" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByText("Story 1")).toBeVisible();
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, 1, "no"));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    expect(await screen.findByText("Story 2")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /No/ }));
+    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith(7, 2, "no"));
+
+    expect(await screen.findByText("Story 3")).toBeVisible();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(api.skipTopic).not.toHaveBeenCalled();
+  });
+
   it("lets the visitor skip matching and open today's stories from Done", async () => {
     renderStart();
     fireEvent.change(await screen.findByLabelText("Radar name"), { target: { value: "R" } });
