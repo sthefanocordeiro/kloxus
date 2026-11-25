@@ -115,3 +115,56 @@ func TestDeleteIdleWorkspaces(t *testing.T) {
 		t.Fatal("fresh workspace deleted")
 	}
 }
+
+// TestRequeueStaleJobsUsesClaimTime: a job enqueued long ago but claimed
+// just now must not be requeued (KLOX-195/A4); one claimed before the
+// cutoff must.
+func TestRequeueStaleJobsUsesClaimTime(t *testing.T) {
+	pool := openPool(t)
+	db := openOn(t, pool)
+	ctx := context.Background()
+
+	id, err := db.EnqueueJob(ctx, JobKindSendIssue, 1, nil, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+	if _, err := pool.db.ExecContext(ctx,
+		`UPDATE jobs SET created_at = $2 WHERE id = $1`, id, TSUTC(time.Now().Add(-24*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := pool.ClaimDueJobs(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed := false
+	for _, j := range jobs {
+		claimed = claimed || j.ID == id
+	}
+	if !claimed {
+		t.Fatal("job not claimed")
+	}
+	status := func() string {
+		var s string
+		if err := pool.db.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = $1`, id).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	cutoff := TSUTC(time.Now().Add(-15 * time.Minute))
+	if err := pool.RequeueStaleJobs(ctx, cutoff); err != nil {
+		t.Fatal(err)
+	}
+	if s := status(); s != "running" {
+		t.Fatalf("freshly claimed job requeued: status=%s", s)
+	}
+	if _, err := pool.db.ExecContext(ctx,
+		`UPDATE jobs SET claimed_at = $2 WHERE id = $1`, id, TSUTC(time.Now().Add(-time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.RequeueStaleJobs(ctx, cutoff); err != nil {
+		t.Fatal(err)
+	}
+	if s := status(); s != "pending" {
+		t.Fatalf("stale claim not requeued: status=%s", s)
+	}
+}
