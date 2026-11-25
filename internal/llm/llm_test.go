@@ -52,6 +52,25 @@ func TestReplayHitAndMiss(t *testing.T) {
 	}
 }
 
+func TestRequestKeyed(t *testing.T) {
+	if !RequestKeyed(Replay{}) {
+		t.Error("Replay should be request-keyed")
+	}
+	for _, p := range []Provider{
+		Anthropic{},
+		Recorder{},
+		Retrier{},
+		&Guard{},
+		None{},
+		Func(func(context.Context, Request) (Response, error) { return Response{}, nil }),
+		nil,
+	} {
+		if RequestKeyed(p) {
+			t.Errorf("%T should not be request-keyed", p)
+		}
+	}
+}
+
 // TestPricePerMillionCurrentPrices pins the table to the Anthropic list
 // prices verified 2026-11-16 (effective 2026-10-07, KLOX-54): the run
 // models haiku-5-5/sonnet-5-5 must cost what the provider actually

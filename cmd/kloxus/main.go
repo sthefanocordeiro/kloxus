@@ -244,7 +244,7 @@ func cmdDemo(args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, true, cfg.LLMOff())
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.LLMOff())
 	if err != nil {
 		return err
 	}
@@ -502,7 +502,7 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.Mode == "demo", cfg.LLMOff())
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.LLMOff())
 	if err != nil {
 		return err
 	}
@@ -791,7 +791,7 @@ func cmdRecord(args []string) error {
 		Inner: llm.Retrier{Inner: llm.Anthropic{APIKey: cfg.AnthropicAPIKey}},
 		Dir:   *dir,
 	}
-	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, false, cfg.LLMOff())
+	res, err := pipeline.RunHeadless(ctx, db, pub, cfg.OutDir, fetcher, provider, cfg.ModelTriage, cfg.ModelDraft, cfg.MaxDeepDives, cfg.LLMOff())
 	if err != nil {
 		return err
 	}

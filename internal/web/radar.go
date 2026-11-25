@@ -280,7 +280,7 @@ func pautaViews(cards []pipeline.PautaCard) []pautaCardView {
 func (s *Server) pautaRunner(r *http.Request) *pipeline.Runner {
 	return &pipeline.Runner{
 		DB: db(r), Fetcher: s.d.Fetcher,
-		DemoMode:      s.d.Cfg.Mode == "demo",
+		PaceStep:      s.stepPacer(),
 		Deterministic: true,
 	}
 }

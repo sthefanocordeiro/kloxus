@@ -218,7 +218,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			MaxDeepDives:  s.d.Cfg.MaxDeepDives,
-			DemoMode:      s.d.Cfg.Mode == "demo",
+			PaceStep:      s.stepPacer(),
 			Deterministic: s.d.Cfg.LLMOff(),
 			OnStep: func(step string) {
 				st.mu.Lock()

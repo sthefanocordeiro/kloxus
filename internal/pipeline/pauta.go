@@ -51,9 +51,6 @@ func (r *Runner) BuildStories(ctx context.Context, pub *store.Publication) ([]st
 		if s.CatalogID != 0 {
 			continue
 		}
-		if r.DemoMode && !strings.HasPrefix(s.URL, "fixtures/") {
-			continue
-		}
 		if r.Fetcher == nil {
 			continue
 		}

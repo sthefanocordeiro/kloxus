@@ -251,7 +251,7 @@ func TestDeterministicRunMakesNoModelCalls(t *testing.T) {
 		t.Fatal("model call attempted in deterministic mode")
 		return llm.Response{}, nil
 	})
-	res, err := RunHeadless(ctx, db, pub, t.TempDir(), fetcher, provider, "haiku", "sonnet", 3, false, true)
+	res, err := RunHeadless(ctx, db, pub, t.TempDir(), fetcher, provider, "haiku", "sonnet", 3, true)
 	if err != nil {
 		t.Fatalf("RunHeadless: %v", err)
 	}
