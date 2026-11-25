@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
 )
@@ -34,6 +35,25 @@ func TestFixtureFetcherSkipsNonFixtureURL(t *testing.T) {
 	var skip *SkipError
 	if !errors.As(err, &skip) {
 		t.Fatalf("err = %v, want *SkipError", err)
+	}
+}
+
+// Captured feeds live under feeds/, not fixtures/ — replay must not be
+// declined by the demo-mode guard (CI: TestRecordedRunReplays).
+func TestCapturedFetcherServesRecordedFeed(t *testing.T) {
+	url := "https://real.example/feed.xml"
+	fsys := fstest.MapFS{
+		"feeds/" + FeedFixtureName("rss", url): {Data: []byte(`<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Real Outlet</title>
+<item><guid>g1</guid><link>https://real.example/a1</link><title>Story</title><description>d</description></item>
+</channel></rss>`)},
+	}
+	items, err := (CapturedFetcher{FS: fsys}).Fetch(context.Background(), "rss", url)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Story" {
+		t.Fatalf("items = %+v", items)
 	}
 }
 

@@ -75,9 +75,19 @@ func (f FixtureFetcher) Fetch(_ context.Context, typ, url string) ([]RawItem, er
 // and model input match the original recorded run.
 type CapturedFetcher struct{ FS fs.FS }
 
-// Fetch implements Fetcher against the recorded captures.
-func (f CapturedFetcher) Fetch(ctx context.Context, typ, url string) ([]RawItem, error) {
-	return FixtureFetcher{FS: f.FS}.Fetch(ctx, typ, "feeds/"+FeedFixtureName(typ, url))
+// Fetch implements Fetcher against the recorded captures. Captures live
+// outside fixtures/, so this bypasses FixtureFetcher's demo-mode guard.
+func (f CapturedFetcher) Fetch(_ context.Context, typ, url string) ([]RawItem, error) {
+	ff := FixtureFetcher{FS: f.FS}
+	name := "feeds/" + FeedFixtureName(typ, url)
+	switch typ {
+	case "rss":
+		return ff.fetchRSS(name)
+	case "page":
+		return ff.fetchPage(name)
+	default:
+		return nil, fmt.Errorf("unknown source type %q", typ)
+	}
 }
 
 func (f FixtureFetcher) fetchRSS(url string) ([]RawItem, error) {
