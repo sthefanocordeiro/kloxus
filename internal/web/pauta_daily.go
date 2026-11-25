@@ -227,6 +227,13 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		// sweep never re-checks this radar today.
 		return wdb.MarkPautaDayEmailed(ctx, pub.ID, day)
 	}
+	// The account opted out — the mailed "Não quero mais" link or the
+	// account-menu toggle (KLOX-257): stamp the day and move on.
+	if out, err := s.dailyMailOptedOut(ctx, pool, wdb, owner); err != nil {
+		return err
+	} else if out {
+		return wdb.MarkPautaDayEmailed(ctx, pub.ID, day)
+	}
 	// One mail per recipient per day: an owner with several claimed
 	// radars (or workspaces) gets a single note, not one per radar.
 	if ok, err := pool.ClaimPautaMail(ctx, owner, day); err != nil {
@@ -263,6 +270,23 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	}
 	link := base + "/claim?t=" + url.QueryEscape(token) + "&lang=" + linkLang
 
+	// The one-click unsubscribe link (KLOX-257): its own token, stored
+	// hashed — never the sign-in token, never a reader MAC. Each send
+	// replaces the hash, so the newest mailed link is the one that works.
+	rawUnsub := make([]byte, 32)
+	if _, err := rand.Read(rawUnsub); err != nil {
+		return err
+	}
+	unsubToken := base64.RawURLEncoding.EncodeToString(rawUnsub)
+	if err := wdb.SaveDailyMailToken(ctx, hashToken(unsubToken)); err != nil {
+		return err
+	}
+	unsubLink := base + "/daily-mail/unsub?t=" + url.QueryEscape(unsubToken)
+	unsubLabel := "Não quero mais este e-mail"
+	if linkLang == "en" {
+		unsubLabel = "I don't want this email anymore"
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "Bom dia! As notícias do seu radar **%s** de hoje estão prontas:\n\n", pub.Name)
 	for i, c := range cards {
@@ -279,6 +303,7 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "[Abrir minhas notícias](%s)\n\nO link assina este navegador na sua conta salva e vale por 72 horas.", link)
+	fmt.Fprintf(&b, "\n\n---\n*[%s](%s)*", unsubLabel, unsubLink)
 
 	subject := "Suas notícias de hoje estão prontas"
 	md := b.String()
@@ -288,6 +313,12 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		Text:    md,
 		HTML:    delivery.RenderHTML(subject, md, base),
 		Kind:    "pauta",
+		// RFC 8058: the same endpoint the footer link lands on — mail
+		// clients POST it for one-click unsubscribes (KLOX-257).
+		Headers: map[string]string{
+			"List-Unsubscribe":      "<" + unsubLink + ">",
+			"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+		},
 		// Provider idempotency is global per API key, not per
 		// workspace — scope the key or the second claimed radar of the
 		// day collides on a modified body and falls back to the outbox.

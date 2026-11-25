@@ -242,6 +242,7 @@ export const dict = {
       signOut: "Sign out",
       creating: "Create your Radar",
       language: "Language",
+      dailyMail: "Receive the day's stories by email",
     },
     steps: {
       of: (n: number, m: number) => `Step ${n} of ${m}`,
@@ -481,6 +482,7 @@ export const dict = {
       signOut: "Sair",
       creating: "Crie seu Radar",
       language: "Idioma",
+      dailyMail: "Receber as notícias do dia por e-mail",
     },
     steps: {
       of: (n: number, m: number) => `Passo ${n} de ${m}`,
