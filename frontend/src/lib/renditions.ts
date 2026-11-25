@@ -44,8 +44,9 @@ export function foldIndex(text: string, fold = LINKEDIN_FOLD): number {
 // splitForX proposes a thread: each blank-line-separated block is a
 // post — the rendition template emits one block per post (the opening
 // first, then one per story), so blocks are never merged. An over-long
-// block breaks at words. Each post of a multi-post thread gets a " n/N"
-// suffix budgeted into the limit.
+// block breaks at words. Each post of a multi-post thread gets an "n/N"
+// counter on its own last line — a trailing " n/N" glued onto a URL
+// (KLOX-214) — budgeted into the limit.
 export function splitForX(text: string): string[] {
   const clean = text.replace(/\r\n/g, "\n").trim();
   if (!clean) return [];
@@ -73,7 +74,7 @@ export function splitForX(text: string): string[] {
     }
     if (cur) posts.push(cur);
   }
-  return posts.length === 1 ? posts : posts.map((p, i) => `${p} ${i + 1}/${posts.length}`);
+  return posts.length === 1 ? posts : posts.map((p, i) => `${p}\n${i + 1}/${posts.length}`);
 }
 
 // absolutizeHtml rewrites root-relative src/href (uploaded images live at
