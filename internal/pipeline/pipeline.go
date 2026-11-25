@@ -242,77 +242,20 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return res, nil
 	}
 
-	// --- dedupe ---
-	r.stepStart("dedupe")
-	start := time.Now()
-	items, err := r.DB.ItemsForPublication(ctx, pub.ID)
-	if err != nil {
+	if err := r.stageDedupe(ctx, pub, st); err != nil {
 		return nil, err
 	}
-	urls := make([]string, len(items))
-	texts := make([]string, len(items))
-	for i, it := range items {
-		urls[i] = it.URL
-		texts[i] = it.Title + "\n" + it.ContentText
-	}
-	clusters := dedupe.Assign(urls, texts)
-	if err := r.DB.ClearStories(ctx, pub.ID); err != nil {
-		return nil, err
-	}
-	groups := map[int][]store.Item{}
-	for i, it := range items {
-		groups[clusters[i]] = append(groups[clusters[i]], it)
-	}
-	ordered := make([][]store.Item, 0, len(groups))
-	for _, g := range groups {
-		ordered = append(ordered, g)
-	}
-	sort.Slice(ordered, func(a, b int) bool { return ordered[a][0].ID < ordered[b][0].ID })
-	for _, g := range ordered {
-		title := g[0].Title
-		for _, it := range g {
-			if len(it.Title) > len(title) {
-				title = it.Title
-			}
-		}
-		storyID, err := r.DB.CreateStory(ctx, pub.ID, title, int64(dedupe.SimHash(g[0].Title+"\n"+g[0].ContentText)))
-		if err != nil {
-			return nil, err
-		}
-		for _, it := range g {
-			if err := r.DB.AddStoryItem(ctx, storyID, it.ID); err != nil {
-				return nil, err
-			}
-		}
-	}
-	stories, err := r.DB.StoriesWithItems(ctx, pub.ID)
-	if err != nil {
-		return nil, err
-	}
-	res.Stories = len(stories)
-	r.emit("dedupe", map[string]int{"stories": res.Stories, "duplicates_merged": len(items) - res.Stories})
-	r.record(ctx, pub.ID, 0, "dedupe", "", start, llm.Response{})
+	stories := st.stories
 
 	// create the issue now so all model steps attach to it
-	number, err := r.DB.NextIssueNumber(ctx, pub.ID)
-	if err != nil {
+	if err := r.createIssue(ctx, pub, st); err != nil {
 		return nil, err
 	}
-	res.Number = number
-	issueID, err := r.DB.CreateIssue(ctx, pub.ID, number,
-		fmt.Sprintf("%s — issue %d", pub.Name, number), "")
-	if err != nil {
-		return nil, err
-	}
-	res.IssueID = issueID
-	r.DB.AttachRuns(ctx, pub.ID, issueID)
-	if r.OnIssue != nil {
-		r.OnIssue(issueID)
-	}
+	issueID := st.issueID
 
 	// --- triage ---
 	r.stepStart("triage")
-	start = time.Now()
+	start := time.Now()
 	type triStory struct {
 		Ref     int
 		Title   string
