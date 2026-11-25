@@ -1,0 +1,10 @@
+-- KLOX-111 (ranking G4): one-line card summary + type for the run's
+-- top stories. Global cache keyed by item — the same item is never
+-- summarised twice, by any workspace or run. model='deterministic'
+-- rows come from the zero-cost template (metadata only, never source
+-- prose); a model name marks an LLM-written row if one is ever enabled.
+--
+-- KLOX-222: the CREATE TABLE for item_summaries was consolidated into
+-- 0016_ranking_embeddings.sql — this file used to create it a second
+-- time (harmless under IF NOT EXISTS, but a real duplicate definition).
+-- The file is kept so the recorded version stays a no-op marker.
