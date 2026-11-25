@@ -93,7 +93,7 @@ func (s *Server) markIssueBlocked(wsp *workspace.Workspace, issueID int64) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := wsp.DB.SetIssueStatus(ctx, issueID, "blocked"); err != nil {
+	if err := wsp.DB.SetIssueStatus(ctx, issueID, store.IssueBlocked); err != nil {
 		slog.Warn("failed issue could not be marked blocked", "issue", issueID, "err", err)
 	}
 }

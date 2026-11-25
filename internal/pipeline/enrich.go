@@ -12,10 +12,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // enrichBatchSize is the §7.2 batch bound — up to 40 items per call.
@@ -141,7 +141,7 @@ func (e *Enricher) enrichBatch(ctx context.Context, items []store.UnenrichedItem
 	for i, it := range items {
 		data.Items = append(data.Items, row{
 			Ref: i + 1, Title: it.Title, Outlet: it.SourceName,
-			Excerpt: truncateRunes(it.Excerpt, enrichExcerptRunes),
+			Excerpt: strutil.Truncate(it.Excerpt, enrichExcerptRunes),
 		})
 	}
 	user, err := RenderPrompt("enrich", data)
@@ -217,12 +217,4 @@ func clampWords(s string, n int) string {
 		return strings.Join(words, " ")
 	}
 	return strings.Join(words[:n], " ")
-}
-
-func truncateRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	r := []rune(s)
-	return string(r[:n]) + "…"
 }

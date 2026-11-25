@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
+  claimOwner,
   fakeLive,
   fakeRequests,
   preflight,
@@ -55,7 +56,10 @@ async function waitRun(page: Page, rid: number) {
 // choreography smoke.sh uses, minus the browser.
 async function approvedIssue(page: Page): Promise<number> {
   await apiPost(page, "/api/v1/demo/new");
-  await claimSynthetic(page); // creating a radar needs the claimed owner (KLOX-161)
+  // creating a radar needs the claimed owner (KLOX-161) — under the
+  // synthetic provider the claim itself must report resend delivery
+  const claim = await claimOwner(page, "smoke@kloxus.dev");
+  expect(claim?.delivery).toBe("resend");
   const proposal = (await apiGet(page, "/api/v1/proposal")).proposal;
   const pub = await apiPost(
     page,
@@ -150,24 +154,6 @@ async function approvedIssue(page: Page): Promise<number> {
   expect(readiness.ready, `not ready: ${JSON.stringify(readiness.checks)}`).toBe(true);
   await apiPost(page, `/api/v1/issues/${iid}/approve`);
   return iid;
-}
-
-async function claimSynthetic(page: Page) {
-  const claim = await apiPost(page, "/api/v1/workspace/claim", { email: "smoke@kloxus.dev" });
-  expect(claim.delivery).toBe("resend");
-  // The publication outbox listing hides account-level magic-link rows
-  // (KLOX-66 §8) — the claim response's outbox_email_id is the direct
-  // handle to the ledger row carrying the link.
-  const mail = await apiGet(page, `/api/v1/outbox/${claim.outbox_email_id}`);
-  expect(mail.email.kind).toBe("magic_link");
-  const link = mail.email.body_md.match(/\/claim\?t=[A-Za-z0-9_-]+/)?.[0];
-  expect(link).toBeTruthy();
-  // Two-step claim: GET lands the confirm page; the explicit POST
-  // spends the token (see claimIfSynthetic in mail.ts)
-  const claimPage = await page.request.get(link!);
-  expect(claimPage.status()).toBe(200);
-  const confirmed = await page.request.post(link!);
-  expect(confirmed.status()).toBe(200);
 }
 
 test("provider failure falls back to the outbox — and recovery sends", async ({ page }) => {

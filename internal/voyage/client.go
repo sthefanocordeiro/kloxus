@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
 )
 
 // Group is a rate-limit / cap bucket; it doubles as the ledger kind.
@@ -211,7 +213,7 @@ func (c *Client) do(ctx context.Context, g Group, path string, est int, body any
 	}
 	hc := c.HTTP
 	if hc == nil {
-		hc = &http.Client{Timeout: 60 * time.Second}
+		hc = httpx.Client(60 * time.Second)
 	}
 	for attempt := 0; ; attempt++ {
 		if err := c.limiter(g).Wait(ctx, est); err != nil {

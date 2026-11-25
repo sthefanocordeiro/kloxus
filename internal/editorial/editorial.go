@@ -14,6 +14,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // Rebuild regenerates the guide from the publication's decisions.
@@ -289,9 +290,7 @@ func ruleFor(reason string) string {
 	rule = guideSubject.ReplaceAllString(rule, "")
 	rule = strings.TrimSpace(rule)
 	rule = strings.TrimRight(rule, ".! \t")
-	if len(rule) > 120 {
-		rule = rule[:120] + "…"
-	}
+	rule = strutil.Cut(rule, 120)
 	if r := []rune(rule); len(r) > 0 && unicode.IsLower(r[0]) {
 		rule = string(unicode.ToUpper(r[0])) + string(r[1:])
 	}

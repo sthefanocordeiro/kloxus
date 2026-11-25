@@ -82,27 +82,42 @@ describe("DestinationStep", () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith(1, 1, "dois"), { timeout: 1000 });
   });
 
-  it("confirms removal in-app instead of window.confirm", async () => {
+  // KLOX-214: unticking deletes at once — a toast carries the undo
+  // (re-fork + write the old body back), never a confirm dialog.
+  it("deletes an unticked destination at once and offers undo on a toast", async () => {
     const del = vi.spyOn(api, "renditionDelete").mockResolvedValue(undefined);
     const confirmSpy = vi.spyOn(window, "confirm");
-    setup([mk(1, "markdown", { body_md: "# md" })]);
+    const { create, save } = setup([mk(1, "markdown", { body_md: "# md" })]);
     const box = await screen.findByRole("checkbox", { name: /Markdown/ });
     await waitFor(() => expect(box).toBeEnabled());
 
     fireEvent.click(box);
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/Remove this version and its edits/)).toBeTruthy();
-
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(del).not.toHaveBeenCalled();
-    expect(confirmSpy).not.toHaveBeenCalled();
-
-    fireEvent.click(box);
-    const again = await screen.findByRole("dialog");
-    fireEvent.click(within(again).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(del).toHaveBeenCalledWith(1, 1));
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(confirmSpy).not.toHaveBeenCalled();
+
+    const toast = await screen.findByRole("status");
+    expect(toast).toHaveTextContent("Version removed");
+    fireEvent.click(within(toast).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(1, "markdown"));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(1, 99, "# md"));
+  });
+
+  // KLOX-214: a thread suggestion is not "over the limit" — the global
+  // counter says how many posts the text becomes, not a red number.
+  it("reads a split X text as a thread, not an over-limit post", async () => {
+    const para = "Uma frase razoavelmente longa para encher espaço no post. ".repeat(12).trim();
+    setup([mk(1, "x", { body_text: `${para}\n\n${para}` })]);
+    expect(await screen.findByTestId("thread-note")).toHaveTextContent(/thread of \d+ posts/);
+    expect(screen.queryByTestId("counter")).toBeNull();
+  });
+
+  // KLOX-214: the many-stories note is dismissable.
+  it("lets the author dismiss the many-stories note", async () => {
+    setup([mk(1, "x", { body_text: "oi" })], [{ headline: "A" }, { headline: "B" }]);
+    const note = await screen.findByRole("note");
+    fireEvent.click(within(note).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByRole("note")).toBeNull());
   });
 
   it("offers a manual refresh when the base changed", async () => {
@@ -110,28 +125,21 @@ describe("DestinationStep", () => {
     expect(await screen.findByRole("button", { name: "Update this version?" })).toBeTruthy();
   });
 
-  // KLOX-213: the dialog closed the instant Remover was clicked — a
-  // failed delete vanished with no error anywhere. It closes only on
-  // success now, and the error renders inside the dialog.
-  it("keeps the remove dialog open with the error when deletion fails", async () => {
-    const del = vi.spyOn(api, "renditionDelete")
-      .mockRejectedValueOnce(new Error("boom"))
-      .mockResolvedValue(undefined);
+  // KLOX-213: a failed delete used to vanish behind a closing confirm
+  // dialog. The instant-delete flow (KLOX-214) surfaces it on the
+  // action error line — and offers no undo toast for a rendition
+  // that still exists.
+  it("shows the delete error when removing a destination fails", async () => {
+    const del = vi.spyOn(api, "renditionDelete").mockRejectedValue(new Error("boom"));
     setup([mk(1, "markdown", { body_md: "# md" })]);
     const box = await screen.findByRole("checkbox", { name: /Markdown/ });
     await waitFor(() => expect(box).toBeEnabled());
 
     fireEvent.click(box);
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
-
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Something went wrong");
-    expect(screen.getByRole("dialog")).toBeTruthy();
-
-    // the same button retries — only a success closes the dialog
-    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(del).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(del).toHaveBeenCalledWith(1, 1));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /Markdown/ })).toBeChecked();
   });
 
   it("shows the refresh error inside its dialog when updating fails", async () => {

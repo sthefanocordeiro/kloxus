@@ -33,10 +33,10 @@ type Deps struct {
 	// the 06:30 build still runs. Transactional mail (magic links) is
 	// unaffected.
 	DailyPautaMail bool
-	WS      *workspace.Manager
-	Cfg     *config.Config
-	Fetcher sources.Fetcher
-	LLM     llm.Provider
+	WS             *workspace.Manager
+	Cfg            *config.Config
+	Fetcher        sources.Fetcher
+	LLM            llm.Provider
 	// Guard enforces the LLM spend limits at run admission and backs the
 	// admin kill switch (D32/D36). Nil disables the guards (tests).
 	Guard   *llm.Guard

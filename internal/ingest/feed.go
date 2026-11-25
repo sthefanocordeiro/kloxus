@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/mmcdole/gofeed"
 	"github.com/sthefanocordeiro/kloxus/internal/decode"
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -66,7 +68,7 @@ type FeedFetcher struct {
 // disables it (tests).
 func NewFeedFetcher(p Store, hc *http.Client, userAgent, agentName string, throttle hostThrottler) *FeedFetcher {
 	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
+		hc = httpx.Client(30 * time.Second)
 	}
 	return &FeedFetcher{
 		http: hc, userAgent: userAgent, agentName: agentName,
@@ -102,7 +104,9 @@ func (f *FeedFetcher) Fetch(ctx context.Context, cs *store.CatalogSource) FetchO
 			}
 			return f.fail(ctx, cs, fmt.Errorf("robots check: %w", err))
 		}
-		_ = f.store.CatalogTouchRobots(ctx, cs.ID)
+		if lerr := f.store.CatalogTouchRobots(ctx, cs.ID); lerr != nil {
+			slog.Warn("feed: touch robots failed", "source", cs.ID, "err", lerr)
+		}
 		if rules.crawlDelay > 0 {
 			if err := f.wait(ctx, cs, rules.crawlDelay); err != nil {
 				return f.fail(ctx, cs, err)
@@ -188,13 +192,21 @@ func stale(checkedAt string, ttl time.Duration, now time.Time) bool {
 }
 
 func (f *FeedFetcher) suspend(ctx context.Context, cs *store.CatalogSource, reason string) {
-	_ = f.store.CatalogSetSuspended(ctx, cs.ID, true, reason)
-	_ = f.store.LogFetch(ctx, cs.ID, "suspended", 0, 0, 0, reason)
+	if lerr := f.store.CatalogSetSuspended(ctx, cs.ID, true, reason); lerr != nil {
+		slog.Warn("feed: suspend source failed", "source", cs.ID, "err", lerr)
+	}
+	if lerr := f.store.LogFetch(ctx, cs.ID, "suspended", 0, 0, 0, reason); lerr != nil {
+		slog.Warn("feed: log fetch failed", "source", cs.ID, "err", lerr)
+	}
 }
 
 func (f *FeedFetcher) fail(ctx context.Context, cs *store.CatalogSource, err error) FetchOutcome {
-	_ = f.store.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error")
-	_ = f.store.LogFetch(ctx, cs.ID, "error", 0, 0, 0, err.Error())
+	if lerr := f.store.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error"); lerr != nil {
+		slog.Warn("feed: mark fetched failed", "source", cs.ID, "err", lerr)
+	}
+	if lerr := f.store.LogFetch(ctx, cs.ID, "error", 0, 0, 0, err.Error()); lerr != nil {
+		slog.Warn("feed: log fetch failed", "source", cs.ID, "err", lerr)
+	}
 	return FetchOutcome{Status: "error", Detail: err.Error()}
 }
 
@@ -207,8 +219,12 @@ func (f *FeedFetcher) finish(ctx context.Context, cs *store.CatalogSource, o Fet
 	if lm == "" {
 		lm = cs.LastModified
 	}
-	_ = f.store.CatalogMarkFetched(ctx, cs.ID, etag, lm, o.Status)
-	_ = f.store.LogFetch(ctx, cs.ID, o.Status, o.HTTPStatus, o.Items, o.NewItems, o.Detail)
+	if lerr := f.store.CatalogMarkFetched(ctx, cs.ID, etag, lm, o.Status); lerr != nil {
+		slog.Warn("feed: mark fetched failed", "source", cs.ID, "err", lerr)
+	}
+	if lerr := f.store.LogFetch(ctx, cs.ID, o.Status, o.HTTPStatus, o.Items, o.NewItems, o.Detail); lerr != nil {
+		slog.Warn("feed: log fetch failed", "source", cs.ID, "err", lerr)
+	}
 	return o
 }
 

@@ -17,11 +17,11 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // docEvidence is the supporting passage for one citation of a sentence:
@@ -67,9 +67,9 @@ type docSource struct {
 
 // docItem is one story inside a section.
 type docItem struct {
-	Ref         int           `json:"ref"`
-	IssueItemID int64         `json:"issue_item_id"`
-	Headline    string        `json:"headline"`
+	Ref         int    `json:"ref"`
+	IssueItemID int64  `json:"issue_item_id"`
+	Headline    string `json:"headline"`
 	// Text is the item's written text as a single field: the stored
 	// fact lines verbatim — punctuation, line breaks and emojis kept —
 	// with only the [n] citation markers removed (KLOX-181). The
@@ -357,7 +357,7 @@ func bestEvidence(d *pipeline.Dossier, ref int, sentence, fallback string) strin
 	if best == "" {
 		return fallback
 	}
-	return truncateStr(best, 320)
+	return strutil.Truncate(best, 320)
 }
 
 // docContext is everything the document parser needs from the store,
@@ -391,7 +391,7 @@ func dcFromPairs(pairs []store.IssueItemDossier, items map[int64]*store.Item) *d
 		dc.items = map[int64]*store.Item{}
 	}
 	for _, p := range pairs {
-		if p.Item.Status == "pending" {
+		if p.Item.Status == store.ItemPending {
 			dc.pending++
 		}
 		var dd pipeline.Dossier
@@ -609,7 +609,7 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 					src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
 					if ds.ItemID != 0 {
 						if stored, ok := dc.items[ds.ItemID]; ok {
-							src.Excerpt = truncateStr(stored.ContentText, 320)
+							src.Excerpt = strutil.Truncate(stored.ContentText, 320)
 							src.Date = stored.PublishedAt
 							it.openings[ds.Ref] = src.Excerpt
 							if src.Name == "" {
@@ -918,15 +918,4 @@ func insertInItem(body string, item *docItem, idx int, raw string) (string, bool
 	// body[spanEnd:] carries the rest of the issue — next items and
 	// sections; dropping it here would silently truncate the document
 	return body[:item.spanStart] + insertRaw(seg, raws, idx, raw) + body[item.spanEnd:], true
-}
-
-// truncateStr shortens s to n runes for excerpts (rune-safe: never
-// splits a UTF-8 sequence).
-func truncateStr(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	r := []rune(s)
-	return string(r[:n]) + "…"
 }

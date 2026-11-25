@@ -11,7 +11,6 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/embed"
 )
 
-
 // PendingEmbeddings lists non-promo items lacking a vector for model,
 // newest first, inside the candidate window.
 func (p *Pool) PendingEmbeddings(ctx context.Context, model string, since time.Time, limit int) ([]embed.Pending, error) {

@@ -198,7 +198,9 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	}
 
 	var cards []pautaCardView
-	_ = json.Unmarshal([]byte(row.CardsJSON), &cards)
+	if err := json.Unmarshal([]byte(row.CardsJSON), &cards); err != nil {
+		slog.Warn("pauta day: malformed cards json", "day", day, "err", err)
+	}
 	base := strings.TrimRight(s.d.Cfg.PublicURL, "/")
 	if base == "" {
 		base = fmt.Sprintf("http://localhost:%d", s.d.Cfg.Port)

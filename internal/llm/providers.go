@@ -13,6 +13,9 @@ import (
 	"path"
 	"path/filepath"
 	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // ErrDisabled is returned by None when a code path reaches the model in
@@ -142,7 +145,7 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	client := a.HTTP
 	if client == nil {
-		client = &http.Client{Timeout: 120 * time.Second}
+		client = httpx.Client(120 * time.Second)
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -154,7 +157,7 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 		return Response{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Response{}, &StatusError{Provider: "anthropic", Status: resp.StatusCode, Body: truncate(string(raw), 400)}
+		return Response{}, &StatusError{Provider: "anthropic", Status: resp.StatusCode, Body: strutil.Truncate(string(raw), 400)}
 	}
 	var ar anthropicResponse
 	if err := json.Unmarshal(raw, &ar); err != nil {
@@ -168,13 +171,6 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 		}
 	}
 	return Response{Text: text, InputTokens: ar.Usage.InputTokens, OutputTokens: ar.Usage.OutputTokens}, nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "…"
-	}
-	return s
 }
 
 // Recorder wraps a Provider and writes each response as a replay fixture

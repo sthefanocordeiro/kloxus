@@ -2,9 +2,9 @@ package web
 
 import (
 	"context"
-	"strings"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"

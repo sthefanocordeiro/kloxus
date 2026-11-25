@@ -66,53 +66,31 @@ export function neverRealMail(ws: WorkspaceInfo) {
   }
 }
 
-// claimIfSynthetic completes the workspace claim via the magic link in
-// the outbox — only under the synthetic loopback transport. Outbox mode
-// has no claim gate; a real provider is refused.
-export async function claimIfSynthetic(page: Page) {
-  const ws = await workspaceInfo(page);
-  neverRealMail(ws);
-  if (ws.mail !== "live" || ws.claimed) return;
-  const claim = await page.request.post("/api/v1/workspace/claim", {
-    data: { email: "smoke@kloxus.dev" },
-  });
-  expect(claim.ok()).toBeTruthy();
-  // The publication outbox listing hides account-level magic-link rows
-  // (KLOX-66 §8) — the claim response's outbox_email_id is the direct
-  // handle to the ledger row carrying the link.
-  const { outbox_email_id: eid } = (await claim.json()) as {
-    outbox_email_id?: number;
-  };
-  expect(eid).toBeTruthy();
-  const mail = await (await page.request.get(`/api/v1/outbox/${eid}`)).json();
-  expect(mail.email.kind).toBe("magic_link");
-  const link = mail.email.body_md.match(/\/claim\?t=[A-Za-z0-9_-]+/)?.[0];
-  expect(link).toBeTruthy();
-  // Two-step claim: GET lands the confirm page (prefetch-safe); the
-  // explicit POST spends the token and sets the cookie on this context
-  const claimPage = await page.request.get(link!);
-  expect(claimPage.status()).toBe(200);
-  const confirmed = await page.request.post(link!);
-  expect(confirmed.status()).toBe(200);
-}
-
-// The address claimOwner verifies — test sends and reader sends to a
-// claimed workspace deliver to it (KLOX-161).
+// The address claimOwner verifies by default — test sends and reader
+// sends to a claimed workspace deliver to it (KLOX-161).
 export const OWNER_EMAIL = "owner@example.com";
+
+export interface ClaimResult {
+  delivery?: string;
+  claim_url?: string;
+  outbox_email_id?: number;
+}
 
 // claimOwner confirms the workspace owner's email by magic link —
 // creating a Radar requires it (KLOX-161). Outbox mode returns the link
 // in the claim response; the synthetic loopback mails it to the ledger.
 // A real provider is refused: the claim email would leave the app.
-export async function claimOwner(page: Page) {
+// Returns the claim response (null when the workspace was already
+// claimed) so callers can assert on transport evidence like delivery.
+export async function claimOwner(page: Page, email = OWNER_EMAIL): Promise<ClaimResult | null> {
   const ws = await workspaceInfo(page);
   neverRealMail(ws);
-  if (ws.claimed) return;
+  if (ws.claimed) return null;
   const claim = await page.request.post("/api/v1/workspace/claim", {
-    data: { email: OWNER_EMAIL },
+    data: { email },
   });
   expect(claim.ok()).toBeTruthy();
-  const body = (await claim.json()) as { claim_url?: string; outbox_email_id?: number };
+  const body = (await claim.json()) as ClaimResult;
   let link = body.claim_url;
   if (!link) {
     expect(body.outbox_email_id).toBeTruthy();
@@ -125,6 +103,7 @@ export async function claimOwner(page: Page) {
   // two-step claim: GET lands the confirm page, POST spends the token
   expect((await page.request.get(path)).status()).toBe(200);
   expect((await page.request.post(path)).status()).toBe(200);
+  return body;
 }
 
 export interface FakeRequest {

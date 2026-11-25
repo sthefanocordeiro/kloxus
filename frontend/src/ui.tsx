@@ -1,4 +1,4 @@
-import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "./lib/cn";
 
@@ -7,9 +7,7 @@ import { cn } from "./lib/cn";
 // Secondary = outline, destructive = red text. Touch targets never go
 // under 44 px on mobile / 40 px on desktop (the 36 px "sm" spec row is
 // overridden by the min-target rule — recorded in decisions.md).
-// exported so non-button elements (links that should read as buttons,
-// like the review cluster's Preview jump) can share the same variants
-export const buttonVariants = cva(
+const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 rounded-[var(--radius-btn)] font-medium transition-colors duration-150 disabled:opacity-50 disabled:pointer-events-none cursor-pointer",
   {
     variants: {
@@ -42,6 +40,18 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ),
 );
 Button.displayName = "Button";
+
+// The one styled checkbox (KLOX-214): the news list and the export
+// destinations share it so a tick never falls back to the native blue.
+export function Tick({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      type="checkbox"
+      className={cn("mt-1.5 h-5 w-5 shrink-0 cursor-pointer accent-teal", className)}
+      {...props}
+    />
+  );
+}
 
 export function Badge({
   className,

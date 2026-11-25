@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // CookieName is the workspace cookie sent to hosted visitors.
@@ -568,8 +569,5 @@ func (m *Manager) cleanup(ctx context.Context) {
 // person: user-facing surfaces (the approval receipt) use the claimed
 // owner e-mail instead, never this label (§2 never-show, KLOX-64).
 func labelOf(id string) string {
-	if len(id) > 4 {
-		return "visitor " + id[:4] + "…"
-	}
-	return "visitor " + id
+	return "visitor " + strutil.Truncate(id, 4)
 }

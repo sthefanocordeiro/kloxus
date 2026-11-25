@@ -30,7 +30,7 @@ func (s *Server) rendDoc(w http.ResponseWriter, r *http.Request) (*store.Issue, 
 	if !ok {
 		return nil, nil, false
 	}
-	if iss.Status != "approved" && iss.Status != "sent" {
+	if iss.Status != store.IssueApproved && iss.Status != store.IssueSent {
 		apiErr(w, 409, "blocked", "renditions ship only reviewed text — finish the review first",
 			apiReason{Code: "not_approved", Message: "issue is not approved",
 				Target: &apiTarget{Kind: "issue", Ref: strconv.FormatInt(iss.ID, 10)}})
@@ -189,7 +189,7 @@ func (s *Server) apiIssueExported(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "format must be linkedin, x, html or markdown")
 		return
 	}
-	if iss.Status != "approved" && iss.Status != "sent" && iss.Status != "scheduled" {
+	if iss.Status != store.IssueApproved && iss.Status != store.IssueSent && iss.Status != store.IssueScheduled {
 		apiErr(w, 409, "blocked", "only a finished pauta can be exported",
 			apiReason{Code: "not_approved", Message: "issue is not approved",
 				Target: &apiTarget{Kind: "issue", Ref: strconv.FormatInt(iss.ID, 10)}})

@@ -132,7 +132,7 @@ func (s *Server) blockCtx(w http.ResponseWriter, r *http.Request, version, secti
 	if !ok {
 		return nil, nil, nil, false
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return nil, nil, nil, false
 	}
@@ -166,15 +166,15 @@ func (s *Server) saveBlockBody(w http.ResponseWriter, r *http.Request, iss *stor
 	err := db(r).SaveIssueEdit(r.Context(), iss.ID, store.IssueEdit{
 		PubID: iss.PublicationID, Body: body, Flags: flags,
 		Decision: "block_edit", Reason: "composer block op",
-		RevertApproved: iss.Status == "approved",
+		RevertApproved: iss.Status == store.IssueApproved,
 	})
 	if apiDBErr(w, r, err, "issue") {
 		return false
 	}
 	iss.BodyMD = body
 	iss.Flags = flags
-	if iss.Status == "approved" {
-		iss.Status = "drafted"
+	if iss.Status == store.IssueApproved {
+		iss.Status = store.IssueDrafted
 	}
 	return true
 }
@@ -267,21 +267,21 @@ func (s *Server) insertItemBlock(r *http.Request, iss *store.Issue, section stri
 	}
 	var ii *store.IssueItem
 	if old, err := db(r).IssueItemByStory(ctx, iss.ID, storyID); err == nil {
-		if old.Status == "pending" || old.Status == "approved" {
+		if old.Status == store.ItemPending || old.Status == store.ItemApproved {
 			return "", "this story is already in the edition"
 		}
 		// a rejected story stays out — the board owns the undo path
-		if old.Status == "rejected" {
+		if old.Status == store.ItemRejected {
 			return "", "this story was rejected — undo the rejection on the board first"
 		}
-		if err := db(r).SetIssueItemPlacement(ctx, old.ID, section, nextPosition(r, iss.ID, section), "approved"); err != nil {
+		if err := db(r).SetIssueItemPlacement(ctx, old.ID, section, nextPosition(r, iss.ID, section), store.ItemApproved); err != nil {
 			return "", "could not place the story"
 		}
 		ii = old
 	} else {
 		id, err := db(r).CreateIssueItem(ctx, store.IssueItem{
 			IssueID: iss.ID, StoryID: storyID, Section: section,
-			Status: "approved", Origin: "manual",
+			Status: store.ItemApproved, Origin: "manual",
 			Position: nextPosition(r, iss.ID, section),
 		})
 		if err != nil {
@@ -475,7 +475,7 @@ func (s *Server) apiBlockRemove(w http.ResponseWriter, r *http.Request) {
 	var flags []store.Flag
 	if blk.Kind == "item" {
 		if it := doc.findItem(blk.Ref); it != nil && it.IssueItemID != 0 {
-			if err := db(r).SetIssueItemStatus(r.Context(), it.IssueItemID, "removed"); err != nil {
+			if err := db(r).SetIssueItemStatus(r.Context(), it.IssueItemID, store.ItemRemoved); err != nil {
 				apiDBErr(w, r, err, "issue")
 				return
 			}
@@ -538,7 +538,7 @@ func (s *Server) apiItemLinkOnly(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}

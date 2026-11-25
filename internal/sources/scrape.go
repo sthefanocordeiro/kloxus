@@ -14,6 +14,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // ScrapedPage is one page's readable content plus the metadata the
@@ -85,7 +88,7 @@ func (f FirecrawlScraper) client() *http.Client {
 	if f.HTTP != nil {
 		return f.HTTP
 	}
-	return &http.Client{Timeout: 60 * time.Second}
+	return httpx.Client(60 * time.Second)
 }
 
 func (f FirecrawlScraper) base() string {
@@ -150,7 +153,7 @@ func (f FirecrawlScraper) Scrape(ctx context.Context, rawURL string) (*ScrapedPa
 		if msg == "" {
 			msg = http.StatusText(resp.StatusCode)
 		}
-		return nil, fmt.Errorf("firecrawl scrape: %d: %s", resp.StatusCode, truncateStr(msg, 300))
+		return nil, fmt.Errorf("firecrawl scrape: %d: %s", resp.StatusCode, strutil.Truncate(msg, 300))
 	}
 	page := &ScrapedPage{
 		URL:         out.Data.Metadata.URL,
@@ -165,7 +168,7 @@ func (f FirecrawlScraper) Scrape(ctx context.Context, rawURL string) (*ScrapedPa
 		page.URL = rawURL
 	}
 	if out.Data.Metadata.Err != "" {
-		return page, fmt.Errorf("firecrawl scrape: page error: %s", truncateStr(out.Data.Metadata.Err, 200))
+		return page, fmt.Errorf("firecrawl scrape: page error: %s", strutil.Truncate(out.Data.Metadata.Err, 200))
 	}
 	return page, nil
 }

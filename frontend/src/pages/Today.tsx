@@ -8,7 +8,7 @@ import { cn } from "../lib/cn";
 import { fmtDate } from "../lib/fmt";
 import { errText, isRateLimited } from "../lib/errors";
 import { RateLimited } from "../components/RateLimited";
-import { Badge, Button, Card, SkeletonLine } from "../ui";
+import { Badge, Button, Card, SkeletonLine, Tick } from "../ui";
 import { useToday } from "./todayStrings";
 
 // Exported formats read as product names — same in pt and en.
@@ -132,9 +132,7 @@ export function Today() {
                 onClick={() => toggle(c.story_id)}
               >
                 <div className="flex items-start gap-3">
-                  <input
-                    type="checkbox"
-                    className="mt-1.5 h-5 w-5 shrink-0 cursor-pointer accent-teal"
+                  <Tick
                     aria-label={`${s.select}: ${c.title}`}
                     checked={pos >= 0}
                     onChange={() => toggle(c.story_id)}

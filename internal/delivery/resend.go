@@ -16,6 +16,7 @@ import (
 	resend "github.com/resend/resend-go/v4"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
 )
 
 // Message is one outgoing email plus its delivery metadata.
@@ -85,6 +86,7 @@ func NewLoopbackSender(endpoint, from string) (*Resend, error) {
 	// trailing slash would eat the last segment.
 	u, _ := url.Parse(strings.TrimSuffix(endpoint, "/") + "/")
 	c := resend.NewCustomClient(&http.Client{
+		Transport: httpx.Transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return errors.New("loopback mail transport must not redirect")
 		},
