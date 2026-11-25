@@ -121,7 +121,7 @@ func (s *Server) apiToday(w http.ResponseWriter, r *http.Request) {
 		}
 		pieces = append(pieces, pieceView{
 			ID: iss.ID, Number: iss.Number, Status: st,
-			Title:     s.pautaTitle(r, iss, pub, mustItems(r, iss.ID)),
+			Title:     s.pautaTitle(ctx, db(r), iss, pub, mustItems(r, iss.ID)),
 			CreatedAt: iss.CreatedAt, ExportedFormats: formats,
 		})
 	}

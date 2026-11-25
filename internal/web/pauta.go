@@ -22,6 +22,8 @@ import (
 const (
 	pautaMaxStories = 50
 	pautaMaxText    = 8000
+	// the pauta name doubles as mail subject and public page heading
+	pautaMaxTitle = 200
 )
 
 type pautaEntryIn struct {
@@ -32,6 +34,10 @@ type pautaEntryIn struct {
 type pautaIn struct {
 	Opening string         `json:"opening"`
 	Entries []pautaEntryIn `json:"entries"`
+	// nil leaves the pauta name alone; "" restores the automatic
+	// "first story title" name; anything else is the author's name
+	// (KLOX-199)
+	Title *string `json:"title"`
 }
 
 type pautaEntryView struct {
@@ -77,6 +83,9 @@ func (s *Server) savePauta(ctx context.Context, d *store.DB, iss *store.Issue, p
 	}
 	if len(in.Opening) > pautaMaxText {
 		return 400, "opening is too long"
+	}
+	if in.Title != nil && len(*in.Title) > pautaMaxTitle {
+		return 400, "title is too long"
 	}
 	secs := issueSections(iss, pub)
 	if len(secs) == 0 {
@@ -135,6 +144,30 @@ func (s *Server) savePauta(ctx context.Context, d *store.DB, iss *store.Issue, p
 		return 500, "could not save the opening"
 	}
 	iss.Commentary = comm
+
+	// KLOX-199: the name lives on the issue subject — an empty title
+	// restores the placeholder so the pauta goes back to being named
+	// by its first story; the exported text never reads the subject.
+	if in.Title != nil {
+		subject := strings.TrimSpace(*in.Title)
+		if subject == "" {
+			// clearing restores the automatic name: a subject that is
+			// still the creation placeholder keeps its own word
+			// ("edição"/"issue"); a renamed pauta goes back to the
+			// pauta-flow placeholder
+			if autoPautaSubject(iss) {
+				subject = iss.Subject
+			} else {
+				subject = fmt.Sprintf("%s — pauta %d", pub.Name, iss.Number)
+			}
+		}
+		if subject != iss.Subject {
+			if err := d.SetIssueSubject(ctx, iss.ID, subject); err != nil {
+				return 500, "could not save the name"
+			}
+			iss.Subject = subject
+		}
+	}
 
 	if len(in.Entries) == 0 {
 		if err := d.UpdateIssue(ctx, iss.ID, "drafted", fmt.Sprintf("# %s\n\n", iss.Subject), "[]"); err != nil {
@@ -237,6 +270,8 @@ func (s *Server) pautaView(ctx context.Context, d *store.DB, iss *store.Issue, p
 	return map[string]any{
 		"issue_id": iss.ID, "number": iss.Number, "status": iss.Status,
 		"opening": opening, "entries": entries,
+		// KLOX-199: the editor shows the same name the lists do
+		"title": s.pautaTitle(ctx, d, iss, pub, items),
 	}, entries, nil
 }
 

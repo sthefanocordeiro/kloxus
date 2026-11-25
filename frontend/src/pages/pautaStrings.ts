@@ -4,6 +4,8 @@ import { useT } from "../i18n";
 const pt = {
   loading: "Carregando…",
   title: "Escrever",
+  nameLabel: "Nome da pauta",
+  nameHint: "Clique para renomear",
   todayDest: "Notícias de hoje",
   hint: "Escreva do seu jeito sob cada notícia. Tudo é salvo sozinho.",
   opening: "Abertura (opcional)",
@@ -32,6 +34,8 @@ const pt = {
 const en: typeof pt = {
   loading: "Loading…",
   title: "Write",
+  nameLabel: "Brief name",
+  nameHint: "Click to rename",
   todayDest: "Today's news",
   hint: "Write in your own words under each story. Everything saves itself.",
   opening: "Opening (optional)",

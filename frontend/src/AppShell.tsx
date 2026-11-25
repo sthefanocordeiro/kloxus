@@ -34,7 +34,7 @@ const matchIssue = (pathname: string) =>
   matchPath("/pauta/:id", pathname) ??
   matchPath("/pauta/:id/export", pathname);
 
-function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: number, issuePubID?: number): Chrome {
+function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: number, issuePubID?: number, issueTitle?: string): Chrome {
   const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
   const issueM = matchIssue(pathname);
   const pub = pubM?.params.id;
@@ -54,7 +54,9 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
       label: t.publications,
       to: issuePubID ? `/publications/${issuePubID}` : "/publications",
     };
-    const pautaLabel = issueNumber ? `${t.issue} ${issueNumber}` : t.issue;
+    // KLOX-199: the pauta is named by its content everywhere — the
+    // same title the lists show, "Pauta N" only while it loads
+    const pautaLabel = issueTitle || (issueNumber ? `${t.issue} ${issueNumber}` : t.issue);
     if (pathname.endsWith("/export")) {
       return {
         title: t.nav.export,
@@ -108,7 +110,7 @@ export function AppShell() {
 
   const pub = pubQ.data?.publication;
   const latest = pubQ.data?.latest_issue;
-  const chrome = chromeFor(pathname, t, pub?.name, issue.data?.number, issue.data?.publication_id);
+  const chrome = chromeFor(pathname, t, pub?.name, issue.data?.number, issue.data?.publication_id, issue.data?.title);
   // Nav targets come from the URL pubId (or the issue's publication_id on
   // /pauta/:id), not the fetched entity — deriving them from `pub` left
   // every pub-scoped link pointing at /publications/<word> until pubQ

@@ -587,10 +587,15 @@ export interface PautaState {
   status: string;
   opening: string;
   entries: PautaEntry[];
+  // KLOX-199: the same name the lists show — the first story's title
+  // until the author renames it in the editor
+  title: string;
 }
 export interface PautaSave {
   opening: string;
   entries: { story_id: number; text: string }[];
+  // omitted leaves the name alone; "" restores the automatic name
+  title?: string;
 }
 
 export const api = {
