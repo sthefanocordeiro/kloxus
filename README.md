@@ -44,7 +44,7 @@ One loop, five screens — cadastro → Radar → notícias → escrever → exp
 | --- | --- |
 | **Sign up** | E-mail in, magic link out (Resend). No password, no form beyond the address. |
 | **Create your Radar** | Name it and say what you cover. Pick among **18 editorias** — from *política* and *economia* to *tecnologia*, *agronegócio* and *cultura*. Kloxus assigns the curated sources for you; one Radar per account. |
-| **Match** | A short calibration deck — real stories from the last 48 h. *Yes* / *No* on each one teaches the Radar your niche. |
+| **Match** | A short calibration deck — real stories from the last 48 h. *Yes* / *No* on each one teaches the Radar your sector. |
 | **Today's stories** | Every morning, a deck of stories from the feed catalog matched to your Radar — outlet and timestamp on each card. Tick what goes into the piece; 👍 / 👎 keeps training the match. The assembled brief also arrives by email at 7 a.m. |
 | **Write → Export** | The *pauta*: an optional opening plus one autosaved text box per story — your words only. Export to **4 formats**: LinkedIn post (3,000 chars), X post (280, auto thread split), rich-text HTML for newsletter/blog/intranet, or a `.md` download ready for Ghost, Notion and Obsidian. |
 
