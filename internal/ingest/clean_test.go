@@ -22,7 +22,7 @@ var boilerplateAnywhere = []*regexp.Regexp{
 }
 
 func TestCleanHTMLFeedBoilerplateRealSamples(t *testing.T) {
-	// stripCSS mirrors the catalog rows in migrations/0002_ingest.sql.
+	// stripCSS mirrors the catalog rows in migrations/0003_ingest.sql.
 	cases := []struct {
 		source   string
 		stripCSS []string

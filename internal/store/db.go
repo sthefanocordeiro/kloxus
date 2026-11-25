@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"sort"
@@ -173,6 +174,71 @@ func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *s
 // twice (duplicate pg_proc/pg_type entries).
 const migrateLockKey int64 = 0x6b6c6f787573
 
+// Migration contract (KLOX-222, DBA review M1):
+//
+//   - Files are named NNNN_descricao.sql and apply in lexical order.
+//     The NNNN prefix must be unique — a number is never reused. A
+//     collision meant apply order depended on filename sorting luck;
+//     boot now fails on a duplicate or malformed name instead.
+//   - schema_migrations.version stores the full file name, so renaming
+//     a file would make the runner re-apply it. migrationRenames maps
+//     each pre-renumber name to its current name and the row is
+//     rewritten on the next migrate, converging already-migrated
+//     databases. Entries are permanent — a database that skipped
+//     releases still needs the rename.
+//   - checksum is the sha256 hex of the file bytes, recorded at apply
+//     time. Rows recorded before checksums existed adopt the current
+//     file's hash on the first migrate after upgrade; a stored checksum
+//     that differs means an applied file was edited — boot fails
+//     instead of letting environments diverge silently.
+//   - Rows whose version matches no file are ignored: they cannot
+//     re-apply anything, and flagging them would brick a database that
+//     once ran a build shipping an extra file.
+var migrationRenames = map[string]string{
+	"0002_ingest.sql":                 "0003_ingest.sql",
+	"0002_llm_guards.sql":             "0004_llm_guards.sql",
+	"0002_story_dedupe_key.sql":       "0005_story_dedupe_key.sql",
+	"0003_candidate_set.sql":          "0006_candidate_set.sql",
+	"0004_test_send.sql":              "0007_test_send.sql",
+	"0005_ai_enrichment.sql":          "0008_ai_enrichment.sql",
+	"0005_issue_sections.sql":         "0009_issue_sections.sql",
+	"0006_composer_blocks.sql":        "0010_composer_blocks.sql",
+	"0007_newsletter_template.sql":    "0011_newsletter_template.sql",
+	"0008_aderencia.sql":              "0012_aderencia.sql",
+	"0008_daily_journal_pgvector.sql": "0013_daily_journal_pgvector.sql",
+	"0008_payments.sql":               "0014_payments.sql",
+	"0009_daily_journal_off.sql":      "0015_daily_journal_off.sql",
+	"0009_ranking_embeddings.sql":     "0016_ranking_embeddings.sql",
+	"0010_stage1_ranking.sql":         "0017_stage1_ranking.sql",
+	"0011_feedback_sections.sql":      "0018_feedback_sections.sql",
+	"0011_waitlist.sql":               "0019_waitlist.sql",
+	"0012_item_summaries.sql":         "0020_item_summaries.sql",
+	"0013_pauta_days.sql":             "0021_pauta_days.sql",
+	"0013_renditions.sql":             "0022_renditions.sql",
+	"0014_tabnews_off.sql":            "0023_tabnews_off.sql",
+	"0015_br_news_portals.sql":        "0024_br_news_portals.sql",
+	"0016_pauta_mail_days.sql":        "0025_pauta_mail_days.sql",
+	"0017_multi_editoria_sources.sql": "0026_multi_editoria_sources.sql",
+	"0018_issue_exports.sql":          "0027_issue_exports.sql",
+	"0018_story_feedback.sql":         "0028_story_feedback.sql",
+	"0019_issue_item_title.sql":       "0029_issue_item_title.sql",
+	"0020_store_integrity.sql":        "0030_store_integrity.sql",
+}
+
+// migrationNumber returns the NNNN prefix of a migration file name.
+func migrationNumber(name string) (string, bool) {
+	if len(name) < 6 || name[4] != '_' {
+		return "", false
+	}
+	p := name[:4]
+	for i := 0; i < 4; i++ {
+		if p[i] < '0' || p[i] > '9' {
+			return "", false
+		}
+	}
+	return p, true
+}
+
 func (p *Pool) migrate() error {
 	// The advisory lock is session-scoped, so hold it on a dedicated conn;
 	// the migrations themselves may run on other pooled conns.
@@ -191,6 +257,21 @@ func (p *Pool) migrate() error {
 	);`); err != nil {
 		return err
 	}
+	if _, err := p.db.Exec(`ALTER TABLE schema_migrations
+		ADD COLUMN IF NOT EXISTS checksum TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	// Converge versions recorded under pre-renumber names. The DELETE
+	// covers the pathological case where both names were recorded.
+	for old, cur := range migrationRenames {
+		if _, err := p.db.Exec(`DELETE FROM schema_migrations WHERE version = $1
+			AND EXISTS (SELECT 1 FROM schema_migrations WHERE version = $2)`, old, cur); err != nil {
+			return err
+		}
+		if _, err := p.db.Exec(`UPDATE schema_migrations SET version = $2 WHERE version = $1`, old, cur); err != nil {
+			return err
+		}
+	}
 	entries, err := migrations.FS.ReadDir(".")
 	if err != nil {
 		return err
@@ -202,29 +283,63 @@ func (p *Pool) migrate() error {
 		}
 	}
 	sort.Strings(names)
+	// Enforce the numbering contract before touching the database.
+	seen := map[string]string{}
 	for _, name := range names {
-		var applied int
-		if err := p.db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = $1`, name).Scan(&applied); err != nil {
-			return err
+		num, ok := migrationNumber(name)
+		if !ok {
+			return fmt.Errorf("migration file %q does not match the NNNN_descricao.sql contract", name)
 		}
-		if applied > 0 {
-			continue
+		if prev, dup := seen[num]; dup {
+			return fmt.Errorf("migration number %s is used by both %s and %s — numbers never repeat", num, prev, name)
 		}
+		seen[num] = name
+	}
+	// Validate every applied file (and adopt checksums on legacy rows)
+	// before applying anything pending, so a tampered file fails the
+	// boot instead of sitting under newly applied migrations.
+	var pending []struct {
+		name string
+		body []byte
+		sum  string
+	}
+	for _, name := range names {
 		body, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			return err
 		}
+		sum := fmt.Sprintf("%x", sha256.Sum256(body))
+		var stored string
+		err = p.db.QueryRow(`SELECT checksum FROM schema_migrations WHERE version = $1`, name).Scan(&stored)
+		switch {
+		case err == sql.ErrNoRows:
+			pending = append(pending, struct {
+				name string
+				body []byte
+				sum  string
+			}{name, body, sum})
+		case err != nil:
+			return err
+		case stored == "":
+			if _, err := p.db.Exec(`UPDATE schema_migrations SET checksum = $2 WHERE version = $1`, name, sum); err != nil {
+				return err
+			}
+		case stored != sum:
+			return fmt.Errorf("migration %s: file content changed after it was applied (stored checksum %s, file %s)", name, stored, sum)
+		}
+	}
+	for _, m := range pending {
 		tx, err := p.db.Begin()
 		if err != nil {
 			return err
 		}
-		for _, stmt := range splitStatements(string(body)) {
+		for _, stmt := range splitStatements(string(m.body)) {
 			if _, err := tx.Exec(stmt); err != nil {
 				tx.Rollback()
-				return fmt.Errorf("migration %s: %w", name, err)
+				return fmt.Errorf("migration %s: %w", m.name, err)
 			}
 		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, name); err != nil {
+		if _, err := tx.Exec(`INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)`, m.name, m.sum); err != nil {
 			tx.Rollback()
 			return err
 		}
