@@ -1,11 +1,12 @@
 You are building the story list for the next issue of "{{.Publication}}".
 
 Audience: {{.Audience}}
-Sections available (in order): {{range .Sections}}"{{.Title}}" ({{.Items}} items, commentary {{.Commentary}}) {{end}}
+Sections available (in order): {{range .Sections}}"{{.Title}}" ({{.Items}} items{{if .Topic}}, topic "{{.Topic}}"{{end}}, commentary {{.Commentary}}) {{end}}
 
 Editorial line:
 {{.EditorialLine}}
-{{if .Guide}}
+{{if .RejectTerms}}Reject terms — never pick stories about: {{.RejectTerms}}
+{{end}}{{if .Guide}}
 Editorial guide:
 {{.Guide}}
 {{end}}
