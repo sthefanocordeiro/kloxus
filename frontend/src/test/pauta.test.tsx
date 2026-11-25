@@ -163,13 +163,13 @@ describe("Escrever (KLOX-168)", () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const first = renderPage(qc);
     await screen.findByRole("link", { name: "Primeira" });
-    fireEvent.click(screen.getByRole("button", { name: "Comment: Primeira" }));
-    fireEvent.change(screen.getByLabelText("Your comment: Primeira"), { target: { value: "Minha nota" } });
+    fireEvent.click(screen.getByRole("button", { name: "Write: Primeira" }));
+    fireEvent.change(screen.getByLabelText("Your text: Primeira"), { target: { value: "Minha nota" } });
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
 
     first.unmount();
     renderPage(qc);
-    expect(await screen.findByLabelText("Your comment: Primeira")).toHaveValue("Minha nota");
+    expect(await screen.findByLabelText("Your text: Primeira")).toHaveValue("Minha nota");
   });
 
   // KLOX-233: a reload (or a dismissed leave-warning) must not drop the
