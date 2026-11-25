@@ -1,15 +1,91 @@
 package web
 
 import (
+	"context"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/testdb"
+	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
+
+// fetchFunc adapts a function to sources.Fetcher.
+type fetchFunc func(ctx context.Context, typ, url string) ([]sources.RawItem, error)
+
+func (f fetchFunc) Fetch(ctx context.Context, typ, url string) ([]sources.RawItem, error) {
+	return f(ctx, typ, url)
+}
+
+// TestShutdownCancelsAndDrainsRuns: a pipeline run in flight is tied to
+// the server's lifecycle — Shutdown cancels its context (the fetch below
+// only unblocks on cancellation) and waits for the goroutine to report
+// itself done, instead of exiting mid-run.
+func TestShutdownCancelsAndDrainsRuns(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.WS(t)
+	pubID, err := db.SeedPublication(ctx, &config.Publication{
+		Name:     "Shutdown Test",
+		Slug:     "shutdown-test",
+		Sections: []config.Section{{Title: "Main", Items: 1, Commentary: "none"}},
+		Sources:  []config.SourceDef{{Type: "rss", URL: "fixtures/feed.xml"}},
+	})
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	pub, err := db.GetPublication(ctx, strconv.FormatInt(pubID, 10))
+	if err != nil {
+		t.Fatalf("GetPublication: %v", err)
+	}
+	wsm := workspace.OpenLocal(db, nil)
+
+	fetchCtx := make(chan context.Context, 1)
+	srv := New(Deps{
+		WS:  wsm,
+		Cfg: &config.Config{Mode: "demo", ModelTriage: "t", ModelDraft: "d", MaxDeepDives: 1},
+		Fetcher: fetchFunc(func(ctx context.Context, _, _ string) ([]sources.RawItem, error) {
+			select {
+			case fetchCtx <- ctx:
+			default:
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}),
+		Monitor: sources.FakeMonitor{},
+	})
+	st := srv.startRun(wsm.Local(), pub)
+	var runCtx context.Context
+	select {
+	case runCtx = <-fetchCtx:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not reach the fetcher")
+	}
+	shCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shCtx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if err := runCtx.Err(); err != context.Canceled {
+		t.Fatalf("run ctx err = %v, want context.Canceled", err)
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !st.st.Done {
+		t.Fatalf("run not drained after shutdown: %+v", st.st)
+	}
+
+	// an idle server shuts down immediately
+	if err := New(Deps{}).Shutdown(ctx); err != nil {
+		t.Fatalf("idle Shutdown: %v", err)
+	}
+}
 
 // TestRemoveInItemDropsCitationMarker: removing a flagged sentence
 // must take its trailing "[n]" too — no orphaned citation left behind.

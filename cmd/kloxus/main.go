@@ -13,11 +13,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
@@ -408,16 +410,20 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		Monitor: deps.monitor, Scraper: deps.scraper, Mailer: deps.mailer, Seed: seed, Pool: pool,
 		Pay: deps.pay,
 	})
-	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
+	// The schedulers share the shutdown signal so a detached sweep
+	// can't outlive the process's decision to exit.
+	stop, stopNotify := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopNotify()
+	go srv.RunScheduler(stop, pool, 20*time.Second)
 	// The daily pauta sweep (KLOX-123 Block 2): builds each active
 	// radar's "pauta de hoje" at 06:30 America/Sao_Paulo and mails the
 	// "sua pauta de hoje está pronta" note to claimed radars at 07:00.
-	go srv.RunDailyPauta(context.Background(), pool, time.Minute)
+	go srv.RunDailyPauta(stop, pool, time.Minute)
 	// one pooled conn stays warm so the remote pooler never reaps
 	// every handle between requests (KLOX-47 p95 latency criteria)
-	go pool.KeepAlive(context.Background(), time.Minute)
+	go pool.KeepAlive(stop, time.Minute)
 	if cfg.IngestEnabled {
-		startIngest(context.Background(), cfg, pool, provider)
+		startIngest(stop, cfg, pool, provider)
 	}
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)
@@ -430,7 +436,23 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	return httpSrv.ListenAndServe()
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.ListenAndServe() }()
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop.Done():
+		fmt.Println("shutting down…")
+	}
+	// One shared deadline covers both drains: the HTTP server stops
+	// listening and waits out in-flight requests while the detached
+	// pipeline runs get cancelled and waited on.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Shutdown(ctx) }()
+	err = httpSrv.Shutdown(ctx)
+	return errors.Join(err, <-runDone)
 }
 
 func openBrowser(url string) {
