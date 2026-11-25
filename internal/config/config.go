@@ -127,111 +127,172 @@ type Config struct {
 	RerankFloor     float64 // KLOXUS_RERANK_FLOOR; 0 disables the cut
 }
 
+// envVar is one row of the declarative env→Config table: the variable
+// name, its fallback and the Config field it fills. An empty def means
+// "no fallback" — secrets and credentials stay empty unless set.
+type envVar struct {
+	key string
+	def string
+	dst func(*Config) *string
+}
+
+type envIntVar struct {
+	key string
+	def int
+	dst func(*Config) *int
+}
+
+type envFloatVar struct {
+	key string
+	def float64
+	dst func(*Config) *float64
+}
+
+var envStrings = []envVar{
+	{"KLOXUS_MODE", "demo", func(c *Config) *string { return &c.Mode }},
+	{"KLOXUS_BIND", "127.0.0.1", func(c *Config) *string { return &c.Bind }},
+	{"DATABASE_URL", "", func(c *Config) *string { return &c.DatabaseURL }},
+	{"KLOXUS_OUT_DIR", "out", func(c *Config) *string { return &c.OutDir }},
+	{"ANTHROPIC_API_KEY", "", func(c *Config) *string { return &c.AnthropicAPIKey }},
+	{"KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5", func(c *Config) *string { return &c.ModelTriage }},
+	{"KLOXUS_MODEL_DRAFT", "claude-haiku-5-5", func(c *Config) *string { return &c.ModelDraft }},
+	{"KLOXUS_LLM_MODE", "auto", func(c *Config) *string { return &c.LLMMode }},
+	{"KLOXUS_ADMIN_TOKEN", "", func(c *Config) *string { return &c.AdminToken }},
+	{"KLOXUS_MASTER_KEY", "", func(c *Config) *string { return &c.MasterKey }},
+	{"RESEND_API_KEY", "", func(c *Config) *string { return &c.ResendAPIKey }},
+	{"KLOXUS_FROM_ADDRESS", "", func(c *Config) *string { return &c.FromAddress }},
+	{"KLOXUS_FAKE_RESEND_URL", "", func(c *Config) *string { return &c.FakeResendURL }},
+	{"FIRECRAWL_API_KEY", "", func(c *Config) *string { return &c.FirecrawlAPIKey }},
+	{"ABACATEPAY_API_KEY", "", func(c *Config) *string { return &c.AbacatePayKey }},
+	{"ABACATEPAY_WEBHOOK_SECRET", "", func(c *Config) *string { return &c.AbacatePayWebhookSecret }},
+	{"VOYAGE_API_SECRET", "", func(c *Config) *string { return &c.VoyageKey }},
+	{"KLOXUS_EMBED_PROVIDER", "voyage", func(c *Config) *string { return &c.EmbedProvider }},
+	{"KLOXUS_EMBED_MODEL", "voyage-4-lite", func(c *Config) *string { return &c.EmbedModel }},
+	{"KLOXUS_RERANK_PROVIDER", "voyage", func(c *Config) *string { return &c.RerankProvider }},
+	{"KLOXUS_RERANK_MODEL", "rerank-2.5-lite", func(c *Config) *string { return &c.RerankModel }},
+	{"KLOXUS_PUBLIC_URL", "", func(c *Config) *string { return &c.PublicURL }},
+	{"KLOXUS_WEBHOOK_SECRET", "", func(c *Config) *string { return &c.WebhookSecret }},
+	{"KLOXUS_DATA_DIR", "", func(c *Config) *string { return &c.DataDir }},
+	{"KLOXUS_COOKIE_SECRET", "", func(c *Config) *string { return &c.CookieSecret }},
+	{"RESEND_WEBHOOK_SECRET", "", func(c *Config) *string { return &c.ResendWebhookSecret }},
+}
+
+var envInts = []envIntVar{
+	{"KLOXUS_PORT", 8080, func(c *Config) *int { return &c.Port }},
+	{"KLOXUS_MAX_DEEP_DIVES", 3, func(c *Config) *int { return &c.MaxDeepDives }},
+	{"KLOXUS_RUNS_PER_DAY", 2, func(c *Config) *int { return &c.RunsPerDay }},
+	{"KLOXUS_TOKENS_PER_RUN", 200000, func(c *Config) *int { return &c.TokensPerRun }},
+	{"KLOXUS_PAID_ACTIONS_PER_DAY", 5, func(c *Config) *int { return &c.PaidActionsPerDay }},
+	{"KLOXUS_RERANKS_PER_DAY", 2, func(c *Config) *int { return &c.ReranksPerDay }},
+	{"KLOXUS_CITECHECKS_PER_EDITION", 3, func(c *Config) *int { return &c.CiteChecksPerEdition }},
+	{"KLOXUS_SCRAPES_PER_DAY", 5, func(c *Config) *int { return &c.ScrapesPerDay }},
+	{"KLOXUS_VOYAGE_EMBED_RPM", 1000, func(c *Config) *int { return &c.VoyageEmbedRPM }},
+	{"KLOXUS_VOYAGE_EMBED_TPM", 8000000, func(c *Config) *int { return &c.VoyageEmbedTPM }},
+	{"KLOXUS_VOYAGE_RERANK_RPM", 1000, func(c *Config) *int { return &c.VoyageRerankRPM }},
+	{"KLOXUS_VOYAGE_RERANK_TPM", 2000000, func(c *Config) *int { return &c.VoyageRerankTPM }},
+	{"KLOXUS_RERANK_K", 100, func(c *Config) *int { return &c.RerankK }},
+	{"KLOXUS_EMAIL_DAILY_CAP", 80, func(c *Config) *int { return &c.EmailDailyCap }},
+	{"KLOXUS_EMAIL_WS_DAILY_CAP", 25, func(c *Config) *int { return &c.EmailWorkspaceDailyCap }},
+}
+
+var envFloats = []envFloatVar{
+	{"KLOXUS_LLM_RUN_CAP_USD", 0.25, func(c *Config) *float64 { return &c.LLMRunCap }},
+	{"KLOXUS_LLM_DAILY_CAP_USD", 1.00, func(c *Config) *float64 { return &c.LLMDailyCap }},
+	{"KLOXUS_EMBED_DAILY_USD", 0.05, func(c *Config) *float64 { return &c.EmbedDailyUSD }},
+	{"KLOXUS_RERANK_DAILY_USD", 0.10, func(c *Config) *float64 { return &c.RerankDailyUSD }},
+	{"KLOXUS_RERANK_FLOOR", 0, func(c *Config) *float64 { return &c.RerankFloor }},
+}
+
 // Load reads .env (if present, without overriding real env vars) then env.
 // KLOXUS_NO_DOTENV skips the file entirely — verification runs set it so an
 // inherited .env can never leak credentials or endpoints into the process.
 func Load() (*Config, error) {
-	if os.Getenv("KLOXUS_NO_DOTENV") == "" {
-		if f, err := os.Open(".env"); err == nil {
-			for k, v := range parseDotEnv(f) {
-				if _, exists := os.LookupEnv(k); !exists {
-					os.Setenv(k, v)
-				}
-			}
-			f.Close()
-		}
+	loadDotEnv()
+	cfg := &Config{}
+	for _, e := range envStrings {
+		*e.dst(cfg) = getenv(e.key, e.def)
 	}
-	cfg := &Config{
-		Mode:                    getenv("KLOXUS_MODE", "demo"),
-		Port:                    getint("KLOXUS_PORT", 8080),
-		Bind:                    getenv("KLOXUS_BIND", "127.0.0.1"),
-		DatabaseURL:             os.Getenv("DATABASE_URL"),
-		OutDir:                  getenv("KLOXUS_OUT_DIR", "out"),
-		AnthropicAPIKey:         os.Getenv("ANTHROPIC_API_KEY"),
-		ModelTriage:             getenv("KLOXUS_MODEL_TRIAGE", "claude-haiku-5-5"),
-		ModelDraft:              getenv("KLOXUS_MODEL_DRAFT", "claude-haiku-5-5"),
-		MaxDeepDives:            getint("KLOXUS_MAX_DEEP_DIVES", 3),
-		LLMMode:                 getenv("KLOXUS_LLM_MODE", "auto"),
-		RunsPerDay:              getint("KLOXUS_RUNS_PER_DAY", 2),
-		TokensPerRun:            getint("KLOXUS_TOKENS_PER_RUN", 200000),
-		LLMRunCap:               getfloat("KLOXUS_LLM_RUN_CAP_USD", 0.25),
-		LLMDailyCap:             getfloat("KLOXUS_LLM_DAILY_CAP_USD", 1.00),
-		PaidActionsPerDay:       getint("KLOXUS_PAID_ACTIONS_PER_DAY", 5),
-		ReranksPerDay:           getint("KLOXUS_RERANKS_PER_DAY", 2),
-		CiteChecksPerEdition:    getint("KLOXUS_CITECHECKS_PER_EDITION", 3),
-		LLMKillEnv:              os.Getenv("KLOXUS_LLM_KILL") != "",
-		AdminToken:              os.Getenv("KLOXUS_ADMIN_TOKEN"),
-		MasterKey:               os.Getenv("KLOXUS_MASTER_KEY"),
-		ResendAPIKey:            os.Getenv("RESEND_API_KEY"),
-		FromAddress:             os.Getenv("KLOXUS_FROM_ADDRESS"),
-		FakeResendURL:           os.Getenv("KLOXUS_FAKE_RESEND_URL"),
-		FirecrawlAPIKey:         os.Getenv("FIRECRAWL_API_KEY"),
-		ScrapesPerDay:           getint("KLOXUS_SCRAPES_PER_DAY", 5),
-		AbacatePayKey:           os.Getenv("ABACATEPAY_API_KEY"),
-		AbacatePayWebhookSecret: os.Getenv("ABACATEPAY_WEBHOOK_SECRET"),
-		VoyageKey:       os.Getenv("VOYAGE_API_SECRET"),
-		EmbedProvider:   getenv("KLOXUS_EMBED_PROVIDER", "voyage"),
-		EmbedModel:      getenv("KLOXUS_EMBED_MODEL", "voyage-4-lite"),
-		VoyageEmbedRPM:  getint("KLOXUS_VOYAGE_EMBED_RPM", 1000),
-		VoyageEmbedTPM:  getint("KLOXUS_VOYAGE_EMBED_TPM", 8000000),
-		VoyageRerankRPM: getint("KLOXUS_VOYAGE_RERANK_RPM", 1000),
-		VoyageRerankTPM: getint("KLOXUS_VOYAGE_RERANK_TPM", 2000000),
-		EmbedDailyUSD:   getfloat("KLOXUS_EMBED_DAILY_USD", 0.05),
-		RerankDailyUSD:  getfloat("KLOXUS_RERANK_DAILY_USD", 0.10),
-		RerankProvider:  getenv("KLOXUS_RERANK_PROVIDER", "voyage"),
-		RerankModel:     getenv("KLOXUS_RERANK_MODEL", "rerank-2.5-lite"),
-		RerankK:         getint("KLOXUS_RERANK_K", 100),
-		RerankFloor:     getfloat("KLOXUS_RERANK_FLOOR", 0),
-		PublicURL:       os.Getenv("KLOXUS_PUBLIC_URL"),
-		WebhookSecret:   os.Getenv("KLOXUS_WEBHOOK_SECRET"),
-		DataDir:         os.Getenv("KLOXUS_DATA_DIR"),
-		CookieSecret:    os.Getenv("KLOXUS_COOKIE_SECRET"),
+	for _, e := range envInts {
+		*e.dst(cfg) = getint(e.key, e.def)
+	}
+	for _, e := range envFloats {
+		*e.dst(cfg) = getfloat(e.key, e.def)
+	}
+	cfg.LLMKillEnv = os.Getenv("KLOXUS_LLM_KILL") != ""
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	cfg.applyDerived()
+	return cfg, nil
+}
 
-		ResendWebhookSecret:    os.Getenv("RESEND_WEBHOOK_SECRET"),
-		EmailDailyCap:          getint("KLOXUS_EMAIL_DAILY_CAP", 80),
-		EmailWorkspaceDailyCap: getint("KLOXUS_EMAIL_WS_DAILY_CAP", 25),
+// loadDotEnv folds .env into the process environment without overriding
+// variables that are already set.
+func loadDotEnv() {
+	if os.Getenv("KLOXUS_NO_DOTENV") != "" {
+		return
 	}
-	if cfg.Mode != "demo" && cfg.Mode != "real" {
-		return nil, fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", cfg.Mode)
+	f, err := os.Open(".env")
+	if err != nil {
+		return
 	}
-	if cfg.LLMMode != "auto" && cfg.LLMMode != "off" {
-		return nil, fmt.Errorf("KLOXUS_LLM_MODE must be \"auto\" or \"off\", got %q", cfg.LLMMode)
-	}
-	if cfg.ResendAPIKey != "" {
-		if err := ValidFromAddress(cfg.FromAddress); err != nil {
-			return nil, err
+	defer f.Close()
+	for k, v := range parseDotEnv(f) {
+		if _, exists := os.LookupEnv(k); !exists {
+			os.Setenv(k, v)
 		}
 	}
-	if cfg.FakeResendURL != "" {
-		if cfg.ResendAPIKey != "" {
-			return nil, fmt.Errorf("KLOXUS_FAKE_RESEND_URL and RESEND_API_KEY are mutually exclusive — the verification transport never carries a real credential")
-		}
-		if err := ValidateLoopbackEndpoint(cfg.FakeResendURL); err != nil {
-			return nil, fmt.Errorf("KLOXUS_FAKE_RESEND_URL: %w", err)
-		}
-		if err := ValidFromAddress(cfg.FromAddress); err != nil {
-			return nil, err
+}
+
+// validate rejects combinations no run can survive: an unknown mode and
+// a mail transport that cannot be trusted end to end.
+func (c *Config) validate() error {
+	if c.Mode != "demo" && c.Mode != "real" {
+		return fmt.Errorf("KLOXUS_MODE must be \"demo\" or \"real\", got %q", c.Mode)
+	}
+	if c.LLMMode != "auto" && c.LLMMode != "off" {
+		return fmt.Errorf("KLOXUS_LLM_MODE must be \"auto\" or \"off\", got %q", c.LLMMode)
+	}
+	if c.ResendAPIKey != "" {
+		if err := ValidFromAddress(c.FromAddress); err != nil {
+			return err
 		}
 	}
+	if c.FakeResendURL != "" {
+		if c.ResendAPIKey != "" {
+			return fmt.Errorf("KLOXUS_FAKE_RESEND_URL and RESEND_API_KEY are mutually exclusive — the verification transport never carries a real credential")
+		}
+		if err := ValidateLoopbackEndpoint(c.FakeResendURL); err != nil {
+			return fmt.Errorf("KLOXUS_FAKE_RESEND_URL: %w", err)
+		}
+		if err := ValidFromAddress(c.FromAddress); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyDerived resolves the env-driven feature flags that depend on the
+// parsed mode or carry multi-value on/off spellings.
+func (c *Config) applyDerived() {
 	// Real mode ingests by default; KLOXUS_INGEST=0/opt-out disables it.
 	// Demo mode stays fixture-only unless explicitly opted in.
-	cfg.IngestEnabled = cfg.Mode == "real"
+	c.IngestEnabled = c.Mode == "real"
 	if v := os.Getenv("KLOXUS_INGEST"); v != "" {
-		cfg.IngestEnabled = v == "1" || v == "true" || v == "yes"
+		c.IngestEnabled = v == "1" || v == "true" || v == "yes"
 	}
 	// Daily Journal is opt-in since KLOX-114 — off by default;
 	// KLOXUS_INGEST_DAILY_JOURNAL=1 re-enables it for a re-seeded
 	// 'daily-journal' catalog row.
-	cfg.DailyJournalEnabled = false
+	c.DailyJournalEnabled = false
 	if v := os.Getenv("KLOXUS_INGEST_DAILY_JOURNAL"); v != "" {
-		cfg.DailyJournalEnabled = v == "1" || v == "true" || v == "yes"
+		c.DailyJournalEnabled = v == "1" || v == "true" || v == "yes"
 	}
-	cfg.PublishingEnabled = false
+	c.PublishingEnabled = false
 	switch strings.ToLower(os.Getenv("KLOXUS_PUBLISHING")) {
 	case "on", "1", "true", "yes":
-		cfg.PublishingEnabled = true
+		c.PublishingEnabled = true
 	}
-	return cfg, nil
 }
 
 // ValidateLoopbackEndpoint restricts a URL to a literal loopback HTTP

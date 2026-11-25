@@ -18,6 +18,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/delivery"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
@@ -449,319 +450,376 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 	return parseIssueDocument(iss, pub, dc), nil
 }
 
-// parseIssueDocument renders the structured document from the stored
-// body — a pure transform over the issue and a preloaded context, so a
-// mutation handler can answer with the post-write document without a
-// second round of dossier/item queries.
-func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext) *issueDocument {
-	// The document — and every consumer holding doc.pub — works from
-	// the edition's own section snapshot, so builder edits made after
-	// the run never rewrite an in-progress issue (KLOX-65).
-	pub = pubWithIssueSections(iss, pub)
-	doc := &issueDocument{
-		IssueID: iss.ID, Number: iss.Number, Status: iss.Status, Subject: iss.Subject,
-		Version: docVersion(iss), Sections: []docSection{},
-		dctx: dc, pub: pub,
-	}
+// docFlagIndex groups flags by (item ref, raw sentence text),
+// preserving flag order: each parsed sentence claims its flag, and the
+// ones no sentence claims may attach to their item in stored order.
+type docFlagIndex struct {
+	bySentence map[int64]map[string]store.Flag
+	order      map[int64][]store.Flag
+}
 
-	// flags by (item ref, raw sentence text), preserving flag order
-	flags := map[int64]map[string]store.Flag{}
-	flagOrder := map[int64][]store.Flag{}
-	for _, f := range iss.Flags {
-		if flags[f.Item] == nil {
-			flags[f.Item] = map[string]store.Flag{}
+func indexDocFlags(fl []store.Flag) docFlagIndex {
+	idx := docFlagIndex{
+		bySentence: map[int64]map[string]store.Flag{},
+		order:      map[int64][]store.Flag{},
+	}
+	for _, f := range fl {
+		if idx.bySentence[f.Item] == nil {
+			idx.bySentence[f.Item] = map[string]store.Flag{}
 		}
-		flags[f.Item][f.Sentence] = f
-		flagOrder[f.Item] = append(flagOrder[f.Item], f)
+		idx.bySentence[f.Item][f.Sentence] = f
+		idx.order[f.Item] = append(idx.order[f.Item], f)
 	}
+	return idx
+}
 
-	secMode := map[string]string{}
-	secFormat := map[string]string{}
+// pubSectionIndex maps section title → section config from the
+// edition's section snapshot, so the body parser resolves a `## `
+// heading's commentary mode and format in one lookup.
+func pubSectionIndex(pub *store.Publication) map[string]config.Section {
+	idx := make(map[string]config.Section, len(pub.Sections))
 	for _, sc := range pub.Sections {
-		secMode[sc.Title] = sc.Commentary
-		secFormat[sc.Title] = sc.Format
+		idx[sc.Title] = sc
 	}
-	commentary := iss.Commentary
-	if commentary == nil {
-		commentary = map[string]string{}
-	}
+	return idx
+}
 
-	var sec *docSection
-	var item *docItem
-	var textLines []string // stored fact lines of the running item
-	usedIDs := map[string]int{}
-	// liveFlags counts the stored flags that still describe the
-	// document: a flag keyed to a sentence is live while that sentence
-	// exists; an "entry has no citations" flag is live while the item
-	// still has an uncited fact. A flag matching nothing would block
-	// approval with no UI path to clear it — it is stale and must not
-	// count (KLOX-52).
-	liveFlags := 0
-	finishItem := func(end int) {
-		if item == nil {
-			return
-		}
-		item.spanEnd = end
-		item.Text = joinItemText(textLines)
-		textLines = nil
-		uncited := 0
-		for _, sn := range item.Sentences {
-			if sn.Kind == "fact" && len(sn.Citations) == 0 {
-				uncited++
-			}
-		}
-		// attach flags that matched no sentence to the item itself —
-		// only while they still hold (see liveFlags above)
-		for _, f := range flagOrder[int64(item.Ref)] {
-			if _, still := flags[int64(item.Ref)][f.Sentence]; !still {
-				continue
-			}
-			if f.Note == "entry has no citations" && uncited > 0 {
-				item.Flags = append(item.Flags, docItemFlag{Sentence: f.Sentence, Note: f.Note})
-				liveFlags++
-			}
-		}
-		item = nil
-	}
-	addSentence := func(raw, kind string) {
-		if item == nil {
-			return
-		}
-		var text string
-		if kind == "interpretation" {
-			text = interpretationText(raw)
-		} else {
-			text = displayText(raw)
-		}
-		sn := docSentence{
-			Text: text, Kind: kind,
-			Citations: citationRefs(raw), raw: raw,
-		}
-		if sn.Citations == nil {
-			sn.Citations = []int{}
-		}
-		base := sentenceID(item.Ref, raw)
-		occ := usedIDs[base]
-		usedIDs[base]++
-		sn.ID = base
-		if occ > 0 {
-			sn.ID = fmt.Sprintf("%s.%d", base, occ+1)
-		}
-		if kind == "fact" {
-			for _, ref := range sn.Citations {
-				sn.Evidence = append(sn.Evidence, docEvidence{
-					Ref:     ref,
-					Excerpt: bestEvidence(item.dossier, ref, text, item.openings[ref]),
-				})
-			}
-		}
-		if f, ok := flags[int64(item.Ref)][raw]; ok {
-			sn.Flag = &docFlag{Note: f.Note}
-			delete(flags[int64(item.Ref)], raw)
-			liveFlags++
-		} else if kind == "fact" && len(sn.Citations) == 0 {
-			// an uncited fact blocks approval whether or not a stored
-			// flag reached it (legacy bodies, restores without
-			// citations, drafts written before the flag rule) — give it
-			// the same flag treatment so the editor always has
-			// Edit / interpretation / Remove to clear it (KLOX-52)
-			sn.Flag = &docFlag{Note: "sentence has no citation"}
-		}
-		item.Sentences = append(item.Sentences, sn)
-	}
-	pos := 0         // byte offset of the current line inside the body
-	textRun := false // previous line extended a section text block
-	lines := strings.Split(iss.BodyMD, "\n")
+// docBodyParser walks the stored markdown body line by line, growing
+// the document's sections, items, blocks and sentences. sec and item
+// point at the section/item currently being filled; textLines keeps
+// the running item's stored fact lines for its single Text field;
+// usedIDs disambiguates identical sentences inside one item;
+// liveFlags counts the stored flags that still describe the document:
+// a flag keyed to a sentence is live while that sentence exists; an
+// "entry has no citations" flag is live while the item still has an
+// uncited fact. A flag matching nothing would block approval with no
+// UI path to clear it — it is stale and must not count (KLOX-52).
+type docBodyParser struct {
+	doc        *issueDocument
+	dc         *docContext
+	flags      docFlagIndex
+	sections   map[string]config.Section
+	commentary map[string]string
+
+	sec       *docSection
+	item      *docItem
+	textLines []string // stored fact lines of the running item
+	usedIDs   map[string]int
+	liveFlags int
+	textRun   bool // previous line extended a section text block
+}
+
+func (p *docBodyParser) parse(body string) {
+	pos := 0 // byte offset of the current line inside the body
+	lines := strings.Split(body, "\n")
 	for li := 0; li < len(lines); li++ {
 		line := lines[li]
 		t := strings.TrimSpace(line)
-		wasText := textRun
-		textRun = false
+		wasText := p.textRun
+		p.textRun = false
 		if m := docSectionRe.FindStringSubmatch(t); m != nil {
-			finishItem(pos)
-			if sec != nil {
-				sec.spanEnd = pos
+			p.finishItem(pos)
+			p.startSection(m[1], pos, line)
+		} else if m := docItemRe.FindStringSubmatch(t); m != nil {
+			p.finishItem(pos)
+			p.startItem(m[1], m[2], m[3], pos)
+		} else if p.sec != nil && headingBlockLine(t) {
+			p.finishItem(pos)
+			p.addHeadingBlock(t, pos, line)
+		} else if p.sec != nil && p.item != nil && strings.HasPrefix(t, "<!--") {
+			// An `<!-- /item -->` marker closes the running item
+			// (KLOX-66): `> ` inside an item is an interpretation
+			// sentence, so an author text block that follows an item
+			// can only be told from one by an explicit boundary — the
+			// block ops write it.
+			p.finishItem(pos)
+		} else {
+			// An embed fence opens a section-level block too — it
+			// closes a running item the same way, but the line itself
+			// still parses as a block below.
+			if p.sec != nil && p.item != nil && t == delivery.EmbedFenceOpen {
+				p.finishItem(pos)
 			}
-			mode := secMode[m[1]]
-			if mode == "" {
-				mode = "none"
-			}
-			doc.Sections = append(doc.Sections, docSection{
-				Title: m[1], Format: secFormat[m[1]],
-				Commentary: docCommentary{Mode: mode, Text: commentary[m[1]]},
-				Items:      []docItem{}, Blocks: []docBlock{},
-				spanStart: pos + len(line) + 1, spanEnd: -1,
-			})
-			sec = &doc.Sections[len(doc.Sections)-1]
-			pos += len(line) + 1
-			continue
-		}
-		if m := docItemRe.FindStringSubmatch(t); m != nil {
-			finishItem(pos)
-			if sec == nil {
-				doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"},
-					Items: []docItem{}, Blocks: []docBlock{}, spanStart: 0, spanEnd: -1})
-				sec = &doc.Sections[len(doc.Sections)-1]
-			}
-			ref, _ := strconv.Atoi(m[2])
-			it := docItem{Ref: ref, Headline: m[1], spanStart: pos, openings: map[int]string{},
-				LinkOnly: m[3] == "link", Sentences: []docSentence{}, Sources: []docSource{}}
-			if info, ok := dc.byRef[ref]; ok {
-				it.IssueItemID = info.issueItemID
-				it.dossier = info.dossier
-				it.AIDraft = info.aiDraft
-				for _, ds := range info.dossier.Sources {
-					src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
-					if ds.ItemID != 0 {
-						if stored, ok := dc.items[ds.ItemID]; ok {
-							src.Excerpt = strutil.Truncate(stored.ContentText, excerptMaxLen)
-							src.Date = stored.PublishedAt
-							it.openings[ds.Ref] = src.Excerpt
-							if src.Name == "" {
-								src.Name = stored.SourceName
-							}
-						}
-					}
-					it.Sources = append(it.Sources, src)
-				}
-			}
-			sec.Items = append(sec.Items, it)
-			item = &sec.Items[len(sec.Items)-1]
-			sec.Blocks = append(sec.Blocks, docBlock{Kind: "item", Ref: ref,
-				spanStart: pos, spanEnd: pos})
-			pos += len(line) + 1
-			continue
-		}
-		// A `###`/`####` line without an item marker is an author
-		// heading block — it always closes the running item (KLOX-66).
-		if sec != nil && (strings.HasPrefix(t, "#### ") ||
-			(strings.HasPrefix(t, "### ") && docItemRe.FindStringSubmatch(t) == nil)) {
-			finishItem(pos)
-			hd := strings.TrimSpace(t[strings.Index(t, " ")+1:])
-			sec.Blocks = append(sec.Blocks, docBlock{Kind: "heading", Text: hd,
-				spanStart: pos, spanEnd: pos + len(line)})
-			pos += len(line) + 1
-			continue
-		}
-		// An `<!-- /item -->` marker closes the running item (KLOX-66):
-		// `> ` inside an item is an interpretation sentence, so an
-		// author text block that follows an item can only be told from
-		// one by an explicit boundary — the block ops write it. An
-		// embed fence opens a section-level block too — it closes a
-		// running item the same way, but the line itself still parses
-		// as a block below.
-		if sec != nil && item != nil && strings.HasPrefix(t, "<!--") {
-			finishItem(pos)
-			pos += len(line) + 1
-			continue
-		}
-		if sec != nil && item != nil && t == delivery.EmbedFenceOpen {
-			finishItem(pos)
-		}
-		// Section-level layout blocks (KLOX-66): divider, link-list,
-		// image, embed and author text live between items. Inside an
-		// item nothing changes — `> ` stays an interpretation sentence
-		// and other marks are folded into the item's span as before.
-		// Before the first `##` they land in the untitled leading
-		// section (KLOX-72) — template header blocks like the banner
-		// stay ordinary composer blocks addressed as (section="", i).
-		if item == nil {
-			// The untitled leading section (KLOX-72) is created lazily —
-			// only when the line actually opens a fence or parses as a
-			// block, so the `#` title line and structural noise before
-			// the first `##` never leave an empty section behind.
-			leadSection := func() {
-				if sec == nil {
-					doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"},
-						Items: []docItem{}, Blocks: []docBlock{}, spanStart: 0, spanEnd: -1})
-					sec = &doc.Sections[len(doc.Sections)-1]
-				}
-			}
-			if t == delivery.EmbedFenceOpen {
-				// multi-line embed block: sanitized HTML lives between
-				// the fence lines. An unclosed fence is stray markup —
-				// skip only its opening line.
-				liStart := li
-				cur := pos + len(line) + 1
-				var inner []string
-				closed := false
-				for li+1 < len(lines) {
-					li++
-					nl := lines[li]
-					if strings.TrimSpace(nl) == delivery.EmbedFenceClose {
-						closed = true
-						break
-					}
-					inner = append(inner, nl)
-					cur += len(nl) + 1
-				}
-				if closed {
-					// re-sanitize on read: a fence that reached the
-					// body past the write path (legacy bodies, a
-					// bypassed guard) is served sanitized too, so raw
-					// markup never reaches the composer canvas
-					leadSection()
-					sec.Blocks = append(sec.Blocks, docBlock{Kind: "embed",
-						Text:      delivery.SanitizeEmbed(strings.Join(inner, "\n")),
-						spanStart: pos, spanEnd: cur + len(lines[li])})
-					pos = cur + len(lines[li]) + 1
-				} else {
-					li = liStart
-					pos += len(line) + 1
-				}
+			if p.item == nil {
+				li, pos = p.addSectionBlock(lines, li, pos, wasText)
 				continue
 			}
-			blk, isBlock := parseBlockLine(t)
-			if isBlock {
-				leadSection()
-				if blk.Kind == "text" && wasText && len(sec.Blocks) > 0 &&
-					sec.Blocks[len(sec.Blocks)-1].Kind == "text" {
-					// contiguous `> ` lines are one multi-paragraph
-					// text block — a blank line splits them
-					last := &sec.Blocks[len(sec.Blocks)-1]
-					last.Text += "\n" + blk.Text
-					last.spanEnd = pos + len(line)
-					textRun = true
-					pos += len(line) + 1
-					continue
-				}
-				blk.spanStart, blk.spanEnd = pos, pos+len(line)
-				sec.Blocks = append(sec.Blocks, blk)
-				textRun = blk.Kind == "text"
-			}
-			pos += len(line) + 1
-			continue
-		}
-		switch {
-		case t == "":
-			// the author's own line breaks: invisible to the
-			// sentence parser, preserved in the item's text
-			textLines = append(textLines, "")
-		case strings.HasPrefix(t, "#"), strings.HasPrefix(t, "**"),
-			strings.HasPrefix(t, "-"), strings.HasPrefix(t, "_"):
-			// headings, source lists, emphasis-only lines
-		case strings.HasPrefix(t, "> "):
-			addSentence(t, "interpretation")
-		default:
-			textLines = append(textLines, t)
-			for _, piece := range pipeline.SplitSentences(t) {
-				piece = strings.TrimSpace(piece)
-				if !strings.ContainsFunc(piece, unicode.IsLetter) {
-					continue
-				}
-				addSentence(piece, "fact")
-			}
+			p.addContent(t)
 		}
 		pos += len(line) + 1
 	}
-	finishItem(len(iss.BodyMD))
-	if sec != nil {
-		sec.spanEnd = len(iss.BodyMD)
+	p.finishItem(len(body))
+	if p.sec != nil {
+		p.sec.spanEnd = len(body)
 	}
-	// align each item block's span with its item — the item's end is
-	// only known once finishItem ran for it.
-	for si := range doc.Sections {
-		sec := &doc.Sections[si]
+	p.alignBlockSpans()
+}
+
+// headingBlockLine reports whether a `###`/`####` line carries no item
+// marker — it is an author heading block, which always closes the
+// running item (KLOX-66).
+func headingBlockLine(t string) bool {
+	return strings.HasPrefix(t, "#### ") ||
+		(strings.HasPrefix(t, "### ") && docItemRe.FindStringSubmatch(t) == nil)
+}
+
+// leadSection returns the section being filled, creating the untitled
+// leading section (KLOX-72) lazily — only when a line actually opens a
+// fence, parses as a block or starts an item, so the `#` title line
+// and structural noise before the first `##` never leave an empty
+// section behind.
+func (p *docBodyParser) leadSection() *docSection {
+	if p.sec == nil {
+		p.doc.Sections = append(p.doc.Sections, docSection{
+			Title: "", Commentary: docCommentary{Mode: "none"},
+			Items: []docItem{}, Blocks: []docBlock{}, spanStart: 0, spanEnd: -1,
+		})
+		p.sec = &p.doc.Sections[len(p.doc.Sections)-1]
+	}
+	return p.sec
+}
+
+// startSection opens a "## title" section with the commentary mode and
+// format its title carries in the edition's section snapshot.
+func (p *docBodyParser) startSection(title string, pos int, line string) {
+	if p.sec != nil {
+		p.sec.spanEnd = pos
+	}
+	sc := p.sections[title]
+	mode := sc.Commentary
+	if mode == "" {
+		mode = "none"
+	}
+	p.doc.Sections = append(p.doc.Sections, docSection{
+		Title: title, Format: sc.Format,
+		Commentary: docCommentary{Mode: mode, Text: p.commentary[title]},
+		Items:      []docItem{}, Blocks: []docBlock{},
+		spanStart: pos + len(line) + 1, spanEnd: -1,
+	})
+	p.sec = &p.doc.Sections[len(p.doc.Sections)-1]
+}
+
+// startItem opens a "### headline <!-- item N -->" item: its span
+// starts at the heading, its sources come from the dossier and it
+// appends the matching item block. An item before any "## " lands in
+// the untitled leading section.
+func (p *docBodyParser) startItem(headline, refText, marker string, pos int) {
+	p.leadSection()
+	ref, _ := strconv.Atoi(refText)
+	it := docItem{Ref: ref, Headline: headline, spanStart: pos, openings: map[int]string{},
+		LinkOnly: marker == "link", Sentences: []docSentence{}, Sources: []docSource{}}
+	if info, ok := p.dc.byRef[ref]; ok {
+		it.IssueItemID = info.issueItemID
+		it.dossier = info.dossier
+		it.AIDraft = info.aiDraft
+		p.loadItemSources(&it, info.dossier)
+	}
+	p.sec.Items = append(p.sec.Items, it)
+	p.item = &p.sec.Items[len(p.sec.Items)-1]
+	p.sec.Blocks = append(p.sec.Blocks, docBlock{Kind: "item", Ref: ref,
+		spanStart: pos, spanEnd: pos})
+}
+
+// loadItemSources fills the item's source list and article openings
+// from its dossier: each source carries the stored article's opening
+// excerpt and date so citation evidence has a fallback passage.
+func (p *docBodyParser) loadItemSources(it *docItem, dossier *pipeline.Dossier) {
+	for _, ds := range dossier.Sources {
+		src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
+		if ds.ItemID != 0 {
+			if stored, ok := p.dc.items[ds.ItemID]; ok {
+				src.Excerpt = strutil.Truncate(stored.ContentText, excerptMaxLen)
+				src.Date = stored.PublishedAt
+				it.openings[ds.Ref] = src.Excerpt
+				if src.Name == "" {
+					src.Name = stored.SourceName
+				}
+			}
+		}
+		it.Sources = append(it.Sources, src)
+	}
+}
+
+// finishItem closes the current item's span at end, joins its stored
+// fact lines into the single Text field, and attaches the flags that
+// matched no sentence to the item itself — only while they still hold
+// (see liveFlags on docBodyParser).
+func (p *docBodyParser) finishItem(end int) {
+	if p.item == nil {
+		return
+	}
+	p.item.spanEnd = end
+	p.item.Text = joinItemText(p.textLines)
+	p.textLines = nil
+	uncited := 0
+	for _, sn := range p.item.Sentences {
+		if sn.Kind == "fact" && len(sn.Citations) == 0 {
+			uncited++
+		}
+	}
+	for _, f := range p.flags.order[int64(p.item.Ref)] {
+		if _, still := p.flags.bySentence[int64(p.item.Ref)][f.Sentence]; !still {
+			continue
+		}
+		if f.Note == "entry has no citations" && uncited > 0 {
+			p.item.Flags = append(p.item.Flags, docItemFlag{Sentence: f.Sentence, Note: f.Note})
+			p.liveFlags++
+		}
+	}
+	p.item = nil
+}
+
+// addSentence parses one raw stored sentence into the current item:
+// display text, citations with their evidence, deduplicated id, and
+// the flag matching its raw text.
+func (p *docBodyParser) addSentence(raw, kind string) {
+	if p.item == nil {
+		return
+	}
+	var text string
+	if kind == "interpretation" {
+		text = interpretationText(raw)
+	} else {
+		text = displayText(raw)
+	}
+	sn := docSentence{
+		Text: text, Kind: kind,
+		Citations: citationRefs(raw), raw: raw,
+	}
+	if sn.Citations == nil {
+		sn.Citations = []int{}
+	}
+	base := sentenceID(p.item.Ref, raw)
+	occ := p.usedIDs[base]
+	p.usedIDs[base]++
+	sn.ID = base
+	if occ > 0 {
+		sn.ID = fmt.Sprintf("%s.%d", base, occ+1)
+	}
+	if kind == "fact" {
+		for _, ref := range sn.Citations {
+			sn.Evidence = append(sn.Evidence, docEvidence{
+				Ref:     ref,
+				Excerpt: bestEvidence(p.item.dossier, ref, text, p.item.openings[ref]),
+			})
+		}
+	}
+	if f, ok := p.flags.bySentence[int64(p.item.Ref)][raw]; ok {
+		sn.Flag = &docFlag{Note: f.Note}
+		delete(p.flags.bySentence[int64(p.item.Ref)], raw)
+		p.liveFlags++
+	} else if kind == "fact" && len(sn.Citations) == 0 {
+		// an uncited fact blocks approval whether or not a stored
+		// flag reached it (legacy bodies, restores without
+		// citations, drafts written before the flag rule) — give it
+		// the same flag treatment so the editor always has
+		// Edit / interpretation / Remove to clear it (KLOX-52)
+		sn.Flag = &docFlag{Note: "sentence has no citation"}
+	}
+	p.item.Sentences = append(p.item.Sentences, sn)
+}
+
+// addContent routes one body line inside an item: blank lines keep the
+// author's own line breaks (invisible to the sentence parser,
+// preserved in the item's text), `> ` blocks parse as interpretation
+// sentences, and remaining text splits into fact sentences — headings,
+// source lists and emphasis-only lines are structural noise.
+func (p *docBodyParser) addContent(t string) {
+	switch {
+	case t == "":
+		p.textLines = append(p.textLines, "")
+	case strings.HasPrefix(t, "#"), strings.HasPrefix(t, "**"),
+		strings.HasPrefix(t, "-"), strings.HasPrefix(t, "_"):
+		// headings, source lists, emphasis-only lines
+	case strings.HasPrefix(t, "> "):
+		p.addSentence(t, "interpretation")
+	default:
+		p.textLines = append(p.textLines, t)
+		for _, piece := range pipeline.SplitSentences(t) {
+			piece = strings.TrimSpace(piece)
+			if !strings.ContainsFunc(piece, unicode.IsLetter) {
+				continue
+			}
+			p.addSentence(piece, "fact")
+		}
+	}
+}
+
+// addHeadingBlock appends an author heading block for a `###`/`####`
+// line with no item marker.
+func (p *docBodyParser) addHeadingBlock(t string, pos int, line string) {
+	hd := strings.TrimSpace(t[strings.Index(t, " ")+1:])
+	p.sec.Blocks = append(p.sec.Blocks, docBlock{Kind: "heading", Text: hd,
+		spanStart: pos, spanEnd: pos + len(line)})
+}
+
+// addSectionBlock parses one line outside any item as a section-level
+// layout block (KLOX-66): divider, link-list, image, embed and author
+// text live between items. Returns the line index and byte offset to
+// continue from — a closed embed fence consumes several lines.
+func (p *docBodyParser) addSectionBlock(lines []string, li, pos int, wasText bool) (int, int) {
+	line := lines[li]
+	if strings.TrimSpace(line) == delivery.EmbedFenceOpen {
+		return p.addEmbedBlock(lines, li, pos)
+	}
+	blk, isBlock := parseBlockLine(strings.TrimSpace(line))
+	if !isBlock {
+		return li, pos + len(line) + 1
+	}
+	p.leadSection()
+	if blk.Kind == "text" && wasText && len(p.sec.Blocks) > 0 &&
+		p.sec.Blocks[len(p.sec.Blocks)-1].Kind == "text" {
+		// contiguous `> ` lines are one multi-paragraph text block —
+		// a blank line splits them
+		last := &p.sec.Blocks[len(p.sec.Blocks)-1]
+		last.Text += "\n" + blk.Text
+		last.spanEnd = pos + len(line)
+		p.textRun = true
+		return li, pos + len(line) + 1
+	}
+	blk.spanStart, blk.spanEnd = pos, pos+len(line)
+	p.sec.Blocks = append(p.sec.Blocks, blk)
+	p.textRun = blk.Kind == "text"
+	return li, pos + len(line) + 1
+}
+
+// addEmbedBlock consumes a multi-line embed block: sanitized HTML
+// lives between the fence lines. An unclosed fence is stray markup —
+// only its opening line is skipped. Returns the line index and byte
+// offset to continue from.
+func (p *docBodyParser) addEmbedBlock(lines []string, li, pos int) (int, int) {
+	liStart := li
+	cur := pos + len(lines[li]) + 1
+	var inner []string
+	closed := false
+	for li+1 < len(lines) {
+		li++
+		nl := lines[li]
+		if strings.TrimSpace(nl) == delivery.EmbedFenceClose {
+			closed = true
+			break
+		}
+		inner = append(inner, nl)
+		cur += len(nl) + 1
+	}
+	if !closed {
+		return liStart, pos + len(lines[liStart]) + 1
+	}
+	// re-sanitize on read: a fence that reached the body past the
+	// write path (legacy bodies, a bypassed guard) is served
+	// sanitized too, so raw markup never reaches the composer canvas
+	p.leadSection()
+	p.sec.Blocks = append(p.sec.Blocks, docBlock{Kind: "embed",
+		Text:      delivery.SanitizeEmbed(strings.Join(inner, "\n")),
+		spanStart: pos, spanEnd: cur + len(lines[li])})
+	return li, cur + len(lines[li]) + 1
+}
+
+// alignBlockSpans aligns each item block's span with its item — the
+// item's end is only known once finishItem ran for it.
+func (p *docBodyParser) alignBlockSpans() {
+	for si := range p.doc.Sections {
+		sec := &p.doc.Sections[si]
 		bi := 0
 		for i := range sec.Items {
 			for bi < len(sec.Blocks) && sec.Blocks[bi].Kind != "item" {
@@ -775,10 +833,12 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			bi++
 		}
 	}
+}
 
-	// sections with required commentary that carry no items still matter
-	// for the readiness checklist — include them even when the body has
-	// no section heading yet.
+// appendCommentarySections adds publication sections the body has no
+// heading for: sections with required commentary that carry no items
+// still matter for the readiness checklist.
+func appendCommentarySections(doc *issueDocument, pub *store.Publication, commentary map[string]string) {
 	for _, sc := range pub.Sections {
 		found := false
 		for _, ds := range doc.Sections {
@@ -795,24 +855,61 @@ func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext
 			})
 		}
 	}
+}
 
+// coverageOf counts the always-visible coverage summary: ok counts
+// fact sentences that are cited and unflagged — the counter shows
+// ok/total.
+func coverageOf(doc *issueDocument, liveFlags int) docCoverage {
+	var cov docCoverage
 	for _, s := range doc.Sections {
 		for _, it := range s.Items {
 			for _, sn := range it.Sentences {
 				if sn.Kind != "fact" {
 					continue
 				}
-				doc.Coverage.Total++
+				cov.Total++
 				if len(sn.Citations) > 0 {
-					doc.Coverage.Cited++
+					cov.Cited++
 					if sn.Flag == nil {
-						doc.Coverage.Ok++
+						cov.Ok++
 					}
 				}
 			}
 		}
 	}
-	doc.Coverage.Flagged = liveFlags
+	cov.Flagged = liveFlags
+	return cov
+}
+
+// parseIssueDocument renders the structured document from the stored
+// body — a pure transform over the issue and a preloaded context, so a
+// mutation handler can answer with the post-write document without a
+// second round of dossier/item queries.
+func parseIssueDocument(iss *store.Issue, pub *store.Publication, dc *docContext) *issueDocument {
+	// The document — and every consumer holding doc.pub — works from
+	// the edition's own section snapshot, so builder edits made after
+	// the run never rewrite an in-progress issue (KLOX-65).
+	pub = pubWithIssueSections(iss, pub)
+	doc := &issueDocument{
+		IssueID: iss.ID, Number: iss.Number, Status: iss.Status, Subject: iss.Subject,
+		Version: docVersion(iss), Sections: []docSection{},
+		dctx: dc, pub: pub,
+	}
+	commentary := iss.Commentary
+	if commentary == nil {
+		commentary = map[string]string{}
+	}
+	p := &docBodyParser{
+		doc: doc, dc: dc,
+		flags:      indexDocFlags(iss.Flags),
+		sections:   pubSectionIndex(pub),
+		commentary: commentary,
+		usedIDs:    map[string]int{},
+	}
+	p.parse(iss.BodyMD)
+	appendCommentarySections(doc, pub, commentary)
+	doc.Coverage = coverageOf(doc, p.liveFlags)
 	return doc
 }
 
