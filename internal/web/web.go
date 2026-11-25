@@ -1154,6 +1154,17 @@ func (s *Server) flagEdit(w http.ResponseWriter, r *http.Request) {
 
 var refRe = regexp.MustCompile(`\[\d+\]`)
 
+const (
+	// citecheckMaxTokens bounds the single-sentence citecheck recheck —
+	// it returns one small JSON verdict object.
+	citecheckMaxTokens = 512
+
+	// groundedMinSim is the fraction of a flagged sentence's content
+	// words that must appear in the cited sources' facts (or summary)
+	// for the deterministic fallback to call it supported.
+	groundedMinSim = 0.6
+)
+
 // editSupported re-runs the citation check on an edited sentence: the
 // model verdict when available (real mode), otherwise a deterministic
 // overlap check against the dossier facts that carry the cited refs —
@@ -1192,7 +1203,7 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef i
 	})
 	if err == nil {
 		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
-			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
+			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: citecheckMaxTokens,
 		}); err == nil {
 			if json.Unmarshal([]byte(resp.Text), &checks) == nil && len(checks) > 0 {
 				return checks[0].Verdict == "ok"
@@ -1223,7 +1234,7 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, itemRef i
 			hit++
 		}
 	}
-	return content > 0 && float64(hit)/float64(content) >= 0.6
+	return content > 0 && float64(hit)/float64(content) >= groundedMinSim
 }
 
 // dossierForItem returns the dossier of the issue item whose dossier ref

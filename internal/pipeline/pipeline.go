@@ -28,6 +28,40 @@ import (
 //go:embed prompts
 var promptFS embed.FS
 
+// Prompt-size limits, output budgets and step caps. Each name carries
+// the reason for the value so a change is deliberate, not a typo.
+const (
+	// callMaxTokens bounds output of the JSON-producing pipeline steps —
+	// every prompt asks for a single JSON object, and 8k output tokens
+	// stays well above the largest expected reply while capping the
+	// cost of a runaway completion.
+	callMaxTokens = 8192
+
+	// triageSnippetMaxLen caps each story excerpt in the triage prompt
+	// so dozens of stories fit in context without one long article
+	// crowding the rest out.
+	triageSnippetMaxLen = 400
+
+	// dossierSourceMaxLen caps each source's text sent to the dossier,
+	// deepdive and alternative-dossier prompts: enough for lede and
+	// body without spending the context on a whole article.
+	dossierSourceMaxLen = 1200
+
+	// fetchErrorMaxLen caps the message stored on a source after a
+	// failed fetch — it surfaces in the sources list, where a long
+	// error would dominate the layout.
+	fetchErrorMaxLen = 120
+
+	// flagExcerptMaxLen caps the draft excerpt attached to a
+	// no-citations flag so the flagged list stays scannable.
+	flagExcerptMaxLen = 120
+
+	// deepDiveCap bounds how many top-scored items get the extra
+	// deepdive pass; each dive is a full model call over all of the
+	// item's sources, so it stays small regardless of lineup size.
+	deepDiveCap = 3
+)
+
 // Steps is the canonical pipeline order, shared with progress displays.
 var Steps = []string{
 	"collect", "dedupe", "triage", "storylist", "dossier", "deepdive", "draft", "citecheck",
@@ -143,7 +177,7 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 	if err != nil {
 		return llm.Response{}, err
 	}
-	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: 8192}
+	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: callMaxTokens}
 	resp, err := r.LLM.Complete(ctx, req)
 	if err != nil {
 		return resp, err
@@ -250,7 +284,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		}
 		raw, err := r.Fetcher.Fetch(ctx, s.Type, s.URL)
 		if err != nil {
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+truncate(err.Error(), 120))
+			r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+truncate(err.Error(), fetchErrorMaxLen))
 			continue // one bad source must not abort the run
 		}
 		n, err := r.DB.SaveItems(ctx, s.ID, raw, dedupe.Canonical)
@@ -359,7 +393,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	for i, s := range stories {
 		snip := ""
 		if len(s.Items) > 0 {
-			snip = truncate(s.Items[0].ContentText, 400)
+			snip = truncate(s.Items[0].ContentText, triageSnippetMaxLen)
 		}
 		ts[i] = triStory{Ref: i + 1, Title: s.Title, Outlets: strings.Join(s.Outlets(), ", "), Snippet: snip}
 	}
@@ -498,7 +532,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	dItems := make([]dItem, len(entries))
 	for i, e := range entries {
 		for j, it := range e.sources {
-			dItems[i].Sources = append(dItems[i].Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+			dItems[i].Sources = append(dItems[i].Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, dossierSourceMaxLen)})
 		}
 		dItems[i].Ref = e.ref
 		dItems[i].Title = e.title
@@ -537,8 +571,8 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 	r.stepStart("deepdive")
 	start = time.Now()
 	topN := r.MaxDeepDives
-	if topN <= 0 || topN > 3 {
-		topN = 3
+	if topN <= 0 || topN > deepDiveCap {
+		topN = deepDiveCap
 	}
 	sorted := append([]entry{}, entries...)
 	sort.Slice(sorted, func(a, b int) bool { return sorted[a].score > sorted[b].score })
@@ -558,7 +592,7 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		dj, _ := json.Marshal(d)
 		di := ddItem{Ref: e.ref, Title: e.title, Dossier: string(dj)}
 		for j, it := range e.sources {
-			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, dossierSourceMaxLen)})
 		}
 		ddItems = append(ddItems, di)
 	}
@@ -909,7 +943,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	for _, e := range entries {
 		de, ok := draftByRef[e.ref]
 		if ok && !refRe.MatchString(de.body) {
-			addFlag(int64(e.ref), truncate(de.body, 120), "entry has no citations")
+			addFlag(int64(e.ref), truncate(de.body, flagExcerptMaxLen), "entry has no citations")
 		}
 	}
 	flagsJSON, _ := json.Marshal(res.Flagged)
@@ -1254,7 +1288,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	}
 	var srcs []dSrc
 	for j, it := range cand.Items {
-		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, dossierSourceMaxLen)})
 	}
 	var dossiers []Dossier
 	resp, err := r.call(ctx, r.DraftModel, "dossier", map[string]any{

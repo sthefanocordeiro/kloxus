@@ -15,6 +15,18 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
+const (
+	// guideMaxTokens bounds guide generation — the guide is a short
+	// editorial charter, not a long-form document.
+	guideMaxTokens = 2048
+
+	// ruleDupMinSim is the token-Jaccard threshold above which two
+	// rejection rules merge as near-duplicates: high enough to fold
+	// differently-worded variants of one objection together without
+	// collapsing genuinely different objections.
+	ruleDupMinSim = 0.6
+)
+
 // Rebuild regenerates the guide from the publication's decisions.
 // Preferred path: the model condenses decisions into rules. Demo-mode
 // fallback (no fixture can cover arbitrary judge input): normalize and
@@ -73,7 +85,7 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 	}
 
 	resp, err := provider.Complete(ctx, llm.Request{
-		Model: model, Template: "guide", User: user, MaxTokens: 2048,
+		Model: model, Template: "guide", User: user, MaxTokens: guideMaxTokens,
 	})
 	var content string
 	switch {
@@ -116,7 +128,7 @@ func buildGuide(reasons []string) string {
 			// superset of the other, or two+ shared content bigrams —
 			// the same objection in different words (the shorter, more
 			// general phrasing wins).
-			if jaccard(t, rt) >= 0.6 || subset(t, rt) || subset(rt, t) ||
+			if jaccard(t, rt) >= ruleDupMinSim || subset(t, rt) || subset(rt, t) ||
 				sharedBigrams(bg, bigramList[i]) >= 2 {
 				dup = i
 				break

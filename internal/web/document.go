@@ -120,6 +120,11 @@ var (
 	docCiteRe    = regexp.MustCompile(`\[(\d+)\]`)
 )
 
+// excerptMaxLen caps excerpts in the document model (opening paragraph,
+// source excerpt) — enough to orient the reader, short enough for the
+// card layout.
+const excerptMaxLen = 320
+
 // docVersion is the document's optimistic-concurrency token: a hash of
 // everything a mutation may touch (body, flags, commentary, status).
 // Every document mutation must send it back; a stale value → conflict.
@@ -293,7 +298,7 @@ func bestEvidence(d *pipeline.Dossier, ref int, sentence, fallback string) strin
 	if best == "" {
 		return fallback
 	}
-	return truncateStr(best, 320)
+	return truncateStr(best, excerptMaxLen)
 }
 
 // buildIssueDocument parses the stored issue body into the structured
@@ -435,7 +440,7 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 					src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
 					if ds.ItemID != 0 {
 						if stored, err := d.GetItem(ctx, ds.ItemID); err == nil {
-							src.Excerpt = truncateStr(stored.ContentText, 320)
+							src.Excerpt = truncateStr(stored.ContentText, excerptMaxLen)
 							src.Date = stored.PublishedAt
 							it.openings[ds.Ref] = src.Excerpt
 							if src.Name == "" {

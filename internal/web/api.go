@@ -1010,6 +1010,11 @@ type apiCandidate struct {
 // actually draft — replay fixtures only exist for the top of the list.
 const demoCandidateCap = 14
 
+// storySnippetMaxLen caps a member article's excerpt in the story
+// response — long enough to judge the story, short enough for the
+// bench's card layout.
+const storySnippetMaxLen = 400
+
 func (s *Server) apiCandidates(w http.ResponseWriter, r *http.Request) {
 	iss, err := s.apiIssueID(r)
 	if apiDBErr(w, r, err, "issue") {
@@ -1235,7 +1240,7 @@ func (s *Server) apiStory(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]any{
 			"id": it.ID, "title": it.Title, "url": "/a/" + fmt.Sprint(it.ID),
 			"outlet": n, "published_at": it.PublishedAt,
-			"snippet": truncateStr(it.ContentText, 400),
+			"snippet": truncateStr(it.ContentText, storySnippetMaxLen),
 		})
 	}
 	apiJSON(w, 200, map[string]any{
