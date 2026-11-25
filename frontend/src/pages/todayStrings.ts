@@ -4,13 +4,12 @@ import { useT } from "../i18n";
 // landing chunk (KLOX-16 budget). KLOX-168: the list is for choosing.
 const pt = {
   title: "Notícias de hoje",
-  hint: "Marque as notícias que quer no seu texto. Sim e Não ensinam o radar.",
+  hint: "Clique numa notícia para colocá-la no seu texto. 👍 e 👎 só ensinam o radar.",
   loading: "Buscando as notícias…",
   empty: "Sem notícia nova agora — volte mais tarde ou revise suas fontes no Radar.",
   select: "Selecionar notícia",
-  write: "Escrever",
-  yes: "Sim",
-  no: "Não",
+  more: "Mais disso",
+  less: "Menos disso",
   outlets: "{n} veículos",
   hoursAgo: "há {n} h",
   selected: "{n} notícias selecionadas",
@@ -26,13 +25,12 @@ const pt = {
 
 const en: typeof pt = {
   title: "Today's news",
-  hint: "Tick the stories you want in your text. Yes and No teach the radar.",
+  hint: "Click a story to put it in your text. 👍 and 👎 only teach the radar.",
   loading: "Fetching the news…",
   empty: "No new stories right now — come back later or review your sources in Radar.",
   select: "Select story",
-  write: "Write",
-  yes: "Yes",
-  no: "No",
+  more: "More of this",
+  less: "Less of this",
   outlets: "{n} outlets",
   hoursAgo: "{n} h ago",
   selected: "{n} stories selected",

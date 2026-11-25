@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiRequestError, pautaPath, type PautaCard, type PieceRow } from "../api";
 import { useT } from "../i18n";
+import { cn } from "../lib/cn";
 import { fmtDate } from "../lib/fmt";
 import { errText, isRateLimited } from "../lib/errors";
 import { RateLimited } from "../components/RateLimited";
@@ -18,10 +20,9 @@ const FORMAT_LABEL: Record<string, string> = {
 };
 
 // /publications/:id/today — Notícias de hoje (KLOX-168): the day's news
-// for the radar with a checkbox on every card and Sim/Não (training
-// continues). The ticking order becomes the text order; "Montar pauta →"
-// opens the Escrever page. "Escrever" on a card (KLOX-162) marks it.
-// No model is called here.
+// for the radar. Clicking a card ticks it (KLOX-200) — the ticking order
+// becomes the text order — and the thumbs keep training the radar.
+// "Montar pauta →" opens the Escrever page. No model is called here.
 export function Today() {
   const { id } = useParams();
   const { t, lang } = useT();
@@ -30,7 +31,7 @@ export function Today() {
   const qc = useQueryClient();
   const key = ["today", id];
   const q = useQuery({ queryKey: key, queryFn: () => api.today(id!), staleTime: 60_000 });
-  // answered cards: Não leaves the list, Sim stays marked
+  // answered cards: thumbs-down leaves the list, thumbs-up stays marked
   const [gone, setGone] = useState<Set<number>>(new Set());
   const [liked, setLiked] = useState<Set<number>>(new Set());
   // story ids in the order they were ticked
@@ -115,7 +116,11 @@ export function Today() {
           const pos = picked.indexOf(c.story_id);
           return (
             <li key={c.story_id}>
-              <Card className="p-4" data-testid="today-card">
+              <Card
+                className={cn("cursor-pointer p-4", pos >= 0 && "border-teal")}
+                data-testid="today-card"
+                onClick={() => toggle(c.story_id)}
+              >
                 <div className="flex items-start gap-3">
                   <input
                     type="checkbox"
@@ -123,6 +128,7 @@ export function Today() {
                     aria-label={`${s.select}: ${c.title}`}
                     checked={pos >= 0}
                     onChange={() => toggle(c.story_id)}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <div className="min-w-0 flex-1">
                     <h2 className="font-display text-lg font-semibold leading-snug">
@@ -141,29 +147,36 @@ export function Today() {
                     {c.summary && <p className="mt-2 text-sm">{c.summary}</p>}
                   </div>
                 </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2 pl-8">
+                {/* KLOX-200: Sim/Não became small thumbs — they only
+                    train the radar, they do not tick the card */}
+                <div className="mt-3 flex items-center gap-2 pl-8">
                   <Button
-                    size="sm"
+                    size="icon"
                     variant="outline"
+                    title={s.more}
+                    aria-label={`${s.more}: ${c.title}`}
                     aria-pressed={liked.has(c.story_id)}
                     disabled={answer.isPending || liked.has(c.story_id)}
-                    onClick={() => answer.mutate({ c, a: "yes" })}
+                    className={cn(liked.has(c.story_id) && "bg-teal-soft text-teal")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      answer.mutate({ c, a: "yes" });
+                    }}
                   >
-                    {liked.has(c.story_id) ? `✓ ${s.yes}` : s.yes}
+                    <ThumbsUp className="h-4 w-4" />
                   </Button>
-                  <Button size="sm" variant="outline" disabled={answer.isPending} onClick={() => answer.mutate({ c, a: "no" })}>
-                    {s.no}
-                  </Button>
-                  {/* KLOX-162: "Escrever" marks the card in this choose
-                      step — same as ticking its checkbox */}
                   <Button
-                    size="sm"
+                    size="icon"
                     variant="outline"
-                    aria-label={`${s.write}: ${c.title}`}
-                    disabled={pos >= 0}
-                    onClick={() => setPicked((p) => (p.includes(c.story_id) ? p : [...p, c.story_id]))}
+                    title={s.less}
+                    aria-label={`${s.less}: ${c.title}`}
+                    disabled={answer.isPending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      answer.mutate({ c, a: "no" });
+                    }}
                   >
-                    {s.write}
+                    <ThumbsDown className="h-4 w-4" />
                   </Button>
                 </div>
               </Card>
