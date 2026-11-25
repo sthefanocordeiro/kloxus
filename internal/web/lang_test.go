@@ -36,7 +36,7 @@ func TestClaimMailCarriesLang(t *testing.T) {
 		if err != nil {
 			t.Fatalf("OutboxEmails: %v", err)
 		}
-		mail, err := db.GetMail(ctx, mails[len(mails)-1].ID)
+		mail, err := db.GetMail(ctx, mails[0].ID)
 		if err != nil {
 			t.Fatalf("GetMail: %v", err)
 		}
