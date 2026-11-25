@@ -239,6 +239,10 @@ export interface PautaCard {
   topics: string[];
   url: string;
   age_hours: number | null;
+  // stable feedback ids echoed back on Sim/Não — the answer still
+  // lands when the stories table was rebuilt since the card was
+  // dealt (KLOX-236)
+  feedback_keys?: string[];
 }
 
 export type RenditionFormat = "linkedin" | "x" | "html" | "markdown";
@@ -387,8 +391,9 @@ export const api = {
     request<{ publication: Publication; sources: SourceRow[] }>("POST", "/api/v1/radar", { name, about: topics, niches }),
   calibration: (pubID: number | string) =>
     request<{ cards: PautaCard[]; window_hours: number }>("POST", `/api/v1/publications/${pubID}/calibration`).then((r) => r.cards),
-  calibrationAnswer: (pubID: number | string, storyID: number, answer: "yes" | "no") =>
-    request<{ ok: boolean }>("POST", `/api/v1/publications/${pubID}/calibration/answer`, { story_id: storyID, answer }),
+  calibrationAnswer: (pubID: number | string, card: Pick<PautaCard, "story_id" | "title"> & { feedback_keys?: string[] }, answer: "yes" | "no") =>
+    request<{ ok: boolean }>("POST", `/api/v1/publications/${pubID}/calibration/answer`,
+      { story_id: card.story_id, answer, feedback_keys: card.feedback_keys, title: card.title }),
   skipTopic: (pubID: number | string, topic: string) =>
     request<{ publication: Publication }>("POST", `/api/v1/publications/${pubID}/skip`, { topic }),
   updatePublication: (id: string | number, p: Partial<Omit<Proposal, "sources">>) =>

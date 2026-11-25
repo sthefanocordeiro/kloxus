@@ -261,13 +261,17 @@ type pautaCardView struct {
 	Topics   []string `json:"topics"`
 	URL      string   `json:"url"`
 	AgeHours *float64 `json:"age_hours"`
+	// Keys are the story's stable feedback identifiers — a Sim/Não
+	// answer echoes them back so it still lands when the stories table
+	// was rebuilt since the card was dealt (KLOX-236).
+	Keys []string `json:"feedback_keys,omitempty"`
 }
 
 func pautaViews(cards []pipeline.PautaCard) []pautaCardView {
 	out := make([]pautaCardView, 0, len(cards))
 	for _, c := range cards {
 		v := pautaCardView{StoryID: c.StoryID, Title: c.Title, Outlet: c.Outlet, Outlets: c.Outlets,
-			Summary: c.Summary, Topics: c.Topics, URL: c.URL}
+			Summary: c.Summary, Topics: c.Topics, URL: c.URL, Keys: c.Keys}
 		if c.AgeHours >= 0 {
 			a := c.AgeHours
 			v.AgeHours = &a
@@ -310,17 +314,58 @@ func (s *Server) apiCalibrationAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		StoryID int64  `json:"story_id"`
-		Answer  string `json:"answer"`
+		StoryID int64    `json:"story_id"`
+		Answer  string   `json:"answer"`
+		Keys    []string `json:"feedback_keys"`
+		Title   string   `json:"title"`
 	}
 	if _, err := apiDecode(r, &in); err != nil || in.StoryID == 0 || (in.Answer != "yes" && in.Answer != "no") {
 		apiErr(w, 400, "validation", "story_id and answer (yes|no) are required")
 		return
 	}
-	// feedback never fails the answer (no vectors → silent no-op)
-	_ = pipeline.RecordStoryFeedback(r.Context(), db(r), pub.ID, in.StoryID, in.Answer == "yes")
+	ctx := r.Context()
+	st, err := db(r).StoryWithItems(ctx, in.StoryID)
+	if err == nil && st != nil && st.PublicationID == pub.ID {
+		// feedback never fails the answer (no vectors → silent no-op)
+		_ = pipeline.RecordStoryFeedback(ctx, db(r), pub.ID, in.StoryID, in.Answer == "yes")
+	} else {
+		// The stories table was rebuilt since the card was dealt — the
+		// posted id is dead and RecordStoryFeedback would silently drop
+		// the answer (KLOX-236). Record it on the card's own stable
+		// keys so a "Não" still keeps the story out of every list.
+		_ = db(r).SaveStoryAnswers(ctx, pub.ID, cardFeedbackKeys(in.Keys), in.Answer, cardAnswerTitle(in.Title))
+	}
 	dropPautaDay(r, db(r), pub.ID) // the answer re-ranks today's pauta
 	apiJSON(w, 200, map[string]any{"ok": true})
+}
+
+// cardFeedbackKeys keeps only well-formed feedback keys a card could
+// have carried — a malformed or oversized list records nothing rather
+// than writing stray rows.
+func cardFeedbackKeys(keys []string) []string {
+	out := []string{}
+	for _, k := range keys {
+		if len(out) >= 8 {
+			break
+		}
+		k = strings.TrimSpace(k)
+		if len(k) <= 2 || len(k) > 400 ||
+			(!strings.HasPrefix(k, "u:") && !strings.HasPrefix(k, "s:")) {
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// cardAnswerTitle normalizes the card title the client echoed — it
+// feeds the look-alike demotion, never the card list.
+func cardAnswerTitle(title string) string {
+	title = strings.Join(strings.Fields(title), " ")
+	if r := []rune(title); len(r) > 300 {
+		return string(r[:300])
+	}
+	return title
 }
 
 // apiSkipTopic adds a topic to the radar's skip list (reject terms):
