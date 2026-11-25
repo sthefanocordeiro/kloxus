@@ -86,7 +86,7 @@ func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawIt
 			(workspace_id, source_id, external_id, url, canonical_url, title, author, published_at, content_text, kind)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'article')
 			ON CONFLICT (source_id, external_id) DO NOTHING`,
-			db.ws, sourceID, r.ExternalID, r.URL, canonical(r.URL), r.Title, r.Author, r.PublishedAt, r.ContentText)
+			db.ws, sourceID, r.ExternalID, r.URL, canonical(r.URL), r.Title, r.Author, NormalizeTS(r.PublishedAt), r.ContentText)
 		if err != nil {
 			return added, err
 		}
@@ -115,54 +115,83 @@ func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawIt
 // enrichment fills in asynchronously after ingest.
 func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT `+itemCols+`
-		FROM (
+		WITH cand_sources AS (
+		  -- The publication's own sources plus its catalog picks: the
+		  -- tenant filter applies BEFORE the window now (KLOX-223), so
+		  -- ROW_NUMBER partitions only over this publication's
+		  -- candidate items instead of every row in the shared items
+		  -- table.
+		  SELECT s.id AS source_id, s.catalog_id
+		  FROM sources s
+		  WHERE s.workspace_id = $1 AND s.publication_id = $2
+		),
+		-- A story used in an earlier edition must not resurface as a
+		-- suggestion in the next one (KLOX-100). Two durable trails
+		-- mark "used": the current generation's story_items →
+		-- issue_items link (this query runs before ClearStories
+		-- rebuilds the table), and any dossier source citation —
+		-- dossiers persist across story rebuilds. Materialized once
+		-- instead of correlated per item.
+		used_items AS MATERIALIZED (
+		  SELECT si.item_id
+		  FROM story_items si
+		  JOIN issue_items ii ON ii.story_id = si.story_id
+		  JOIN issues iss ON iss.id = ii.issue_id
+		  WHERE si.workspace_id = $1 AND iss.publication_id = $2
+		  UNION ALL
+		  SELECT (el->>'item_id')::bigint
+		  FROM dossiers d
+		  JOIN issue_items ii ON ii.id = d.issue_item_id
+		  JOIN issues iss ON iss.id = ii.issue_id
+		  CROSS JOIN LATERAL jsonb_array_elements(
+		    COALESCE(NULLIF(d.json,'')::jsonb -> 'sources', '[]'::jsonb)) el
+		  WHERE d.workspace_id = $1 AND iss.publication_id = $2
+		    AND el->>'item_id' ~ '^\d+$'
+		),
+		-- Two index-driven legs (items.source_id / items.catalog_id) so
+		-- the candidate set never seq-scans the shared table; UNION
+		-- dedups an item that matches both.
+		cand_items AS (
 		  SELECT i.*,
-		    ROW_NUMBER() OVER (
-		      PARTITION BY COALESCE('s' || i.source_id, 'c' || i.catalog_id)
-		      ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
-		               i.id DESC
-		    ) AS rn,
-		    COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) AS eff
+		    COALESCE(i.published_ts, i.fetched_ts) AS eff,
+		    COALESCE('s' || i.source_id, 'c' || i.catalog_id) AS part
 		  FROM items i
+		  JOIN cand_sources cs ON cs.source_id = i.source_id
 		  WHERE i.kind <> 'promo'
 		    AND NOT EXISTS (
 		      SELECT 1 FROM item_enrichment e
 		      WHERE e.item_id = i.id
 		        AND (e.promotional OR e.ai_kind IN
 		             ('lista','publieditorial','entretenimento','esporte','efemeride','tutorial','review')))
-		) i
+		  UNION
+		  SELECT i.*,
+		    COALESCE(i.published_ts, i.fetched_ts) AS eff,
+		    COALESCE('s' || i.source_id, 'c' || i.catalog_id) AS part
+		  FROM items i
+		  JOIN cand_sources cs ON cs.catalog_id = i.catalog_id
+		  WHERE i.kind <> 'promo'
+		    AND NOT EXISTS (
+		      SELECT 1 FROM item_enrichment e
+		      WHERE e.item_id = i.id
+		        AND (e.promotional OR e.ai_kind IN
+		             ('lista','publieditorial','entretenimento','esporte','efemeride','tutorial','review')))
+		),
+		ranked AS (
+		  SELECT i.*,
+		    ROW_NUMBER() OVER (
+		      PARTITION BY part
+		      ORDER BY eff DESC NULLS LAST, id DESC
+		    ) AS rn
+		  FROM cand_items i
+		)
+		SELECT `+itemCols+`
+		FROM ranked i
 		LEFT JOIN sources s ON s.id = i.source_id
 		LEFT JOIN source_catalog c ON c.id = i.catalog_id
-		WHERE (s.id IS NOT NULL AND s.workspace_id = $1 AND s.publication_id = $2)
-		   OR (c.id IS NOT NULL AND EXISTS (
-		         SELECT 1 FROM sources ws
-		         WHERE ws.workspace_id = $1 AND ws.publication_id = $2
-		           AND ws.catalog_id = i.catalog_id))
-		  AND (i.catalog_id IS NULL
+		WHERE (i.catalog_id IS NULL
 		       OR (i.rn <= 60 AND (i.eff IS NULL
 		           OR i.eff >= now() - interval '7 days')))
-		  -- A story used in an earlier edition must not resurface as a
-		  -- suggestion in the next one (KLOX-100). Two durable trails
-		  -- mark "used": the current generation's story_items →
-		  -- issue_items link (this query runs before ClearStories
-		  -- rebuilds the table), and any dossier source citation —
-		  -- dossiers persist across story rebuilds.
-		  AND NOT EXISTS (
-		    SELECT 1 FROM story_items si
-		    JOIN issue_items ii ON ii.story_id = si.story_id
-		    JOIN issues iss ON iss.id = ii.issue_id
-		    WHERE si.workspace_id = $1 AND iss.publication_id = $2
-		      AND si.item_id = i.id)
-		  AND NOT EXISTS (
-		    SELECT 1 FROM dossiers d
-		    JOIN issue_items ii ON ii.id = d.issue_item_id
-		    JOIN issues iss ON iss.id = ii.issue_id
-		    CROSS JOIN LATERAL jsonb_array_elements(
-		      COALESCE(NULLIF(d.json,'')::jsonb -> 'sources', '[]'::jsonb)) el
-		    WHERE d.workspace_id = $1 AND iss.publication_id = $2
-		      AND CASE WHEN el->>'item_id' ~ '^\d+$'
-		               THEN (el->>'item_id')::bigint END = i.id)
+		  AND NOT EXISTS (SELECT 1 FROM used_items u WHERE u.item_id = i.id)
 		ORDER BY i.id`, db.ws, pubID)
 	if err != nil {
 		return nil, err

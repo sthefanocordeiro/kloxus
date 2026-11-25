@@ -99,7 +99,7 @@ func (p *Pool) UnembeddedItemsFor(ctx context.Context, ws, model string, limit i
 		LEFT JOIN item_embedding ie ON ie.item_id = it.id AND ie.model = $1
 		WHERE ie.item_id IS NULL AND it.kind <> 'promo'
 		  AND ($2 = '' OR it.workspace_id IS NULL OR it.workspace_id = $2)
-		ORDER BY it.fetched_at DESC, it.id DESC
+		ORDER BY it.fetched_ts DESC NULLS LAST, it.id DESC
 		LIMIT $3`, model, ws, limit)
 	if err != nil {
 		return nil, err

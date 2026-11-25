@@ -31,7 +31,7 @@ func (r *Runner) stageDedupe(ctx context.Context, pub *store.Publication, st *ph
 		texts[i] = it.ContentText
 		// The 72 h merge window uses the published date first and the
 		// fetched time when it is unparseable — the same fallback the
-		// candidate query applies (safe_ts).
+		// candidate query applies (published_ts → fetched_ts).
 		if t, ok := parsePublished(it.PublishedAt); ok {
 			published[i] = t
 		} else if t, ok := parsePublished(it.FetchedAt); ok {
