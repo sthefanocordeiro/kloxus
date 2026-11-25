@@ -211,7 +211,7 @@ func (p *Pool) SaveCatalogItems(ctx context.Context, catalogID int64, raw []Cata
 			(source_id, catalog_id, external_id, url, canonical_url, title, author, published_at, content_text, kind, meta_json, body_truncated)
 			VALUES (NULL,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 			ON CONFLICT (catalog_id, external_id) WHERE catalog_id IS NOT NULL DO NOTHING`,
-			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author, r.PublishedAt, r.ContentText, kind, string(data), r.BodyTruncated)
+			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author, NormTS(r.PublishedAt), r.ContentText, kind, string(data), r.BodyTruncated)
 		if err != nil {
 			return added, err
 		}
@@ -352,7 +352,7 @@ func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogIt
 			   OR items.meta_json IS DISTINCT FROM EXCLUDED.meta_json
 			RETURNING id, (xmax = 0)`,
 			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author,
-			r.PublishedAt, r.ContentText, kind, string(data), r.BodyTruncated).
+			NormTS(r.PublishedAt), r.ContentText, kind, string(data), r.BodyTruncated).
 			Scan(&id, &inserted)
 		if err == sql.ErrNoRows {
 			continue // unchanged — the DO UPDATE WHERE skipped it
@@ -394,7 +394,7 @@ func (p *Pool) DJPendingDetails(ctx context.Context, catalogID int64, limit int)
 		FROM items i
 		WHERE i.catalog_id = $1
 		  AND COALESCE(i.meta_json::jsonb ->> 'detail_fetched', '') NOT IN ('true', 'gone')
-		ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
+		ORDER BY i.eff_at DESC NULLS LAST,
 		         i.id DESC
 		LIMIT $2`, catalogID, limit)
 	if err != nil {
@@ -533,20 +533,19 @@ func (db *DB) CatalogItemsStats(ctx context.Context, pubID int64) (total, fresh 
 		           (SELECT max(created_at) FROM issues
 		            WHERE workspace_id = $1 AND publication_id = $2), '1970-01-01'))
 		FROM (
-		  SELECT i.fetched_at,
+		  SELECT i.fetched_at, i.eff_at,
 		    ROW_NUMBER() OVER (
 		      PARTITION BY 'c' || i.catalog_id
-		      ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
+		      ORDER BY i.eff_at DESC NULLS LAST,
 		               i.id DESC
-		    ) AS rn,
-		    COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) AS eff
+		    ) AS rn
 		  FROM items i
 		  WHERE i.kind <> 'promo'
 		    AND i.catalog_id IN (SELECT catalog_id FROM sources
 		                         WHERE workspace_id = $1 AND publication_id = $2
 		                           AND catalog_id IS NOT NULL)
 		) i
-		WHERE i.rn <= 60 AND (i.eff IS NULL OR i.eff >= now() - interval '7 days')`,
+		WHERE i.rn <= 60 AND (i.eff_at IS NULL OR i.eff_at >= now() - interval '7 days')`,
 		db.ws, pubID).Scan(&total, &fresh)
 	return total, fresh, err
 }

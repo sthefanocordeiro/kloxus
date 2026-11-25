@@ -27,6 +27,26 @@ func NowUTC() string { return TSUTC(time.Now()) }
 // TSUTC formats t in the stored timestamp shape.
 func TSUTC(t time.Time) string { return t.UTC().Format(tsLayout) }
 
+// NormTS normalizes an externally-sourced timestamp to RFC3339 UTC —
+// the single shape feed/API-facing columns (items.published_at,
+// issues.scheduled_at) store so their values are unambiguous and
+// lexically ordered (KLOX-218). The internal tsLayout shape and a bare
+// ISO date or zone-less 'T' time are read as UTC; input under no known
+// layout is returned unchanged — the column keeps the raw value and
+// eff_at/safe_ts fall back on the read path.
+func NormTS(s string) string {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return ""
+	}
+	for _, l := range []string{time.RFC3339Nano, tsLayout, "2006-01-02T15:04:05", "2006-01-02"} {
+		if parsed, err := time.Parse(l, t); err == nil {
+			return parsed.UTC().Format(time.RFC3339)
+		}
+	}
+	return s
+}
+
 // Pool is the shared Postgres connection pool. Repository methods live
 // on DB, a workspace-scoped handle obtained from For.
 type Pool struct {

@@ -12,15 +12,16 @@ import (
 )
 
 // PendingEmbeddings lists non-promo items lacking a vector for model,
-// newest first, inside the candidate window.
+// newest first, inside the candidate window. eff_at is the stored
+// effective timestamp (published_at else fetched_at — KLOX-218).
 func (p *Pool) PendingEmbeddings(ctx context.Context, model string, since time.Time, limit int) ([]embed.Pending, error) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT it.id, it.title, it.content_text
 		FROM items it
 		LEFT JOIN item_embeddings ie ON ie.item_id = it.id AND ie.model = $1
 		WHERE ie.item_id IS NULL AND it.kind <> 'promo'
-		  AND COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) >= $2::timestamptz
-		ORDER BY COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) DESC NULLS LAST, it.id DESC
+		  AND it.eff_at >= $2::timestamptz
+		ORDER BY it.eff_at DESC NULLS LAST, it.id DESC
 		LIMIT $3`, model, since.UTC().Format(time.RFC3339), limit)
 	if err != nil {
 		return nil, err
@@ -48,7 +49,7 @@ func (p *Pool) PendingStats(ctx context.Context, model string, since time.Time) 
 		FROM items it
 		LEFT JOIN item_embeddings ie ON ie.item_id = it.id AND ie.model = $1
 		WHERE ie.item_id IS NULL AND it.kind <> 'promo'
-		  AND COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) >= $2::timestamptz`,
+		  AND it.eff_at >= $2::timestamptz`,
 		model, since.UTC().Format(time.RFC3339), embed.ItemBodyChars).Scan(&n, &chars)
 	return n, chars, err
 }

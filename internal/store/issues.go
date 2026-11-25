@@ -198,6 +198,7 @@ func (db *DB) MarkIssueTestSent(ctx context.Context, id int64) error {
 // ScheduleIssue locks an issue for a future send and queues the
 // dispatch job that delivers it at that time.
 func (db *DB) ScheduleIssue(ctx context.Context, id int64, at string) error {
+	at = NormTS(at)
 	if _, err := db.ExecContext(ctx,
 		`UPDATE issues SET status = 'scheduled', scheduled_at = $1 WHERE workspace_id = $2 AND id = $3`,
 		at, db.ws, id); err != nil {

@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 // --- workspace claim ---
@@ -336,15 +337,30 @@ func (db *DB) MailByIdemKey(ctx context.Context, idemKey string) (*OutboxMail, e
 	return &m, nil
 }
 
+// dayRange returns the half-open [day, next) bounds a btree index can
+// serve on the stored 'YYYY-MM-DD HH24:MI:SS' timestamps —
+// substr(created_at,1,10) matched the same rows but forced a seq scan
+// past idx_outbox_created (KLOX-218). An unparseable day degenerates
+// to an empty range — zero rows, matching the old equality.
+func dayRange(day string) (string, string) {
+	d, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return day, day
+	}
+	return day, d.AddDate(0, 0, 1).Format("2006-01-02")
+}
+
 // SendsToday counts attempted real sends since the start of the UTC
 // day — provider='resend' rows, refused rows excepted since they never
 // reached the API. day is 'YYYY-MM-DD'.
 func (db *DB) SendsToday(ctx context.Context, day string) (int, error) {
 	var n int
+	lo, hi := dayRange(day)
 	err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM outbox_emails
-		 WHERE workspace_id = $1 AND provider = 'resend' AND substr(created_at, 1, 10) = $2`,
-		db.ws, day).Scan(&n)
+		 WHERE workspace_id = $1 AND provider = 'resend'
+		   AND created_at >= $2 AND created_at < $3`,
+		db.ws, lo, hi).Scan(&n)
 	return n, err
 }
 
@@ -352,9 +368,11 @@ func (db *DB) SendsToday(ctx context.Context, day string) (int, error) {
 // the global daily cap.
 func (p *Pool) SendsTodayAll(ctx context.Context, day string) (int, error) {
 	var n int
+	lo, hi := dayRange(day)
 	err := p.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM outbox_emails WHERE provider = 'resend' AND substr(created_at, 1, 10) = $1`,
-		day).Scan(&n)
+		`SELECT count(*) FROM outbox_emails WHERE provider = 'resend'
+		   AND created_at >= $1 AND created_at < $2`,
+		lo, hi).Scan(&n)
 	return n, err
 }
 

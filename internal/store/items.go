@@ -86,7 +86,7 @@ func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawIt
 			(workspace_id, source_id, external_id, url, canonical_url, title, author, published_at, content_text, kind)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'article')
 			ON CONFLICT (source_id, external_id) DO NOTHING`,
-			db.ws, sourceID, r.ExternalID, r.URL, canonical(r.URL), r.Title, r.Author, r.PublishedAt, r.ContentText)
+			db.ws, sourceID, r.ExternalID, r.URL, canonical(r.URL), r.Title, r.Author, NormTS(r.PublishedAt), r.ContentText)
 		if err != nil {
 			return added, err
 		}
@@ -120,10 +120,9 @@ func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, err
 		  SELECT i.*,
 		    ROW_NUMBER() OVER (
 		      PARTITION BY COALESCE('s' || i.source_id, 'c' || i.catalog_id)
-		      ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
+		      ORDER BY i.eff_at DESC NULLS LAST,
 		               i.id DESC
-		    ) AS rn,
-		    COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) AS eff
+		    ) AS rn
 		  FROM items i
 		  WHERE i.kind <> 'promo'
 		    AND NOT EXISTS (
@@ -140,8 +139,8 @@ func (db *DB) ItemsForPublication(ctx context.Context, pubID int64) ([]Item, err
 		         WHERE ws.workspace_id = $1 AND ws.publication_id = $2
 		           AND ws.catalog_id = i.catalog_id))
 		  AND (i.catalog_id IS NULL
-		       OR (i.rn <= 60 AND (i.eff IS NULL
-		           OR i.eff >= now() - interval '7 days')))
+		       OR (i.rn <= 60 AND (i.eff_at IS NULL
+		           OR i.eff_at >= now() - interval '7 days')))
 		  -- A story used in an earlier edition must not resurface as a
 		  -- suggestion in the next one (KLOX-100). Two durable trails
 		  -- mark "used": the current generation's story_items →

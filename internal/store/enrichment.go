@@ -208,7 +208,7 @@ func (db *DB) StoryCards(ctx context.Context, storyIDs []int64) (map[int64]*Stor
 	rows, err := db.QueryContext(ctx, `
 		SELECT si.story_id,
 		       e.ai_kind, e.summary_pt, e.language, e.topics_json,
-		       COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) AS ts,
+		       it.eff_at AS ts,
 		       g.summary, g.kind
 		FROM story_items si
 		JOIN items it ON it.id = si.item_id
