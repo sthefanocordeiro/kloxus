@@ -30,7 +30,7 @@ describe("renditions helpers", () => {
     expect(posts.length).toBeGreaterThan(2);
     posts.forEach((p, i) => {
       expect(xCount(p)).toBeLessThanOrEqual(X_LIMIT);
-      expect(p.endsWith(` ${i + 1}/${posts.length}`)).toBe(true);
+      expect(p.endsWith(`\n${i + 1}/${posts.length}`)).toBe(true);
     });
     expect(splitForX("curto")).toEqual(["curto"]);
   });
@@ -40,16 +40,16 @@ describe("renditions helpers", () => {
       "Abertura do fio.\n\nNotícia um\nhttps://a.example/um\nTexto um.\n\nNotícia dois\nhttps://b.example/dois\nTexto dois.",
     );
     expect(posts).toEqual([
-      "Abertura do fio. 1/3",
-      "Notícia um\nhttps://a.example/um\nTexto um. 2/3",
-      "Notícia dois\nhttps://b.example/dois\nTexto dois. 3/3",
+      "Abertura do fio.\n1/3",
+      "Notícia um\nhttps://a.example/um\nTexto um.\n2/3",
+      "Notícia dois\nhttps://b.example/dois\nTexto dois.\n3/3",
     ]);
     expect(posts.join(" ")).not.toContain("---");
   });
 
   it("treats a '---' block as a boundary, never post text", () => {
     const posts = splitForX("Abertura.\n\n---\n\nNotícia\nhttps://a.example/1\nTexto.");
-    expect(posts).toEqual(["Abertura. 1/2", "Notícia\nhttps://a.example/1\nTexto. 2/2"]);
+    expect(posts).toEqual(["Abertura.\n1/2", "Notícia\nhttps://a.example/1\nTexto.\n2/2"]);
   });
 
   it("absolutizes root-relative media and links only", () => {

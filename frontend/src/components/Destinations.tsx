@@ -5,10 +5,11 @@ import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { api, type Rendition, type RenditionFormat } from "../api";
 import { useT } from "../i18n";
-import { Button } from "../ui";
+import { Button, Tick } from "../ui";
 import { KDialog } from "../ui-overlays";
 import { Markdown } from "../markdown";
 import { cn } from "../lib/cn";
+import { errText } from "../lib/errors";
 import {
   LINKEDIN_LIMIT, X_LIMIT, absolutizeHtml, charCount, foldIndex, htmlToPlain, splitForX,
   standaloneHtml, xCount,
@@ -33,8 +34,10 @@ const en = {
   stale: "The brief changed since this version was made.",
   refresh: "Update this version?",
   refreshConfirm: "Updating replaces your edits in this version with the current brief. Continue?",
-  removeConfirm: "Remove this version and its edits?",
-  removeTitle: "Remove this version?",
+  threadNote: (n: number) => `Becomes a thread of ${n} posts`,
+  removed: "Version removed.",
+  undo: "Undo",
+  dismiss: "Dismiss",
   update: "Update",
   cancel: "Cancel",
   saving: "Saving…",
@@ -77,8 +80,10 @@ const pt: Strings = {
   stale: "A pauta mudou desde que esta versão foi feita.",
   refresh: "Atualizar esta versão?",
   refreshConfirm: "Atualizar troca suas edições desta versão pelo texto atual da pauta. Continuar?",
-  removeConfirm: "Remover esta versão e suas edições?",
-  removeTitle: "Remover esta versão?",
+  threadNote: (n) => `Vira uma thread de ${n} posts`,
+  removed: "Versão removida.",
+  undo: "Desfazer",
+  dismiss: "Dispensar",
   update: "Atualizar",
   cancel: "Cancelar",
   saving: "Salvando…",
@@ -316,7 +321,13 @@ function PlainEditor({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <Counter n={count} max={linkedin ? LINKEDIN_LIMIT : X_LIMIT} s={s} />
+        {/* KLOX-214: a suggested thread makes the "420 / 280 over the
+            limit" counter a false alarm — say what it really is */}
+        {linkedin || posts.length <= 1 ? (
+          <Counter n={count} max={linkedin ? LINKEDIN_LIMIT : X_LIMIT} s={s} />
+        ) : (
+          <span className="text-xs text-muted" data-testid="thread-note">{s.threadNote(posts.length)}</span>
+        )}
         <SaveBadge state={save.state} s={s} />
         <Button size="sm" className="ml-auto" onClick={() => copy("text", async () => { await copyText(text); markExported(); }, () => selectEl(textRef.current))}>
           {copied === "text" ? s.copied : s.copy}
@@ -558,15 +569,21 @@ function HtmlEditor({
 export function DestinationStep({
   issueID, stories,
 }: { issueID: number; stories: { headline: string }[] }) {
-  const { lang } = useT();
+  const { t, lang } = useT();
   const s = lang === "pt" ? pt : en;
   const qc = useQueryClient();
   const key = ["renditions", issueID];
   const q = useQuery({ queryKey: key, queryFn: () => api.renditions(issueID) });
   const [active, setActive] = useState<RenditionFormat | null>(null);
   const [refreshing, setRefreshing] = useState(0);
-  const [confirmRemove, setConfirmRemove] = useState<RenditionFormat | null>(null);
   const [confirmRefresh, setConfirmRefresh] = useState(false);
+  const [noteClosed, setNoteClosed] = useState(false);
+  // KLOX-214: unticking a destination deletes at once and offers undo
+  // on a toast — no modal confirm in the way of every checkbox
+  const [undo, setUndo] = useState<Rendition | null>(null);
+  const undoTimer = useRef(0);
+  const [actionErr, setActionErr] = useState("");
+  useEffect(() => () => window.clearTimeout(undoTimer.current), []);
 
   const rs = q.data?.renditions ?? [];
   const byFormat = new Map(rs.map((r) => [r.format, r]));
@@ -580,7 +597,14 @@ export function DestinationStep({
   });
   const del = useMutation({
     mutationFn: (r: Rendition) => api.renditionDelete(issueID, r.id),
-    onSuccess: () => { setActive(null); qc.invalidateQueries({ queryKey: key }); },
+    onError: (e) => setActionErr(errText(t, e)),
+    onSuccess: (_v, r) => {
+      setActive((a) => (a === r.format ? null : a));
+      qc.invalidateQueries({ queryKey: key });
+      window.clearTimeout(undoTimer.current);
+      setUndo(r);
+      undoTimer.current = window.setTimeout(() => setUndo(null), 8000);
+    },
   });
   const refresh = useMutation({
     mutationFn: (r: Rendition) => api.renditionRefresh(issueID, r.id),
@@ -590,10 +614,26 @@ export function DestinationStep({
   const toggle = (f: RenditionFormat) => {
     const cur = byFormat.get(f);
     if (!cur) { create.mutate(f); return; }
-    setConfirmRemove(f);
+    del.mutate(cur);
   };
 
-  const removing = confirmRemove ? byFormat.get(confirmRemove) : undefined;
+  // undo re-forks the format and writes the deleted body back, so the
+  // author's edits survive an accidental untick
+  const undoRemove = async () => {
+    const r = undo;
+    if (!r) return;
+    window.clearTimeout(undoTimer.current);
+    setUndo(null);
+    try {
+      const fresh = await api.renditionCreate(issueID, r.format);
+      const body = r.format === "html" ? r.body_html : r.format === "markdown" ? r.body_md : r.body_text;
+      if (body) await api.renditionSave(issueID, fresh.id, body);
+      void qc.invalidateQueries({ queryKey: key });
+      setActive(r.format);
+    } catch (e) {
+      setActionErr(errText(t, e));
+    }
+  };
 
   const current = (active && byFormat.get(active)) || (rs.length ? rs[0] : undefined);
   const socialChosen = rs.some((r) => isSocial(r.format));
@@ -616,12 +656,12 @@ export function DestinationStep({
                     on ? "border-teal bg-teal-soft/40" : "border-line bg-paper",
                   )}
                 >
-                  <input
-                    type="checkbox"
+                  <Tick
                     checked={on}
                     disabled={q.isLoading || create.isPending || del.isPending}
                     onChange={() => toggle(f)}
-                    className="mt-1 h-4 w-4 cursor-pointer accent-teal"
+                    className="mt-0.5"
+                    aria-label={s.formats[f].name}
                   />
                   <span>
                     <span className="block text-sm font-medium">{s.formats[f].name}</span>
@@ -631,11 +671,20 @@ export function DestinationStep({
               );
             })}
           </div>
-          {social && (
-            <p role="note" className="mt-3 rounded-[var(--radius-btn)] bg-warn-soft/60 px-3 py-2 text-xs text-warn">
-              {s.manyStories(stories.length, stories[0]?.headline ?? "")}
+          {social && !noteClosed && (
+            <p role="note" className="mt-3 flex items-start gap-2 rounded-[var(--radius-btn)] bg-warn-soft/60 px-3 py-2 text-xs text-warn">
+              <span className="flex-1">{s.manyStories(stories.length, stories[0]?.headline ?? "")}</span>
+              <button
+                type="button"
+                aria-label={s.dismiss}
+                className="shrink-0 cursor-pointer px-1 leading-none hover:text-ink"
+                onClick={() => setNoteClosed(true)}
+              >
+                ✕
+              </button>
             </p>
           )}
+          {actionErr && <p role="alert" className="mt-3 text-xs text-danger">{actionErr}</p>}
         </section>
 
         {q.isLoading && <p className="text-sm text-muted">{s.loading}</p>}
@@ -692,25 +741,23 @@ export function DestinationStep({
         )}
       </div>
 
-      <KDialog
-        open={removing !== undefined}
-        onOpenChange={(o) => { if (!o) setConfirmRemove(null); }}
-        title={s.removeTitle}
-      >
-        <p className="text-sm text-muted">{s.removeConfirm}</p>
-        <div className="mt-5 flex gap-3">
-          <Button
-            variant="danger"
-            disabled={del.isPending}
-            onClick={() => { if (removing) del.mutate(removing); setConfirmRemove(null); }}
+      {/* delete is instant — the undo toast is the safety net; sits
+          above the mobile bottom nav like the editor action bar */}
+      {undo && (
+        <div
+          role="status"
+          className="fixed inset-x-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-50 mx-auto flex w-[min(24rem,100%)] items-center justify-between gap-3 rounded-[var(--radius-btn)] bg-ink px-4 py-3 text-sm text-paper shadow-lg md:bottom-6"
+        >
+          <span>{s.removed}</span>
+          <button
+            type="button"
+            className="shrink-0 cursor-pointer font-semibold text-accent hover:underline"
+            onClick={() => void undoRemove()}
           >
-            {s.remove}
-          </Button>
-          <Button variant="outline" onClick={() => setConfirmRemove(null)}>
-            {s.cancel}
-          </Button>
+            {s.undo}
+          </button>
         </div>
-      </KDialog>
+      )}
 
       <KDialog
         open={confirmRefresh}
