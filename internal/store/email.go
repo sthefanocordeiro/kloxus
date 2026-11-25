@@ -343,7 +343,8 @@ func (db *DB) SendsToday(ctx context.Context, day string) (int, error) {
 	var n int
 	err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM outbox_emails
-		 WHERE workspace_id = $1 AND provider = 'resend' AND substr(created_at, 1, 10) = $2`,
+		 WHERE workspace_id = $1 AND provider = 'resend'
+		   AND created_at >= $2 AND created_at < ($2::date + 1)::text`,
 		db.ws, day).Scan(&n)
 	return n, err
 }
@@ -353,7 +354,9 @@ func (db *DB) SendsToday(ctx context.Context, day string) (int, error) {
 func (p *Pool) SendsTodayAll(ctx context.Context, day string) (int, error) {
 	var n int
 	err := p.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM outbox_emails WHERE provider = 'resend' AND substr(created_at, 1, 10) = $1`,
+		`SELECT count(*) FROM outbox_emails
+		 WHERE provider = 'resend'
+		   AND created_at >= $1 AND created_at < ($1::date + 1)::text`,
 		day).Scan(&n)
 	return n, err
 }

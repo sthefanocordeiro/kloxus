@@ -132,7 +132,7 @@ func (p *Pool) UnenrichedItems(ctx context.Context, limit int) ([]UnenrichedItem
 		LEFT JOIN source_catalog c ON c.id = it.catalog_id
 		LEFT JOIN item_enrichment e ON e.item_id = it.id AND e.model NOT LIKE 'local-%'
 		WHERE e.item_id IS NULL AND it.kind = 'article'
-		ORDER BY it.fetched_at DESC, it.id DESC
+		ORDER BY it.fetched_ts DESC NULLS LAST, it.id DESC
 		LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -208,7 +208,7 @@ func (db *DB) StoryCards(ctx context.Context, storyIDs []int64) (map[int64]*Stor
 	rows, err := db.QueryContext(ctx, `
 		SELECT si.story_id,
 		       e.ai_kind, e.summary_pt, e.language, e.topics_json,
-		       COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) AS ts,
+		       COALESCE(it.published_ts, it.fetched_ts) AS ts,
 		       g.summary, g.kind
 		FROM story_items si
 		JOIN items it ON it.id = si.item_id

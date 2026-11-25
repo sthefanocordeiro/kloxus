@@ -198,13 +198,16 @@ func (db *DB) MarkIssueTestSent(ctx context.Context, id int64) error {
 // ScheduleIssue locks an issue for a future send and queues the
 // dispatch job that delivers it at that time.
 func (db *DB) ScheduleIssue(ctx context.Context, id int64, at string) error {
-	if _, err := db.ExecContext(ctx,
-		`UPDATE issues SET status = 'scheduled', scheduled_at = $1 WHERE workspace_id = $2 AND id = $3`,
-		at, db.ws, id); err != nil {
-		return err
-	}
+	// Parse first: a malformed 'at' must not commit the status flip.
+	// The stored value is normalized RFC3339 UTC (KLOX-223) — callers
+	// may still hand the plain timestamp shape in.
 	t, err := parseScheduledAt(at)
 	if err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE issues SET status = 'scheduled', scheduled_at = $1 WHERE workspace_id = $2 AND id = $3`,
+		t.UTC().Format(time.RFC3339), db.ws, id); err != nil {
 		return err
 	}
 	if err := db.CancelJobs(ctx, JobKindSendIssue, id); err != nil {

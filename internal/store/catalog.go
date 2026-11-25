@@ -211,7 +211,7 @@ func (p *Pool) SaveCatalogItems(ctx context.Context, catalogID int64, raw []Cata
 			(source_id, catalog_id, external_id, url, canonical_url, title, author, published_at, content_text, kind, meta_json, body_truncated)
 			VALUES (NULL,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 			ON CONFLICT (catalog_id, external_id) WHERE catalog_id IS NOT NULL DO NOTHING`,
-			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author, r.PublishedAt, r.ContentText, kind, string(data), r.BodyTruncated)
+			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author, NormalizeTS(r.PublishedAt), r.ContentText, kind, string(data), r.BodyTruncated)
 		if err != nil {
 			return added, err
 		}
@@ -352,7 +352,7 @@ func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogIt
 			   OR items.meta_json IS DISTINCT FROM EXCLUDED.meta_json
 			RETURNING id, (xmax = 0)`,
 			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author,
-			r.PublishedAt, r.ContentText, kind, string(data), r.BodyTruncated).
+			NormalizeTS(r.PublishedAt), r.ContentText, kind, string(data), r.BodyTruncated).
 			Scan(&id, &inserted)
 		if err == sql.ErrNoRows {
 			continue // unchanged — the DO UPDATE WHERE skipped it
@@ -394,7 +394,7 @@ func (p *Pool) DJPendingDetails(ctx context.Context, catalogID int64, limit int)
 		FROM items i
 		WHERE i.catalog_id = $1
 		  AND COALESCE(i.meta_json::jsonb ->> 'detail_fetched', '') NOT IN ('true', 'gone')
-		ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
+		ORDER BY COALESCE(i.published_ts, i.fetched_ts) DESC NULLS LAST,
 		         i.id DESC
 		LIMIT $2`, catalogID, limit)
 	if err != nil {
@@ -515,8 +515,8 @@ func (p *Pool) CatalogItemsCount(ctx context.Context, catalogID int64) (int, err
 func (p *Pool) CatalogItemsPerWeek(ctx context.Context, catalogID int64) (int, error) {
 	var n int
 	err := p.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM items WHERE catalog_id = $1 AND fetched_at > $2`,
-		catalogID, TSUTC(time.Now().Add(-7*24*time.Hour))).Scan(&n)
+		`SELECT count(*) FROM items WHERE catalog_id = $1 AND fetched_ts > $2`,
+		catalogID, time.Now().Add(-7*24*time.Hour).UTC()).Scan(&n)
 	return n, err
 }
 
@@ -529,17 +529,18 @@ func (p *Pool) CatalogItemsPerWeek(ctx context.Context, catalogID int64) (int, e
 func (db *DB) CatalogItemsStats(ctx context.Context, pubID int64) (total, fresh int, err error) {
 	err = db.QueryRowContext(ctx, `
 		SELECT count(*),
-		       count(*) FILTER (WHERE i.fetched_at > COALESCE(
-		           (SELECT max(created_at) FROM issues
-		            WHERE workspace_id = $1 AND publication_id = $2), '1970-01-01'))
+		       count(*) FILTER (WHERE i.fetched_ts > COALESCE(
+		           to_utc_ts((SELECT max(created_at) FROM issues
+		            WHERE workspace_id = $1 AND publication_id = $2)),
+		            '1970-01-01'::timestamptz))
 		FROM (
-		  SELECT i.fetched_at,
+		  SELECT i.fetched_ts,
 		    ROW_NUMBER() OVER (
 		      PARTITION BY 'c' || i.catalog_id
-		      ORDER BY COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) DESC NULLS LAST,
+		      ORDER BY COALESCE(i.published_ts, i.fetched_ts) DESC NULLS LAST,
 		               i.id DESC
 		    ) AS rn,
-		    COALESCE(safe_ts(i.published_at), safe_ts(i.fetched_at)) AS eff
+		    COALESCE(i.published_ts, i.fetched_ts) AS eff
 		  FROM items i
 		  WHERE i.kind <> 'promo'
 		    AND i.catalog_id IN (SELECT catalog_id FROM sources
@@ -555,8 +556,8 @@ func (db *DB) CatalogItemsStats(ctx context.Context, pubID int64) (total, fresh 
 // window (30 days, D28's 500 MB bound). Title, link and metadata stay.
 func (p *Pool) PurgeOldBodies(ctx context.Context, olderThan time.Time) (int64, error) {
 	res, err := p.db.ExecContext(ctx,
-		`UPDATE items SET content_text = '' WHERE fetched_at < $1 AND content_text <> ''`,
-		TSUTC(olderThan))
+		`UPDATE items SET content_text = '' WHERE fetched_ts < $1 AND content_text <> ''`,
+		olderThan.UTC())
 	if err != nil {
 		return 0, err
 	}

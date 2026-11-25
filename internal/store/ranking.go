@@ -19,9 +19,9 @@ func (p *Pool) PendingEmbeddings(ctx context.Context, model string, since time.T
 		FROM items it
 		LEFT JOIN item_embeddings ie ON ie.item_id = it.id AND ie.model = $1
 		WHERE ie.item_id IS NULL AND it.kind <> 'promo'
-		  AND COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) >= $2::timestamptz
-		ORDER BY COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) DESC NULLS LAST, it.id DESC
-		LIMIT $3`, model, since.UTC().Format(time.RFC3339), limit)
+		  AND COALESCE(it.published_ts, it.fetched_ts) >= $2
+		ORDER BY COALESCE(it.published_ts, it.fetched_ts) DESC NULLS LAST, it.id DESC
+		LIMIT $3`, model, since.UTC(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +48,8 @@ func (p *Pool) PendingStats(ctx context.Context, model string, since time.Time) 
 		FROM items it
 		LEFT JOIN item_embeddings ie ON ie.item_id = it.id AND ie.model = $1
 		WHERE ie.item_id IS NULL AND it.kind <> 'promo'
-		  AND COALESCE(safe_ts(it.published_at), safe_ts(it.fetched_at)) >= $2::timestamptz`,
-		model, since.UTC().Format(time.RFC3339), embed.ItemBodyChars).Scan(&n, &chars)
+		  AND COALESCE(it.published_ts, it.fetched_ts) >= $2`,
+		model, since.UTC(), embed.ItemBodyChars).Scan(&n, &chars)
 	return n, chars, err
 }
 

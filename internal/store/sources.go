@@ -40,11 +40,11 @@ func (db *DB) ItemsPerWeek(ctx context.Context, sourceID int64) (int, error) {
 	var n int
 	err := db.QueryRowContext(ctx, `
 		SELECT count(*) FROM items i
-		WHERE i.fetched_at > $3 AND (
+		WHERE i.fetched_ts > $3 AND (
 			(i.workspace_id = $1 AND i.source_id = $2)
 			OR i.catalog_id = (SELECT catalog_id FROM sources
 			                   WHERE workspace_id = $1 AND id = $2 AND catalog_id IS NOT NULL))`,
-		db.ws, sourceID, TSUTC(time.Now().Add(-7*24*time.Hour))).Scan(&n)
+		db.ws, sourceID, time.Now().Add(-7*24*time.Hour).UTC()).Scan(&n)
 	return n, err
 }
 
