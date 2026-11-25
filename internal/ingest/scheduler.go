@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
 	"sync"
 	"time"
 
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -43,7 +43,7 @@ type Scheduler struct {
 // NewScheduler wires the feed fetcher + retention on the pool.
 func NewScheduler(p Store, ua string, logger *log.Logger) *Scheduler {
 	throttle := &hostThrottle{last: map[string]time.Time{}}
-	hc := &http.Client{Timeout: 30 * time.Second}
+	hc := httpx.Client(30 * time.Second)
 	return &Scheduler{
 		pool: p,
 		feed: NewFeedFetcher(p, hc, ua, "KloxusBot", throttle),
@@ -192,8 +192,12 @@ func (s *Scheduler) pollDailyJournal(ctx context.Context, cs *store.CatalogSourc
 		if rl, ok := err.(*ErrRateLimited); ok {
 			detail = "HTTP 429 (retry-after " + rl.RetryAfter.String() + ")"
 		}
-		_ = s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error")
-		_ = s.pool.LogFetch(ctx, cs.ID, "error", 0, len(items), 0, detail)
+		if lerr := s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error"); lerr != nil {
+			s.log.Printf("ingest: mark fetched failed: %v", lerr)
+		}
+		if lerr := s.pool.LogFetch(ctx, cs.ID, "error", 0, len(items), 0, detail); lerr != nil {
+			s.log.Printf("ingest: log fetch failed: %v", lerr)
+		}
 		return FetchOutcome{Status: "error", Detail: detail}
 	}
 	raw := make([]store.CatalogItem, 0, len(items))
@@ -202,16 +206,24 @@ func (s *Scheduler) pollDailyJournal(ctx context.Context, cs *store.CatalogSourc
 	}
 	added, changed, err := s.pool.SaveDJItems(ctx, cs.ID, raw)
 	if err != nil {
-		_ = s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error")
-		_ = s.pool.LogFetch(ctx, cs.ID, "error", 0, len(raw), 0, err.Error())
+		if lerr := s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "error"); lerr != nil {
+			s.log.Printf("ingest: mark fetched failed: %v", lerr)
+		}
+		if lerr := s.pool.LogFetch(ctx, cs.ID, "error", 0, len(raw), 0, err.Error()); lerr != nil {
+			s.log.Printf("ingest: log fetch failed: %v", lerr)
+		}
 		return FetchOutcome{Status: "error", Detail: err.Error()}
 	}
-	_ = s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "ok")
+	if lerr := s.pool.CatalogMarkFetched(ctx, cs.ID, cs.ETag, cs.LastModified, "ok"); lerr != nil {
+		s.log.Printf("ingest: mark fetched failed: %v", lerr)
+	}
 	detail := ""
 	if changed > 0 {
 		detail = fmt.Sprintf("%d updated", changed)
 	}
-	_ = s.pool.LogFetch(ctx, cs.ID, "ok", 200, len(raw), added, detail)
+	if lerr := s.pool.LogFetch(ctx, cs.ID, "ok", 200, len(raw), added, detail); lerr != nil {
+		s.log.Printf("ingest: log fetch failed: %v", lerr)
+	}
 	return FetchOutcome{Status: "ok", Items: len(raw), NewItems: added}
 }
 
@@ -248,7 +260,9 @@ func (s *Scheduler) backfillDetails(ctx context.Context, cs *store.CatalogSource
 				// rest: one dead slug at the head must never starve
 				// every item behind it.
 				s.logf("daily-journal detail %s: %v — marked gone", slug, err)
-				_ = s.pool.DJMarkDetailFailed(ctx, cs.ID, slug)
+				if lerr := s.pool.DJMarkDetailFailed(ctx, cs.ID, slug); lerr != nil {
+					s.log.Printf("ingest: mark detail failed: %v", lerr)
+				}
 				gone++
 				continue
 			}
@@ -272,7 +286,9 @@ func (s *Scheduler) backfillDetails(ctx context.Context, cs *store.CatalogSource
 		if gone > 0 {
 			detail = fmt.Sprintf("detail backfill, %d gone", gone)
 		}
-		_ = s.pool.LogFetch(ctx, cs.ID, "ok", 200, filled, 0, detail)
+		if lerr := s.pool.LogFetch(ctx, cs.ID, "ok", 200, filled, 0, detail); lerr != nil {
+			s.log.Printf("ingest: log fetch failed: %v", lerr)
+		}
 	}
 }
 

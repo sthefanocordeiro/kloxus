@@ -447,4 +447,3 @@ func TestCandidatesEditorialSkipMarks(t *testing.T) {
 		t.Errorf("clean story wrongly rejected: %v", keep)
 	}
 }
-

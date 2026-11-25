@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/sthefanocordeiro/kloxus/internal/store"
@@ -128,7 +129,7 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool)
 			if ii.Origin != "phaseA" {
 				continue
 			}
-		} else if ii.Status != "approved" {
+		} else if ii.Status != store.ItemApproved {
 			continue
 		}
 		djson, err := r.DB.Dossier(ctx, ii.ID)
@@ -141,7 +142,11 @@ func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool)
 		}
 		title := d.Title
 		if title == "" {
-			title, _ = r.DB.StoryTitle(ctx, ii.StoryID)
+			if t, err := r.DB.StoryTitle(ctx, ii.StoryID); err != nil {
+				slog.Warn("story title lookup failed", "story", ii.StoryID, "err", err)
+			} else {
+				title = t
+			}
 		}
 		section := ii.Section
 		if canonical && ii.OrigSection != "" {
@@ -179,7 +184,7 @@ func (r *Runner) ensureDossiers(ctx context.Context, pub *store.Publication, iss
 			}
 			continue
 		}
-		if ii.Status == "approved" || ii.Status == "pending" {
+		if ii.Status == store.ItemApproved || ii.Status == store.ItemPending {
 			missing = append(missing, ii)
 		}
 	}

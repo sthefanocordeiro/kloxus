@@ -96,7 +96,7 @@ func (s *Server) sendScheduledIssue(ctx context.Context, pool *store.Pool, j sto
 	if err != nil {
 		return err
 	}
-	if iss.Status != "scheduled" {
+	if iss.Status != store.IssueScheduled {
 		return nil
 	}
 	pub, err := s.canonicalPub(wdb.GetPublication(ctx, fmt.Sprint(iss.PublicationID)))
@@ -111,7 +111,7 @@ func (s *Server) sendScheduledIssue(ctx context.Context, pool *store.Pool, j sto
 		if _, err := s.sendIssueMail(ctx, wdb, j.WorkspaceID, iss, pub, []string{"readers@kloxus.demo"}, "issue", base); err != nil {
 			return err
 		}
-		return wdb.SetIssueStatus(ctx, iss.ID, "sent")
+		return wdb.SetIssueStatus(ctx, iss.ID, store.IssueSent)
 	}
 
 	// Live send: an unclaimed workspace can't mail — put the issue back
@@ -122,7 +122,7 @@ func (s *Server) sendScheduledIssue(ctx context.Context, pool *store.Pool, j sto
 	}
 	if owner == "" {
 		wdb.RecordDecision(ctx, iss.PublicationID, 0, "send", "scheduled send skipped: workspace is not claimed")
-		return wdb.SetIssueStatus(ctx, iss.ID, "approved")
+		return wdb.SetIssueStatus(ctx, iss.ID, store.IssueApproved)
 	}
 	// Global cap already spent: queue the send for the next UTC day
 	// instead of refusing per-recipient and marking a non-delivery sent.
@@ -154,7 +154,7 @@ func (s *Server) sendScheduledIssue(ctx context.Context, pool *store.Pool, j sto
 	// deliverable.
 	if sum.Sent+sum.Deduped == 0 {
 		wdb.RecordDecision(ctx, iss.PublicationID, 0, "send", "scheduled send delivered nothing — issue returned to approved")
-		return wdb.SetIssueStatus(ctx, iss.ID, "approved")
+		return wdb.SetIssueStatus(ctx, iss.ID, store.IssueApproved)
 	}
-	return wdb.SetIssueStatus(ctx, iss.ID, "sent")
+	return wdb.SetIssueStatus(ctx, iss.ID, store.IssueSent)
 }

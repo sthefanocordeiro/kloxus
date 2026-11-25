@@ -30,9 +30,9 @@ const (
 // as exportada.
 func pieceStatus(status string) string {
 	switch status {
-	case "approved":
+	case store.IssueApproved:
 		return "reviewed"
-	case "sent", "scheduled":
+	case store.IssueSent, store.IssueScheduled:
 		return "exported"
 	default:
 		return "draft"
@@ -209,13 +209,13 @@ func (s *Server) apiTodayWrite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if old, err := db(r).IssueItemByStory(ctx, iss.ID, in.StoryID); err == nil {
-		if apiDBErr(w, r, db(r).SetIssueItemPlacement(ctx, old.ID, section, old.Position, "approved"), "item") {
+		if apiDBErr(w, r, db(r).SetIssueItemPlacement(ctx, old.ID, section, old.Position, store.ItemApproved), "item") {
 			return
 		}
 	} else if _, err := db(r).CreateIssueItem(ctx, store.IssueItem{
 		IssueID: iss.ID, StoryID: in.StoryID, Section: section,
 		Score: story.TriageScore, Reason: story.TriageReason,
-		Status: "approved", Origin: "manual", Position: nextPosition(r, iss.ID, section),
+		Status: store.ItemApproved, Origin: "manual", Position: nextPosition(r, iss.ID, section),
 	}); apiDBErr(w, r, err, "item") {
 		return
 	}

@@ -54,11 +54,11 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 // approve returns the same receipt, never a new timestamp.
 func (s *Server) recordApproval(r *http.Request, iss *store.Issue, pub *store.Publication, checks []apiCheck) (*store.ApprovalReceipt, error) {
 	ctx := r.Context()
-	if iss.Status != "approved" {
-		if err := db(r).SetIssueStatus(ctx, iss.ID, "approved"); err != nil {
+	if iss.Status != store.IssueApproved {
+		if err := db(r).SetIssueStatus(ctx, iss.ID, store.IssueApproved); err != nil {
 			return nil, err
 		}
-		iss.Status = "approved" // the receipt attests to the approved document
+		iss.Status = store.IssueApproved // the receipt attests to the approved document
 		db(r).RecordDecision(ctx, iss.PublicationID, 0, "approve", approveDecisionReason(iss.ID))
 	}
 	rec, err := db(r).ApprovalReceipt(ctx, iss.ID)
@@ -118,7 +118,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "scheduling applies to a reader send — a test send goes out now")
 		return
 	}
-	if iss.Status != "approved" {
+	if iss.Status != store.IssueApproved {
 		apiErr(w, 409, "blocked", "the issue must be approved before sending",
 			apiReason{Code: "not_approved", Message: "issue is not approved",
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})
@@ -164,7 +164,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if kind == "issue" {
-			if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
+			if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, store.IssueSent), "issue") {
 				return
 			}
 		} else {
@@ -263,7 +263,7 @@ func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if kind == "issue" && sum.Sent+sum.Deduped > 0 {
-		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, "sent"), "issue") {
+		if apiDBErr(w, r, db(r).SetIssueStatus(r.Context(), iss.ID, store.IssueSent), "issue") {
 			return
 		}
 		if fresh, _ := db(r).GetIssue(r.Context(), iss.ID); fresh != nil {
@@ -301,7 +301,7 @@ func (s *Server) apiHold(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status != "scheduled" {
+	if iss.Status != store.IssueScheduled {
 		apiErr(w, 409, "validation", "only a scheduled issue can be held")
 		return
 	}
@@ -323,7 +323,7 @@ func (s *Server) apiExport(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	if iss.Status != "approved" && iss.Status != "sent" {
+	if iss.Status != store.IssueApproved && iss.Status != store.IssueSent {
 		apiErr(w, 409, "blocked", "exports ship only approved output — approve the issue first",
 			apiReason{Code: "not_approved", Message: "issue is not approved",
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})

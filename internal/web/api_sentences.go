@@ -48,7 +48,7 @@ func (s *Server) apiSentenceCtx(w http.ResponseWriter, r *http.Request) (*store.
 	if !ok {
 		return nil, nil, nil, false
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return nil, nil, nil, false
 	}
@@ -79,9 +79,9 @@ func dropFlagRaw(iss *store.Issue, itemRef int64, raw string) ([]store.Flag, boo
 // revertApproved returns an approved issue to drafted after an edit —
 // which also invalidates the stored approval receipt.
 func revertApproved(r *http.Request, iss *store.Issue) {
-	if iss.Status == "approved" {
+	if iss.Status == store.IssueApproved {
 		db(r).RevertIssueToDraft(r.Context(), iss.ID)
-		iss.Status = "drafted"
+		iss.Status = store.IssueDrafted
 	}
 }
 
@@ -237,15 +237,15 @@ func (s *Server) apiSentenceEdit(w http.ResponseWriter, r *http.Request) {
 	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
 		PubID: iss.PublicationID, IssueItemID: loc.item.IssueItemID, Body: body,
 		Flags: flags, Decision: kind, Reason: loc.sentence.raw + " → " + text,
-		RevertApproved: iss.Status == "approved",
+		RevertApproved: iss.Status == store.IssueApproved,
 	})
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
 	iss.BodyMD = body
 	iss.Flags = flags
-	if iss.Status == "approved" {
-		iss.Status = "drafted"
+	if iss.Status == store.IssueApproved {
+		iss.Status = store.IssueDrafted
 	}
 	s.respondSentence(w, r, iss, doc, nil)
 }
@@ -298,15 +298,15 @@ func (s *Server) apiSentenceRemove(w http.ResponseWriter, r *http.Request) {
 	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
 		PubID: iss.PublicationID, IssueItemID: loc.item.IssueItemID, Body: body,
 		Flags: flags, Decision: kind, Reason: loc.sentence.raw,
-		RevertApproved: iss.Status == "approved",
+		RevertApproved: iss.Status == store.IssueApproved,
 	})
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
 	iss.BodyMD = body
 	iss.Flags = flags
-	if iss.Status == "approved" {
-		iss.Status = "drafted"
+	if iss.Status == store.IssueApproved {
+		iss.Status = store.IssueDrafted
 	}
 	s.respondSentence(w, r, iss, doc, map[string]any{"removed": removed})
 }
@@ -332,7 +332,7 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -436,15 +436,15 @@ func (s *Server) apiSentenceRestore(w http.ResponseWriter, r *http.Request) {
 		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body, Flags: flags,
 		Decision:       "sentence_restore",
 		Reason:         fmt.Sprintf("%d %s restored to item %d", len(entries), plural(len(entries), "sentence", "sentences"), ref),
-		RevertApproved: iss.Status == "approved",
+		RevertApproved: iss.Status == store.IssueApproved,
 	})
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
 	iss.BodyMD = body
 	iss.Flags = flags
-	if iss.Status == "approved" {
-		iss.Status = "drafted"
+	if iss.Status == store.IssueApproved {
+		iss.Status = store.IssueDrafted
 	}
 	s.respondSentence(w, r, iss, doc, nil)
 }
@@ -458,7 +458,7 @@ func (s *Server) apiItemRemoveFlagged(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -522,15 +522,15 @@ func (s *Server) apiItemRemoveFlagged(w http.ResponseWriter, r *http.Request) {
 		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body, Flags: kept,
 		Decision:       "flagged_bulk_remove",
 		Reason:         fmt.Sprintf("%d flagged %s removed from item %d", len(removed), plural(len(removed), "sentence", "sentences"), item.Ref),
-		RevertApproved: iss.Status == "approved",
+		RevertApproved: iss.Status == store.IssueApproved,
 	})
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
 	iss.BodyMD = body
 	iss.Flags = kept
-	if iss.Status == "approved" {
-		iss.Status = "drafted"
+	if iss.Status == store.IssueApproved {
+		iss.Status = store.IssueDrafted
 	}
 	s.respondSentence(w, r, iss, doc, map[string]any{"removed": removed})
 }
@@ -591,15 +591,15 @@ func (s *Server) apiSentenceInterpretation(w http.ResponseWriter, r *http.Reques
 	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
 		PubID: iss.PublicationID, IssueItemID: loc.item.IssueItemID, Body: body,
 		Flags: flags, Decision: kind, Reason: loc.sentence.raw,
-		RevertApproved: iss.Status == "approved",
+		RevertApproved: iss.Status == store.IssueApproved,
 	})
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
 	iss.BodyMD = body
 	iss.Flags = flags
-	if iss.Status == "approved" {
-		iss.Status = "drafted"
+	if iss.Status == store.IssueApproved {
+		iss.Status = store.IssueDrafted
 	}
 	s.respondSentence(w, r, iss, doc, nil)
 }
@@ -631,7 +631,7 @@ func (s *Server) apiCommentary(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}

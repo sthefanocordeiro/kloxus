@@ -14,6 +14,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 func (s *Server) apiIssues(w http.ResponseWriter, r *http.Request) {
@@ -49,13 +50,13 @@ func (s *Server) apiIssueItems(w http.ResponseWriter, r *http.Request) {
 	out := []apiItem{}
 	pending := 0
 	for _, ii := range items {
-		if ii.Status == "pending" {
+		if ii.Status == store.ItemPending {
 			pending++
 		}
 		out = append(out, s.apiCardFor(r, ii))
 	}
 	apiJSON(w, 200, map[string]any{
-		"items": out, "pending": pending,
+		"items": out, store.ItemPending: pending,
 	})
 }
 
@@ -236,9 +237,9 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 	inIssue, bench := []store.RankedCandidate{}, []store.RankedCandidate{}
 	for _, c := range pool {
 		switch {
-		case c.Item != nil && (c.Item.Status == "pending" || c.Item.Status == "approved"):
+		case c.Item != nil && (c.Item.Status == store.ItemPending || c.Item.Status == store.ItemApproved):
 			inIssue = append(inIssue, c)
-		case c.Item != nil && c.Item.Status == "rejected":
+		case c.Item != nil && c.Item.Status == store.ItemRejected:
 			// A reasoned rejection is an editorial decision, not a
 			// bench slot — the story must not resurface as a
 			// suggestion (KLOX-55). Undo restores it to the lineup.
@@ -250,7 +251,7 @@ func (s *Server) candidatePage(r *http.Request, cands []store.RankedCandidate, p
 	// board — the bench is bounded, the lineup is not.
 	if len(cands) > candidateCap {
 		for _, c := range cands[candidateCap:] {
-			if c.Item != nil && (c.Item.Status == "pending" || c.Item.Status == "approved") {
+			if c.Item != nil && (c.Item.Status == store.ItemPending || c.Item.Status == store.ItemApproved) {
 				inIssue = append(inIssue, c)
 			}
 		}
@@ -381,7 +382,7 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate, 
 			cv.Origin = c.Item.Origin
 			cv.Position = c.Item.Position
 			cv.AIDraft = c.Item.AIDraft
-			cv.InIssue = c.Item.Status == "pending" || c.Item.Status == "approved"
+			cv.InIssue = c.Item.Status == store.ItemPending || c.Item.Status == store.ItemApproved
 			// any prior placement is a valid suggestion: a rejected or
 			// alternative story re-adds where it once sat
 			cv.SuggestedSection = c.Item.Section
@@ -566,7 +567,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -642,10 +643,10 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		positions[e.Section]++
 		pos := positions[e.Section] - 1
 		if ii, err := db(r).IssueItemByStory(ctx, iss.ID, e.StoryID); err == nil {
-			if ii.Status == "rejected" {
+			if ii.Status == store.ItemRejected {
 				reIncluded = true
 			}
-			if apiDBErr(w, r, db(r).SetIssueItemPlacement(ctx, ii.ID, e.Section, pos, "approved"), "item") {
+			if apiDBErr(w, r, db(r).SetIssueItemPlacement(ctx, ii.ID, e.Section, pos, store.ItemApproved), "item") {
 				return
 			}
 		} else {
@@ -653,7 +654,7 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 			if _, err := db(r).CreateIssueItem(ctx, store.IssueItem{
 				IssueID: iss.ID, StoryID: e.StoryID, Section: e.Section,
 				Score: c.Story.TriageScore, Reason: c.Story.TriageReason,
-				Status: "approved", Origin: "manual", Position: pos,
+				Status: store.ItemApproved, Origin: "manual", Position: pos,
 			}); apiDBErr(w, r, err, "item") {
 				return
 			}
@@ -661,8 +662,8 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 	}
 	items, _ := db(r).IssueItems(ctx, iss.ID)
 	for _, ii := range items {
-		if (ii.Status == "pending" || ii.Status == "approved") && !seen[ii.StoryID] {
-			if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, ii.ID, "removed"), "item") {
+		if (ii.Status == store.ItemPending || ii.Status == store.ItemApproved) && !seen[ii.StoryID] {
+			if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, ii.ID, store.ItemRemoved), "item") {
 				return
 			}
 		}
@@ -710,7 +711,7 @@ func (s *Server) apiStory(w http.ResponseWriter, r *http.Request) {
 		row := map[string]any{
 			"id": it.ID, "title": it.Title, "url": "/a/" + fmt.Sprint(it.ID),
 			"outlet": n, "published_at": it.PublishedAt,
-			"snippet": truncateStr(it.ContentText, 400),
+			"snippet": strutil.Truncate(it.ContentText, 400),
 		}
 		if it.Signal() {
 			// Link-level signal: shown as "via <source>" with its link —

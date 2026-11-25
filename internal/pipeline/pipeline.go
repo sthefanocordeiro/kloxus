@@ -25,6 +25,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/rerank"
 	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 //go:embed prompts
@@ -263,8 +264,8 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 		return nil, err
 	}
 	for _, ii := range items {
-		if ii.Status == "pending" {
-			if err := r.DB.SetIssueItemStatus(ctx, ii.ID, "approved"); err != nil {
+		if ii.Status == store.ItemPending {
+			if err := r.DB.SetIssueItemStatus(ctx, ii.ID, store.ItemApproved); err != nil {
 				return nil, err
 			}
 		}
@@ -705,7 +706,7 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 		Section: old.Section,
 		Score:   cand.TriageScore,
 		Reason:  cand.TriageReason,
-		Status:  "pending",
+		Status:  store.ItemPending,
 		Origin:  "alternative",
 	})
 	if err != nil {
@@ -716,7 +717,7 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 	if err := r.DB.SaveDossier(ctx, newID, string(data)); err != nil {
 		return nil, err
 	}
-	if err := r.DB.SetIssueItemStatus(ctx, old.ID, "alternative"); err != nil {
+	if err := r.DB.SetIssueItemStatus(ctx, old.ID, store.ItemAlternative); err != nil {
 		return nil, err
 	}
 	// a swap means the creator declined the old story: it is rejected
@@ -744,7 +745,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	}
 	var srcs []dSrc
 	for j, it := range items {
-		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, 1200)})
 	}
 	var dossiers []Dossier
 	resp, err := r.call(ctx, r.DraftModel, "dossier", map[string]any{
@@ -794,7 +795,7 @@ func EnsureManualDossiers(ctx context.Context, db *store.DB, issueID int64) erro
 			}
 			continue
 		}
-		if ii.Status == "approved" || ii.Status == "pending" {
+		if ii.Status == store.ItemApproved || ii.Status == store.ItemPending {
 			missing = append(missing, ii)
 		}
 	}
@@ -843,7 +844,7 @@ func (r *Runner) ensureResearch(ctx context.Context, issueID int64, draftByRef m
 			}
 			continue
 		}
-		if ii.Status == "approved" || ii.Status == "pending" {
+		if ii.Status == store.ItemApproved || ii.Status == store.ItemPending {
 			missing = append(missing, ii)
 		}
 	}
@@ -911,18 +912,11 @@ func (r *Runner) ComposeSkeleton(ctx context.Context, pub *store.Publication, is
 		sectionOrder = append(sectionOrder, s.Title)
 	}
 	body := assembleIssue(pub, number, entries, draftByRef, dossierByRef, sectionOrder)
-	if err := r.DB.UpdateIssue(ctx, issueID, "drafted", body, "[]"); err != nil {
+	if err := r.DB.UpdateIssue(ctx, issueID, store.IssueDrafted, body, "[]"); err != nil {
 		return nil, err
 	}
 	res.Number = number
 	return res, nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }
 
 // RunHeadless is the CLI entry: build a runner for the given mode and run it.

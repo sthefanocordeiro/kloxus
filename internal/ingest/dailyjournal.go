@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -126,7 +127,7 @@ type DailyJournal struct {
 // PoolAPICounter for the catalog row in production, a fake in tests.
 func NewDailyJournal(counter APICounter, hc *http.Client, ua, base string) *DailyJournal {
 	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
+		hc = httpx.Client(30 * time.Second)
 	}
 	return &DailyJournal{
 		http: hc, base: base, ua: ua,

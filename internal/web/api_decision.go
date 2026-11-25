@@ -23,7 +23,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "item") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -45,8 +45,8 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			ii = ii2
 		}
 		resp := map[string]any{
-			"item":    s.apiCardFor(r, *ii),
-			"pending": pendingDecisions(r, iss.ID),
+			"item":            s.apiCardFor(r, *ii),
+			store.ItemPending: pendingDecisions(r, iss.ID),
 		}
 		if guide != nil {
 			resp["guide"] = guide
@@ -56,11 +56,11 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 
 	switch in.Kind {
 	case "undo":
-		if ii.Status != "rejected" {
+		if ii.Status != store.ItemRejected {
 			apiErr(w, 409, "not_rejected", "undo applies only to a rejected item")
 			return
 		}
-		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, "pending"), "item") {
+		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, store.ItemPending), "item") {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "undo", "")
@@ -72,7 +72,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		finish(iid)
 		return
 	case "approve":
-		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, "approved"), "item") {
+		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, store.ItemApproved), "item") {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "approve", in.Reason)
@@ -85,7 +85,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 					Target: &apiTarget{Kind: "item", Ref: fmt.Sprint(iid)}})
 			return
 		}
-		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, "rejected"), "item") {
+		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, store.ItemRejected), "item") {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "reject", in.Reason)
@@ -118,7 +118,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "kind must be approve|reject|alternative|undo")
 		return
 	}
-	if iss.Status == "approved" {
+	if iss.Status == store.IssueApproved {
 		// a decision after approval returns the issue to draft
 		db(r).RevertIssueToDraft(ctx, iss.ID)
 	}

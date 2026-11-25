@@ -10,6 +10,7 @@ package web
 // answers scrape_blocked, and the demo's simulated provider is labeled
 // in the response so the UI can badge it.
 import (
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -53,7 +54,9 @@ func (s *Server) apiPropose(w http.ResponseWriter, r *http.Request) {
 	page, err := s.d.Scraper.Scrape(r.Context(), u.String())
 	// Attempts count whether the provider read the page or not — the
 	// credit may be spent either way, and the cap exists to bound that.
-	_ = db(r).RecordPaidAction(r.Context(), store.PaidActionScrape, 0)
+	if err := db(r).RecordPaidAction(r.Context(), store.PaidActionScrape, 0); err != nil {
+		slog.Warn("scrape: record paid action failed", "err", err)
+	}
 	if err != nil {
 		apiErr(w, 502, "scrape_failed", "the page could not be read — check the link or try again later")
 		return

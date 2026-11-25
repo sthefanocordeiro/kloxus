@@ -3,12 +3,14 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // stageCollect fetches the publication's own sources and counts the
@@ -36,12 +38,16 @@ func (r *Runner) stageCollect(ctx context.Context, pub *store.Publication, st *p
 		if r.DemoMode && !strings.HasPrefix(s.URL, "fixtures/") {
 			// Visitor-added sources are never fetched on the hosted demo
 			// (SSRF surface); they are stored but skipped at collect time.
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "simulated in demo mode: sources are not fetched")
+			if err := r.DB.MarkSourceFetched(ctx, s.ID, "", "simulated in demo mode: sources are not fetched"); err != nil {
+				slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
+			}
 			continue
 		}
 		raw, err := r.Fetcher.Fetch(ctx, s.Type, s.URL)
 		if err != nil {
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+truncate(err.Error(), 120))
+			if err := r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+strutil.Cut(err.Error(), 120)); err != nil {
+				slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
+			}
 			continue // one bad source must not abort the run
 		}
 		n, err := r.DB.SaveItems(ctx, s.ID, raw, dedupe.Canonical)
@@ -52,7 +58,9 @@ func (r *Runner) stageCollect(ctx context.Context, pub *store.Publication, st *p
 		if len(raw) > 0 {
 			outlet = raw[0].Outlet
 		}
-		r.DB.MarkSourceFetched(ctx, s.ID, outlet, fmt.Sprintf("ok: %d items, %d new", len(raw), n))
+		if err := r.DB.MarkSourceFetched(ctx, s.ID, outlet, fmt.Sprintf("ok: %d items, %d new", len(raw), n)); err != nil {
+			slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
+		}
 		res.Items += len(raw)
 		res.New += n
 	}

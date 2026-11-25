@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -51,7 +52,7 @@ func (db *DB) UpdateIssue(ctx context.Context, issueID int64, status, bodyMD, fl
 	if err != nil {
 		return err
 	}
-	if status != "approved" {
+	if status != IssueApproved {
 		_, err = db.ExecContext(ctx,
 			`DELETE FROM approval_receipts WHERE workspace_id = $1 AND issue_id = $2`, db.ws, issueID)
 	}
@@ -94,9 +95,15 @@ func (db *DB) scanIssue(row *sql.Row) (*Issue, error) {
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal([]byte(flags), &i.Flags)
-	json.Unmarshal([]byte(commentary), &i.Commentary)
-	json.Unmarshal([]byte(sections), &i.Sections)
+	if err := json.Unmarshal([]byte(flags), &i.Flags); err != nil {
+		slog.Warn("issue row: malformed flags json", "issue", i.ID, "err", err)
+	}
+	if err := json.Unmarshal([]byte(commentary), &i.Commentary); err != nil {
+		slog.Warn("issue row: malformed commentary json", "issue", i.ID, "err", err)
+	}
+	if err := json.Unmarshal([]byte(sections), &i.Sections); err != nil {
+		slog.Warn("issue row: malformed sections json", "issue", i.ID, "err", err)
+	}
 	return &i, nil
 }
 
@@ -124,9 +131,15 @@ func (db *DB) ListIssues(ctx context.Context, pubID int64) ([]*Issue, error) {
 			&i.Subject, &i.BodyMD, &flags, &commentary, &sections, &i.CreatedAt, &i.ScheduledAt, &i.TestSentAt); err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(flags), &i.Flags)
-		json.Unmarshal([]byte(commentary), &i.Commentary)
-		json.Unmarshal([]byte(sections), &i.Sections)
+		if err := json.Unmarshal([]byte(flags), &i.Flags); err != nil {
+			slog.Warn("issue row: malformed flags json", "issue", i.ID, "err", err)
+		}
+		if err := json.Unmarshal([]byte(commentary), &i.Commentary); err != nil {
+			slog.Warn("issue row: malformed commentary json", "issue", i.ID, "err", err)
+		}
+		if err := json.Unmarshal([]byte(sections), &i.Sections); err != nil {
+			slog.Warn("issue row: malformed sections json", "issue", i.ID, "err", err)
+		}
 		out = append(out, &i)
 	}
 	return out, rows.Err()
@@ -214,7 +227,7 @@ func parseScheduledAt(s string) (time.Time, error) {
 // approval receipt — post-approval edits invalidate the approval. Any
 // queued send goes with it.
 func (db *DB) RevertIssueToDraft(ctx context.Context, id int64) error {
-	if err := db.SetIssueStatus(ctx, id, "drafted"); err != nil {
+	if err := db.SetIssueStatus(ctx, id, IssueDrafted); err != nil {
 		return err
 	}
 	if err := db.CancelJobs(ctx, JobKindSendIssue, id); err != nil {

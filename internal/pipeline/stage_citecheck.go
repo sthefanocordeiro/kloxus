@@ -8,6 +8,7 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // stageCitecheck checks every body sentence against the citation
@@ -170,14 +171,14 @@ func (r *Runner) stageCitecheck(ctx context.Context, pub *store.Publication, st 
 	for _, e := range entries {
 		de, ok := draftByRef[e.ref]
 		if ok && de.body != "" && !refRe.MatchString(de.body) {
-			addFlag(int64(e.ref), truncate(de.body, 120), "entry has no citations")
+			addFlag(int64(e.ref), strutil.Cut(de.body, 120), "entry has no citations")
 		}
 	}
 	flagsJSON, _ := json.Marshal(res.Flagged)
 	if res.Flagged == nil {
 		flagsJSON = []byte("[]")
 	}
-	if err := r.DB.UpdateIssue(ctx, issueID, "drafted", body, string(flagsJSON)); err != nil {
+	if err := r.DB.UpdateIssue(ctx, issueID, store.IssueDrafted, body, string(flagsJSON)); err != nil {
 		return err
 	}
 	for _, e := range entries {

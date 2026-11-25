@@ -110,7 +110,7 @@ func (s *Server) savePauta(ctx context.Context, d *store.DB, iss *store.Issue, p
 		}
 		seen[e.StoryID] = true
 		if old, ok := byStory[e.StoryID]; ok {
-			if err := d.SetIssueItemPlacement(ctx, old.ID, section, i, "approved"); err != nil {
+			if err := d.SetIssueItemPlacement(ctx, old.ID, section, i, store.ItemApproved); err != nil {
 				return 500, "could not reorder the pauta"
 			}
 			continue
@@ -122,14 +122,14 @@ func (s *Server) savePauta(ctx context.Context, d *store.DB, iss *store.Issue, p
 		if _, err := d.CreateIssueItem(ctx, store.IssueItem{
 			IssueID: iss.ID, StoryID: e.StoryID, Section: section,
 			Score: story.TriageScore, Reason: story.TriageReason,
-			Status: "approved", Origin: "manual", Position: i,
+			Status: store.ItemApproved, Origin: "manual", Position: i,
 		}); err != nil {
 			return 500, "could not add the story"
 		}
 	}
 	for _, ii := range existing {
-		if !seen[ii.StoryID] && ii.Status != "removed" {
-			if err := d.SetIssueItemStatus(ctx, ii.ID, "removed"); err != nil {
+		if !seen[ii.StoryID] && ii.Status != store.ItemRemoved {
+			if err := d.SetIssueItemStatus(ctx, ii.ID, store.ItemRemoved); err != nil {
 				return 500, "could not remove the story"
 			}
 		}
@@ -170,7 +170,7 @@ func (s *Server) savePauta(ctx context.Context, d *store.DB, iss *store.Issue, p
 	}
 
 	if len(in.Entries) == 0 {
-		if err := d.UpdateIssue(ctx, iss.ID, "drafted", fmt.Sprintf("# %s\n\n", iss.Subject), "[]"); err != nil {
+		if err := d.UpdateIssue(ctx, iss.ID, store.IssueDrafted, fmt.Sprintf("# %s\n\n", iss.Subject), "[]"); err != nil {
 			return 500, "could not save the pauta"
 		}
 		return 0, ""
@@ -219,7 +219,7 @@ func (s *Server) savePauta(ctx context.Context, d *store.DB, iss *store.Issue, p
 		marker := fmt.Sprintf("<!-- item %d -->\n\n", di.Ref)
 		body = strings.Replace(body, marker, marker+strings.Join(lines, "\n")+"\n\n", 1)
 	}
-	if err := d.UpdateIssue(ctx, iss.ID, "drafted", body, "[]"); err != nil {
+	if err := d.UpdateIssue(ctx, iss.ID, store.IssueDrafted, body, "[]"); err != nil {
 		return 500, "could not save the pauta"
 	}
 	return 0, ""
@@ -237,7 +237,7 @@ func (s *Server) pautaView(ctx context.Context, d *store.DB, iss *store.Issue, p
 	}
 	storyOf := map[int64]int64{}
 	for _, ii := range items {
-		if ii.Status != "removed" && ii.Status != "rejected" {
+		if ii.Status != store.ItemRemoved && ii.Status != store.ItemRejected {
 			storyOf[ii.ID] = ii.StoryID
 		}
 	}
@@ -344,7 +344,7 @@ func (s *Server) apiPautaSave(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this pauta is already sent — it is read-only")
 		return
 	}
@@ -368,7 +368,7 @@ func (s *Server) apiPautaFinish(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiJSON(w, 200, map[string]any{"ready": true, "missing_text": 0})
 		return
 	}
@@ -382,8 +382,8 @@ func (s *Server) apiPautaFinish(w http.ResponseWriter, r *http.Request) {
 			missing++
 		}
 	}
-	if iss.Status != "approved" {
-		if apiDBErr(w, r, db(r).UpdateIssue(r.Context(), iss.ID, "approved", iss.BodyMD, "[]"), "pauta") {
+	if iss.Status != store.IssueApproved {
+		if apiDBErr(w, r, db(r).UpdateIssue(r.Context(), iss.ID, store.IssueApproved, iss.BodyMD, "[]"), "pauta") {
 			return
 		}
 	}

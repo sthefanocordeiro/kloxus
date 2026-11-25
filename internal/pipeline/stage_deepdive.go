@@ -9,6 +9,7 @@ import (
 
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // stageDeepdive enriches the top-scored items' dossiers with extra
@@ -44,7 +45,7 @@ func (r *Runner) stageDeepdive(ctx context.Context, pub *store.Publication, st *
 		dj := d.promptJSON()
 		di := ddItem{Ref: e.ref, Title: e.title, Dossier: string(dj)}
 		for j, it := range e.sources {
-			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: truncate(it.ContentText, 1200)})
+			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, 1200)})
 		}
 		ddItems = append(ddItems, di)
 	}
@@ -89,5 +90,5 @@ func (r *Runner) stageDeepdive(ctx context.Context, pub *store.Publication, st *
 			return err
 		}
 	}
-	return r.DB.SetIssueStatus(ctx, res.IssueID, "reviewing")
+	return r.DB.SetIssueStatus(ctx, res.IssueID, store.IssueReviewing)
 }

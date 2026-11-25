@@ -167,7 +167,7 @@ func ReaderBody(iss *store.Issue, pub *store.Publication, base string, aiUsed bo
 	// collapse them so exports show no stray empty lines (KLOX-56).
 	body = trailSpacesRe.ReplaceAllString(body, "\n")
 	body = blankRunRe.ReplaceAllString(body, "\n\n")
-	if (iss.Status == "approved" || iss.Status == "sent") && aiUsed {
+	if (iss.Status == store.IssueApproved || iss.Status == store.IssueSent) && aiUsed {
 		if d := aiDisclosure(pub); d != "" {
 			if i := strings.Index(body, "\n"); i >= 0 {
 				body = body[:i+1] + "\n" + d + "\n" + body[i+1:]

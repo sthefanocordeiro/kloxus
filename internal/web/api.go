@@ -350,8 +350,11 @@ func publicationView(p *store.Publication) apiPublication {
 // apiIssueSummary is the issue resource in lists and detail.
 func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any {
 	ctx := r.Context()
-	counts := map[string]int{"pending": 0, "approved": 0, "rejected": 0, "alternative": 0}
-	items, _ := db(r).IssueItems(ctx, iss.ID)
+	counts := map[string]int{store.ItemPending: 0, store.ItemApproved: 0, store.ItemRejected: 0, store.ItemAlternative: 0}
+	items, err := db(r).IssueItems(ctx, iss.ID)
+	if err != nil {
+		slog.Warn("issue summary: list items failed", "issue", iss.ID, "err", err)
+	}
 	for _, ii := range items {
 		counts[ii.Status]++
 	}
@@ -408,7 +411,7 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	// post-approval edit reverted it — the stored approve decision for
 	// this issue is the marker (the receipt itself is voided on revert).
 	// The header shows "re-approve to send" until a fresh approve lands.
-	if iss.Status == "drafted" || iss.Status == "reviewing" {
+	if iss.Status == store.IssueDrafted || iss.Status == store.IssueReviewing {
 		if ok, _ := db(r).DecisionExists(ctx, iss.PublicationID, "approve",
 			approveDecisionReason(iss.ID)); ok {
 			m["edited_after_approval"] = true
@@ -428,7 +431,7 @@ func (s *Server) pautaTitle(ctx context.Context, d *store.DB, iss *store.Issue, 
 	var first *store.IssueItem
 	for i := range items {
 		ii := &items[i]
-		if ii.Status == "removed" || ii.Status == "rejected" {
+		if ii.Status == store.ItemRemoved || ii.Status == store.ItemRejected {
 			continue
 		}
 		if first == nil || ii.Position < first.Position ||
@@ -535,7 +538,9 @@ func orEmpty[T any](s []T) []T {
 // receiptView renders a stored approval receipt for the API.
 func receiptView(rec *store.ApprovalReceipt) map[string]any {
 	checks := []apiCheck{}
-	json.Unmarshal([]byte(rec.ChecksJSON), &checks)
+	if err := json.Unmarshal([]byte(rec.ChecksJSON), &checks); err != nil {
+		slog.Warn("approval receipt: malformed checks_json", "issue", rec.IssueID, "err", err)
+	}
 	// Receipts stored before the owner e-mail became the approver carry
 	// the workspace's session label — never show it (§2, KLOX-64).
 	approver := rec.Approver
@@ -597,7 +602,7 @@ func (s *Server) apiCardFor(r *http.Request, ii store.IssueItem) apiItem {
 	if card.Outlets == nil {
 		card.Outlets = []string{}
 	}
-	if ii.Status == "rejected" {
+	if ii.Status == store.ItemRejected {
 		if _, reason, err := db(r).LatestDecision(ctx, ii.ID); err == nil {
 			card.RejectWhy = reason
 		}
@@ -612,7 +617,7 @@ func pendingDecisions(r *http.Request, issueID int64) int {
 	}
 	n := 0
 	for _, ii := range items {
-		if ii.Status == "pending" {
+		if ii.Status == store.ItemPending {
 			n++
 		}
 	}

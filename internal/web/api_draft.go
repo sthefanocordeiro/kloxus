@@ -30,7 +30,7 @@ type apiCheck struct {
 // empty. Undecided candidates, open slots and commentary never block.
 func (s *Server) readinessChecks(r *http.Request, iss *store.Issue, pub *store.Publication, doc *issueDocument) []apiCheck {
 	checks := []apiCheck{}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		checks = append(checks, apiCheck{Code: "read_only", OK: false,
 			Message: "this issue is sent or scheduled — locked issues are read-only"})
 	}
@@ -152,7 +152,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -164,7 +164,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 	lineup, _ := db(r).IssueItems(r.Context(), iss.ID)
 	picked := 0
 	for _, ii := range lineup {
-		if ii.Status == "pending" || ii.Status == "approved" {
+		if ii.Status == store.ItemPending || ii.Status == store.ItemApproved {
 			picked++
 		}
 	}
@@ -174,8 +174,8 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, ii := range lineup {
-		if ii.Status == "pending" {
-			if apiDBErr(w, r, db(r).SetIssueItemStatus(r.Context(), ii.ID, "approved"), "item") {
+		if ii.Status == store.ItemPending {
+			if apiDBErr(w, r, db(r).SetIssueItemStatus(r.Context(), ii.ID, store.ItemApproved), "item") {
 				return
 			}
 		}
@@ -262,7 +262,7 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -289,7 +289,7 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 	lineup, _ := db(r).IssueItems(r.Context(), iss.ID)
 	picked := 0
 	for _, ii := range lineup {
-		if ii.Status == "pending" || ii.Status == "approved" {
+		if ii.Status == store.ItemPending || ii.Status == store.ItemApproved {
 			picked++
 		}
 	}
@@ -300,8 +300,8 @@ func (s *Server) apiCompose(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	for _, ii := range lineup {
-		if ii.Status == "pending" {
-			if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, ii.ID, "approved"), "item") {
+		if ii.Status == store.ItemPending {
+			if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, ii.ID, store.ItemApproved), "item") {
 				return
 			}
 		}
@@ -342,7 +342,7 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if iss.Status == "sent" || iss.Status == "scheduled" {
+	if iss.Status == store.IssueSent || iss.Status == store.IssueScheduled {
 		apiErr(w, 409, "read_only", "this issue is sent or scheduled — locked issues are read-only")
 		return
 	}
@@ -467,15 +467,15 @@ func (s *Server) apiComposeSentence(w http.ResponseWriter, r *http.Request) {
 	}
 	err := db(r).SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
 		PubID: iss.PublicationID, IssueItemID: item.IssueItemID, Body: body,
-		Flags: flags, Decision: "manual_compose", Reason: raw, RevertApproved: iss.Status == "approved",
+		Flags: flags, Decision: "manual_compose", Reason: raw, RevertApproved: iss.Status == store.IssueApproved,
 	})
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
 	iss.BodyMD = body
 	iss.Flags = flags
-	if iss.Status == "approved" {
-		iss.Status = "drafted"
+	if iss.Status == store.IssueApproved {
+		iss.Status = store.IssueDrafted
 	}
 	s.respondSentence(w, r, iss, doc, map[string]any{
 		"added":   len(strings.Split(raw, "\n")),

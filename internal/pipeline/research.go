@@ -19,6 +19,7 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // researchSourceExcerpt bounds each source inside the research prompt —
@@ -40,10 +41,10 @@ type Research struct {
 
 // researchAnswer is the model's JSON reply shape.
 type researchAnswer struct {
-	Summary       string         `json:"summary"`
-	Facts         []DossierFact  `json:"facts"`
-	OpenQuestions []string       `json:"open_questions"`
-	DraftBody     string         `json:"draft_body"`
+	Summary       string          `json:"summary"`
+	Facts         []DossierFact   `json:"facts"`
+	OpenQuestions []string        `json:"open_questions"`
+	DraftBody     string          `json:"draft_body"`
 	Sources       []DossierSource `json:"sources"`
 }
 
@@ -147,10 +148,10 @@ func (rc *Researcher) generate(ctx context.Context, story *store.Story, items []
 		srcs = srcs[:researchMaxSources]
 	}
 	type src struct {
-		Ref     int
-		URL     string
-		Name    string
-		Text    string
+		Ref  int
+		URL  string
+		Name string
+		Text string
 	}
 	data := struct {
 		Title   string
@@ -159,7 +160,7 @@ func (rc *Researcher) generate(ctx context.Context, story *store.Story, items []
 	for i, it := range srcs {
 		data.Sources = append(data.Sources, src{
 			Ref: i + 1, URL: it.URL, Name: it.SourceName,
-			Text: truncateRunes(it.ContentText, researchSourceExcerpt),
+			Text: strutil.Truncate(it.ContentText, researchSourceExcerpt),
 		})
 	}
 	user, err := RenderPrompt("research", data)

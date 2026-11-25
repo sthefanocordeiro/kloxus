@@ -11,6 +11,8 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
+
 	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/embedding"
@@ -88,7 +90,9 @@ func localEnrichment(it store.UnembeddedRow) store.ItemEnrichment {
 		Description string   `json:"description"`
 		Categories  []string `json:"categories"`
 	}
-	_ = json.Unmarshal([]byte(it.MetaJSON), &meta)
+	if err := json.Unmarshal([]byte(it.MetaJSON), &meta); err != nil {
+		slog.Warn("item enrichment: malformed meta json", "err", err)
+	}
 	res := embedding.Classify(it.Title, it.ContentText, meta.Categories)
 	summary := meta.Description
 	if summary == "" {

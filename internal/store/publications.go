@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -96,9 +97,15 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 			&p.EditorialLine, &p.RejectTerms, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template); err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(sections), &p.Sections)
-		json.Unmarshal([]byte(paywall), &p.Paywall)
-		json.Unmarshal([]byte(template), &p.Template)
+		if err := json.Unmarshal([]byte(sections), &p.Sections); err != nil {
+			slog.Warn("publication row: malformed sections json", "publication", p.ID, "err", err)
+		}
+		if err := json.Unmarshal([]byte(paywall), &p.Paywall); err != nil {
+			slog.Warn("publication row: malformed paywall json", "publication", p.ID, "err", err)
+		}
+		if err := json.Unmarshal([]byte(template), &p.Template); err != nil {
+			slog.Warn("publication row: malformed template json", "publication", p.ID, "err", err)
+		}
 		p.TemplateRaw = template
 		out = append(out, &p)
 	}

@@ -171,7 +171,7 @@ func (s *Server) apiPublicIssue(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	if iss.Status != "sent" && iss.Status != "scheduled" && iss.TestSentAt == "" {
+	if iss.Status != store.IssueSent && iss.Status != store.IssueScheduled && iss.TestSentAt == "" {
 		apiErr(w, 404, "not_found", "issue not found")
 		return
 	}
@@ -261,7 +261,7 @@ func (s *Server) apiAfter(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	if iss.Status != "sent" && iss.Status != "scheduled" && iss.TestSentAt == "" {
+	if iss.Status != store.IssueSent && iss.Status != store.IssueScheduled && iss.TestSentAt == "" {
 		apiErr(w, 409, "blocked", "the public page exists once the issue is sent, scheduled or test-sent",
 			apiReason{Code: "not_sent", Message: "issue is not sent",
 				Target: &apiTarget{Kind: "issue", Ref: fmt.Sprint(iss.ID)}})

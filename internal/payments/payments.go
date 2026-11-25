@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
 )
 
 // Provider names recorded on payments and subscriptions rows.
@@ -94,7 +96,7 @@ func (a AbacatePay) client() *http.Client {
 	if a.HTTP != nil {
 		return a.HTTP
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	return httpx.Client(15 * time.Second)
 }
 
 // apiError surfaces a provider failure: HTTP status plus the envelope's
@@ -245,7 +247,7 @@ type Fake struct {
 	Created []BillingRequest
 }
 
-func (f *Fake) Name() string  { return FakeName }
+func (f *Fake) Name() string   { return FakeName }
 func (f *Fake) TestMode() bool { return true }
 
 func (f *Fake) CreateBilling(_ context.Context, req BillingRequest) (*Billing, error) {

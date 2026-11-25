@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -307,7 +308,9 @@ func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogIt
 				return 0, 0, err
 			}
 			var m map[string]any
-			_ = json.Unmarshal([]byte(mj), &m)
+			if err := json.Unmarshal([]byte(mj), &m); err != nil {
+				slog.Warn("catalog item: malformed meta json", "err", err)
+			}
 			stored[ext] = struct {
 				meta map[string]any
 				text string

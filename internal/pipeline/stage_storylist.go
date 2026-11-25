@@ -108,7 +108,7 @@ func (r *Runner) stageStorylist(ctx context.Context, pub *store.Publication, st 
 			Section: p.Section,
 			Score:   sc.score,
 			Reason:  p.Why,
-			Status:  "pending",
+			Status:  store.ItemPending,
 		})
 		if err != nil {
 			return err
@@ -162,7 +162,7 @@ func (r *Runner) stageStorylist(ctx context.Context, pub *store.Publication, st 
 				Section: sec.Title,
 				Score:   sc.score,
 				Reason:  why,
-				Status:  "pending",
+				Status:  store.ItemPending,
 			})
 			if err != nil {
 				return err
