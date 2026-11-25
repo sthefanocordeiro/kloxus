@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, pautaPath, type PautaEntry } from "../api";
+import { api, pautaPath, type PautaEntry, type PautaSave, type PautaState } from "../api";
 import { DestinationStep } from "../components/Destinations";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
@@ -30,6 +30,14 @@ export function IssueRedirect() {
 // its single optional comment space (KLOX-162, autosaved). No sentences,
 // citations or checks — the only gate is a heads-up about news left
 // without text.
+// the PUT is a full-state replace (order, adds and removals all live in
+// the entries list), so persist and the unload flush share one body
+const pautaBody = (cur: { opening: string; entries: PautaEntry[]; title: string | undefined }): PautaSave => ({
+  opening: cur.opening,
+  entries: cur.entries.map((e) => ({ story_id: e.story_id, text: e.text })),
+  ...(cur.title !== undefined ? { title: cur.title } : {}),
+});
+
 export function PautaPage() {
   const { id } = useParams();
   const issueID = Number(id);
@@ -37,7 +45,10 @@ export function PautaPage() {
   const s = usePautaStrings();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["pauta", issueID], queryFn: () => api.pauta(issueID), staleTime: Infinity });
+  // no staleTime: every mount refetches, and persist() writes each save
+  // back into this cache — a remount seeds the editor from what the
+  // server holds, never from a pre-edit snapshot (KLOX-233)
+  const q = useQuery({ queryKey: ["pauta", issueID], queryFn: () => api.pauta(issueID) });
   const issueQ = useQuery({ queryKey: ["issue", issueID], queryFn: () => api.issue(issueID) });
   const pubID = issueQ.data?.publication_id;
 
@@ -61,8 +72,12 @@ export function PautaPage() {
   const flight = useRef<Promise<void> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // seed from the cache on mount; a refetch that lands later re-seeds
+  // only while nothing local is unsaved, so it can never eat keystrokes
+  // or a pending save (KLOX-233)
   useEffect(() => {
-    if (q.data && !ready) {
+    if (!q.data) return;
+    if (!ready || (!dirty.current && !flight.current)) {
       setOpening(q.data.opening);
       setEntries(q.data.entries);
       setReady(true);
@@ -88,11 +103,7 @@ export function PautaPage() {
     setSaveState("saving");
     const cur = latest.current;
     let ok = false;
-    const req = api.pautaSave(issueID, {
-      opening: cur.opening,
-      entries: cur.entries.map((e) => ({ story_id: e.story_id, text: e.text })),
-      ...(cur.title !== undefined ? { title: cur.title } : {}),
-    });
+    const req = api.pautaSave(issueID, pautaBody(cur));
     flight.current = req.then(() => undefined, () => undefined);
     try {
       await req;
@@ -103,6 +114,13 @@ export function PautaPage() {
       setSaveState("error");
     } finally {
       flight.current = null;
+      if (ok) {
+        // the cache must mirror what the server now holds — a remount
+        // seeds the editor from it, and a stale snapshot showed a
+        // written story as empty so the next whole-pauta save wiped it
+        qc.setQueryData<PautaState>(["pauta", issueID], (old) =>
+          old ? { ...old, opening: cur.opening, entries: cur.entries } : old);
+      }
       // edits that landed mid-flight still need to go out, in order;
       // on error dirty stays set and the next touch/blur retries
       if (ok && dirty.current) timer.current = setTimeout(() => void persistRef.current(), 400);
@@ -138,6 +156,21 @@ export function PautaPage() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, []);
+
+  // and flush them anyway: a dismissed warning, a reload racing the
+  // debounce or an in-flight save aborted by the unload all used to
+  // lose the last keystrokes. A keepalive PUT outlives the page, and
+  // savePauta is idempotent — it replaces the pauta with exactly what
+  // it gets, so re-sending the latest state can never write anything
+  // older (KLOX-233)
+  useEffect(() => {
+    const flush = () => {
+      if (!dirty.current && flight.current === null) return;
+      void api.pautaSave(issueID, pautaBody(latest.current), true).catch(() => {});
+    };
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, [issueID]);
 
   const edit = (fn: (e: PautaEntry[]) => PautaEntry[]) => {
     setEntries((p) => fn(p));
