@@ -111,18 +111,12 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
     vi.mocked(api.publication).mockReturnValue(d.promise);
     renderAt("/publications/42/sources");
     await screen.findByText("pub screen");
-    await screen.findAllByRole("link", { name: "Settings" }); // workspace flag settled
+    await screen.findAllByRole("link", { name: "Radar" }); // workspace flag settled
 
     // pubQ is unresolved — the nav must already point at /publications/42
     expectNoDeadLinks();
     const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
-    for (const tail of ["sources", "settings"]) {
-      expect(hrefs).toContain(`/publications/42/${tail}`);
-    }
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
-      "href",
-      "/publications/42/settings",
-    );
+    expect(hrefs).toContain("/publications/42/sources");
 
     // resolving pubQ only fills in data — the nav targets stay identical
     d.resolve({ publication: pub, latest_issue: issue });
@@ -131,10 +125,9 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
         expect(a).toHaveAttribute("href", "/pauta/7");
       }
     });
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
-      "href",
-      "/publications/42/settings",
-    );
+    for (const a of screen.getAllByRole("link", { name: "Radar" })) {
+      expect(a).toHaveAttribute("href", "/publications/42/sources");
+    }
   });
 
   it("resolves pub links from the issue's publication_id ahead of pubQ", async () => {
@@ -146,10 +139,8 @@ describe("AppShell pub-scoped nav (KLOX-74)", () => {
     // the issue fetch supplies the publication id one round-trip before
     // pubQ could — links go pub-scoped as soon as it lands
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
-        "href",
-        "/publications/42/settings",
-      );
+      const radars = screen.getAllByRole("link", { name: "Radar" });
+      expect(radars.some((a) => a.getAttribute("href") === "/publications/42/sources")).toBe(true);
     });
     expect(api.publication).toHaveBeenCalledWith("42");
     expectNoDeadLinks();
@@ -189,8 +180,8 @@ describe("AppShell nav highlight without an edition (KLOX-90)", () => {
 
     expectInactive("Current brief");
     expectInactive("Briefs");
-    const sources = screen.getAllByRole("link", { name: "Sources" })[0];
-    expect(sources.className).toContain("bg-teal-soft");
+    const radar = screen.getAllByRole("link", { name: "Radar" })[0];
+    expect(radar.className).toContain("bg-teal-soft");
   });
 
   it("glows nothing on /publications — the title is Radar-level (KLOX-185)", async () => {
@@ -200,13 +191,16 @@ describe("AppShell nav highlight without an edition (KLOX-90)", () => {
 
     expectInactive("Current brief");
     expectInactive("Briefs");
-    expectInactive("Sources");
-    expectInactive("Settings");
+    // the publications list is Radar-level chrome — the merged Radar
+    // item is what glows (KLOX-185, KLOX-207)
+    const radar = screen.getAllByRole("link", { name: "Radar" })[0];
+    expect(radar.className).toContain("bg-teal-soft");
   });
 });
 
 // KLOX-122: with publishing off (the default) the sidebar is exactly
-// Today · Briefs · Radar · Settings — no readers, outbox or send.
+// Today · Briefs · Radar — Configurações merged into Radar (KLOX-207);
+// no readers, outbox or send.
 describe("AppShell nav with publishing off (KLOX-122)", () => {
   beforeEach(() => {
     vi.mocked(api.workspace).mockResolvedValue({
@@ -221,7 +215,7 @@ describe("AppShell nav with publishing off (KLOX-122)", () => {
     vi.mocked(api.publication).mockResolvedValue({ publication: pub });
   });
 
-  it("shows only Today, Briefs, Radar and Settings", async () => {
+  it("shows only Today, Briefs and Radar", async () => {
     renderAt("/publications/42/sources");
     await screen.findByText("pub screen");
     const side = screen.getAllByRole("navigation", { name: "Radar" })[0];
@@ -229,7 +223,6 @@ describe("AppShell nav with publishing off (KLOX-122)", () => {
       "Today",
       "Briefs",
       "Radar",
-      "Settings",
     ]);
     for (const a of screen.getAllByRole("link")) {
       expect(a.getAttribute("href") ?? "").not.toMatch(/readers|outbox/);
@@ -321,13 +314,13 @@ describe("AppShell nav before the first Radar (KLOX-187)", () => {
     await screen.findByText("pubs screen");
 
     // still loading — the shell must not flash an empty nav
-    await screen.findAllByRole("link", { name: "Settings" });
+    await screen.findAllByRole("link", { name: "Radar" });
 
     d.resolve([]);
     await waitFor(() => {
-      expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+      expect(screen.queryByRole("link", { name: "Radar" })).toBeNull();
     });
-    for (const name of ["Current brief", "Briefs", "Sources"]) {
+    for (const name of ["Current brief", "Briefs"]) {
       expect(screen.queryByRole("link", { name })).toBeNull();
     }
     // the only way forward is creating the first Radar

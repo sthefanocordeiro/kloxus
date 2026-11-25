@@ -11,4 +11,12 @@ func TestNicheMapsCover18Editorias(t *testing.T) {
 			t.Errorf("editoria %q lacks a label or sources", k)
 		}
 	}
+	if len(nicheOrder) != len(nicheSources) {
+		t.Fatalf("nicheOrder covers %d editorias, want %d", len(nicheOrder), len(nicheSources))
+	}
+	for _, k := range nicheOrder {
+		if nicheLabels[k] == "" {
+			t.Errorf("nicheOrder lists unknown editoria %q", k)
+		}
+	}
 }
