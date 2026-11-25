@@ -302,99 +302,20 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return res, nil
 	}
 
-	// --- dedupe ---
-	r.stepStart("dedupe")
-	start := time.Now()
-	items, err := r.DB.ItemsForPublication(ctx, pub.ID)
-	if err != nil {
+	if err := r.stageDedupe(ctx, pub, st); err != nil {
 		return nil, err
 	}
-	urls := make([]string, len(items))
-	texts := make([]string, len(items))
-	published := make([]time.Time, len(items))
-	for i, it := range items {
-		urls[i] = it.URL
-		// SimHash runs over body text only (KLOX-46): a republish's new
-		// headline must not push the pair past the 4-bit threshold.
-		texts[i] = it.ContentText
-		// The 72 h merge window uses the published date first and the
-		// fetched time when it is unparseable — the same fallback the
-		// candidate query applies (safe_ts).
-		if t, ok := parsePublished(it.PublishedAt); ok {
-			published[i] = t
-		} else if t, ok := parsePublished(it.FetchedAt); ok {
-			published[i] = t
-		}
-	}
-	clusters := dedupe.Assign(urls, texts, published)
-	if err := r.DB.ClearStories(ctx, pub.ID); err != nil {
-		return nil, err
-	}
-	groups := map[int][]store.Item{}
-	for i, it := range items {
-		groups[clusters[i]] = append(groups[clusters[i]], it)
-	}
-	groups = mergeCitedGroups(groups)
-	groups = mergeEventGroups(groups)
-	ordered := make([][]store.Item, 0, len(groups))
-	for _, g := range groups {
-		ordered = append(ordered, g)
-	}
-	sort.Slice(ordered, func(a, b int) bool { return ordered[a][0].ID < ordered[b][0].ID })
-	drafts := make([]store.StoryDraft, len(ordered))
-	for i, g := range ordered {
-		itemIDs := make([]int64, len(g))
-		for j, it := range g {
-			itemIDs[j] = it.ID
-		}
-		drafts[i] = store.StoryDraft{
-			Title:     earliestTitle(g),
-			Simhash:   int64(dedupe.SimHash(g[0].Title + "\n" + g[0].ContentText)),
-			DedupeKey: dedupeKey(g),
-			ItemIDs:   itemIDs,
-		}
-	}
-	if err := r.DB.CreateStories(ctx, pub.ID, drafts); err != nil {
-		return nil, err
-	}
-	stories, err := r.DB.StoriesWithItems(ctx, pub.ID)
-	if err != nil {
-		return nil, err
-	}
-	res.Stories = len(stories)
-	r.emit("dedupe", map[string]int{"stories": res.Stories, "duplicates_merged": len(items) - res.Stories})
-	r.record(ctx, pub.ID, 0, "dedupe", "", start, llm.Response{})
+	stories := st.stories
 
 	// create the issue now so all model steps attach to it
-	number, err := r.DB.NextIssueNumber(ctx, pub.ID)
-	if err != nil {
+	if err := r.createIssue(ctx, pub, st); err != nil {
 		return nil, err
 	}
-	res.Number = number
-	// the stored subject mirrors assembleIssue's body heading — the
-	// issue chrome, mail subject, and export title all render it as-is
-	// (KLOX-56).
-	word := "issue"
-	if ptLang(pub.Language) {
-		word = "edição"
-	}
-	// The issue snapshots the publication's section definitions: builder
-	// edits land on the next edition, not the one already in progress
-	// (KLOX-65).
-	issueID, err := r.DB.CreateIssue(ctx, pub.ID, number,
-		fmt.Sprintf("%s — %s %d", pub.Name, word, number), "", pub.Sections)
-	if err != nil {
-		return nil, err
-	}
-	res.IssueID = issueID
-	r.DB.AttachRuns(ctx, pub.ID, issueID)
-	if r.OnIssue != nil {
-		r.OnIssue(issueID)
-	}
+	issueID := st.issueID
 
 	// --- triage ---
 	r.stepStart("triage")
-	start = time.Now()
+	start := time.Now()
 	type triStory struct {
 		Ref     int
 		Title   string
