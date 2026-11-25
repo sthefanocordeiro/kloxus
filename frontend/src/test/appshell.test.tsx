@@ -356,7 +356,7 @@ describe("AppShell 'New Radar' entry points (KLOX-206)", () => {
     // pubs resolved empty — the nav items hid; the sidebar create link
     // must not point back at the page the user is already on
     await waitFor(() => {
-      expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
+      expect(screen.queryByRole("link", { name: "Radar" })).toBeNull();
     });
     expect(screen.queryByRole("link", { name: "New Radar" })).toBeNull();
   });
@@ -365,7 +365,7 @@ describe("AppShell 'New Radar' entry points (KLOX-206)", () => {
     vi.mocked(api.publications).mockResolvedValue([pub]);
     renderAt("/publications/42");
     await screen.findByText("pub screen");
-    await screen.findAllByRole("link", { name: "Settings" }); // queries settled
+    await screen.findAllByRole("link", { name: "Radar" }); // queries settled
 
     fireEvent.click(screen.getByRole("button", { name: "Account" }));
     expect(await screen.findByRole("button", { name: "Sign out" })).toBeInTheDocument();
