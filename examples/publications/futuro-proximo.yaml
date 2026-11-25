@@ -1,23 +1,24 @@
 slug: futuro-proximo
 name: Futuro Próximo
 language: pt-BR
-topic: Tecnologia e tendências que afetam profissionais valdorianos
+topic: Tecnologia e tendências que afetam o trabalho de profissionais não técnicos
 audience: Profissionais em meio de carreira, curiosos mas não engenheiros
 editorial_line: |
   Priorize adoção real em vez de anúncios.
-  Pule lançamentos de produto sem disponibilidade na Valdória.
+  Pule lançamentos de produtos que os leitores ainda não conseguem comprar.
   Pule rodadas de investimento, a menos que mudem um mercado.
   Prefira fontes primárias (blogs de empresas, papers, reguladores).
+  Pule ofertas, cupons e guias de compra.
 tone: Direto, em primeira pessoa, sem hype
 frequency: weekly
 sections:
-  - title: The big one
+  - title: O destaque
     items: 1
     commentary: required
-  - title: Worth knowing
+  - title: Vale saber
     items: 4
     commentary: optional
-  - title: Quick links
+  - title: Links rápidos
     items: 5
     commentary: none
 sources:
@@ -35,6 +36,6 @@ sources:
     url: fixtures/pages/observatorio-aberto.html
 paywall:
   enabled: true
-  price: "V$ 12/month"
-  paid_sections: [The big one]
+  price: ""
+  paid_sections: [O destaque]
 ai_disclosure: short
