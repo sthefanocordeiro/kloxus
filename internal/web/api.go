@@ -316,6 +316,9 @@ type apiPublication struct {
 	AIDisclosure  string       `json:"ai_disclosure"`
 	Sections      []apiSection `json:"sections"`
 	Paywall       apiPaywall   `json:"paywall"`
+	// Niches are the editorias the theme names — shown as chips on the
+	// Radar screen (KLOX-207).
+	Niches []string `json:"niches"`
 }
 
 type apiSection struct {
@@ -361,6 +364,7 @@ func publicationView(p *store.Publication) apiPublication {
 	if v.Paywall.PaidSections == nil {
 		v.Paywall.PaidSections = []string{}
 	}
+	v.Niches = nichesFromTopic(p.Topic)
 	return v
 }
 

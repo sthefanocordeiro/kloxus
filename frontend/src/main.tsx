@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiRequestError } from "./api";
 import { LangProvider } from "./i18n";
@@ -26,6 +26,13 @@ const qc = new QueryClient({
     },
   },
 });
+
+// Configurações merged into the Radar screen (KLOX-207) — old
+// /settings links land on it instead of the 404.
+function SettingsRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/publications/${id}/sources`} replace />;
+}
 
 // Heavy screens (the Tiptap editor above all) load on demand so the
 // landing bundle stays small — see scripts/check-bundle-size.mjs.
@@ -63,7 +70,7 @@ const router = createBrowserRouter([
       { path: "/publications/:id", lazy: () => import("./pages/PublicationPage").then((m) => ({ Component: m.PublicationPage })) },
       { path: "/publications/:id/today", lazy: () => import("./pages/Today").then((m) => ({ Component: m.Today })) },
       { path: "/publications/:id/sources", lazy: () => import("./pages/Sources").then((m) => ({ Component: m.SourcesPage })) },
-      { path: "/publications/:id/settings", lazy: () => import("./pages/SettingsPage").then((m) => ({ Component: m.SettingsPage })) },
+      { path: "/publications/:id/settings", element: <SettingsRedirect /> },
       { path: "/pauta/:id", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaPage })) },
       { path: "/pauta/:id/export", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaExport })) },
       { path: "/issues/:id", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.IssueRedirect })) },

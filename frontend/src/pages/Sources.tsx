@@ -4,23 +4,37 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api, type PreviewItem } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
+import { usePublishing } from "../lib/publishing";
+import { NICHE_KEYS, useStart } from "./startStrings";
 import { Badge, Button, Card, SkeletonLine } from "../ui";
+import { KDialog } from "../ui-overlays";
 
-// /publications/:id/sources — the onboarding sources screen: suggested fixture
-// sources with real previews, add/remove, and confirm → today's pauta
+// /publications/:id/sources — the Radar screen: what the Radar is and
+// reads, in one place. The old Configurações duplicated Nome/Tema/
+// Nunca mostrar — they live here now, with the cadastro editorias as
+// chips and Apagar Radar at the end (KLOX-207). Its headline job is
+// still the aderência controls (KLOX-94) and the suggested sources.
 // (Hoje builds the deck on demand — the old collection run is gone,
-// KLOX-179). Its headline job is the aderência controls (KLOX-94): the
-// theme, reject terms and per-section pautas the suggestion engine ranks by.
+// KLOX-179.)
 export function SourcesPage() {
   const { id } = useParams();
   const { t } = useT();
+  const start = useStart();
   const nav = useNavigate();
+  const publishing = usePublishing();
   const qc = useQueryClient();
   const [previews, setPreviews] = useState<Record<string, PreviewItem[] | "loading">>({});
   const [previewNote, setPreviewNote] = useState<Record<string, string>>({});
   const [sel, setSel] = useState<Record<string, boolean>>({});
-  const [adForm, setAdForm] = useState<{ topic: string; rejects: string; sections: Record<string, string> } | null>(null);
+  const [adForm, setAdForm] = useState<{
+    name: string;
+    topic: string;
+    rejects: string;
+    price: string;
+    sections: Record<string, string>;
+  } | null>(null);
   const [adSaved, setAdSaved] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const pub = useQuery({ queryKey: ["publication", id], queryFn: () => api.publication(id!) });
   const sources = useQuery({ queryKey: ["sources", id], queryFn: () => api.sources(id!) });
@@ -34,8 +48,10 @@ export function SourcesPage() {
     if (pub.data && !adForm) {
       const p = pub.data.publication;
       setAdForm({
+        name: p.name,
         topic: p.topic,
         rejects: p.reject_terms ?? "",
+        price: p.paywall.price,
         sections: Object.fromEntries(p.sections.map((s) => [s.id, s.topic ?? ""])),
       });
     }
@@ -46,8 +62,10 @@ export function SourcesPage() {
   const saveAd = useMutation({
     mutationFn: () =>
       api.updatePublication(id!, {
+        name: adForm!.name,
         topic: adForm!.topic,
         reject_terms: adForm!.rejects,
+        paywall: { ...pub.data!.publication.paywall, price: adForm!.price },
         sections: pub.data!.publication.sections.map((s) => ({
           ...s,
           topic: adForm!.sections[s.id] ?? "",
@@ -56,12 +74,21 @@ export function SourcesPage() {
     onSuccess: () => {
       setAdSaved(true);
       qc.invalidateQueries({ queryKey: ["publication", id] });
+      qc.invalidateQueries({ queryKey: ["publications"] });
     },
   });
   const editAd = (patch: Partial<NonNullable<typeof adForm>>) => {
     setAdForm((f) => (f ? { ...f, ...patch } : f));
     setAdSaved(false);
   };
+
+  const del = useMutation({
+    mutationFn: () => api.deletePublication(id!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["publications"] });
+      nav("/publications", { replace: true });
+    },
+  });
 
   const remove = useMutation({
     mutationFn: (sid: number) => api.sourceDelete(id!, sid),
@@ -94,15 +121,17 @@ export function SourcesPage() {
     }
   };
 
+  const p = pub.data?.publication;
+  // the cadastro editorias, back in the cadastro's order — chips, never
+  // editable after signup (KLOX-207)
+  const niches = NICHE_KEYS.filter((k) => p?.niches?.includes(k));
+
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      <h1 className="mt-4 font-display text-2xl font-bold">
-        {t.sourcesPage.title}
-        {pub.data && <span className="ml-2 text-base font-normal text-muted">— {pub.data.publication.name}</span>}
-      </h1>
+      <h1 className="mt-4 font-display text-2xl font-bold">{t.sourcesPage.title}</h1>
       <p className="mt-1 text-sm text-muted">{t.sourcesPage.subtitle}</p>
 
-      {/* aderência controls (KLOX-94): this page's job — the topics the
+      {/* the Radar block: identity + aderência (KLOX-94) — what the
           suggestion engine ranks by, in the creator's own words. Custom-
           source submission is off the table by owner decision: the page
           manages the catalog feeds plus these controls, nothing else. */}
@@ -112,6 +141,14 @@ export function SourcesPage() {
           <p className="mt-1 text-xs text-muted">{t.sourcesPage.aderenciaHint}</p>
           <div className="mt-3 space-y-3">
             <label className="block">
+              <span className="text-xs font-medium text-muted">{t.sourcesPage.name}</span>
+              <input
+                value={adForm.name}
+                onChange={(e) => editAd({ name: e.target.value })}
+                className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+              />
+            </label>
+            <label className="block">
               <span className="text-xs font-medium text-muted">{t.sourcesPage.newsletterTheme}</span>
               <input
                 value={adForm.topic}
@@ -120,6 +157,16 @@ export function SourcesPage() {
                 className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
               />
             </label>
+            {niches.length > 0 && (
+              <div>
+                <span className="text-xs font-medium text-muted">{t.sourcesPage.editorias}</span>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {niches.map((k) => (
+                    <Badge key={k} tone="chip">{start.niches[k]}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
             <label className="block">
               <span className="text-xs font-medium text-muted">{t.sourcesPage.rejectsLabel}</span>
               <input
@@ -130,12 +177,28 @@ export function SourcesPage() {
               />
               <span className="mt-1 block text-xs text-muted">{t.create.rejectTermsHint}</span>
             </label>
+            {publishing && p?.paywall.enabled && (
+              <label className="block">
+                <span className="text-xs font-medium text-muted">{t.sourcesPage.price}</span>
+                <input
+                  value={adForm.price}
+                  onChange={(e) => editAd({ price: e.target.value })}
+                  placeholder={t.sourcesPage.pricePlaceholder}
+                  className="mt-1 w-full rounded border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-teal"
+                />
+              </label>
+            )}
           </div>
           <div className="mt-3 flex items-center gap-3">
             {/* outline: the screen's one primary is the forward action
                 below — two filled buttons competed for it (§4.3, KLOX-68) */}
-            <Button variant="outline" size="sm" disabled={saveAd.isPending} onClick={() => saveAd.mutate()}>
-              {t.sourcesPage.save}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={saveAd.isPending || !adForm.name.trim()}
+              onClick={() => saveAd.mutate()}
+            >
+              {saveAd.isPending ? t.sourcesPage.saving : t.sourcesPage.save}
             </Button>
             {adSaved && <span className="text-xs text-teal">{t.sourcesPage.saved}</span>}
           </div>
@@ -191,10 +254,11 @@ export function SourcesPage() {
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{o.name || o.url}</span>
-                      <span className="mt-0.5 flex items-center gap-2 text-xs text-muted">
-                        <Badge>{o.type === "rss" ? t.sourcesPage.ownType.rss : t.sourcesPage.ownType.page}</Badge>
-                        {o.suspended && <Badge tone="warn">{t.sourcesPage.suspendedBadge}</Badge>}
-                      </span>
+                      {o.suspended && (
+                        <span className="mt-0.5 flex items-center gap-2 text-xs text-muted">
+                          <Badge tone="warn">{t.sourcesPage.suspendedBadge}</Badge>
+                        </span>
+                      )}
                       {o.note && <span className="mt-0.5 block text-xs text-muted">{o.note}</span>}
                     </span>
                   </label>
@@ -254,6 +318,42 @@ export function SourcesPage() {
         )}
       </div>
       {confirm.error && <p className="mt-2 text-xs text-danger">{errText(t, confirm.error)}</p>}
+
+      {/* Apagar Radar sits at the end of the merged screen, behind an
+          explicit confirmation (KLOX-207 — the old Configurações' one
+          destructive action) */}
+      {p && (
+        <Card className="mt-8 border-danger/40 p-4">
+          <h2 className="font-display text-base font-bold text-danger">{t.sourcesPage.dangerTitle}</h2>
+          <p className="mt-1 text-sm text-muted">{t.sourcesPage.dangerBody}</p>
+          {del.error && <p className="mt-2 text-xs text-danger">{errText(t, del.error)}</p>}
+          <div className="mt-4">
+            <Button variant="dangerGhost" onClick={() => setConfirmingDelete(true)}>
+              {t.sourcesPage.deleteAction}
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      <KDialog
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title={t.sourcesPage.deleteConfirmTitle}
+      >
+        <p className="text-sm text-muted">{p && t.sourcesPage.deleteConfirmBody(p.name)}</p>
+        <div className="mt-5 flex gap-3">
+          <Button
+            variant="danger"
+            disabled={del.isPending}
+            onClick={() => del.mutate()}
+          >
+            {del.isPending ? t.sourcesPage.deleting : t.sourcesPage.deleteConfirmAction}
+          </Button>
+          <Button variant="outline" onClick={() => setConfirmingDelete(false)}>
+            {t.sourcesPage.cancel}
+          </Button>
+        </div>
+      </KDialog>
     </div>
   );
 }
