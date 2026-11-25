@@ -252,61 +252,27 @@ func cmdDemo(args []string) error {
 	return nil
 }
 
-// serveUI starts the web UI: hosted multi-workspace mode when
-// KLOXUS_DATA_DIR is set (Fly.io), a single local workspace otherwise.
-func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, guard *llm.Guard, seed func(context.Context, *store.DB) error) error {
-	var monitor sources.MonitorProvider = sources.FakeMonitor{}
-	var scraper sources.Scraper = sources.FakeScraper{}
-	if cfg.Mode == "real" && cfg.FirecrawlAPIKey != "" {
-		monitor = sources.FirecrawlMonitor{
-			APIKey:     cfg.FirecrawlAPIKey,
-			WebhookURL: strings.TrimRight(cfg.PublicURL, "/") + "/webhooks/firecrawl",
-			Secret:     cfg.WebhookSecret,
-		}
-		scraper = sources.FirecrawlScraper{APIKey: cfg.FirecrawlAPIKey}
+// serveDeps are the collaborators serveUI wires into the web server.
+type serveDeps struct {
+	monitor sources.MonitorProvider
+	scraper sources.Scraper
+	mailer  delivery.Sender
+	pay     payments.Provider
+	wsm     *workspace.Manager
+}
+
+// buildDeps constructs the web server's collaborators from config:
+// monitor + scraper (Firecrawl or fakes), the mail transport, the
+// workspace manager and the payments provider.
+func buildDeps(cfg *config.Config, pool *store.Pool, db *store.DB, seed func(context.Context, *store.DB) error) (*serveDeps, error) {
+	monitor, scraper := buildScraping(cfg)
+	mailer, err := buildMailer(cfg)
+	if err != nil {
+		return nil, err
 	}
-	if cfg.Mode == "real" && cfg.FirecrawlAPIKey == "" {
-		// no provider, no pretend scrape — apiPropose answers
-		// scrape_unavailable instead of inventing a proposal
-		scraper = nil
-	}
-	var mailer delivery.Sender
-	switch {
-	case cfg.FakeResendURL != "":
-		// Verification-only transport: a literal-loopback fake with a
-		// synthetic credential — live-mail rules run end to end and
-		// nothing real can leave the machine. Config rejected an
-		// invalid or remote endpoint already; an error here still
-		// stops startup rather than falling back to a real API.
-		fake, err := delivery.NewLoopbackSender(cfg.FakeResendURL, cfg.FromAddress)
-		if err != nil {
-			return err
-		}
-		mailer = fake
-	case cfg.ResendAPIKey != "":
-		// A configured key means real mail: claim gate + confirmed
-		// readers + caps all switch on. Empty key keeps outbox mode.
-		mailer = delivery.NewResend(cfg.ResendAPIKey, cfg.FromAddress)
-	}
-	var wsm *workspace.Manager
-	var err error
-	if cfg.DataDir != "" {
-		secret := []byte(cfg.CookieSecret)
-		if len(secret) == 0 {
-			secret, err = workspace.LoadOrCreateSecret(filepath.Join(cfg.DataDir, "cookie.secret"))
-			if err != nil {
-				return err
-			}
-		}
-		wsm, err = workspace.OpenHosted(context.Background(), pool, secret, seed)
-		if err != nil {
-			return err
-		}
-		if v, perr := strconv.Atoi(strings.TrimSpace(os.Getenv("KLOXUS_NEW_SESSIONS_PER_IP_HOUR"))); perr == nil {
-			wsm.SetCreateLimit(v)
-		}
-	} else {
-		wsm = workspace.OpenLocal(db, seed)
+	wsm, err := openWorkspaceManager(cfg, pool, db, seed)
+	if err != nil {
+		return nil, err
 	}
 	var pay payments.Provider
 	if cfg.AbacatePayKey != "" {
@@ -314,10 +280,133 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 		// provider serves the checkout and the UI labels it simulated.
 		pay = payments.AbacatePay{APIKey: cfg.AbacatePayKey}
 	}
+	return &serveDeps{monitor: monitor, scraper: scraper, mailer: mailer, pay: pay, wsm: wsm}, nil
+}
+
+// buildScraping picks the source monitor and page scraper: Firecrawl in
+// real mode with a key, the fakes otherwise.
+func buildScraping(cfg *config.Config) (sources.MonitorProvider, sources.Scraper) {
+	if cfg.Mode == "real" && cfg.FirecrawlAPIKey != "" {
+		return sources.FirecrawlMonitor{
+			APIKey:     cfg.FirecrawlAPIKey,
+			WebhookURL: strings.TrimRight(cfg.PublicURL, "/") + "/webhooks/firecrawl",
+			Secret:     cfg.WebhookSecret,
+		}, sources.FirecrawlScraper{APIKey: cfg.FirecrawlAPIKey}
+	}
+	if cfg.Mode == "real" {
+		// no provider, no pretend scrape — apiPropose answers
+		// scrape_unavailable instead of inventing a proposal
+		return sources.FakeMonitor{}, nil
+	}
+	return sources.FakeMonitor{}, sources.FakeScraper{}
+}
+
+// buildMailer picks the mail transport: the loopback fake under
+// KLOXUS_FAKE_RESEND_URL, real Resend under RESEND_API_KEY, nil
+// (outbox-only mode) when neither is configured.
+func buildMailer(cfg *config.Config) (delivery.Sender, error) {
+	if cfg.FakeResendURL != "" {
+		// Verification-only transport: a literal-loopback fake with a
+		// synthetic credential — live-mail rules run end to end and
+		// nothing real can leave the machine. Config rejected an
+		// invalid or remote endpoint already; an error here still
+		// stops startup rather than falling back to a real API.
+		return delivery.NewLoopbackSender(cfg.FakeResendURL, cfg.FromAddress)
+	}
+	if cfg.ResendAPIKey != "" {
+		// A configured key means real mail: claim gate + confirmed
+		// readers + caps all switch on. Empty key keeps outbox mode.
+		return delivery.NewResend(cfg.ResendAPIKey, cfg.FromAddress), nil
+	}
+	return nil, nil
+}
+
+// openWorkspaceManager opens the hosted multi-workspace manager when
+// KLOXUS_DATA_DIR is set (Fly.io), the single local workspace otherwise.
+func openWorkspaceManager(cfg *config.Config, pool *store.Pool, db *store.DB, seed func(context.Context, *store.DB) error) (*workspace.Manager, error) {
+	if cfg.DataDir == "" {
+		return workspace.OpenLocal(db, seed), nil
+	}
+	secret := []byte(cfg.CookieSecret)
+	if len(secret) == 0 {
+		var err error
+		secret, err = workspace.LoadOrCreateSecret(filepath.Join(cfg.DataDir, "cookie.secret"))
+		if err != nil {
+			return nil, err
+		}
+	}
+	wsm, err := workspace.OpenHosted(context.Background(), pool, secret, seed)
+	if err != nil {
+		return nil, err
+	}
+	if v, perr := strconv.Atoi(strings.TrimSpace(os.Getenv("KLOXUS_NEW_SESSIONS_PER_IP_HOUR"))); perr == nil {
+		wsm.SetCreateLimit(v)
+	}
+	return wsm, nil
+}
+
+// startIngest launches the global feed scheduler (D29) — feeds fetch
+// once for every workspace — wired with the post-poll sweeps and the
+// Voyage embedding queue. Runs only when cfg.IngestEnabled.
+func startIngest(ctx context.Context, cfg *config.Config, pool *store.Pool, provider llm.Provider) {
+	// Daily Journal left the catalog again (KLOX-114); its client stays
+	// opt-in via the env flag.
+	sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, slog.Default())
+	if cfg.DailyJournalEnabled {
+		sched.SetupDailyJournal(ctx, ingest.DefaultUserAgent)
+	}
+	// Post-poll sweeps run in order: the free deterministic pass
+	// embeds + classifies everything first (KLOX-93), then the AI
+	// sweep upgrades 'local-%' rows when a model is enabled
+	// (KLOX-67 §7.2). Under the paid-AI freeze the local rows are
+	// the classification suggestions see.
+	sem := &pipeline.SemanticSweep{Pool: pool}
+	var enr *pipeline.Enricher
+	if cfg.Mode != "demo" && !cfg.LLMOff() {
+		enr = &pipeline.Enricher{Pool: pool, LLM: provider, Model: cfg.ModelTriage}
+	}
+	// Voyage embedding queue (KLOX-108): kicked after each poll, runs
+	// in its own goroutine, never blocks ingestion.
+	var embedWorker *embed.Worker
+	if emb := newEmbedder(cfg, pool); emb != nil {
+		pipeline.DefaultEmbedder = emb // stage-1 profile embedding (KLOX-109)
+		embedWorker = &embed.Worker{Store: pool, Embedder: emb, Log: slog.Default()}
+		embedWorker.Start()
+		go embedWorker.Run(ctx)
+	}
+	if rr := newReranker(cfg, pool); rr != nil {
+		pipeline.DefaultReranker = rr // stage 2 (KLOX-110)
+		pipeline.Stage2.K, pipeline.Stage2.Floor = cfg.RerankK, cfg.RerankFloor
+	}
+	sched.AfterPoll = func(ctx context.Context) {
+		defer embedWorker.Kick() // nil-safe; non-blocking
+		if n, err := sem.Sweep(ctx, 200); err != nil {
+			slog.Warn("semantic sweep failed", "err", err)
+		} else if n > 0 {
+			slog.Info("semantic sweep: items embedded+classified", "count", n)
+		}
+		if enr != nil {
+			if n, err := enr.Sweep(ctx, 200); err != nil {
+				slog.Warn("enrich sweep failed", "err", err)
+			} else if n > 0 {
+				slog.Info("enrich sweep: items classified", "count", n)
+			}
+		}
+	}
+	go sched.Run(ctx)
+}
+
+// serveUI starts the web UI: hosted multi-workspace mode when
+// KLOXUS_DATA_DIR is set (Fly.io), a single local workspace otherwise.
+func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources.Fetcher, provider llm.Provider, guard *llm.Guard, seed func(context.Context, *store.DB) error) error {
+	deps, err := buildDeps(cfg, pool, db, seed)
+	if err != nil {
+		return err
+	}
 	srv := web.New(web.Deps{
-		WS: wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider, Guard: guard,
-		Monitor: monitor, Scraper: scraper, Mailer: mailer, Seed: seed, Pool: pool,
-		Pay: pay,
+		WS: deps.wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider, Guard: guard,
+		Monitor: deps.monitor, Scraper: deps.scraper, Mailer: deps.mailer, Seed: seed, Pool: pool,
+		Pay: deps.pay,
 	})
 	go srv.RunScheduler(context.Background(), pool, 20*time.Second)
 	// The daily pauta sweep (KLOX-123 Block 2): builds each active
@@ -328,52 +417,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	// every handle between requests (KLOX-47 p95 latency criteria)
 	go pool.KeepAlive(context.Background(), time.Minute)
 	if cfg.IngestEnabled {
-		// The global feed scheduler — feeds fetch once for every
-		// workspace (D29). Daily Journal left the catalog again
-		// (KLOX-114); its client stays opt-in via the env flag.
-		sched := ingest.NewScheduler(pool, ingest.DefaultUserAgent, slog.Default())
-		if cfg.DailyJournalEnabled {
-			sched.SetupDailyJournal(context.Background(), ingest.DefaultUserAgent)
-		}
-		// Post-poll sweeps run in order: the free deterministic pass
-		// embeds + classifies everything first (KLOX-93), then the AI
-		// sweep upgrades 'local-%' rows when a model is enabled
-		// (KLOX-67 §7.2). Under the paid-AI freeze the local rows are
-		// the classification suggestions see.
-		sem := &pipeline.SemanticSweep{Pool: pool}
-		var enr *pipeline.Enricher
-		if cfg.Mode != "demo" && !cfg.LLMOff() {
-			enr = &pipeline.Enricher{Pool: pool, LLM: provider, Model: cfg.ModelTriage}
-		}
-		// Voyage embedding queue (KLOX-108): kicked after each poll, runs
-		// in its own goroutine, never blocks ingestion.
-		var embedWorker *embed.Worker
-		if emb := newEmbedder(cfg, pool); emb != nil {
-			pipeline.DefaultEmbedder = emb // stage-1 profile embedding (KLOX-109)
-			embedWorker = &embed.Worker{Store: pool, Embedder: emb, Log: slog.Default()}
-			embedWorker.Start()
-			go embedWorker.Run(context.Background())
-		}
-		if rr := newReranker(cfg, pool); rr != nil {
-			pipeline.DefaultReranker = rr // stage 2 (KLOX-110)
-			pipeline.Stage2.K, pipeline.Stage2.Floor = cfg.RerankK, cfg.RerankFloor
-		}
-		sched.AfterPoll = func(ctx context.Context) {
-			defer embedWorker.Kick() // nil-safe; non-blocking
-			if n, err := sem.Sweep(ctx, 200); err != nil {
-				slog.Warn("semantic sweep failed", "err", err)
-			} else if n > 0 {
-				slog.Info("semantic sweep: items embedded+classified", "count", n)
-			}
-			if enr != nil {
-				if n, err := enr.Sweep(ctx, 200); err != nil {
-					slog.Warn("enrich sweep failed", "err", err)
-				} else if n > 0 {
-					slog.Info("enrich sweep: items classified", "count", n)
-				}
-			}
-		}
-		go sched.Run(context.Background())
+		startIngest(context.Background(), cfg, pool, provider)
 	}
 	url := fmt.Sprintf("http://localhost:%d", cfg.Port)
 	fmt.Printf("Kloxus UI on %s (Ctrl+C to stop)\n", url)
