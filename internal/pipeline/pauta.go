@@ -31,6 +31,10 @@ type PautaCard struct {
 	// AgeHours is -1 when the story has no parseable date.
 	AgeHours float64
 	Score    float64
+	// Keys are the story's stable feedback identifiers — the client
+	// echoes them on a Sim/Não so the answer still lands when the
+	// stories table was rebuilt since the card was dealt (KLOX-236).
+	Keys []string
 }
 
 // Window of the calibration sample (spec Block 2): real stories of the
@@ -327,7 +331,7 @@ const (
 )
 
 func pautaCard(s *store.Story, enrich map[int64]*store.ItemEnrichment, age, score float64) PautaCard {
-	card := PautaCard{StoryID: s.ID, Title: s.Title, Outlets: len(s.Outlets()), AgeHours: age, Score: score, Topics: []string{}}
+	card := PautaCard{StoryID: s.ID, Title: s.Title, Outlets: len(s.Outlets()), AgeHours: age, Score: score, Topics: []string{}, Keys: s.FeedbackKeys()}
 	if len(s.Items) > 0 {
 		it := s.Items[0]
 		card.Outlet, card.URL = it.SourceName, it.URL

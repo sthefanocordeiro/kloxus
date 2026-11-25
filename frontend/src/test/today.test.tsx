@@ -61,11 +61,11 @@ describe("Hoje (KLOX-123)", () => {
     expect(await screen.findByText("Story 1")).toBeVisible();
     const first = screen.getAllByTestId("today-card")[0];
     fireEvent.click(within(first).getByRole("button", { name: /Less of this/ }));
-    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith("7", 1, "no"));
+    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith("7", card(1), "no"));
     await waitFor(() => expect(screen.queryByText("Story 1")).toBeNull());
     // a thumb only trains the radar — it must not tick the card
     fireEvent.click(screen.getByRole("button", { name: /More of this: Story 2/ }));
-    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith("7", 2, "yes"));
+    await waitFor(() => expect(api.calibrationAnswer).toHaveBeenCalledWith("7", card(2), "yes"));
     expect(screen.queryByText(/selected/)).toBeNull();
     const liked = screen.getByRole("button", { name: /More of this: Story 2/ });
     expect(liked).toBeDisabled();

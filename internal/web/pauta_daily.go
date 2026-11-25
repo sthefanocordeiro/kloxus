@@ -58,6 +58,44 @@ func dropPautaDay(r *http.Request, wdb *store.DB, pubID int64) {
 	_ = wdb.DeletePautaDay(r.Context(), pubID, pautaDayOf(time.Now()))
 }
 
+// visiblePautaCards drops stored cards the creator already answered
+// "Não" — the snapshot is served between builds, so the rejection
+// filter the live build applies must also run on read: a snapshot
+// written before the answer landed must not resurrect the story
+// (KLOX-236). Snapshots predating card keys resolve them through the
+// live story row; an unresolvable card stays — hiding needs a matched
+// key, not a guess.
+func visiblePautaCards(ctx context.Context, wdb *store.DB, pubID int64, views []pautaCardView) []pautaCardView {
+	answers, err := wdb.RejectedStoryFeedback(ctx, pubID)
+	if err != nil || len(answers) == 0 {
+		return views
+	}
+	rejected := make(map[string]bool, len(answers))
+	for _, a := range answers {
+		rejected[a.Key] = true
+	}
+	out := make([]pautaCardView, 0, len(views))
+	for _, v := range views {
+		keys := v.Keys
+		if len(keys) == 0 {
+			if st, err := wdb.StoryWithItems(ctx, v.StoryID); err == nil && st != nil {
+				keys = st.FeedbackKeys()
+			}
+		}
+		drop := false
+		for _, k := range keys {
+			if rejected[k] {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // RunDailyPauta ticks until ctx ends. Each tick builds the missing
 // pauta for the current São Paulo day (after 06:30) and mails claimed
 // radars (after 07:00). Both sides are idempotent at the row level, so
@@ -201,6 +239,7 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	if err := json.Unmarshal([]byte(row.CardsJSON), &cards); err != nil {
 		slog.Warn("pauta day: malformed cards json", "day", day, "err", err)
 	}
+	cards = visiblePautaCards(ctx, wdb, pub.ID, cards)
 	base := strings.TrimRight(s.d.Cfg.PublicURL, "/")
 	if base == "" {
 		base = fmt.Sprintf("http://localhost:%d", s.d.Cfg.Port)
