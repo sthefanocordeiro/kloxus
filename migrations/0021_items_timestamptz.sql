@@ -7,22 +7,30 @@
 -- per-row and could never use an index.
 
 -- to_utc_ts parses a stored timestamp leniently, like safe_ts, but
--- pins the canonical 'YYYY-MM-DD HH24:MI:SS' shape (and its 'T'
--- variant) to UTC explicitly instead of the session TimeZone — a plain
--- v::timestamptz cast reads no-offset input in the session TZ, which
--- silently shifts every stored timestamp when TZ <> UTC. Values that
--- carry their own offset (RFC3339) still go through the lenient cast;
--- garbage returns NULL so reads fall back to fetched_ts.
+-- pins the zone-less shapes we actually store — 'YYYY-MM-DD HH24:MI:SS',
+-- its 'T' variant, and the bare ISO date — to UTC explicitly instead of
+-- the session TimeZone: a plain v::timestamptz cast reads no-offset
+-- input in the session TZ, which silently shifts every stored
+-- timestamp when TZ <> UTC. Values that carry their own offset
+-- (RFC3339) still go through the lenient cast; garbage returns NULL so
+-- reads fall back to fetched_ts.
 CREATE OR REPLACE FUNCTION to_utc_ts(v TEXT) RETURNS TIMESTAMPTZ AS $$
 BEGIN
   IF v ~ '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$' THEN
     RETURN replace(v, 'T', ' ')::timestamp AT TIME ZONE 'UTC';
+  END IF;
+  IF v ~ '^\d{4}-\d{2}-\d{2}$' THEN
+    RETURN (v || ' 00:00:00')::timestamp AT TIME ZONE 'UTC';
   END IF;
   RETURN v::timestamptz;
 EXCEPTION WHEN OTHERS THEN
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql STABLE STRICT;
+
+-- Anything exotic and zone-less that still reaches the bare cast below
+-- is read as UTC while this migration's transaction runs.
+SET LOCAL TIME ZONE 'UTC';
 
 ALTER TABLE items
   ADD COLUMN IF NOT EXISTS published_ts TIMESTAMPTZ,
@@ -74,7 +82,8 @@ CREATE INDEX IF NOT EXISTS idx_items_eff_ts
 CREATE INDEX IF NOT EXISTS idx_items_fetched_ts
   ON items (fetched_ts);
 
--- safe_ts has no remaining call sites: every read moved to the *_ts
--- columns and the write path parses through to_utc_ts. Dropping it
--- keeps a future query from quietly reintroducing a per-row parse.
-DROP FUNCTION IF EXISTS safe_ts(TEXT);
+-- safe_ts stays even though no read path calls it anymore: keeping the
+-- migration strictly additive means a rollback to a binary that still
+-- issues safe_ts(...) queries against this schema keeps working (the
+-- TEXT columns stay populated and the trigger only maintains the
+-- extra *_ts columns, which old code never touches).

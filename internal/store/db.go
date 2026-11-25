@@ -29,15 +29,16 @@ func TSUTC(t time.Time) string { return t.UTC().Format(tsLayout) }
 
 // NormalizeTS returns s as RFC3339 UTC when it parses — the single
 // format for API/feed-facing timestamp fields (published_at,
-// scheduled_at; KLOX-223). Inputs accepted: RFC3339 in any offset and
-// the canonical stored layout. Unparseable input passes through
-// unchanged so the items_*_ts fallback (fetched date) still applies.
+// scheduled_at; KLOX-223). Inputs accepted: RFC3339 in any offset,
+// the canonical stored layout and its 'T' variant, and bare ISO
+// dates. Unparseable input passes through unchanged so the
+// items_*_ts fallback (fetched date) still applies.
 func NormalizeTS(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return s
 	}
-	for _, layout := range []string{time.RFC3339, tsLayout} {
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", tsLayout, time.DateOnly} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t.UTC().Format(time.RFC3339)
 		}
