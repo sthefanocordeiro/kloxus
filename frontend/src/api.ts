@@ -191,13 +191,16 @@ export function parseRetryAfter(v: string | null): number | undefined {
 
 // request is the single fetch path: JSON in, JSON out, envelope errors
 // become ApiRequestError. Conflict responses may carry the fresh
-// document — callers use it to resync.
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+// document — callers use it to resync. keepalive lets a save fired on
+// pagehide outlive the page itself (KLOX-233); bodies are capped at
+// ~64 KB by the browser.
+export async function request<T>(method: string, path: string, body?: unknown, keepalive = false): Promise<T> {
   const mutating = method !== "GET" && method !== "HEAD";
   const res = await fetch(path, {
     method,
     headers: mutating ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    keepalive,
   });
   const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -305,8 +308,8 @@ export const api = {
   pautaCreate: (pubID: number | string, storyIDs: number[]) =>
     request<{ issue_id: number }>("POST", `/api/v1/publications/${pubID}/pauta`, { story_ids: storyIDs }),
   pauta: (issueID: number | string) => request<PautaState>("GET", `/api/v1/issues/${issueID}/pauta`),
-  pautaSave: (issueID: number | string, body: PautaSave) =>
-    request<{ saved: boolean }>("PUT", `/api/v1/issues/${issueID}/pauta`, body),
+  pautaSave: (issueID: number | string, body: PautaSave, keepalive = false) =>
+    request<{ saved: boolean }>("PUT", `/api/v1/issues/${issueID}/pauta`, body, keepalive),
   pautaFinish: (issueID: number | string) =>
     request<{ ready: boolean; missing_text: number }>("POST", `/api/v1/issues/${issueID}/pauta/finish`, {}),
   logout: () =>
