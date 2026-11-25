@@ -8,8 +8,11 @@ import (
 	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
+	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
+// apiDecision applies one triage decision: approve | reject |
+// alternative | undo. Same rules as the HTML route.
 func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 	iss, err := s.apiIssueID(r)
 	if apiDBErr(w, r, err, "issue") {
@@ -61,6 +64,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "undo", "")
+		pipeline.RecordFeedback(ctx, db(r), iss.PublicationID, iid, store.FeedbackUndoReject)
 		// an undone rejection must leave the editorial guide too
 		if pub != nil {
 			guide = s.guideAfterRebuild(w, r, pub)
@@ -72,6 +76,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "approve", in.Reason)
+		pipeline.RecordFeedback(ctx, db(r), iss.PublicationID, iid, store.FeedbackAccept)
 	case "reject":
 		if strings.TrimSpace(in.Reason) == "" {
 			apiErr(w, 400, "reason_required",
@@ -84,6 +89,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "reject", in.Reason)
+		pipeline.RecordFeedback(ctx, db(r), iss.PublicationID, iid, store.FeedbackReject)
 		if pub != nil {
 			guide = s.guideAfterRebuild(w, r, pub)
 		}
@@ -95,7 +101,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		runner := &pipeline.Runner{
 			DB: db(r), LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
-			DemoMode: s.d.Cfg.Mode == "demo",
+			DemoMode: s.d.Cfg.Mode == "demo", Deterministic: s.d.Cfg.LLMOff(),
 		}
 		newII, err := runner.SubstituteAlternative(ctx, pub, iss, ii)
 		if err == sql.ErrNoRows {

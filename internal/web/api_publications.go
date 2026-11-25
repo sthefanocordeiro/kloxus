@@ -11,43 +11,45 @@ import (
 	"github.com/sthefanocordeiro/kloxus/examples"
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/dedupe"
+	"github.com/sthefanocordeiro/kloxus/internal/opml"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
-// sampleArticle serves a stub article page for the landing sample's
-// sources: the dossiers cite fictional .example outlets, so the links
-// resolve inside the app instead of hitting a dead external domain.
-// Workspace-free like /api/v1/sample — no session before Start.
-func (s *Server) sampleArticle(w http.ResponseWriter, r *http.Request) {
-	u, err := url.Parse(strings.TrimSpace(r.URL.Query().Get("u")))
-	if err != nil || u.Host == "" || !strings.HasSuffix(u.Host, ".example") {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	title := strings.Trim(strings.ReplaceAll(u.Path, "/", " "), " ")
-	if title == "" {
-		title = u.Host
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>%s — %s</title>`+
-		`<style>body{font-family:Georgia,serif;max-width:38em;margin:3em auto;padding:0 1.2em;color:#1c1c1c;line-height:1.6}`+
-		`.site{color:#0e7a6d;font-size:.85em;text-transform:uppercase;letter-spacing:.08em}`+
-		`.note{margin-top:3em;padding:.9em 1.1em;border:1px dashed #bbb;border-radius:.5em;color:#666;font-size:.85em;font-family:system-ui,sans-serif}`+
-		`</style></head><body>`+
-		`<p class="site">%s</p><h1>%s</h1>`+
-		`<p>Este é um artigo de demonstração do universo ficcional de Valdória — `+
-		`o Kloxus serve fontes simuladas para que cada citação abra um original de verdade, mesmo em modo demo.</p>`+
-		`<div class="note">Conteúdo simulado · fictional source · <a href="/">← Kloxus</a></div>`+
-		`</body></html>`,
-		title, u.Host, u.Host, title)
-}
-
-// --- workspace / publications / sources ---
-
 func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws := reqWS(r)
+	owner := s.workspaceOwner(r.Context(), db(r))
+	mail := "outbox"
+	// mail_transport is the sender's own wire identity — positive
+	// server-side evidence for verification preflights: "outbox" (no
+	// sender), "resend" (the real provider), "synthetic" (the loopback
+	// fake), "custom" (any other injected sender).
+	transport := "outbox"
+	// mail_webhook reports whether the app can verify Resend delivery
+	// events (RESEND_WEBHOOK_SECRET set); mail_stale_sent counts
+	// provider-accepted sends whose delivery event never arrived —
+	// together they are the posture a dead endpoint cannot fake
+	// (KLOX-98). Outbox mode has no webhook, so both stay inert.
+	mailWebhook := "n/a"
+	staleSent := 0
+	if s.liveMail() {
+		mail = "live"
+		transport = "custom"
+		if t, ok := s.d.Mailer.(interface{ Transport() string }); ok {
+			transport = t.Transport()
+		}
+		mailWebhook = "unconfigured"
+		if s.d.Cfg.ResendWebhookSecret != "" {
+			mailWebhook = "configured"
+		}
+		staleSent = s.staleSent(r.Context(), db(r))
+	}
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
+		"llm_mode": s.d.Cfg.LLMMode,
+		"claimed":  owner != "", "owner_email": owner, "mail": mail,
+		"mail_transport": transport, "mail_webhook": mailWebhook,
+		"mail_stale_sent": staleSent,
+		"publishing":      s.d.Cfg.PublishingEnabled,
 	})
 }
 
@@ -84,6 +86,8 @@ type apiSourceRow struct {
 	Type         string         `json:"type"`
 	URL          string         `json:"url"`
 	CanonicalURL string         `json:"canonical_url"`
+	CatalogID    int64          `json:"catalog_id,omitempty"`
+	Policy       string         `json:"policy,omitempty"`
 	LastFetchAt  *string        `json:"last_fetch_at"`
 	LastStatus   *string        `json:"last_status"`
 	ItemsPerWeek int            `json:"items_per_week"`
@@ -100,6 +104,7 @@ func (s *Server) sourceRow(r *http.Request, src store.Source) apiSourceRow {
 	row := apiSourceRow{
 		ID: src.ID, Name: src.Name, Type: src.Type, URL: src.URL,
 		CanonicalURL: dedupe.Canonical(src.URL),
+		CatalogID:    src.CatalogID, Policy: src.Policy,
 	}
 	if src.LastFetchAt.Valid {
 		row.LastFetchAt = &src.LastFetchAt.String
@@ -144,6 +149,10 @@ func (s *Server) apiSourceAdd(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	if rawURL == "" || (typ != "rss" && typ != "page") {
 		apiErr(w, 400, "validation", "type rss|page and url are required")
+		return
+	}
+	if s.d.Cfg.Mode != "demo" && s.d.Pool != nil {
+		s.realSourceAdd(w, r, pub, rawURL, in.Name)
 		return
 	}
 	note := ""
@@ -212,11 +221,17 @@ func (s *Server) apiSourceDelete(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{"ok": true})
 }
 
-// apiSourceCatalog lists the sample fixture sources not yet added — the
-// "offered" sources the sources screen proposes in demo mode.
+// apiSourceCatalog lists the sources a publication can pick. Demo mode
+// offers the sample fixture sources; real mode serves the global
+// catalog — launch/signal entries only; hold/blocked entries are never
+// listed to users (D29/D31/KLOX-49).
 func (s *Server) apiSourceCatalog(w http.ResponseWriter, r *http.Request) {
 	pub, err := s.apiPub(r)
 	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	if s.d.Cfg.Mode != "demo" && s.d.Pool != nil {
+		s.apiRealCatalog(w, r, pub)
 		return
 	}
 	def, err := s.sampleDef()
@@ -258,6 +273,14 @@ func (s *Server) apiSourcePreview(w http.ResponseWriter, r *http.Request) {
 	typ, rawURL := r.URL.Query().Get("type"), strings.TrimSpace(r.URL.Query().Get("url"))
 	if rawURL == "" || (typ != "rss" && typ != "page") {
 		apiErr(w, 400, "validation", "type rss|page and url are required")
+		return
+	}
+	if s.d.Cfg.Mode != "demo" && s.d.Pool != nil {
+		if s.realCatalogPreview(w, r, rawURL) {
+			return
+		}
+		apiErr(w, 400, "catalog_only",
+			"that source is not in the catalog — pick from the listed sources")
 		return
 	}
 	if !strings.HasPrefix(rawURL, "fixtures/") && s.d.Cfg.Mode == "demo" {
@@ -309,6 +332,10 @@ func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "invalid JSON body")
 		return
 	}
+	if s.d.Cfg.Mode != "demo" && s.d.Pool != nil {
+		s.realSourceConfirm(w, r, pub, in.Include, decoded)
+		return
+	}
 	if s.d.Cfg.Mode == "demo" {
 		if def, err := s.sampleDef(); err == nil {
 			existing := map[string]bool{}
@@ -336,7 +363,10 @@ func (s *Server) apiSourceConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiSample serves the landing page's cited dossier — workspace-free, so
-// the first screen doesn't create a demo workspace before Start.
+// the first screen doesn't create a demo workspace before Start. It is
+// always the fictional Valdória sample (KLOX-49): the landing shows only
+// content we are allowed to display — the recorded real issue carried
+// dossiers from outlets outside the catalog (g1), so it no longer ships.
 func (s *Server) apiSample(w http.ResponseWriter, r *http.Request) {
 	data, err := examples.FS.ReadFile("landing/sample.json")
 	if err != nil {
@@ -356,8 +386,12 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secs := []apiSection{}
-	for _, sec := range def.Sections {
-		secs = append(secs, apiSection{Title: sec.Title, Items: sec.Items, Commentary: sec.Commentary})
+	for _, sec := range config.NormalizeSections(def.Sections, def.Paywall.PaidSections) {
+		secs = append(secs, apiSection{
+			ID: sec.ID, Title: sec.Title, Format: sec.Format,
+			Items: sec.Items, Commentary: sec.Commentary, Access: sec.Access,
+			Topic: sec.Topic,
+		})
 	}
 	srcs := []map[string]string{}
 	for _, sd := range def.Sources {
@@ -365,42 +399,28 @@ func (s *Server) apiProposal(w http.ResponseWriter, r *http.Request) {
 	}
 	apiJSON(w, 200, map[string]any{"proposal": map[string]any{
 		"name": def.Name, "topic": def.Topic, "audience": def.Audience,
-		"editorial_line": def.EditorialLine, "tone": def.Tone,
+		"editorial_line": localizeEditorialLine(def.EditorialLine, def.Language),
+		"reject_terms":   def.RejectTerms, "tone": def.Tone,
 		"language": def.Language, "frequency": def.Frequency,
 		"ai_disclosure": def.AIDisclosure,
 		"sections":      secs, "sources": srcs,
-		"paywall": apiPaywall{Enabled: def.Paywall.Enabled, PaidSections: def.Paywall.PaidSections, Price: def.Paywall.Price},
+		"paywall": apiPaywall{Enabled: def.Paywall.Enabled, PaidSections: def.Paywall.PaidSections, Price: localizePrice(def.Paywall.Price, def.Language)},
 	}})
-}
-
-// apiPropose turns pasted material into a proposal. In demo mode only the
-// sample newsletter is offered — pasted links/issues are refused with
-// live_only, matching the "available in live mode" UX.
-func (s *Server) apiPropose(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Material string `json:"material"`
-	}
-	if _, err := apiDecode(r, &in); err != nil {
-		apiErr(w, 400, "bad_json", "request body is not valid JSON")
-		return
-	}
-	if s.d.Cfg.Mode == "demo" {
-		apiErr(w, 422, "live_only",
-			"proposals from pasted material are available in live mode — the hosted demo offers the sample newsletter")
-		return
-	}
-	apiErr(w, 501, "not_implemented", "proposal extraction is not implemented")
 }
 
 // apiPublicationCreate stores a creator-made publication from the
 // (possibly edited) proposal blocks. Sources are added separately on the
 // sources screen.
 func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireClaimed(w, r) {
+		return
+	}
 	var in struct {
 		Name          string           `json:"name"`
 		Topic         string           `json:"topic"`
 		Audience      string           `json:"audience"`
 		EditorialLine string           `json:"editorial_line"`
+		RejectTerms   string           `json:"reject_terms"`
 		Tone          string           `json:"tone"`
 		Language      string           `json:"language"`
 		Frequency     string           `json:"frequency"`
@@ -412,14 +432,37 @@ func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
 		return
 	}
+	secs, reasons := validateSections(in.Sections)
+	if len(reasons) > 0 {
+		apiErr(w, 400, "validation", "the section list needs a fix", reasons...)
+		return
+	}
+	// the builder's per-section access flag is the source of truth for
+	// the paywall's title list — the two must never drift apart
+	in.Paywall.PaidSections = config.PaidSectionTitles(secs)
 	def := &config.Publication{
 		Name: in.Name, Topic: in.Topic, Audience: in.Audience,
-		EditorialLine: in.EditorialLine, Tone: in.Tone,
+		EditorialLine: in.EditorialLine, RejectTerms: in.RejectTerms, Tone: in.Tone,
 		Language: in.Language, Frequency: in.Frequency,
-		AIDisclosure: in.AIDisclosure, Sections: in.Sections, Paywall: in.Paywall,
+		AIDisclosure: in.AIDisclosure, Sections: secs, Paywall: in.Paywall,
 	}
 	if err := def.Validate(); err != nil {
 		apiErr(w, 400, "validation", err.Error())
+		return
+	}
+	// One newsletter per account (owner amendment, KLOX-66): the rule
+	// lives in the API, not just the UI — any existing publication makes
+	// the account "has a newsletter", including a template-seeded one.
+	// Workspaces that already hold several publications (pre-amendment
+	// data) keep them all; the guard only stops new growth, and deleting
+	// back to zero reopens onboarding.
+	pubs, err := db(r).ListPublications(r.Context())
+	if apiDBErr(w, r, err, "publications") {
+		return
+	}
+	if len(pubs) > 0 {
+		apiErr(w, 409, "one_newsletter",
+			"this account already has a newsletter — one newsletter per account")
 		return
 	}
 	id, err := db(r).CreatePublication(r.Context(), def)
@@ -429,6 +472,195 @@ func (s *Server) apiPublicationCreate(w http.ResponseWriter, r *http.Request) {
 	db(r).SetProgress(r.Context(), "publication_created")
 	pub, _ := db(r).GetPublication(r.Context(), fmt.Sprint(id))
 	apiJSON(w, 201, map[string]any{"publication": publicationView(pub)})
+}
+
+// validateSections applies the builder's rules and returns the
+// normalized list (ids, formats and access defaults filled, paywall
+// titles resolved) — the value to persist. Bound checks come back as
+// structured reasons so the client can localize each one.
+func validateSections(in []config.Section) ([]config.Section, []apiReason) {
+	var reasons []apiReason
+	secs := config.NormalizeSections(in, nil)
+	if len(secs) == 0 {
+		reasons = append(reasons, apiReason{Code: "sections_empty",
+			Message: "add at least one section"})
+		return nil, reasons
+	}
+	ids, titles := map[string]bool{}, map[string]bool{}
+	total := 0
+	for i, sc := range secs {
+		target := &apiTarget{Kind: "section", Ref: sc.Title}
+		if strings.TrimSpace(sc.Title) == "" {
+			reasons = append(reasons, apiReason{Code: "section_title_empty",
+				Message: fmt.Sprintf("section %d needs a name", i+1), Target: target})
+		} else if len([]rune(sc.Title)) > 40 {
+			reasons = append(reasons, apiReason{Code: "section_title_long",
+				Message: fmt.Sprintf("section %q runs past 40 characters", sc.Title), Target: target})
+		} else if titles[strings.ToLower(sc.Title)] {
+			reasons = append(reasons, apiReason{Code: "section_title_dup",
+				Message: fmt.Sprintf("section %q is repeated", sc.Title), Target: target})
+		}
+		titles[strings.ToLower(sc.Title)] = true
+		if ids[sc.ID] {
+			reasons = append(reasons, apiReason{Code: "section_id_dup",
+				Message: fmt.Sprintf("section id %q is repeated", sc.ID), Target: target})
+		}
+		ids[sc.ID] = true
+		if sc.Items < 1 || sc.Items > 10 {
+			reasons = append(reasons, apiReason{Code: "section_items",
+				Message: fmt.Sprintf("section %q asks for %d stories — pick 1 to 10", sc.Title, sc.Items), Target: target})
+		} else {
+			total += sc.Items
+		}
+		if !config.ValidSectionFormat(sc.Format) {
+			reasons = append(reasons, apiReason{Code: "section_format",
+				Message: fmt.Sprintf("section %q has an unknown format %q", sc.Title, sc.Format), Target: target})
+		}
+		switch sc.Commentary {
+		case "required", "optional", "none":
+		default:
+			reasons = append(reasons, apiReason{Code: "section_commentary",
+				Message: fmt.Sprintf("section %q has an unknown commentary mode %q", sc.Title, sc.Commentary), Target: target})
+		}
+		if !config.ValidSectionAccess(sc.Access) {
+			reasons = append(reasons, apiReason{Code: "section_access",
+				Message: fmt.Sprintf("section %q has an unknown access level %q", sc.Title, sc.Access), Target: target})
+		}
+	}
+	if total > 20 {
+		reasons = append(reasons, apiReason{Code: "sections_total",
+			Message: fmt.Sprintf("the edition asks for %d stories — the limit is 20", total)})
+	}
+	if len(reasons) > 0 {
+		return nil, reasons
+	}
+	return secs, nil
+}
+
+// apiPublicationUpdate rewrites the creator-editable blocks of a
+// publication — identity copy, cadence, sections and the paywall
+// block. The change lands on the next edition: issues already in
+// progress keep the sections they were built with (KLOX-65).
+func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
+	// the write path reads the stored row — canonicalPub swaps a custom
+	// publication's prompt fields for the demo sample, and persisting
+	// those fallbacks would silently overwrite the creator's edits
+	pub, err := db(r).GetPublication(r.Context(), r.PathValue("id"))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	var in struct {
+		Name          string           `json:"name"`
+		Audience      string           `json:"audience"`
+		EditorialLine string           `json:"editorial_line"`
+		Tone          string           `json:"tone"`
+		Frequency     string           `json:"frequency"`
+		AIDisclosure  string           `json:"ai_disclosure"`
+		Sections      []config.Section `json:"sections"`
+		Paywall       *apiPaywall      `json:"paywall"`
+		// Topic and RejectTerms ride pointers so "clear the field" ("")
+		// is a real write while an absent key keeps the stored value —
+		// the keep-if-empty convention can't tell the two apart (KLOX-94).
+		Topic       *string `json:"topic"`
+		RejectTerms *string `json:"reject_terms"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	def := &config.Publication{
+		Name: in.Name, Topic: pub.Topic, Audience: in.Audience,
+		EditorialLine: in.EditorialLine, RejectTerms: pub.RejectTerms, Tone: in.Tone,
+		Language: pub.Language, Slug: pub.Slug,
+		Frequency:    in.Frequency,
+		AIDisclosure: in.AIDisclosure,
+		Sections:     config.NormalizeSections(pub.Sections, pub.Paywall.PaidSections),
+		Paywall:      pub.Paywall,
+	}
+	// every block the request leaves out keeps the stored value — the
+	// builder's sections-only save must not wipe the identity fields
+	// (KLOX-65)
+	if def.Name == "" {
+		def.Name = pub.Name
+	}
+	if in.Topic != nil {
+		def.Topic = strings.TrimSpace(*in.Topic)
+	}
+	if def.Audience == "" {
+		def.Audience = pub.Audience
+	}
+	if def.EditorialLine == "" {
+		def.EditorialLine = pub.EditorialLine
+	}
+	if def.Tone == "" {
+		def.Tone = pub.Tone
+	}
+	if def.Frequency == "" {
+		def.Frequency = pub.Frequency
+	}
+	if def.AIDisclosure == "" {
+		def.AIDisclosure = pub.AIDisclosure
+	}
+	if in.RejectTerms != nil {
+		def.RejectTerms = strings.TrimSpace(*in.RejectTerms)
+	}
+	if strings.TrimSpace(def.Name) == "" {
+		apiErr(w, 400, "validation", "the newsletter needs a name",
+			apiReason{Code: "name_empty", Message: "give the newsletter a name"})
+		return
+	}
+	if in.Sections != nil {
+		secs, reasons := validateSections(in.Sections)
+		if len(reasons) > 0 {
+			apiErr(w, 400, "validation", "the section list needs a fix", reasons...)
+			return
+		}
+		def.Sections = secs
+	}
+	if in.Paywall != nil {
+		def.Paywall.Enabled = in.Paywall.Enabled
+		def.Paywall.Price = in.Paywall.Price
+	}
+	def.Paywall.PaidSections = config.PaidSectionTitles(def.Sections)
+	if err := def.Validate(); err != nil {
+		apiErr(w, 400, "validation", err.Error())
+		return
+	}
+	if apiDBErr(w, r, db(r).UpdatePublication(r.Context(), pub.ID, def), "publication") {
+		return
+	}
+	fresh, err := db(r).GetPublication(r.Context(), fmt.Sprint(pub.ID))
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	apiJSON(w, 200, map[string]any{"publication": publicationView(fresh)})
+}
+
+// apiPublicationDelete removes a publication and everything it owns —
+// issues, stories, sources, readers, guides. The call must carry an
+// explicit {"confirm": true} so a stray request can never delete a
+// newsletter (KLOX-65).
+func (s *Server) apiPublicationDelete(w http.ResponseWriter, r *http.Request) {
+	pub, err := s.apiPub(r)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	var in struct {
+		Confirm bool `json:"confirm"`
+	}
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON")
+		return
+	}
+	if !in.Confirm {
+		apiErr(w, 400, "validation", "deleting a newsletter requires confirm: true",
+			apiReason{Code: "confirm_required", Message: "confirm the deletion"})
+		return
+	}
+	if err := db(r).DeletePublication(r.Context(), pub.ID); apiDBErr(w, r, err, "publication") {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) apiSourceWatch(w http.ResponseWriter, r *http.Request) {
@@ -487,4 +719,99 @@ func (s *Server) apiSourceCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	apiJSON(w, 200, map[string]any{"source": row})
+}
+
+// sourceURL returns the URL of a source owned by the publication in the
+// request path, guarding against cross-publication source ids.
+func (s *Server) sourceURL(r *http.Request, sid int64) (string, error) {
+	pub, err := s.pub(r)
+	if err != nil {
+		return "", err
+	}
+	var url string
+	err = db(r).QueryRowContext(r.Context(),
+		`SELECT url FROM sources WHERE workspace_id = $1 AND id = $2 AND publication_id = $3`,
+		db(r).Workspace(), sid, pub.ID).Scan(&url)
+	return url, err
+}
+
+// apiSourceImportOPML imports feeds from an OPML export (Feedly etc.).
+// Body: {"opml": "<xml>", "apply": false, "include": [urls]}. Without
+// apply it is a dry run: every feed is classified new | duplicate |
+// invalid. With apply the new ones (optionally limited to include) are
+// stored as rss sources. Duplicates are matched by scheme/www/trailing-
+// slash-insensitive URL against existing sources and within the file;
+// feeds sharing a domain with an existing source are flagged, not blocked.
+// Demo mode validates and stores but never fetches, like apiSourceAdd.
+func (s *Server) apiSourceImportOPML(w http.ResponseWriter, r *http.Request) {
+	pub, err := s.apiPub(r)
+	if apiDBErr(w, r, err, "publication") {
+		return
+	}
+	var in struct {
+		OPML    string   `json:"opml"`
+		Apply   bool     `json:"apply"`
+		Include []string `json:"include"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, opml.MaxBytes*2)
+	if _, err := apiDecode(r, &in); err != nil {
+		apiErr(w, 400, "bad_json", "request body is not valid JSON (or exceeds 1 MB)")
+		return
+	}
+	feeds, err := opml.Parse(strings.NewReader(in.OPML))
+	if err != nil {
+		apiErr(w, 400, "invalid_opml", err.Error())
+		return
+	}
+	seen := map[string]bool{}
+	domains := map[string]bool{}
+	for _, src := range mustSources(r, pub.ID) {
+		seen[opml.Key(src.URL)] = true
+		domains[opml.Domain(src.URL)] = true
+	}
+	var only map[string]bool
+	if len(in.Include) > 0 {
+		only = map[string]bool{}
+		for _, u := range in.Include {
+			only[opml.Key(u)] = true
+		}
+	}
+	type row struct {
+		opml.Feed
+		Status     string `json:"status"` // new | duplicate | invalid | skipped
+		SameDomain bool   `json:"same_domain,omitempty"`
+		Imported   bool   `json:"imported,omitempty"`
+	}
+	rows := []row{}
+	counts := map[string]int{}
+	for _, f := range feeds {
+		rw := row{Feed: f}
+		key := opml.Key(f.URL)
+		switch {
+		case !opml.Valid(f.URL):
+			rw.Status = "invalid"
+		case seen[key]:
+			rw.Status = "duplicate"
+		case only != nil && !only[key]:
+			rw.Status = "skipped"
+		default:
+			rw.Status = "new"
+			rw.SameDomain = domains[opml.Domain(f.URL)]
+			seen[key] = true
+			if in.Apply {
+				if _, err := db(r).AddSource(r.Context(), pub.ID, "rss", f.URL, f.Name); err != nil {
+					apiDBErr(w, r, err, "source")
+					return
+				}
+				rw.Imported = true
+			}
+		}
+		counts[rw.Status]++
+		rows = append(rows, rw)
+	}
+	resp := map[string]any{"feeds": rows, "counts": counts, "applied": in.Apply}
+	if s.d.Cfg.Mode == "demo" {
+		resp["note"] = "Simulated in demo mode: sources are not fetched on the hosted demo."
+	}
+	apiJSON(w, 200, resp)
 }

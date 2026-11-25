@@ -9,18 +9,20 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 )
 
-// --- runs ---
-
 // apiRun is the run resource snapshot.
 type apiRun struct {
-	ID         string         `json:"id"`
-	Kind       string         `json:"kind"`
-	Status     string         `json:"status"` // running | done | failed
-	Step       string         `json:"step"`
-	IssueID    int64          `json:"issue_id,omitempty"`
-	NoNewItems bool           `json:"no_new_items"`
-	Error      string         `json:"error,omitempty"`
-	Events     []runEventView `json:"events"`
+	ID            string         `json:"id"`
+	Kind          string         `json:"kind"`
+	Status        string         `json:"status"` // running | done | failed | blocked
+	Step          string         `json:"step"`
+	IssueID       int64          `json:"issue_id,omitempty"`
+	PublicationID int64          `json:"publication_id,omitempty"`
+	NoNewItems    bool           `json:"no_new_items"`
+	Error         string         `json:"error,omitempty"`
+	Blocked       bool           `json:"blocked,omitempty"`
+	BlockedReason string         `json:"blocked_reason,omitempty"`
+	Sample        bool           `json:"sample,omitempty"`
+	Events        []runEventView `json:"events"`
 }
 
 type runEventView struct {
@@ -34,13 +36,18 @@ func runView(st *runProgress) apiRun {
 	defer st.mu.Unlock()
 	v := apiRun{
 		ID: st.st.RunID, Kind: st.st.Kind, Step: st.st.Step,
-		IssueID: st.st.IssueID, NoNewItems: st.st.NoNewItems, Error: st.st.Err,
+		IssueID: st.st.IssueID, PublicationID: st.st.PubID,
+		NoNewItems: st.st.NoNewItems, Error: st.st.Err,
+		Blocked: st.st.Blocked, BlockedReason: st.st.BlockedReason, Sample: st.st.Sample,
 		Status: "running",
 	}
 	if st.st.Done {
 		v.Status = "done"
 		if st.st.Err != "" {
 			v.Status = "failed"
+		}
+		if st.st.Blocked {
+			v.Status = "blocked"
 		}
 	}
 	for i, ev := range st.events {
@@ -97,7 +104,7 @@ func (s *Server) apiRunEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
+	h.Set("Content-Type", "text/event-stream; charset=utf-8")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "keep-alive")
 	send := func(event string, data any) {
@@ -108,7 +115,12 @@ func (s *Server) apiRunEvents(w http.ResponseWriter, r *http.Request) {
 	sent := 0
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
+	// The server's 60s WriteTimeout would kill a stream held open by a
+	// long run — renew the deadline every tick so a live handler keeps
+	// its connection while a wedged one still dies.
+	rc := http.NewResponseController(w)
 	for {
+		_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		st.mu.Lock()
 		evs := append([]pipeline.StepEvent{}, st.events...)
 		done := st.st.Done

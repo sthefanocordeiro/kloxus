@@ -2,18 +2,33 @@ package web
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/editorial"
+	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
+// guideProvider is the provider the guide rebuild may call: nil under
+// llm_mode=off so editorial.Rebuild takes its deterministic fallback
+// without ever invoking the model (KLOX-55).
+func (s *Server) guideProvider() llm.Provider {
+	if s.d.Cfg.LLMOff() {
+		return nil
+	}
+	return s.d.LLM
+}
+
 // guideAfterRebuild rebuilds the editorial guide and reports what it
-// learned ("Rule learned: …" toasts in the new interface).
+// learned ("Rule learned: …" toasts in the new interface). Under
+// llm_mode=off a nil provider runs Rebuild's deterministic fallback, so
+// a reasoned rejection persists a guide version with no model call.
 func (s *Server) guideAfterRebuild(w http.ResponseWriter, r *http.Request, pub *store.Publication) any {
 	prevV, prevC, _ := db(r).LatestGuide(r.Context(), pub.ID)
-	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
+	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.guideProvider(), s.d.Cfg.ModelTriage)
 	if err != nil {
 		return nil
 	}
@@ -23,8 +38,6 @@ func (s *Server) guideAfterRebuild(w http.ResponseWriter, r *http.Request, pub *
 	}
 	return out
 }
-
-// --- guide / costs ---
 
 func (s *Server) apiGuide(w http.ResponseWriter, r *http.Request) {
 	pub, err := s.apiPub(r)
@@ -80,7 +93,15 @@ func (s *Server) apiGuideRebuild(w http.ResponseWriter, r *http.Request) {
 	if apiDBErr(w, r, err, "publication") {
 		return
 	}
-	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.d.LLM, s.d.Cfg.ModelTriage)
+	// Under llm_mode=off Rebuild runs its deterministic fallback on a
+	// nil provider — the same condensation a rejection-triggered
+	// rebuild uses — so the manual rebuild stays available with zero
+	// model calls (KLOX-55).
+	content, version, err := editorial.Rebuild(r.Context(), db(r), pub, s.guideProvider(), s.d.Cfg.ModelTriage)
+	if errors.Is(err, llm.ErrDisabled) {
+		apiErr(w, 409, "ai_disabled", "guide rebuild needs a model — model calls are disabled (KLOXUS_LLM_MODE=off)")
+		return
+	}
 	if err != nil {
 		apiErr(w, 409, "conflict", err.Error())
 		return
@@ -115,4 +136,19 @@ func (s *Server) apiCosts(w http.ResponseWriter, r *http.Request) {
 		g.TotalUSD += row.CostUSD
 	}
 	apiJSON(w, 200, map[string]any{"issues": groups})
+}
+
+// addedLines lists lines present in newer but absent from older.
+func addedLines(older, newer string) []string {
+	old := map[string]bool{}
+	for _, l := range strings.Split(older, "\n") {
+		old[strings.TrimSpace(l)] = true
+	}
+	var out []string
+	for _, l := range strings.Split(newer, "\n") {
+		if t := strings.TrimSpace(l); t != "" && !old[t] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
