@@ -133,7 +133,7 @@ export const dict = {
         },
         {
           q: "Does the AI write for me?",
-          a: "No. It finds and summarizes the stories. The writing is yours.",
+          a: "No. It finds, groups and ranks the stories. The writing is yours.",
         },
         {
           q: "Which sources can I use?",
@@ -372,7 +372,7 @@ export const dict = {
         },
         {
           q: "A IA escreve por mim?",
-          a: "Não. Ela encontra e resume as notícias. A escrita é sua.",
+          a: "Não. Ela encontra, agrupa e ordena as notícias. A escrita é sua.",
         },
         {
           q: "Quais fontes posso usar?",

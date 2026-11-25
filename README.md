@@ -9,8 +9,8 @@
 > hands you a ready brief. You write the take and export to LinkedIn, X,
 > HTML or Markdown.
 >
-> Deterministic fixture demo (no API keys, fully offline code path):
-> https://kloxus-demo.fly.dev
+> A deterministic fixture demo runs locally with no API keys:
+> `go run ./cmd/kloxus demo`.
 
 Kloxus is the editorial back office for people who publish about a
 sector every day — the analyst, the consultant, the banker who posts
@@ -20,7 +20,8 @@ opening dozens of sites, throwing away duplicates, deciding what
 matters. Kloxus automates that flow. Overnight it collects audited
 sources, removes duplicates and ranks what matters with embeddings and
 a reranker that learn from every Yes/No. The brief is assembled at
-~06:30 and lands in your inbox by 7 a.m. You pick the stories, write,
+~06:30 and — on mornings with new stories — lands in your inbox by
+7 a.m., one click to stop it. You pick the stories, write,
 and one text becomes a LinkedIn post, an X thread, HTML and Markdown.
 What it never does is write for you: the opinion stays yours. The same
 machinery later extends to market intelligence and team clipping —
@@ -30,8 +31,7 @@ today it serves one person who publishes about a sector.
 > Automation). This is the
 > hosted real app: a curated catalog of 29 live feeds, Postgres on
 > Supabase, real magic-link email via Resend, one Go binary on Fly.io.
-> The deterministic fixture demo stays deployed as the evaluation
-> fallback (`demo-fixture-v2` tag). The reasoning lives in
+> The reasoning lives in
 > [docs/decisions.md](docs/decisions.md) (D27 onward).
 
 ---
@@ -45,13 +45,13 @@ One loop, five screens — cadastro → Radar → notícias → escrever → exp
 | **Sign up** | E-mail in, magic link out (Resend). No password, no form beyond the address. |
 | **Create your Radar** | Name it and say what you cover. Pick among **18 editorias** — from *política* and *economia* to *tecnologia*, *agronegócio* and *cultura*. Kloxus assigns the curated sources for you; one Radar per account. |
 | **Match** | A short calibration deck — real stories from the last 48 h. *Yes* / *No* on each one teaches the Radar your sector. |
-| **Today's stories** | Every morning, a deck of stories from the feed catalog matched to your Radar — outlet and timestamp on each card. Tick what goes into the piece; 👍 / 👎 keeps training the match. The assembled brief also arrives by email at 7 a.m. |
+| **Today's stories** | Every morning, a deck of stories from the feed catalog matched to your Radar — outlet and timestamp on each card. Click a card to pick it for the brief; 👍 / 👎 keeps training the match. On days with new stories the assembled brief also arrives by email at 7 a.m. — every send carries a one-click unsubscribe. |
 | **Write → Export** | The *pauta*: an optional opening plus one autosaved text box per story — your words only. Export to **4 formats**: LinkedIn post (3,000 chars), X post (280, auto thread split), rich-text HTML for newsletter/blog/intranet, or a `.md` download ready for Ghost, Notion and Obsidian. |
 
-The interface is fully bilingual (pt-BR / EN). A claimed Radar also gets
-the day's deck by email every morning — assembled at ~06:30, in the
-inbox by 7 a.m. ("Suas notícias de hoje estão prontas",
-America/Sao_Paulo).
+The interface is bilingual (pt-BR / EN), and the morning email follows
+the account language. A claimed Radar also gets the day's deck by email
+on mornings with new stories — assembled at ~06:30, in the inbox by
+7 a.m. (America/Sao_Paulo), with a one-click unsubscribe in every send.
 
 <p align="center">
   <img src="docs/screenshots/01-landing.png" width="720" alt="Landing — The research is ready. The writing is yours.">
@@ -89,7 +89,8 @@ America/Sao_Paulo).
                                 │  global poll · conditional GET ·
                                 │  robots-aware · one fetch for all
                                 ▼
-        clean + normalize ──▶ dedupe (canonical URL / exact hash)
+        clean + normalize ──▶ dedupe (canonical URL + SimHash
+                                      near-duplicate text)
                                 │
                                 ▼
         embed once at ingest (Voyage; deterministic hash classifier
@@ -107,9 +108,10 @@ America/Sao_Paulo).
   new items are classified and embedded once for everyone.
 - **Matching** is per-Radar: the beat (plus its editorias) is the query,
   story-level *Yes* / *No* / thumbs feedback is the supervision signal.
-- **Generative AI is optional.** Claude models power deeper analysis where
-  enabled, always inside the spend guards; the Radar → pauta → export loop
-  runs fully deterministically without them.
+- Generative AI (Claude) is enabled in production under hard caps and a
+  live kill switch; matching uses Voyage embeddings and reranking, and
+  the AI never writes the commentary. `KLOXUS_LLM_MODE=off` runs the
+  whole loop deterministically at $0.
 
 ## Stack
 
@@ -181,16 +183,8 @@ fixture fallback (`kloxus-demo`) — an unqualified `fly deploy` can never
 hit the wrong app. Step-by-step, release windows and the backup job in
 [docs/deploy.md](docs/deploy.md).
 
-## Troubleshooting
-
-- **The demo URL bounces or shows a blank page after an earlier visit:**
-  the app moved from `/app/` to the site root during development, and
-  browsers cache the old permanent redirects (`/` → `/app/` and back),
-  which can loop forever. Nothing the server sends can clear a cached
-  301 — **clear site data** for `kloxus-demo.fly.dev` (or open a private
-  window) and reload once. Current builds never issue a 301 on app
-  paths, so a fresh visit cannot get stuck again.
-
 ## License
 
-MIT — see [LICENSE](LICENSE.md).
+PolyForm Strict 1.0.0, with an additional permission for HackBrazil 2026
+organizers and judges to read, run, test and modify the software solely
+to evaluate it — see [LICENSE.md](LICENSE.md).
