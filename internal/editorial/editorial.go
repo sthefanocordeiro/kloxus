@@ -7,21 +7,26 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
 	"github.com/sthefanocordeiro/kloxus/internal/llm"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // Rebuild regenerates the guide from the publication's decisions.
-// Preferred path: the model condenses decisions into rules. Demo-mode
-// fallback (no fixture can cover arbitrary judge input): normalize and
-// merge rejection reasons into short general rules. Only effective
+// Preferred path: the model condenses decisions into rules. Fallback —
+// a nil provider (llm_mode=off, KLOX-55) or a demo replay without a
+// fixture: normalize and merge rejection reasons into short general
+// rules. Only effective
 // rejections feed the guide — approvals, alternatives and undone
 // rejections carry no editorial signal. Identical output is not
 // re-versioned (SaveGuide dedupes). Returns content and version.
+// A nil provider is the contract for "no model": the function never
+// invokes it, keeping deterministic mode free of model calls.
 func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider llm.Provider, model string) (string, int, error) {
 	decisions, err := db.Decisions(ctx, pub.ID)
 	if err != nil {
@@ -36,7 +41,7 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 		lastIdx[d.ItemID] = i
 	}
 	var ds []store.Decision
-	var reasons []string
+	var reasons, ctxs []string
 	for i, d := range decisions {
 		if i == lastIdx[d.ItemID] && d.Kind == "reject" && strings.TrimSpace(d.Reason) != "" {
 			bare := strings.TrimSpace(d.Reason)
@@ -44,13 +49,63 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 			// Universidade lança modelo…"), but the rules distilled in
 			// demo fallback stay general — a learned rule names the
 			// objection, never a specific headline.
+			var rejCtx string
 			if ii, err := db.GetIssueItem(ctx, d.ItemID); err == nil {
-				if title, err := db.StoryTitle(ctx, ii.StoryID); err == nil && title != "" {
-					d.Reason = bare + " — " + title
+				// The rejection's context records the story's kind and
+				// its source outlets alongside the title (KLOX-66 §8.10):
+				// the guide can learn "weak source" → which outlet,
+				// "not for my audience" → which story kind.
+				if story, err := db.StoryWithItems(ctx, ii.StoryID); err == nil && story.Title != "" {
+					var itemIDs []int64
+					for _, it := range story.Items {
+						itemIDs = append(itemIDs, it.ID)
+					}
+					enrich, _ := db.EnrichmentsForItems(ctx, itemIDs)
+					kinds := map[string]bool{}
+					topics := map[string]bool{}
+					outlets := map[string]bool{}
+					var kl, tl, ol []string
+					for _, it := range story.Items {
+						k := it.Kind
+						if k == "" {
+							k = "article"
+						}
+						if en := enrich[it.ID]; en != nil && en.Kind != "" {
+							k = en.Kind
+						}
+						if !kinds[k] {
+							kinds[k] = true
+							kl = append(kl, k)
+						}
+						if en := enrich[it.ID]; en != nil {
+							for _, tp := range en.Topics {
+								if tp != "" && !topics[tp] {
+									topics[tp] = true
+									tl = append(tl, tp)
+								}
+							}
+						}
+						o := it.SourceName
+						if o == "" {
+							o = it.SourceURL
+						}
+						if o != "" && !outlets[o] {
+							outlets[o] = true
+							ol = append(ol, o)
+						}
+					}
+					d.Reason = fmt.Sprintf("%s — %s [%s · %s]", bare, story.Title,
+						strings.Join(kl, "/"), strings.Join(ol, ", "))
+					// The deterministic fallback keeps the rejection's
+					// type/topic/outlet too (KLOX-100): a bare chip like
+					// "não é para meu público" teaches nothing without
+					// what was rejected.
+					rejCtx = rejectionContext(pub.Language, kl, tl, ol)
 				}
 			}
 			ds = append(ds, d)
 			reasons = append(reasons, bare)
+			ctxs = append(ctxs, rejCtx)
 		}
 	}
 	if len(reasons) == 0 {
@@ -72,17 +127,23 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 		return "", 0, err
 	}
 
-	resp, err := provider.Complete(ctx, llm.Request{
-		Model: model, Template: "guide", User: user, MaxTokens: 2048,
-	})
 	var content string
-	switch {
-	case errors.Is(err, llm.ErrMissingFixture):
-		content = buildGuide(reasons)
-	case err != nil:
-		return "", 0, err
-	default:
-		content = strings.TrimSpace(resp.Text)
+	if provider == nil {
+		// Deterministic mode — no model exists to condense, so the
+		// reasons condense locally.
+		content = buildGuide(reasons, ctxs)
+	} else {
+		resp, err := provider.Complete(ctx, llm.Request{
+			Model: model, Template: "guide", User: user, MaxTokens: 2048,
+		})
+		switch {
+		case errors.Is(err, llm.ErrMissingFixture):
+			content = buildGuide(reasons, ctxs)
+		case err != nil:
+			return "", 0, err
+		default:
+			content = strings.TrimSpace(resp.Text)
+		}
 	}
 	v, err := db.SaveGuide(ctx, pub.ID, content)
 	if err != nil {
@@ -97,16 +158,55 @@ var guideSubject = regexp.MustCompile(`(?i)^(?:esta|esse|essa|este|a|o|this|the)
 
 var punctRe = regexp.MustCompile(`[.,;:!?()\[\]"'“”‘’]+`)
 
+// rejectionContext renders what was rejected — kind, topics, outlets —
+// in the publication's language, so the guide's learned rule says more
+// than the bare chip label (KLOX-100).
+func rejectionContext(lang string, kinds, topics, outlets []string) string {
+	pt := strings.HasPrefix(strings.ToLower(lang), "pt")
+	label := func(ptS, enS string, v []string) string {
+		if len(v) == 0 {
+			return ""
+		}
+		if pt {
+			return ptS + ": " + strings.Join(v, ", ")
+		}
+		return enS + ": " + strings.Join(v, ", ")
+	}
+	parts := []string{
+		label("tipo", "type", kinds),
+		label("assunto", "topic", topics),
+		label("veículo", "outlet", outlets),
+	}
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, " · ")
+}
+
 // buildGuide condenses rejection reasons into short general rules and
-// merges near-duplicates (same objection, different wording → one rule).
-func buildGuide(reasons []string) string {
+// merges near-duplicates (same objection, different wording → one
+// rule). ctxs rides alongside: the rejected story's type/topic/outlet
+// is appended to the rule so the guide records WHAT was rejected, not
+// just the objection label (KLOX-100). The context stays out of the
+// similarity check — rejections of same-kind/same-outlet stories share
+// context wording that would collapse distinct objections into one
+// rule.
+func buildGuide(reasons, ctxs []string) string {
 	var rules []string
+	var ruleCtxs [][]string
 	var toks []map[string]bool
 	var bigramList []map[string]bool
-	for _, reason := range reasons {
+	for i, reason := range reasons {
 		rule := ruleFor(reason)
 		if rule == "" {
 			continue
+		}
+		ctx := ""
+		if i < len(ctxs) {
+			ctx = ctxs[i]
 		}
 		t := tokens(rule)
 		bg := bigrams(rule)
@@ -123,19 +223,32 @@ func buildGuide(reasons []string) string {
 			}
 		}
 		if dup >= 0 {
-			// keep the shorter (more general) phrasing
+			// keep the shorter (more general) phrasing; every merged
+			// rejection still contributes the story it rejected
 			if len(rule) < len(rules[dup]) {
 				rules[dup], toks[dup], bigramList[dup] = rule, t, bg
+			}
+			if ctx != "" && !slices.Contains(ruleCtxs[dup], ctx) {
+				ruleCtxs[dup] = append(ruleCtxs[dup], ctx)
 			}
 			continue
 		}
 		rules = append(rules, rule)
+		var cs []string
+		if ctx != "" {
+			cs = []string{ctx}
+		}
+		ruleCtxs = append(ruleCtxs, cs)
 		toks = append(toks, t)
 		bigramList = append(bigramList, bg)
 	}
 	var b strings.Builder
-	for _, r := range rules {
-		fmt.Fprintf(&b, "- %s\n", r)
+	for i, r := range rules {
+		fmt.Fprintf(&b, "- %s", r)
+		if len(ruleCtxs[i]) > 0 {
+			fmt.Fprintf(&b, " — %s", strings.Join(ruleCtxs[i], " | "))
+		}
+		b.WriteByte('\n')
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -158,7 +271,7 @@ var chipRules = map[string]string{
 // output the guide fallback writes, exposed for views that need the
 // learned rules (e.g. the after-sending screen).
 func RulesFrom(reasons []string) []string {
-	guide := buildGuide(reasons)
+	guide := buildGuide(reasons, nil)
 	var out []string
 	for _, line := range strings.Split(guide, "\n") {
 		if r := strings.TrimSpace(strings.TrimPrefix(line, "- ")); r != "" {
@@ -177,9 +290,7 @@ func ruleFor(reason string) string {
 	rule = guideSubject.ReplaceAllString(rule, "")
 	rule = strings.TrimSpace(rule)
 	rule = strings.TrimRight(rule, ".! \t")
-	if len(rule) > 120 {
-		rule = rule[:120] + "…"
-	}
+	rule = strutil.Cut(rule, 120)
 	if r := []rune(rule); len(r) > 0 && unicode.IsLower(r[0]) {
 		rule = string(unicode.ToUpper(r[0])) + string(r[1:])
 	}
