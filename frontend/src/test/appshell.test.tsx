@@ -354,16 +354,18 @@ describe("AppShell nav before the first Radar (KLOX-187)", () => {
     for (const name of ["Current brief", "Briefs"]) {
       expect(screen.queryByRole("link", { name })).toBeNull();
     }
-    // the only way forward is creating the first Radar
-    expect(screen.getByRole("link", { name: "New Radar" })).toHaveAttribute("href", "/start");
+    // the only way forward is the card CTA inside the publications
+    // empty state — the shell carries no duplicate link (KLOX-235)
+    expect(screen.queryByRole("link", { name: "New Radar" })).toBeNull();
   });
 });
 
 // KLOX-206: "New Radar" leaked where it cannot work — the API allows
 // one Radar per account (409 one_newsletter). On /start the sidebar
 // offered a link to the page the user is already on, and the claimed
-// account menu silently signed the user out to /start. The only entry
-// points left are the empty-state CTA and the sidebar block off /start.
+// account menu silently signed the user out to /start. KLOX-235 then
+// dropped the sidebar copy too — the only entry point left is the
+// empty-state card CTA.
 describe("AppShell 'New Radar' entry points (KLOX-206)", () => {
   beforeEach(() => {
     vi.mocked(api.workspace).mockResolvedValue({

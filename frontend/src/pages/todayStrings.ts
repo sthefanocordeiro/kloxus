@@ -4,7 +4,7 @@ import { useT } from "../i18n";
 // landing chunk (KLOX-16 budget). KLOX-168: the list is for choosing.
 const pt = {
   title: "Notícias de hoje",
-  hint: "Clique numa notícia para colocá-la no seu texto. 👍 e 👎 só ensinam o radar.",
+  hint: "Clique numa notícia para colocá-la no seu texto. Os botões de polegar só ensinam o radar.",
   loading: "Buscando as notícias…",
   empty: "Sem notícia nova agora — volte mais tarde ou revise suas fontes no Radar.",
   select: "Selecionar notícia",
@@ -19,15 +19,16 @@ const pt = {
   building1: "Juntando a notícia…",
   buildingEditor: "Abrindo o editor…",
   piecesTitle: "Pautas em andamento",
-  noPieces: "Nenhuma pauta ainda. Marque notícias e clique em Montar pauta.",
+  noPieces: "Nenhuma pauta ainda. Clique nas notícias que quiser e use Montar pauta.",
   piece: "Pauta {n}",
   status: { draft: "Rascunho", reviewed: "Pronta", exported: "Exportada" } as Record<string, string>,
+  statusEdited: "Editada desde a exportação",
   stale: "A lista de notícias mudou — revise sua seleção e tente de novo.",
 };
 
 const en: typeof pt = {
   title: "Today's stories",
-  hint: "Click a story to put it in your text. 👍 and 👎 only teach the radar.",
+  hint: "Click a story to put it in your text. The thumbs buttons only teach the radar.",
   loading: "Fetching the stories…",
   empty: "No new stories right now — come back later or review your sources in Radar.",
   select: "Select story",
@@ -42,9 +43,10 @@ const en: typeof pt = {
   building1: "Putting the story together…",
   buildingEditor: "Opening the editor…",
   piecesTitle: "Briefs in progress",
-  noPieces: "No briefs yet. Tick stories and click Build brief.",
+  noPieces: "No briefs yet. Click the stories you want and hit Build brief.",
   piece: "Brief {n}",
   status: { draft: "Draft", reviewed: "Ready", exported: "Exported" },
+  statusEdited: "Edited since export",
   stale: "The story list changed — review your picks and try again.",
 };
 

@@ -7,7 +7,6 @@ import {
   Ellipsis,
   Layers,
   Newspaper,
-  Plus,
   Rss,
 } from "lucide-react";
 import { api, pautaPath } from "./api";
@@ -50,8 +49,10 @@ function chromeFor(pathname: string, t: T, pubName?: string, issueNumber?: numbe
     // KLOX-187: the pauta pages used to show a bare "Kloxus" header —
     // the trail is Radar › Pauta, and on export Pauta › Exportar so
     // "← Voltar" lands back on the editor, like every other screen.
+    // KLOX-235: the crumb names the Radar itself ("My radar › Pauta"),
+    // not the section label.
     const radarCrumb: Crumb = {
-      label: t.publications,
+      label: pubName ?? t.publications,
       to: issuePubID ? `/publications/${issuePubID}` : "/publications",
     };
     // KLOX-199: the pauta is named by its content everywhere — the
@@ -199,14 +200,8 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        {pubs.data?.length === 0 && pathname !== "/start" && (
-          <div className="border-t border-line p-3">
-            <Link to="/start" className="flex h-10 items-center gap-2.5 rounded-[var(--radius-btn)] px-3 text-sm font-medium text-muted hover:bg-line/50 hover:text-ink">
-              <Plus size={16} aria-hidden />
-              {t.nav.newNewsletter}
-            </Link>
-          </div>
-        )}
+        {/* KLOX-235: the empty state's card CTA is the one place a
+            Radar is created — the sidebar link duplicated it */}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

@@ -49,6 +49,10 @@ type pieceView struct {
 	Title           string   `json:"title"`
 	CreatedAt       string   `json:"created_at"`
 	ExportedFormats []string `json:"exported_formats,omitempty"`
+	// KLOX-235: an exported pauta edited afterwards keeps a stale
+	// version until it's refreshed — the badge reads "edited since
+	// export" instead of a plain "exported".
+	StaleExports bool `json:"stale_exports,omitempty"`
 }
 
 // mustItems loads an issue's items for the title lookup — a failed
@@ -116,13 +120,16 @@ func (s *Server) apiToday(w http.ResponseWriter, r *http.Request) {
 	for _, iss := range issues {
 		formats := exports[iss.ID]
 		st := pieceStatus(iss.Status)
+		var stale bool
 		if len(formats) > 0 {
 			st = "exported"
+			stale = staleExports(ctx, db(r), iss, pub)
 		}
 		pieces = append(pieces, pieceView{
 			ID: iss.ID, Number: iss.Number, Status: st,
 			Title:     s.pautaTitle(ctx, db(r), iss, pub, mustItems(r, iss.ID)),
 			CreatedAt: iss.CreatedAt, ExportedFormats: formats,
+			StaleExports: stale,
 		})
 	}
 	open := int64(0)

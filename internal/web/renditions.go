@@ -5,6 +5,7 @@ package web
 // piece through a fixed template (no model) that is then edited on its
 // own. Kloxus never publishes — the author copies or downloads.
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"strconv"
@@ -55,6 +56,29 @@ func staleView(rs []store.Rendition, doc *issueDocument) []renditionView {
 		out = append(out, renditionView{Rendition: x, Stale: x.BaseHash != cur})
 	}
 	return out
+}
+
+// staleExports reports whether any rendition of the issue predates the
+// current piece: editing an exported pauta leaves its versions
+// out-of-date until "Update this version?" runs, and the lists say so
+// (KLOX-235). Read failures stay invisible — a missing flag only means
+// the badge keeps reading Exported.
+func staleExports(ctx context.Context, d *store.DB, iss *store.Issue, pub *store.Publication) bool {
+	rs, err := d.Renditions(ctx, iss.ID)
+	if err != nil || len(rs) == 0 {
+		return false
+	}
+	doc, err := buildIssueDocument(ctx, d, iss, pub)
+	if err != nil {
+		return false
+	}
+	_, _, _, cur := renditionBodies(doc, FmtMarkdown)
+	for i := range rs {
+		if rs[i].BaseHash != cur {
+			return true
+		}
+	}
+	return false
 }
 
 func storyCount(doc *issueDocument) int {

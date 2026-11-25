@@ -81,6 +81,9 @@ export interface IssueSummary {
   title?: string;
   exported?: boolean;
   exported_formats?: string[];
+  // KLOX-235: the piece changed since a version was exported — the
+  // badge reads "edited since export" until it's refreshed.
+  stale_exports?: boolean;
 }
 
 export interface PublicIssue {
@@ -223,6 +226,8 @@ export interface CatalogOffer {
   kind?: string;
   suspended?: boolean;
   note?: string;
+  // the outlet sits behind a reader paywall — suggested last (KLOX-235)
+  paywall?: boolean;
 }
 export interface SourceCatalog {
   offered: CatalogOffer[];
@@ -257,6 +262,7 @@ export interface PieceRow {
   title?: string;
   created_at?: string;
   exported_formats?: string[];
+  stale_exports?: boolean;
 }
 
 export interface TodayData {

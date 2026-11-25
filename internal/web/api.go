@@ -406,6 +406,11 @@ func (s *Server) issueSummary(r *http.Request, iss *store.Issue) map[string]any 
 	if formats, err := db(r).IssueExports(ctx, iss.ID); err == nil && len(formats) > 0 {
 		m["exported"] = true
 		m["exported_formats"] = formats
+		// KLOX-235: edits after the export leave a stale version — the
+		// list badge reads "edited since export" until it's refreshed.
+		if pub != nil && staleExports(ctx, db(r), iss, pub) {
+			m["stale_exports"] = true
+		}
 	}
 	// Edited-after-approval (KLOX-66): the issue sat in "approved" and a
 	// post-approval edit reverted it — the stored approve decision for

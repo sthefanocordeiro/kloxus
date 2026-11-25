@@ -17,7 +17,10 @@ const FORMAT_LABEL: Record<string, string> = {
 
 // KLOX-184: a copied/downloaded pauta is "Exportada" even though its
 // lifecycle status stays "approved" — the export mark lives beside it.
-const effStatus = (iss: IssueSummary) => (iss.exported ? "exported" : iss.status);
+// KLOX-235: edits after that export read "Edited since export" until a
+// fresh version is copied/downloaded.
+const effStatus = (iss: IssueSummary) =>
+  iss.stale_exports ? "edited" : iss.exported ? "exported" : iss.status;
 
 export function PublicationPage() {
   const { id = "" } = useParams();
@@ -56,7 +59,7 @@ export function PublicationPage() {
                     ))}
                   </span>
                 </span>
-                <Badge tone={st === "exported" || st === "sent" ? "teal" : st === "approved" ? "ink" : "muted"}>
+                <Badge tone={st === "exported" || st === "sent" ? "teal" : st === "approved" ? "ink" : st === "edited" ? "warn" : "muted"}>
                   {(t.status as Record<string, string>)[st] ?? st}
                 </Badge>
               </Card>

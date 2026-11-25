@@ -109,6 +109,19 @@ export const NICHE_KEYS = [
   "ciencia", "meio-ambiente", "cultura", "estilo-vida",
 ];
 
+// The exact pt labels cadastro folds into the topic text — the same
+// strings the backend's nicheLabels uses. Sources derives the editoria
+// chips a theme still names from these, and rewrites the theme when a
+// chip toggles (KLOX-235).
+export const NICHE_LABEL_PT: Record<string, string> = {
+  politica: "política", economia: "economia", "mercado-financeiro": "mercado financeiro e investimentos",
+  "financas-pessoais": "finanças pessoais", negocios: "negócios e empresas", startups: "startups e inovação",
+  carreira: "carreira e trabalho", tecnologia: "tecnologia", agronegocio: "agronegócio",
+  internacional: "internacional", "brasil-cidades": "Brasil e cidades", "justica-direito": "justiça e direito",
+  saude: "saúde", educacao: "educação", ciencia: "ciência", "meio-ambiente": "meio ambiente e sustentabilidade",
+  cultura: "cultura e entretenimento", "estilo-vida": "estilo de vida e consumo",
+};
+
 export function useStart(): StartStrings {
   const { lang } = useT();
   return lang === "pt" ? pt : en;
