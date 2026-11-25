@@ -296,183 +296,237 @@ func bestEvidence(d *pipeline.Dossier, ref int, sentence, fallback string) strin
 	return truncateStr(best, 320)
 }
 
-// buildIssueDocument parses the stored issue body into the structured
-// document. Flags are matched to sentences by (item ref, raw text);
-// unmatched flags stay on their item.
-func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub *store.Publication) (*issueDocument, error) {
-	if pub == nil {
-		return nil, fmt.Errorf("publication %d not found", iss.PublicationID)
-	}
-	doc := &issueDocument{
-		IssueID: iss.ID, Number: iss.Number, Status: iss.Status, Subject: iss.Subject,
-		Version: docVersion(iss), Sections: []docSection{},
-	}
+// docItemInfo is what the body parser needs about one <!-- item N -->
+// marker: the issue item row and its parsed dossier.
+type docItemInfo struct {
+	issueItemID int64
+	dossier     *pipeline.Dossier
+}
 
-	// item ref → issue item + dossier (the <!-- item N --> markers the
-	// assembler writes equal dossier refs).
-	type itemInfo struct {
-		issueItemID int64
-		dossier     *pipeline.Dossier
+// loadItemDossiers maps item ref → issue item + dossier (the
+// <!-- item N --> markers the assembler writes equal dossier refs).
+func loadItemDossiers(ctx context.Context, d *store.DB, issueID int64) map[int]docItemInfo {
+	byRef := map[int]docItemInfo{}
+	iis, err := d.IssueItems(ctx, issueID)
+	if err != nil {
+		return byRef
 	}
-	byRef := map[int]itemInfo{}
-	if iis, err := d.IssueItems(ctx, iss.ID); err == nil {
-		for _, ii := range iis {
-			dj, err := d.Dossier(ctx, ii.ID)
-			if err != nil {
-				continue
-			}
-			var dd pipeline.Dossier
-			if json.Unmarshal([]byte(dj), &dd) == nil {
-				byRef[dd.Ref] = itemInfo{issueItemID: ii.ID, dossier: &dd}
-			}
+	for _, ii := range iis {
+		dj, err := d.Dossier(ctx, ii.ID)
+		if err != nil {
+			continue
+		}
+		var dd pipeline.Dossier
+		if json.Unmarshal([]byte(dj), &dd) == nil {
+			byRef[dd.Ref] = docItemInfo{issueItemID: ii.ID, dossier: &dd}
 		}
 	}
+	return byRef
+}
 
-	// flags by (item ref, raw sentence text), preserving flag order
-	flags := map[int64]map[string]store.Flag{}
-	flagOrder := map[int64][]store.Flag{}
-	for _, f := range iss.Flags {
-		if flags[f.Item] == nil {
-			flags[f.Item] = map[string]store.Flag{}
-		}
-		flags[f.Item][f.Sentence] = f
-		flagOrder[f.Item] = append(flagOrder[f.Item], f)
+// docFlagIndex groups flags by (item ref, raw sentence text),
+// preserving flag order: each parsed sentence claims its flag, and the
+// ones no sentence claims attach to their item in stored order.
+type docFlagIndex struct {
+	bySentence map[int64]map[string]store.Flag
+	order      map[int64][]store.Flag
+}
+
+func indexDocFlags(fl []store.Flag) docFlagIndex {
+	idx := docFlagIndex{
+		bySentence: map[int64]map[string]store.Flag{},
+		order:      map[int64][]store.Flag{},
 	}
+	for _, f := range fl {
+		if idx.bySentence[f.Item] == nil {
+			idx.bySentence[f.Item] = map[string]store.Flag{}
+		}
+		idx.bySentence[f.Item][f.Sentence] = f
+		idx.order[f.Item] = append(idx.order[f.Item], f)
+	}
+	return idx
+}
 
-	secMode := map[string]string{}
+// sectionCommentaryModes maps section title → commentary mode
+// (required | optional | none) from the publication definition.
+func sectionCommentaryModes(pub *store.Publication) map[string]string {
+	modes := map[string]string{}
 	for _, sc := range pub.Sections {
-		secMode[sc.Title] = sc.Commentary
+		modes[sc.Title] = sc.Commentary
 	}
-	commentary := iss.Commentary
-	if commentary == nil {
-		commentary = map[string]string{}
-	}
+	return modes
+}
 
-	var sec *docSection
-	var item *docItem
-	usedIDs := map[string]int{}
-	finishItem := func(end int) {
-		if item == nil {
-			return
-		}
-		item.spanEnd = end
-		// attach flags that matched no sentence to the item itself
-		for _, f := range flagOrder[int64(item.Ref)] {
-			if _, still := flags[int64(item.Ref)][f.Sentence]; still {
-				item.Flags = append(item.Flags, docItemFlag{Sentence: f.Sentence, Note: f.Note})
-			}
-		}
-		item = nil
-	}
-	addSentence := func(raw, kind string) {
-		if item == nil {
-			return
-		}
-		var text string
-		if kind == "interpretation" {
-			text = interpretationText(raw)
-		} else {
-			text = displayText(raw)
-		}
-		sn := docSentence{
-			Text: text, Kind: kind,
-			Citations: citationRefs(raw), raw: raw,
-		}
-		if sn.Citations == nil {
-			sn.Citations = []int{}
-		}
-		base := sentenceID(item.Ref, raw)
-		occ := usedIDs[base]
-		usedIDs[base]++
-		sn.ID = base
-		if occ > 0 {
-			sn.ID = fmt.Sprintf("%s.%d", base, occ+1)
-		}
-		if kind == "fact" {
-			for _, ref := range sn.Citations {
-				sn.Evidence = append(sn.Evidence, docEvidence{
-					Ref:     ref,
-					Excerpt: bestEvidence(item.dossier, ref, text, item.openings[ref]),
-				})
-			}
-		}
-		if f, ok := flags[int64(item.Ref)][raw]; ok {
-			sn.Flag = &docFlag{Note: f.Note}
-			delete(flags[int64(item.Ref)], raw)
-		}
-		item.Sentences = append(item.Sentences, sn)
-	}
+// docBodyParser walks the stored markdown body line by line, growing
+// the document's sections, items and sentences. sec and item point at
+// the section/item currently being filled; usedIDs disambiguates
+// identical sentences inside one item.
+type docBodyParser struct {
+	ctx        context.Context
+	d          *store.DB
+	doc        *issueDocument
+	items      map[int]docItemInfo
+	flags      docFlagIndex
+	secMode    map[string]string
+	commentary map[string]string
+	sec        *docSection
+	item       *docItem
+	usedIDs    map[string]int
+}
+
+func (p *docBodyParser) parse(body string) {
 	pos := 0 // byte offset of the current line inside the body
-	for _, line := range strings.Split(iss.BodyMD, "\n") {
+	for _, line := range strings.Split(body, "\n") {
 		t := strings.TrimSpace(line)
 		if m := docSectionRe.FindStringSubmatch(t); m != nil {
-			finishItem(pos)
-			mode := secMode[m[1]]
-			if mode == "" {
-				mode = "none"
-			}
-			doc.Sections = append(doc.Sections, docSection{
-				Title: m[1], Commentary: docCommentary{Mode: mode, Text: commentary[m[1]]},
-				Items: []docItem{},
-			})
-			sec = &doc.Sections[len(doc.Sections)-1]
-			pos += len(line) + 1
-			continue
-		}
-		if m := docItemRe.FindStringSubmatch(t); m != nil {
-			finishItem(pos)
-			if sec == nil {
-				doc.Sections = append(doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"}, Items: []docItem{}})
-				sec = &doc.Sections[len(doc.Sections)-1]
-			}
-			ref, _ := strconv.Atoi(m[2])
-			it := docItem{Ref: ref, Headline: m[1], spanStart: pos, openings: map[int]string{},
-				Sentences: []docSentence{}, Sources: []docSource{}}
-			if info, ok := byRef[ref]; ok {
-				it.IssueItemID = info.issueItemID
-				it.dossier = info.dossier
-				for _, ds := range info.dossier.Sources {
-					src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
-					if ds.ItemID != 0 {
-						if stored, err := d.GetItem(ctx, ds.ItemID); err == nil {
-							src.Excerpt = truncateStr(stored.ContentText, 320)
-							src.Date = stored.PublishedAt
-							it.openings[ds.Ref] = src.Excerpt
-							if src.Name == "" {
-								src.Name = stored.SourceName
-							}
-						}
-					}
-					it.Sources = append(it.Sources, src)
-				}
-			}
-			sec.Items = append(sec.Items, it)
-			item = &sec.Items[len(sec.Items)-1]
-			pos += len(line) + 1
-			continue
-		}
-		switch {
-		case t == "", strings.HasPrefix(t, "#"), strings.HasPrefix(t, "**"),
-			strings.HasPrefix(t, "-"), strings.HasPrefix(t, "_"):
-			// headings, source lists, emphasis-only lines
-		case strings.HasPrefix(t, "> "):
-			addSentence(t, "interpretation")
-		default:
-			for _, piece := range pipeline.SplitSentences(t) {
-				piece = strings.TrimSpace(piece)
-				if !strings.ContainsFunc(piece, unicode.IsLetter) {
-					continue
-				}
-				addSentence(piece, "fact")
-			}
+			p.finishItem(pos)
+			p.startSection(m[1])
+		} else if m := docItemRe.FindStringSubmatch(t); m != nil {
+			p.finishItem(pos)
+			p.startItem(m[1], m[2], pos)
+		} else {
+			p.addContent(t)
 		}
 		pos += len(line) + 1
 	}
-	finishItem(len(iss.BodyMD))
+	p.finishItem(len(body))
+}
 
-	// sections with required commentary that carry no items still matter
-	// for the readiness checklist — include them even when the body has
-	// no section heading yet.
+// startSection opens a "## title" section with its commentary mode.
+func (p *docBodyParser) startSection(title string) {
+	mode := p.secMode[title]
+	if mode == "" {
+		mode = "none"
+	}
+	p.doc.Sections = append(p.doc.Sections, docSection{
+		Title: title, Commentary: docCommentary{Mode: mode, Text: p.commentary[title]},
+		Items: []docItem{},
+	})
+	p.sec = &p.doc.Sections[len(p.doc.Sections)-1]
+}
+
+// startItem opens a "### headline <!-- item N -->" item: its span
+// starts at the heading and its sources come from the dossier. An item
+// before any "## " lands in an anonymous leading section.
+func (p *docBodyParser) startItem(headline, refText string, pos int) {
+	if p.sec == nil {
+		p.doc.Sections = append(p.doc.Sections, docSection{Title: "", Commentary: docCommentary{Mode: "none"}, Items: []docItem{}})
+		p.sec = &p.doc.Sections[len(p.doc.Sections)-1]
+	}
+	ref, _ := strconv.Atoi(refText)
+	it := docItem{Ref: ref, Headline: headline, spanStart: pos, openings: map[int]string{},
+		Sentences: []docSentence{}, Sources: []docSource{}}
+	if info, ok := p.items[ref]; ok {
+		it.IssueItemID = info.issueItemID
+		it.dossier = info.dossier
+		p.loadItemSources(&it, info.dossier)
+	}
+	p.sec.Items = append(p.sec.Items, it)
+	p.item = &p.sec.Items[len(p.sec.Items)-1]
+}
+
+// loadItemSources fills the item's source list and article openings
+// from its dossier: each source carries the stored article's opening
+// excerpt and date so citation evidence has a fallback passage.
+func (p *docBodyParser) loadItemSources(it *docItem, dossier *pipeline.Dossier) {
+	for _, ds := range dossier.Sources {
+		src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
+		if ds.ItemID != 0 {
+			if stored, err := p.d.GetItem(p.ctx, ds.ItemID); err == nil {
+				src.Excerpt = truncateStr(stored.ContentText, 320)
+				src.Date = stored.PublishedAt
+				it.openings[ds.Ref] = src.Excerpt
+				if src.Name == "" {
+					src.Name = stored.SourceName
+				}
+			}
+		}
+		it.Sources = append(it.Sources, src)
+	}
+}
+
+// finishItem closes the current item's span at end and attaches the
+// flags that matched no sentence to the item itself.
+func (p *docBodyParser) finishItem(end int) {
+	if p.item == nil {
+		return
+	}
+	p.item.spanEnd = end
+	for _, f := range p.flags.order[int64(p.item.Ref)] {
+		if _, still := p.flags.bySentence[int64(p.item.Ref)][f.Sentence]; still {
+			p.item.Flags = append(p.item.Flags, docItemFlag{Sentence: f.Sentence, Note: f.Note})
+		}
+	}
+	p.item = nil
+}
+
+// addSentence parses one raw stored sentence into the current item:
+// display text, citations with their evidence, deduplicated id, and
+// the flag matching its raw text.
+func (p *docBodyParser) addSentence(raw, kind string) {
+	if p.item == nil {
+		return
+	}
+	var text string
+	if kind == "interpretation" {
+		text = interpretationText(raw)
+	} else {
+		text = displayText(raw)
+	}
+	sn := docSentence{
+		Text: text, Kind: kind,
+		Citations: citationRefs(raw), raw: raw,
+	}
+	if sn.Citations == nil {
+		sn.Citations = []int{}
+	}
+	base := sentenceID(p.item.Ref, raw)
+	occ := p.usedIDs[base]
+	p.usedIDs[base]++
+	sn.ID = base
+	if occ > 0 {
+		sn.ID = fmt.Sprintf("%s.%d", base, occ+1)
+	}
+	if kind == "fact" {
+		for _, ref := range sn.Citations {
+			sn.Evidence = append(sn.Evidence, docEvidence{
+				Ref:     ref,
+				Excerpt: bestEvidence(p.item.dossier, ref, text, p.item.openings[ref]),
+			})
+		}
+	}
+	if f, ok := p.flags.bySentence[int64(p.item.Ref)][raw]; ok {
+		sn.Flag = &docFlag{Note: f.Note}
+		delete(p.flags.bySentence[int64(p.item.Ref)], raw)
+	}
+	p.item.Sentences = append(p.item.Sentences, sn)
+}
+
+// addContent routes one body line that is neither a section nor an
+// item heading: interpretation blocks, fact text (split into
+// sentences), or markup to skip.
+func (p *docBodyParser) addContent(t string) {
+	switch {
+	case t == "", strings.HasPrefix(t, "#"), strings.HasPrefix(t, "**"),
+		strings.HasPrefix(t, "-"), strings.HasPrefix(t, "_"):
+		// headings, source lists, emphasis-only lines
+	case strings.HasPrefix(t, "> "):
+		p.addSentence(t, "interpretation")
+	default:
+		for _, piece := range pipeline.SplitSentences(t) {
+			piece = strings.TrimSpace(piece)
+			if !strings.ContainsFunc(piece, unicode.IsLetter) {
+				continue
+			}
+			p.addSentence(piece, "fact")
+		}
+	}
+}
+
+// appendCommentarySections adds publication sections the body has no
+// heading for: sections with required commentary that carry no items
+// still matter for the readiness checklist.
+func appendCommentarySections(doc *issueDocument, pub *store.Publication, commentary map[string]string) {
 	for _, sc := range pub.Sections {
 		found := false
 		for _, ds := range doc.Sections {
@@ -487,24 +541,59 @@ func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub 
 			})
 		}
 	}
+}
 
+// coverageOf counts the always-visible coverage summary: ok counts
+// fact sentences that are cited and unflagged — the counter shows
+// ok/total.
+func coverageOf(doc *issueDocument, flagCount int) docCoverage {
+	var cov docCoverage
 	for _, s := range doc.Sections {
 		for _, it := range s.Items {
 			for _, sn := range it.Sentences {
 				if sn.Kind != "fact" {
 					continue
 				}
-				doc.Coverage.Total++
+				cov.Total++
 				if len(sn.Citations) > 0 {
-					doc.Coverage.Cited++
+					cov.Cited++
 					if sn.Flag == nil {
-						doc.Coverage.Ok++
+						cov.Ok++
 					}
 				}
 			}
 		}
 	}
-	doc.Coverage.Flagged = len(iss.Flags)
+	cov.Flagged = flagCount
+	return cov
+}
+
+// buildIssueDocument parses the stored issue body into the structured
+// document. Flags are matched to sentences by (item ref, raw text);
+// unmatched flags stay on their item.
+func buildIssueDocument(ctx context.Context, d *store.DB, iss *store.Issue, pub *store.Publication) (*issueDocument, error) {
+	if pub == nil {
+		return nil, fmt.Errorf("publication %d not found", iss.PublicationID)
+	}
+	doc := &issueDocument{
+		IssueID: iss.ID, Number: iss.Number, Status: iss.Status, Subject: iss.Subject,
+		Version: docVersion(iss), Sections: []docSection{},
+	}
+	commentary := iss.Commentary
+	if commentary == nil {
+		commentary = map[string]string{}
+	}
+	p := &docBodyParser{
+		ctx: ctx, d: d, doc: doc,
+		items:      loadItemDossiers(ctx, d, iss.ID),
+		flags:      indexDocFlags(iss.Flags),
+		secMode:    sectionCommentaryModes(pub),
+		commentary: commentary,
+		usedIDs:    map[string]int{},
+	}
+	p.parse(iss.BodyMD)
+	appendCommentarySections(doc, pub, commentary)
+	doc.Coverage = coverageOf(doc, len(iss.Flags))
 	return doc, nil
 }
 
