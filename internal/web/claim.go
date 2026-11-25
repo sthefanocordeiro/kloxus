@@ -129,12 +129,13 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := s.publicBase(r) + "/claim?t=" + url.QueryEscape(token)
-	subject, md := "Confirm your email to create your Radar",
-		fmt.Sprintf("Confirm this email to create your Radar.\n\n[Create my Radar](%s)\n\nThe link works once and expires in 15 minutes.", link)
+	stamp := claimStamp(time.Now())
+	subject, md := "Your Kloxus link — "+stamp,
+		fmt.Sprintf("Confirm this email to create your Radar.\n\n[Create my Radar](%s)\n\nThe link works once and expires in 15 minutes.\n\nIf you didn't ask for this, ignore this email.", link)
 	if ptLang(in.Lang) {
 		link += "&lang=pt"
-		subject, md = "Confirme seu e-mail para criar seu Radar",
-			fmt.Sprintf("Confirme este e-mail para criar seu Radar.\n\n[Criar meu Radar](%s)\n\nO link funciona uma vez e expira em 15 minutos.", link)
+		subject, md = "Seu link do Kloxus — "+stamp,
+			fmt.Sprintf("Confirme este e-mail para criar seu Radar.\n\n[Criar meu Radar](%s)\n\nO link funciona uma vez e expira em 15 minutos.\n\nSe você não pediu, ignore este e-mail.", link)
 	}
 	res, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{email},
@@ -463,4 +464,11 @@ func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	s.d.WS.ClearCookie(w, r)
 	apiJSON(w, 200, map[string]any{"ok": true})
+}
+
+// claimStamp renders the send time in BRT ("19h18") so each magic-link email
+// has a unique subject and Gmail does not thread old, already-used links.
+func claimStamp(t time.Time) string {
+	loc := time.FixedZone("BRT", -3*3600)
+	return t.In(loc).Format("15h04")
 }
