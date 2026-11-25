@@ -32,5 +32,35 @@ test.describe("main flow (KLOX-168)", () => {
     await page.waitForURL(/\/pauta\/\d+\/export/);
     await expect(page.getByText(/1 story has no text/)).toBeVisible();
     await expect(page.getByRole("heading", { name: "Export" })).toBeVisible();
+
+    // KLOX-215: walk the last step too — tick a destination, copy its
+    // version, and the API must record the piece exported with that
+    // format. Copy needs the clipboard grant or the write is refused
+    // and the piece is never marked.
+    const issueID = page.url().match(/\/pauta\/(\d+)\/export/)![1];
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    // the destination checkbox is server-controlled — `checked` only
+    // flips after the rendition mutation + refetch, and the input is
+    // disabled while it runs, so click and wait for the state instead
+    // of .check() (which verifies immediately and fails deterministically)
+    const linkedin = page.getByRole("checkbox", { name: "LinkedIn post" });
+    await linkedin.click();
+    await expect(linkedin).toBeChecked({ timeout: 15_000 });
+    const copy = page.getByRole("button", { name: "Copy", exact: true });
+    await expect(copy).toBeVisible({ timeout: 15_000 });
+    await copy.click();
+    await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+
+    // markExported is fire-and-forget after the copy — poll the API
+    // until the export lands instead of asserting on a race
+    await expect(async () => {
+      const res = await page.request.get(`/api/v1/issues/${issueID}`);
+      expect(res.ok()).toBeTruthy();
+      const { issue } = (await res.json()) as {
+        issue: { exported?: boolean; exported_formats?: string[] };
+      };
+      expect(issue.exported).toBe(true);
+      expect(issue.exported_formats).toContain("linkedin");
+    }).toPass({ timeout: 15_000 });
   });
 });
