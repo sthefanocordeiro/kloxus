@@ -10,6 +10,54 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 )
 
+// NextIssueNumber returns the next sequential issue number for a publication.
+func (db *DB) NextIssueNumber(ctx context.Context, pubID int64) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(number), 0) + 1 FROM issues WHERE workspace_id = $1 AND publication_id = $2`,
+		db.ws, pubID).Scan(&n)
+	return n, err
+}
+
+// CreateIssue inserts an issue and returns its id. sections snapshots
+// the publication's section definitions for this edition — later
+// builder edits must not rewrite an edition already in progress
+// (KLOX-65); callers pass nil where no snapshot applies.
+func (db *DB) CreateIssue(ctx context.Context, pubID int64, number int, subject, bodyMD string, sections []config.Section) (int64, error) {
+	var id int64
+	secs, _ := json.Marshal(sections)
+	err := db.QueryRowContext(ctx,
+		`INSERT INTO issues (workspace_id, publication_id, number, subject, body_md, sections_json) VALUES ($1,$2,$3,$4,$5,$6)
+		 RETURNING id`,
+		db.ws, pubID, number, subject, bodyMD, string(secs)).Scan(&id)
+	return id, err
+}
+
+// IssueBody returns the stored markdown body of an issue.
+func (db *DB) IssueBody(ctx context.Context, pubID int64, number int) (string, error) {
+	var body string
+	err := db.QueryRowContext(ctx,
+		`SELECT body_md FROM issues WHERE workspace_id = $1 AND publication_id = $2 AND number = $3`,
+		db.ws, pubID, number).Scan(&body)
+	return body, err
+}
+
+// UpdateIssue sets status, body and flags on an issue. A re-draft
+// invalidates any stored approval receipt.
+func (db *DB) UpdateIssue(ctx context.Context, issueID int64, status, bodyMD, flagsJSON string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE issues SET status = $1, body_md = $2, flags_json = $3 WHERE workspace_id = $4 AND id = $5`,
+		status, bodyMD, flagsJSON, db.ws, issueID)
+	if err != nil {
+		return err
+	}
+	if status != "approved" {
+		_, err = db.ExecContext(ctx,
+			`DELETE FROM approval_receipts WHERE workspace_id = $1 AND issue_id = $2`, db.ws, issueID)
+	}
+	return err
+}
+
 // Issue is a stored issue row.
 type Issue struct {
 	ID            int64
@@ -352,328 +400,4 @@ func (db *DB) SaveCommentary(ctx context.Context, issueID int64, commentary map[
 	_, err = db.ExecContext(ctx,
 		`UPDATE issues SET commentary_json = $1 WHERE workspace_id = $2 AND id = $3`, string(data), db.ws, issueID)
 	return err
-}
-
-// AddCatalogSource registers a catalog pick on a publication: the row
-// mirrors the catalog's name/url so display reads stay local, and the
-// catalog_id link is what the editorial run filters shared items by.
-func (db *DB) AddCatalogSource(ctx context.Context, pubID int64, cs *CatalogSource) (int64, error) {
-	typ := cs.Kind
-	if typ == "api" {
-		typ = "rss" // the stored type drives display badges only
-	}
-	if _, err := db.ExecContext(ctx,
-		`INSERT INTO sources (workspace_id, publication_id, type, url, name, catalog_id)
-		 VALUES ($1,$2,$3,$4,$5,$6)
-		 ON CONFLICT (publication_id, url) DO UPDATE SET catalog_id = excluded.catalog_id`,
-		db.ws, pubID, typ, cs.URL, cs.Name, cs.ID); err != nil {
-		return 0, err
-	}
-	var id int64
-	err := db.QueryRowContext(ctx,
-		`SELECT id FROM sources WHERE workspace_id = $1 AND publication_id = $2 AND url = $3`, db.ws, pubID, cs.URL).Scan(&id)
-	return id, err
-}
-
-// AddSource registers a new source on a publication.
-func (db *DB) AddSource(ctx context.Context, pubID int64, typ, url, name string) (int64, error) {
-	if _, err := db.ExecContext(ctx,
-		`INSERT INTO sources (workspace_id, publication_id, type, url, name) VALUES ($1,$2,$3,$4,$5)
-		 ON CONFLICT (publication_id, url) DO UPDATE SET
-		   name = CASE WHEN excluded.name != '' THEN excluded.name ELSE sources.name END`,
-		db.ws, pubID, typ, url, name); err != nil {
-		return 0, err
-	}
-	var id int64
-	err := db.QueryRowContext(ctx,
-		`SELECT id FROM sources WHERE workspace_id = $1 AND publication_id = $2 AND url = $3`, db.ws, pubID, url).Scan(&id)
-	return id, err
-}
-
-// SetSourceMonitor records monitor provider state on a source.
-func (db *DB) SetSourceMonitor(ctx context.Context, sourceID int64, provider, monitorID, status string) error {
-	_, err := db.ExecContext(ctx,
-		`UPDATE sources SET monitor_provider = $1, monitor_id = $2, monitor_status = $3 WHERE workspace_id = $4 AND id = $5`,
-		provider, monitorID, status, db.ws, sourceID)
-	return err
-}
-
-// SourceMonitor returns monitor fields for a source.
-func (db *DB) SourceMonitor(ctx context.Context, sourceID int64) (provider, monitorID, status string, err error) {
-	err = db.QueryRowContext(ctx,
-		`SELECT monitor_provider, monitor_id, monitor_status FROM sources WHERE workspace_id = $1 AND id = $2`,
-		db.ws, sourceID).Scan(&provider, &monitorID, &status)
-	return
-}
-
-// FindSourceByMonitor resolves a source in this workspace by provider
-// monitor id — the local-mode variant of the pool lookup.
-func (db *DB) FindSourceByMonitor(ctx context.Context, monitorID string) (*Source, error) {
-	var s Source
-	err := db.QueryRowContext(ctx,
-		`SELECT id, type, url, last_fetch_at, last_status FROM sources WHERE workspace_id = $1 AND monitor_id = $2`,
-		db.ws, monitorID).Scan(&s.ID, &s.Type, &s.URL, &s.LastFetchAt, &s.LastStatus)
-	if err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-// MonitorSource is a source row plus its workspace — the global lookup
-// the Firecrawl webhook needs, since monitor ids cross tenant
-// boundaries by nature.
-type MonitorSource struct {
-	Source
-	WorkspaceID string
-}
-
-// FindSourceByMonitor resolves a source from a provider monitor id
-// across all workspaces — monitor ids are globally unique, and the
-// webhook caller carries no tenant context.
-func (p *Pool) FindSourceByMonitor(ctx context.Context, monitorID string) (*MonitorSource, error) {
-	var s MonitorSource
-	err := p.db.QueryRowContext(ctx,
-		`SELECT id, workspace_id, type, url, last_fetch_at, last_status FROM sources WHERE monitor_id = $1`,
-		monitorID).Scan(&s.ID, &s.WorkspaceID, &s.Type, &s.URL, &s.LastFetchAt, &s.LastStatus)
-	if err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-// UpsertReader returns the id of a reader for (publication, email),
-// storing a display name on first insert.
-func (db *DB) UpsertReader(ctx context.Context, pubID int64, email, name string) (int64, error) {
-	var id int64
-	err := db.QueryRowContext(ctx,
-		`SELECT id FROM readers WHERE workspace_id = $1 AND publication_id = $2 AND email = $3`,
-		db.ws, pubID, email).Scan(&id)
-	if err == nil {
-		return id, nil
-	}
-	if err != sql.ErrNoRows {
-		return 0, err
-	}
-	err = db.QueryRowContext(ctx,
-		`INSERT INTO readers (workspace_id, publication_id, email, name) VALUES ($1,$2,$3,$4) RETURNING id`,
-		db.ws, pubID, email, name).Scan(&id)
-	return id, err
-}
-
-// ActivateSubscription marks the reader's subscription active and stores
-// the magic-link token that unlocks the reader view.
-func (db *DB) ActivateSubscription(ctx context.Context, readerID int64, provider, ref, magicToken string) error {
-	return db.ActivateSubscriptionUntil(ctx, readerID, provider, ref, magicToken, "")
-}
-
-// ActivateSubscriptionUntil is ActivateSubscription with an expiry —
-// one-time checkouts grant a fixed window (D56); an empty paidUntil
-// keeps the subscription lifetime-scoped (fake provider, demo paths).
-func (db *DB) ActivateSubscriptionUntil(ctx context.Context, readerID int64, provider, ref, magicToken, paidUntil string) error {
-	var id int64
-	err := db.QueryRowContext(ctx,
-		`SELECT id FROM subscriptions WHERE workspace_id = $1 AND reader_id = $2`, db.ws, readerID).Scan(&id)
-	if err == sql.ErrNoRows {
-		_, err = db.ExecContext(ctx,
-			`INSERT INTO subscriptions (workspace_id, reader_id, status, provider, provider_ref, magic_token, paid_until)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7)`, db.ws, readerID, "active", provider, ref, magicToken, paidUntil)
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx,
-		`UPDATE subscriptions SET status = 'active', provider = $1, provider_ref = $2, magic_token = $3, paid_until = $4
-		 WHERE workspace_id = $5 AND reader_id = $6`,
-		provider, ref, magicToken, paidUntil, db.ws, readerID)
-	return err
-}
-
-// CancelSubscription marks the reader's subscription canceled.
-func (db *DB) CancelSubscription(ctx context.Context, readerID int64) error {
-	_, err := db.ExecContext(ctx,
-		`UPDATE subscriptions SET status = 'canceled' WHERE workspace_id = $1 AND reader_id = $2 AND status = 'active'`,
-		db.ws, readerID)
-	return err
-}
-
-// UnsubscribeReader records an email unsubscribe: the subscription is
-// canceled and the reader row is stamped so sends can honor the opt-out.
-func (db *DB) UnsubscribeReader(ctx context.Context, readerID int64) error {
-	if _, err := db.ExecContext(ctx,
-		`UPDATE readers SET unsubscribed_at = $1 WHERE workspace_id = $2 AND id = $3`,
-		NowUTC(), db.ws, readerID); err != nil {
-		return err
-	}
-	return db.CancelSubscription(ctx, readerID)
-}
-
-// ReaderUnsubscribed reports whether the reader opted out of emails.
-func (db *DB) ReaderUnsubscribed(ctx context.Context, readerID int64) bool {
-	var ts string
-	err := db.QueryRowContext(ctx,
-		`SELECT unsubscribed_at FROM readers WHERE workspace_id = $1 AND id = $2`, db.ws, readerID).Scan(&ts)
-	return err == nil && ts != ""
-}
-
-// HasActiveSubscription reports whether the reader has an active sub.
-// ReaderCount returns how many readers would receive an issue — every
-// reader who hasn't unsubscribed. SubscriberCount counts the paying
-// subset; the send dialog shows both ("N readers (M paying)").
-func (db *DB) ReaderCount(ctx context.Context, pubID int64) (int, error) {
-	var n int
-	err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM readers WHERE workspace_id = $1 AND publication_id = $2 AND unsubscribed_at = ''`,
-		db.ws, pubID).Scan(&n)
-	return n, err
-}
-
-// SubscriberCount returns how many readers hold an active subscription
-// on a publication — the "recipients" line of the send confirmation.
-func (db *DB) SubscriberCount(ctx context.Context, pubID int64) (int, error) {
-	var n int
-	err := db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT s.reader_id) FROM subscriptions s
-		JOIN readers r ON r.id = s.reader_id
-		WHERE r.workspace_id = $1 AND r.publication_id = $2 AND s.status = 'active' AND r.unsubscribed_at = ''
-		  AND (s.paid_until = '' OR s.paid_until > $3)`,
-		db.ws, pubID, NowUTC()).Scan(&n)
-	return n, err
-}
-
-// HasActiveSubscription reports an active, unexpired subscription; an
-// empty paid_until never lapses (D56).
-func (db *DB) HasActiveSubscription(ctx context.Context, readerID int64) (bool, error) {
-	var n int
-	err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM subscriptions WHERE workspace_id = $1 AND reader_id = $2 AND status = 'active' AND (paid_until = '' OR paid_until > $3)`,
-		db.ws, readerID, NowUTC()).Scan(&n)
-	return n > 0, err
-}
-
-// ReaderByMagicToken resolves a magic-link token to a reader id within a
-// publication (sql.ErrNoRows when invalid or the access window lapsed).
-func (db *DB) ReaderByMagicToken(ctx context.Context, pubID int64, token string) (int64, error) {
-	var id int64
-	err := db.QueryRowContext(ctx, `
-		SELECT r.id FROM readers r
-		JOIN subscriptions s ON s.reader_id = r.id
-		WHERE r.workspace_id = $1 AND r.publication_id = $2 AND s.magic_token = $3 AND s.magic_token != '' AND s.status = 'active'
-		  AND (s.paid_until = '' OR s.paid_until > $4)`,
-		db.ws, pubID, token, NowUTC()).Scan(&id)
-	return id, err
-}
-
-// ReaderByToken resolves a magic-link token regardless of subscription
-// status — used to locate the workspace a reader link belongs to, even
-// after the reader unsubscribed (sql.ErrNoRows when invalid).
-func (db *DB) ReaderByToken(ctx context.Context, pubID int64, token string) (int64, error) {
-	var id int64
-	err := db.QueryRowContext(ctx, `
-		SELECT r.id FROM readers r
-		JOIN subscriptions s ON s.reader_id = r.id
-		WHERE r.workspace_id = $1 AND r.publication_id = $2 AND s.magic_token = $3 AND s.magic_token != ''`,
-		db.ws, pubID, token).Scan(&id)
-	return id, err
-}
-
-// OutboxEmail is one outgoing message stored per workspace. Provider,
-// ProviderID, Status and Error are the delivery-ledger fields: provider
-// "resend" means the provider protocol was attempted (a real key or the
-// loopback fake), "outbox" means it never left the app.
-type OutboxEmail struct {
-	ID         int64
-	Kind       string
-	To         string
-	Subject    string
-	BodyMD     string
-	BodyHTML   string
-	Provider   string
-	ProviderID string
-	Status     string
-	Error      string
-	CreatedAt  string
-}
-
-// SaveOutboxEmail records a simulated email in the workspace outbox.
-func (db *DB) SaveOutboxEmail(ctx context.Context, kind, to, subject, bodyMD, bodyHTML string) (int64, error) {
-	var id int64
-	err := db.QueryRowContext(ctx,
-		`INSERT INTO outbox_emails (workspace_id, kind, to_addr, subject, body_md, body_html)
-		 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		db.ws, kind, to, subject, bodyMD, bodyHTML).Scan(&id)
-	return id, err
-}
-
-// OutboxEmails lists recorded emails, newest first.
-func (db *DB) OutboxEmails(ctx context.Context) ([]OutboxEmail, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT id, kind, to_addr, subject, provider, provider_id, status, error, created_at
-		 FROM outbox_emails WHERE workspace_id = $1 ORDER BY id DESC`, db.ws)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []OutboxEmail
-	for rows.Next() {
-		var e OutboxEmail
-		if err := rows.Scan(&e.ID, &e.Kind, &e.To, &e.Subject,
-			&e.Provider, &e.ProviderID, &e.Status, &e.Error, &e.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
-}
-
-// GetOutboxEmail loads one email including bodies.
-func (db *DB) GetOutboxEmail(ctx context.Context, id int64) (*OutboxEmail, error) {
-	var e OutboxEmail
-	err := db.QueryRowContext(ctx,
-		`SELECT id, kind, to_addr, subject, body_md, body_html, provider, provider_id, status, error, created_at
-		 FROM outbox_emails WHERE workspace_id = $1 AND id = $2`, db.ws, id).
-		Scan(&e.ID, &e.Kind, &e.To, &e.Subject, &e.BodyMD, &e.BodyHTML,
-			&e.Provider, &e.ProviderID, &e.Status, &e.Error, &e.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &e, nil
-}
-
-// Progress returns a demo-progress flag ("" when unset).
-func (db *DB) Progress(ctx context.Context, key string) string {
-	var v string
-	if err := db.QueryRowContext(ctx,
-		`SELECT value FROM demo_progress WHERE workspace_id = $1 AND key = $2`, db.ws, key).Scan(&v); err != nil {
-		return ""
-	}
-	return v
-}
-
-// SetProgress marks a demo-progress flag.
-func (db *DB) SetProgress(ctx context.Context, key string) error {
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO demo_progress (workspace_id, key, value) VALUES ($1, $2, '1')
-		 ON CONFLICT (workspace_id, key) DO NOTHING`, db.ws, key)
-	return err
-}
-
-// Reset wipes all demo data in this workspace (used by "Reset demo"):
-// the workspace row is deleted — the workspace_id cascade clears every
-// tenant table — and recreated empty in the same transaction. Identity
-// sequence values are not reused afterwards; nothing may assume them
-// (D16's id-1 deep links died with the old id-sequence reset).
-func (db *DB) Reset(ctx context.Context) error {
-	tx, err := db.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM workspaces WHERE id = $1`, db.ws); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO workspaces (id) VALUES ($1)`, db.ws); err != nil {
-		return err
-	}
-	return tx.Commit()
 }
