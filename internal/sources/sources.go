@@ -33,12 +33,26 @@ type Fetcher interface {
 	Fetch(ctx context.Context, typ, url string) ([]RawItem, error)
 }
 
+// SkipError is returned by a Fetcher that deliberately declines a
+// source — FixtureFetcher refuses URLs outside the fixture set because
+// fetching visitor-typed URLs on the hosted demo is an SSRF surface.
+// Callers record the skip instead of reporting a fetch failure.
+type SkipError struct {
+	URL    string
+	Reason string
+}
+
+func (e *SkipError) Error() string { return e.Reason }
+
 // FixtureFetcher reads demo fixtures from an fs.FS. Source URLs are paths
 // inside that FS (e.g. "fixtures/feeds/radar-tech.xml").
 type FixtureFetcher struct{ FS fs.FS }
 
 // Fetch implements Fetcher for fixture files.
 func (f FixtureFetcher) Fetch(_ context.Context, typ, url string) ([]RawItem, error) {
+	if !strings.HasPrefix(url, "fixtures/") {
+		return nil, &SkipError{URL: url, Reason: "simulated in demo mode: sources are not fetched"}
+	}
 	switch typ {
 	case "rss":
 		return f.fetchRSS(url)

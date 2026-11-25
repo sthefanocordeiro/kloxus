@@ -8,6 +8,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,10 +45,11 @@ type Runner struct {
 	TriageModel  string
 	DraftModel   string
 	MaxDeepDives int
-	// DemoMode makes PhaseB send the canonical all-selected item set to
-	// draft/citecheck (stable fixture keys) while the stored body and
-	// flags are built from active items only.
-	DemoMode bool
+	// PaceStep, if set, runs at each step boundary before OnStep — demo
+	// deployments wire a short sleep (PacedStep) so fixture replays,
+	// which finish in milliseconds, stay visible on progress displays.
+	// Production leaves it nil: pacing is presentation, not pipeline work.
+	PaceStep func(step string)
 	// OnStep, if set, is called as each step starts (progress reporting).
 	OnStep func(step string)
 	// OnEvent, if set, is called as each step finishes with the step's
@@ -149,7 +151,7 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 		return resp, err
 	}
 	if err := decodeJSON(resp.Text, out); err != nil {
-		if r.DemoMode {
+		if llm.RequestKeyed(r.LLM) {
 			// A retry would change the request and miss the fixture.
 			return resp, fmt.Errorf("template %s: %w", name, err)
 		}
@@ -218,11 +220,16 @@ func (r *Runner) Run(ctx context.Context, pub *store.Publication, outDir string)
 	return r.finish(ctx, res, outDir)
 }
 
+// PacedStep returns a PaceStep hook that sleeps d at each step boundary.
+// Demo deployments wire it so fixture replays stay visible on progress
+// displays; production leaves PaceStep nil.
+func PacedStep(d time.Duration) func(step string) {
+	return func(string) { time.Sleep(d) }
+}
+
 func (r *Runner) stepStart(name string) {
-	if r.DemoMode {
-		// Demo replays finish in milliseconds; a short pause per step
-		// makes the live progress display on the run page visible.
-		time.Sleep(500 * time.Millisecond)
+	if r.PaceStep != nil {
+		r.PaceStep(name)
 	}
 	if r.OnStep != nil {
 		r.OnStep(name)
@@ -242,14 +249,17 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 		return nil, err
 	}
 	for _, s := range srcs {
-		if r.DemoMode && !strings.HasPrefix(s.URL, "fixtures/") {
-			// Visitor-added sources are never fetched on the hosted demo
-			// (SSRF surface); they are stored but skipped at collect time.
-			r.DB.MarkSourceFetched(ctx, s.ID, "", "simulated in demo mode: sources are not fetched")
-			continue
-		}
 		raw, err := r.Fetcher.Fetch(ctx, s.Type, s.URL)
 		if err != nil {
+			var skip *sources.SkipError
+			if errors.As(err, &skip) {
+				// The fetcher declined this source — the fixture
+				// fetcher never fetches visitor-added URLs on the
+				// hosted demo (SSRF surface). Record the skip, not
+				// an error.
+				r.DB.MarkSourceFetched(ctx, s.ID, "", skip.Error())
+				continue
+			}
 			r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+truncate(err.Error(), 120))
 			continue // one bad source must not abort the run
 		}
@@ -607,9 +617,9 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 // issue items, their dossiers and story titles.
 //
 // canonical=true returns every Phase A item regardless of review status —
-// the stable input that keeps demo-mode draft/citecheck replay keys
-// fixed. canonical=false returns only approved items (plus pending? no —
-// the draft contains approved items only), which is what actually ships.
+// the stable input that keeps fixture-replay draft/citecheck keys fixed.
+// canonical=false returns only approved items (plus pending? no — the
+// draft contains approved items only), which is what actually ships.
 func (r *Runner) loadEntries(ctx context.Context, issueID int64, canonical bool) ([]entry, map[int]*Dossier, error) {
 	iis, err := r.DB.IssueItems(ctx, issueID)
 	if err != nil {
@@ -718,8 +728,11 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 		return nil, fmt.Errorf("no approved items — approve at least one story before drafting")
 	}
 	res.Selected = len(entries)
+	keyed := llm.RequestKeyed(r.LLM)
 	modelEntries, modelDossiers := entries, dossierByRef
-	if r.DemoMode {
+	if keyed {
+		// Fixture replay: draft/citecheck must see the recorded
+		// canonical input set, not the board's current selection.
 		modelEntries, modelDossiers, err = r.loadEntries(ctx, issueID, true)
 		if err != nil {
 			return nil, err
@@ -814,7 +827,7 @@ func (r *Runner) RunPhaseB(ctx context.Context, pub *store.Publication, issueID 
 	checkBody := body
 	checkEntries := entries
 	checkDossiers := dossierByRef
-	if r.DemoMode {
+	if keyed {
 		checkBody = assembleIssue(pub, number, modelEntries, draftByRef, modelDossiers, sectionOrder)
 		checkEntries = modelEntries
 		checkDossiers = modelDossiers
@@ -1244,8 +1257,8 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 }
 
 // alternativeDossier builds the dossier for an alternative story. Real
-// mode asks the model; demo mode falls back to a deterministic dossier
-// synthesized from the story's items when no replay fixture exists.
+// mode asks the model; fixture replay falls back to a deterministic
+// dossier synthesized from the story's items when no fixture exists.
 func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication, cand *store.Story, ref int) *Dossier {
 	type dSrc struct {
 		Ref  int
@@ -1307,9 +1320,10 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// RunHeadless is the CLI entry: build a runner for the given mode and run it.
-// demo=true makes PhaseB use canonical replay input (see Runner.DemoMode).
-func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int, demo bool) (*Result, error) {
+// RunHeadless is the CLI entry: build a runner and run it. A
+// request-keyed provider (fixture replay) automatically gets the
+// recorded canonical Phase-B input (see llm.RequestKeyed).
+func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outDir string, fetcher sources.Fetcher, provider llm.Provider, triageModel, draftModel string, maxDeep int) (*Result, error) {
 	r := &Runner{
 		DB:           db,
 		LLM:          provider,
@@ -1317,7 +1331,6 @@ func RunHeadless(ctx context.Context, db *store.DB, pub *store.Publication, outD
 		TriageModel:  triageModel,
 		DraftModel:   draftModel,
 		MaxDeepDives: maxDeep,
-		DemoMode:     demo,
 	}
 	return r.Run(ctx, pub, outDir)
 }

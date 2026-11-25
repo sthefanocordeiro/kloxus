@@ -52,6 +52,22 @@ func TestReplayHitAndMiss(t *testing.T) {
 	}
 }
 
+func TestRequestKeyed(t *testing.T) {
+	if !RequestKeyed(Replay{}) {
+		t.Error("Replay should be request-keyed")
+	}
+	for _, p := range []Provider{
+		Anthropic{},
+		Recorder{},
+		Func(func(context.Context, Request) (Response, error) { return Response{}, nil }),
+		nil,
+	} {
+		if RequestKeyed(p) {
+			t.Errorf("%T should not be request-keyed", p)
+		}
+	}
+}
+
 func TestRecorderWritesFixture(t *testing.T) {
 	dir := t.TempDir()
 	rec := Recorder{

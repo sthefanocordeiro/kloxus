@@ -1361,7 +1361,6 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		runner := &pipeline.Runner{
 			DB: db(r), LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
-			DemoMode: s.d.Cfg.Mode == "demo",
 		}
 		newII, err := runner.SubstituteAlternative(ctx, pub, iss, ii)
 		if err == sql.ErrNoRows {
@@ -1578,7 +1577,7 @@ func (s *Server) apiDraft(w http.ResponseWriter, r *http.Request) {
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			MaxDeepDives: s.d.Cfg.MaxDeepDives,
-			DemoMode:     s.d.Cfg.Mode == "demo",
+			PaceStep:     s.stepPacer(),
 			OnStep: func(step string) {
 				st.mu.Lock()
 				st.st.Step = step

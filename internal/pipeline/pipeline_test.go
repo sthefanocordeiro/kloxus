@@ -68,7 +68,7 @@ func TestRunHeadless(t *testing.T) {
 	})
 
 	outDir := t.TempDir()
-	res, err := RunHeadless(ctx, db, pub, outDir, fetcher, provider, "haiku", "sonnet", 3, false)
+	res, err := RunHeadless(ctx, db, pub, outDir, fetcher, provider, "haiku", "sonnet", 3)
 	if err != nil {
 		t.Fatalf("RunHeadless: %v", err)
 	}
@@ -107,6 +107,98 @@ func TestRunHeadless(t *testing.T) {
 	}
 }
 
+// TestCollectRecordsFetcherSkips: a source the fetcher declines
+// (fixture replay never fetches visitor URLs — SSRF surface on the
+// hosted demo) is marked with the skip reason, not an error, and the
+// run goes on. Also covers PaceStep firing once per step.
+func TestCollectRecordsFetcherSkips(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+
+	def := &config.Publication{
+		Slug: "p", Name: "Pub", Language: "pt-BR",
+		Sections: []config.Section{{Title: "Lead", Items: 1, Commentary: "required"}},
+		Sources: []config.SourceDef{
+			{Type: "rss", URL: "fixtures/feeds/a.xml"},
+			{Type: "rss", URL: "https://visitor.example/feed.xml"},
+		},
+	}
+	if _, err := db.SeedPublication(ctx, def); err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	pub, err := db.GetPublication(ctx, "p")
+	if err != nil {
+		t.Fatalf("GetPublication: %v", err)
+	}
+
+	fsys := fstest.MapFS{"fixtures/feeds/a.xml": {Data: []byte(testFeed)}}
+	var paced []string
+	runner := &Runner{
+		DB: db, Fetcher: sources.FixtureFetcher{FS: fsys}, TriageModel: "haiku", DraftModel: "sonnet", MaxDeepDives: 3,
+		PaceStep: func(step string) { paced = append(paced, step) },
+		LLM: llm.Func(func(_ context.Context, req llm.Request) (llm.Response, error) {
+			return llm.Response{Text: canned[req.Template], InputTokens: 1, OutputTokens: 1}, nil
+		}),
+	}
+	if _, err := runner.RunPhaseA(ctx, pub); err != nil {
+		t.Fatalf("RunPhaseA: %v", err)
+	}
+	srcs, err := db.Sources(ctx, pub.ID)
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+	var skipped, fetched bool
+	for _, s := range srcs {
+		switch s.URL {
+		case "https://visitor.example/feed.xml":
+			skipped = true
+			if !s.LastStatus.Valid || s.LastStatus.String != "simulated in demo mode: sources are not fetched" {
+				t.Errorf("declined source status = %q", s.LastStatus.String)
+			}
+		case "fixtures/feeds/a.xml":
+			fetched = true
+			if !s.LastStatus.Valid || !strings.HasPrefix(s.LastStatus.String, "ok:") {
+				t.Errorf("fixture source status = %q", s.LastStatus.String)
+			}
+		}
+	}
+	if !skipped || !fetched {
+		t.Fatalf("sources = %+v", srcs)
+	}
+	if len(paced) != len(StepsA) {
+		t.Errorf("PaceStep fired %d times, want %d (StepsA)", len(paced), len(StepsA))
+	}
+}
+
+// TestCallRetriesBadJSON: a non-keyed provider gets one retry on
+// undecodable output (real models occasionally emit non-JSON).
+func TestCallRetriesBadJSON(t *testing.T) {
+	calls := 0
+	r := &Runner{
+		LLM: llm.Func(func(_ context.Context, req llm.Request) (llm.Response, error) {
+			calls++
+			if calls == 1 {
+				return llm.Response{Text: "not json"}, nil
+			}
+			return llm.Response{Text: `{"ok":true}`}, nil
+		}),
+	}
+	var out map[string]bool
+	if _, err := r.call(context.Background(), "m", "triage", map[string]any{}, &out); err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2 (initial + retry)", calls)
+	}
+	if !out["ok"] {
+		t.Errorf("out = %v", out)
+	}
+}
+
 func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -140,7 +232,6 @@ func TestPhaseBReplayUsesCanonicalItems(t *testing.T) {
 	fsys := fstest.MapFS{"fixtures/feeds/a.xml": {Data: []byte(testFeed)}}
 	runner := &Runner{
 		DB: db, Fetcher: sources.FixtureFetcher{FS: fsys}, TriageModel: "haiku", DraftModel: "sonnet", MaxDeepDives: 3,
-		DemoMode: true,
 		LLM: llm.Func(func(_ context.Context, req llm.Request) (llm.Response, error) {
 			return llm.Response{Text: responses[req.Template], InputTokens: 1, OutputTokens: 1}, nil
 		}),

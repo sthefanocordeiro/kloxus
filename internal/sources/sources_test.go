@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
@@ -20,6 +21,17 @@ func TestFixtureFetcherRSS(t *testing.T) {
 		if it.Title == "" || it.URL == "" || it.ContentText == "" {
 			t.Errorf("incomplete item: %+v", it)
 		}
+	}
+}
+
+// Visitor-typed URLs are declined, never fetched — fetching them on the
+// hosted demo would be an SSRF surface.
+func TestFixtureFetcherSkipsNonFixtureURL(t *testing.T) {
+	f := FixtureFetcher{FS: examples.FS}
+	_, err := f.Fetch(context.Background(), "rss", "https://example.com/feed.xml")
+	var skip *SkipError
+	if !errors.As(err, &skip) {
+		t.Fatalf("err = %v, want *SkipError", err)
 	}
 }
 

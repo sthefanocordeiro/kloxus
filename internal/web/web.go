@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/sthefanocordeiro/kloxus/examples"
@@ -615,6 +616,16 @@ func (s *Server) runStart(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, "/pub/"+r.PathValue("id")+"/run")
 }
 
+// stepPacer returns the per-step pause wired on demo deployments —
+// fixture replays finish in milliseconds, so a short delay keeps the
+// live progress display readable. Real mode runs unpaced.
+func (s *Server) stepPacer() func(string) {
+	if s.d.Cfg.Mode != "demo" {
+		return nil
+	}
+	return pipeline.PacedStep(500 * time.Millisecond)
+}
+
 // startRun launches a Phase A run for the publication, reusing an
 // in-flight run when one exists. Shared by the HTML route and the API.
 func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *runProgress {
@@ -638,7 +649,7 @@ func (s *Server) startRun(wsp *workspace.Workspace, pub *store.Publication) *run
 			DB: wsp.DB, LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			MaxDeepDives: s.d.Cfg.MaxDeepDives,
-			DemoMode:     s.d.Cfg.Mode == "demo",
+			PaceStep:     s.stepPacer(),
 			OnStep: func(step string) {
 				st.mu.Lock()
 				st.st.Step = step
@@ -850,7 +861,6 @@ func (s *Server) decision(w http.ResponseWriter, r *http.Request) {
 		runner := &pipeline.Runner{
 			DB: db(r), LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
-			DemoMode: s.d.Cfg.Mode == "demo",
 		}
 		newII, err := runner.SubstituteAlternative(r.Context(), pub, iss, ii)
 		if err == sql.ErrNoRows {
@@ -934,7 +944,6 @@ func (s *Server) draftRun(w http.ResponseWriter, r *http.Request) {
 		DB: db(r), LLM: s.d.LLM, Fetcher: s.d.Fetcher,
 		TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 		MaxDeepDives: s.d.Cfg.MaxDeepDives,
-		DemoMode:     s.d.Cfg.Mode == "demo",
 	}
 	wsp := reqWS(r)
 	wsp.Activity.RLock()
