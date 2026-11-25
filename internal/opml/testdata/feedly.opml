@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<opml version="1.0">
+    <head>
+        <title>subscriptions in feedly Cloud</title>
+    </head>
+    <body>
+        <outline text="Innovation" title="Innovation">
+            <outline type="rss" text="NeoFeed" title="NeoFeed" xmlUrl="https://neofeed.com.br/feed/" htmlUrl="https://neofeed.com.br/"/>
+            <outline type="rss" text="Projeto Draft" title="Projeto Draft" xmlUrl="http://projetodraft.com/feed/" htmlUrl="https://www.projetodraft.com/"/>
+            <outline type="rss" text="Impact Lab" title="Impact Lab" xmlUrl="http://www.impactlab.net/feed/" htmlUrl="https://www.impactlab.com"/>
+            <outline type="rss" text="NextBigFuture.com" title="NextBigFuture.com" xmlUrl="http://feeds.feedburner.com/blogspot/advancednano" htmlUrl="https://www.nextbigfuture.com"/>
+            <outline type="rss" text="SingularityHub" title="SingularityHub" xmlUrl="http://singularityhub.com/feed/" htmlUrl="https://singularityhub.com/"/>
+            <outline type="rss" text="Idea to Value" title="Idea to Value" xmlUrl="https://www.ideatovalue.com/feed/" htmlUrl="https://www.ideatovalue.com/"/>
+            <outline type="rss" text="Blog – Futurelab.net" title="Blog – Futurelab.net" xmlUrl="http://feeds.feedburner.com/Futurelab" htmlUrl="https://www.futurelab.net"/>
+            <outline type="rss" text="O Futuro das Coisas" title="O Futuro das Coisas" xmlUrl="http://ofuturodascoisas.com/feed/" htmlUrl="https://ofuturodascoisas.com/"/>
+            <outline type="rss" text="Innovation, New Ideas and How The World is Changing" title="Innovation, New Ideas and How The World is Changing" xmlUrl="http://www.game-changer.net/feed/" htmlUrl="https://www.game-changer.net/"/>
+        </outline>
+        <outline text="AI &amp; Future" title="AI &amp; Future">
+            <outline type="rss" text="r/artificial" title="r/artificial" xmlUrl="https://api.reddit.com/subreddit/artificial" htmlUrl="https://www.reddit.com/r/artificial/new"/>
+            <outline type="rss" text="Futurism" title="Futurism" xmlUrl="http://www.fromquarkstoquasars.com/feed/" htmlUrl="https://futurism.com"/>
+            <outline type="rss" text="Futurity" title="Futurity" xmlUrl="http://www.futurity.org/feed/" htmlUrl="https://www.futurity.org/"/>
+            <outline type="rss" text="Futurist Speaker" title="Futurist Speaker" xmlUrl="http://www.futuristspeaker.com/feed/" htmlUrl="https://futuristspeaker.com/"/>
+            <outline type="rss" text="New York Times - Artificial Intelligence " title="New York Times - Artificial Intelligence " xmlUrl="http://topics.nytimes.com/top/reference/timestopics/subjects/a/artificial_intelligence/?rss=1" htmlUrl="https://www.nytimes.com/topic/subject/artificial-intelligence"/>
+            <outline type="rss" text="MIT News - Computer Science and Artificial Intelligence Laboratory " title="MIT News - Computer Science and Artificial Intelligence Laboratory " xmlUrl="http://web.mit.edu/newsoffice/topic/mitcomputers-rss.xml" htmlUrl="https://www.csail.mit.edu/"/>
+            <outline type="rss" text="OpenAI " title="OpenAI " xmlUrl="https://blog.openai.com/rss/" htmlUrl="https://blog.openai.com"/>
+            <outline type="rss" text="The Guardian - Artificial intelligence" title="The Guardian - Artificial intelligence" xmlUrl="http://www.guardian.co.uk/technology/artificialintelligenceai/rss" htmlUrl="https://www.theguardian.com/technology/artificialintelligenceai"/>
+            <outline type="rss" text="DeepMind " title="DeepMind " xmlUrl="https://deepmind.com/blog/feed/basic/" htmlUrl="https://deepmind.google/blog/"/>
+            <outline type="rss" text="The Future Laboratory Blog" title="The Future Laboratory Blog" xmlUrl="https://www.thefuturelaboratory.com/blog/rss.xml" htmlUrl="https://www.thefuturelaboratory.com/blog"/>
+            <outline type="rss" text="BBC Future" title="BBC Future" xmlUrl="http://www.bbc.com/future/feed.rss" htmlUrl="https://www.bbc.com/"/>
+            <outline type="rss" text="ScienceDaily - Artificial Intelligence" title="ScienceDaily - Artificial Intelligence" xmlUrl="http://www.sciencedaily.com/rss/computers_math/artificial_intelligence.xml" htmlUrl="https://www.sciencedaily.com/news/computers_math/artificial_intelligence/"/>
+            <outline type="rss" text="Science and Technology Research News Articles | Futurity" title="Science and Technology Research News Articles | Futurity" xmlUrl="http://www.futurity.org/category/science-technology/feed/" htmlUrl="https://www.futurity.org/category/science-technology/"/>
+        </outline>
+        <outline text="Tech" title="Tech">
+            <outline type="rss" text="TechCrunch" title="TechCrunch" xmlUrl="http://feeds.feedburner.com/Techcrunch" htmlUrl="https://techcrunch.com/"/>
+            <outline type="rss" text="Latest from TechRadar" title="Latest from TechRadar" xmlUrl="http://www.techradar.com/rss" htmlUrl="https://www.techradar.com/feeds.xml"/>
+            <outline type="rss" text="Lifehacker" title="Lifehacker" xmlUrl="http://feeds.gawker.com/lifehacker/vip" htmlUrl="https://lifehacker.com/feed/rss"/>
+            <outline type="rss" text="Olhar Digital" title="Olhar Digital" xmlUrl="http://olhardigital.uol.com.br/rss/ultimas_noticias.php" htmlUrl="https://olhardigital.com.br/"/>
+            <outline type="rss" text="CNN Brasil" title="CNN Brasil" xmlUrl="https://www.cnnbrasil.com.br/feed/" htmlUrl="https://www.cnnbrasil.com.br"/>
+            <outline type="rss" text="Novidades do TecMundo | Estadão" title="Novidades do TecMundo | Estadão" xmlUrl="http://www.baixaki.com.br/rss/tecnologia.xml" htmlUrl="https://www.estadao.com.br/tecmundo/"/>
+            <outline type="rss" text="g1 &gt; Tecnologia" title="g1 &gt; Tecnologia" xmlUrl="http://g1.globo.com/dynamo/tecnologia/rss2.xml" htmlUrl="https://g1.globo.com/tecnologia/"/>
+            <outline type="rss" text="CriptoFacil" title="CriptoFacil" xmlUrl="http://www.criptomoedasfacil.com/feed" htmlUrl="https://www.criptofacil.com/"/>
+            <outline type="rss" text="BitNotícias" title="BitNotícias" xmlUrl="https://bitnoticias.com.br/feed/" htmlUrl="https://bitnoticias.com.br/"/>
+            <outline type="rss" text="Canaltech" title="Canaltech" xmlUrl="http://feeds2.feedburner.com/canaltechbr" htmlUrl="https://canaltech.com.br/"/>
+            <outline type="rss" text="Notícias sobre Criptomoedas" title="Notícias sobre Criptomoedas" xmlUrl="https://br.investing.com/rss/news_301.rss" htmlUrl="https://br.investing.com"/>
+            <outline type="rss" text="Slashdot" title="Slashdot" xmlUrl="http://rss.slashdot.org/Slashdot/slashdot" htmlUrl="https://slashdot.org/"/>
+            <outline type="rss" text="UOL Tecnologia" title="UOL Tecnologia" xmlUrl="http://rss.tecnologia.uol.com.br/ultnot/index.xml" htmlUrl="http://tecnologia.uol.com.br/"/>
+            <outline type="rss" text="Cointelegraph.com News" title="Cointelegraph.com News" xmlUrl="https://br.cointelegraph.com/rss" htmlUrl="https://cointelegraph.com.br"/>
+            <outline type="rss" text="Exame" title="Exame" xmlUrl="http://exame.abril.com.br/rss/" htmlUrl="https://exame.com"/>
+            <outline type="rss" text="MIT Technology Review" title="MIT Technology Review" xmlUrl="http://www.technologyreview.com/rss/rss.aspx" htmlUrl="https://www.technologyreview.com"/>
+            <outline type="rss" text="SciTechDaily" title="SciTechDaily" xmlUrl="http://feeds.feedburner.com/scitechdaily" htmlUrl="https://scitechdaily.com/"/>
+            <outline type="rss" text="The Next Web" title="The Next Web" xmlUrl="http://feeds2.feedburner.com/thenextweb" htmlUrl="https://thenextweb.com"/>
+            <outline type="rss" text="Wired" title="Wired" xmlUrl="http://feeds.wired.com/wired/index" htmlUrl="https://www.wired.com"/>
+            <outline type="rss" text="The Defiant" title="The Defiant" xmlUrl="https://thedefiant.io/feed/" htmlUrl="https://thedefiant.io"/>
+            <outline type="rss" text="Gizmodo" title="Gizmodo" xmlUrl="http://feeds.gawker.com/gizmodo/full" htmlUrl="https://gizmodo.com/"/>
+            <outline type="rss" text="Digital Drops" title="Digital Drops" xmlUrl="http://feeds.feedburner.com/digitaldrops" htmlUrl="https://digitaldrops.com.br/"/>
+            <outline type="rss" text="The Verge" title="The Verge" xmlUrl="http://www.theverge.com/rss/full.xml" htmlUrl="https://www.theverge.com"/>
+        </outline>
+    </body>
+</opml>

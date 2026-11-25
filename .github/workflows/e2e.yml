@@ -1,0 +1,107 @@
+name: e2e
+
+# Playwright e2e in demo mode against a disposable Postgres (KLOX-129).
+# Scoped to frontend/** and the e2e plumbing — backend-only PRs keep
+# relying on the D65 merged-SHA gate — so the browser install and the
+# serial suite only cost minutes when the surface under test changed.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "scripts/e2e-*.mjs"
+      - "scripts/e2e-*.d.mts"
+      - "scripts/fake-resend.mjs"
+      - ".github/workflows/e2e.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "scripts/e2e-*.mjs"
+      - "scripts/e2e-*.d.mts"
+      - "scripts/fake-resend.mjs"
+      - ".github/workflows/e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      # Disposable Postgres — the demo app migrates itself on store.Open.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kloxus
+          POSTGRES_PASSWORD: kloxus
+          POSTGRES_DB: kloxus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kloxus -d kloxus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://kloxus:kloxus@localhost:5432/kloxus?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      # The Go server serves the embedded build — the suite needs real
+      # assets, not the .keep placeholder.
+      - run: npm run build
+        working-directory: frontend
+      # Warm the Go build cache so playwright's `go run` webServer boots
+      # well inside its 120s timeout.
+      - run: go build ./...
+      - name: Playwright version
+        id: playwright-version
+        working-directory: frontend
+        run: echo "version=$(npx playwright --version | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-ms-playwright-${{ steps.playwright-version.outputs.version }}
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      # The suite self-selects per posture: demo pipeline + outbox is the
+      # default, E2E_PUBLISHING=off exercises the shipped default, and
+      # E2E_LIVE_MAIL=1 runs the synthetic loopback transport — all
+      # fixture replay, zero paid providers (KLOX-32 preflight).
+      - name: e2e — demo, publishing on
+        working-directory: frontend
+        run: npx playwright test --reporter=github,line,html
+        env:
+          PLAYWRIGHT_HTML_REPORT: playwright-report/demo
+      - name: e2e — demo, publishing off
+        working-directory: frontend
+        run: npx playwright test --reporter=github,line,html
+        env:
+          E2E_PUBLISHING: "off"
+          PLAYWRIGHT_HTML_REPORT: playwright-report/publishing-off
+      - name: e2e — fake-live (synthetic mail transport)
+        working-directory: frontend
+        run: npx playwright test --reporter=github,line,html
+        env:
+          E2E_LIVE_MAIL: "1"
+          PLAYWRIGHT_HTML_REPORT: playwright-report/fake-live
+      - name: Upload Playwright reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
