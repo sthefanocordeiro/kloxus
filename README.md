@@ -12,14 +12,22 @@
 > Deterministic fixture demo (no API keys, fully offline code path):
 > https://kloxus-demo.fly.dev
 
-Kloxus is the editorial back office for people who publish every day —
-newsletter writers, niche analysts, solo publications. It does the
-invisible work that makes independent publishing exhausting: reading
-dozens of sources, throwing away duplicates, and deciding what actually
-matters to your niche. What it never does is write for you: the brief
-arrives with the stories and the links; the words stay yours.
+Kloxus is the editorial back office for people who publish about a
+sector every day — the analyst, the consultant, the banker who posts
+about fintech, the HR professional who writes about careers. The
+bottleneck is not the writing; it is the invisible work before it:
+opening dozens of sites, throwing away duplicates, deciding what
+matters. Kloxus automates that flow. Overnight it collects audited
+sources, removes duplicates and ranks what matters with embeddings and
+a reranker that learn from every Yes/No. The brief is assembled at
+~06:30 and lands in your inbox by 7 a.m. You pick the stories, write,
+and one text becomes a LinkedIn post, an X thread, HTML and Markdown.
+What it never does is write for you: the opinion stays yours. The same
+machinery later extends to market intelligence and team clipping —
+today it serves one person who publishes about a sector.
 
-> **HackBrazil 2026** — track *Culture and Creative Economy*. This is the
+> **HackBrazil 2026** — track *Logística & Automação* (Logistics and
+> Automation). This is the
 > hosted real app: a curated catalog of 29 live feeds, Postgres on
 > Supabase, real magic-link email via Resend, one Go binary on Fly.io.
 > The deterministic fixture demo stays deployed as the evaluation
@@ -36,13 +44,14 @@ One loop, five screens — cadastro → Radar → notícias → escrever → exp
 | --- | --- |
 | **Sign up** | E-mail in, magic link out (Resend). No password, no form beyond the address. |
 | **Create your Radar** | Name it and say what you cover. Pick among **18 editorias** — from *política* and *economia* to *tecnologia*, *agronegócio* and *cultura*. Kloxus assigns the curated sources for you; one Radar per account. |
-| **Match** | A short calibration deck — real stories from the last 48 h. *Yes* / *No* on each one teaches the Radar your niche. |
-| **Today's stories** | Every morning, a deck of stories from the feed catalog matched to your Radar — outlet and timestamp on each card. Tick what goes into the piece; 👍 / 👎 keeps training the match. |
+| **Match** | A short calibration deck — real stories from the last 48 h. *Yes* / *No* on each one teaches the Radar your sector. |
+| **Today's stories** | Every morning, a deck of stories from the feed catalog matched to your Radar — outlet and timestamp on each card. Tick what goes into the piece; 👍 / 👎 keeps training the match. The assembled brief also arrives by email at 7 a.m. |
 | **Write → Export** | The *pauta*: an optional opening plus one autosaved text box per story — your words only. Export to **4 formats**: LinkedIn post (3,000 chars), X post (280, auto thread split), rich-text HTML for newsletter/blog/intranet, or a `.md` download ready for Ghost, Notion and Obsidian. |
 
 The interface is fully bilingual (pt-BR / EN). A claimed Radar also gets
-the day's deck by email every morning ("Suas notícias de hoje estão
-prontas", ~06:30 America/Sao_Paulo).
+the day's deck by email every morning — assembled at ~06:30, in the
+inbox by 7 a.m. ("Suas notícias de hoje estão prontas",
+America/Sao_Paulo).
 
 <p align="center">
   <img src="docs/screenshots/01-landing.png" width="720" alt="Landing — The research is ready. The writing is yours.">

@@ -94,24 +94,30 @@ export const dict = {
       navDashboard: "Dashboard",
       cta: "Create your Radar",
       starting: "Opening your session…",
-      eyebrow: "For people who publish every day",
+      eyebrow: "For people who publish about a sector every day",
       headline: "The research is ready. The writing is yours.",
       subhead:
-        "Every day, the stories that matter to your niche arrive organized, with a link to every story. You pick the angle and write in your own voice, to publish where your audience is.",
+        "Every morning, the brief lands in your inbox: the stories that matter to your sector, collected overnight, deduplicated and ranked, with a link to every story. You pick the angle and write in your own voice, to publish where your audience is.",
       emailNote:
         "You confirm your email by magic link as you create your Radar.",
       waitlistSupport:
-        "No AI writing for you. Just the boring work of finding and checking what happened, done before you open the editor.",
+        "No AI writing for you. Just the boring work of finding and checking what happened, done overnight, before you open the editor.",
       alreadyCreator: "Already have an account? Sign in",
       shotAlt: "Kloxus: a story list with ticked boxes and the editor with two linked stories",
       howTitle: "How it works",
       howSteps: [
-        { title: "Say what you cover", body: "Your topics. We pick the sources." },
+        {
+          title: "Say what you cover",
+          body: "Your topics. We pick the sources — and respect each site's rules.",
+        },
         {
           title: "Pick today's stories",
-          body: "Kloxus picks what matters. You choose.",
+          body: "Overnight, Kloxus collects, drops duplicates and ranks what matters — learning from every Yes and No. The brief is in your inbox by 7 a.m.",
         },
-        { title: "Write and export", body: "For LinkedIn, X, your blog or newsletter." },
+        {
+          title: "Write and export",
+          body: "One text becomes a LinkedIn post, an X thread, HTML and Markdown.",
+        },
       ],
       cardsTitle: "Made for people who write",
       cards: [
@@ -136,6 +142,14 @@ export const dict = {
         {
           q: "Who chooses the stories?",
           a: "You do, never the AI. Kloxus only suggests.",
+        },
+        {
+          q: "When does the brief arrive?",
+          a: "The Radar collects, dedupes and ranks overnight; the assembled brief reaches your email by 7 a.m.",
+        },
+        {
+          q: "Is it for teams or market intelligence?",
+          a: "Not yet — market intelligence and team clipping are expansion paths; today the Radar serves one person who publishes about a sector.",
         },
       ],
       closingTitle: "Your next brief starts here.",
@@ -319,24 +333,30 @@ export const dict = {
       navDashboard: "Ir para o painel",
       cta: "Criar meu Radar",
       starting: "Abrindo sua sessão…",
-      eyebrow: "Para quem publica todo dia",
+      eyebrow: "Para quem publica sobre um setor todo dia",
       headline: "A pauta pronta. A\u00a0escrita é sua.",
       subhead:
-        "Todo dia, as notícias que importam para o seu nicho chegam organizadas, com o link de cada matéria. Você escolhe o ângulo e escreve do seu jeito, na sua voz. Para publicar onde sua audiência está.",
+        "Toda manhã, a pauta chega por e-mail: as notícias que importam para o seu setor, coletadas de madrugada, sem repetições e já ordenadas, com o link de cada matéria. Você escolhe o ângulo e escreve do seu jeito, na sua voz. Para publicar onde sua audiência está.",
       emailNote:
         "Você confirma seu e-mail por link mágico ao criar o Radar.",
       waitlistSupport:
-        "Sem IA escrevendo por você. Só o trabalho chato de achar e organizar o que aconteceu, feito antes de você abrir o editor.",
+        "Sem IA escrevendo por você. Só o trabalho chato de achar e organizar o que aconteceu, feito de madrugada, antes de você abrir o editor.",
       alreadyCreator: "Já tenho conta · Entrar",
       shotAlt: "O Kloxus: lista de notícias com caixas marcadas e o editor com duas notícias linkadas",
       howTitle: "Como funciona",
       howSteps: [
-        { title: "Diga do que você fala", body: "Seus temas. As fontes, a gente escolhe." },
+        {
+          title: "Diga do que você fala",
+          body: "Seus temas. As fontes, a gente escolhe — e respeita as regras de cada uma.",
+        },
         {
           title: "Escolha as notícias do dia",
-          body: "O Kloxus separa o que vale. Você escolhe.",
+          body: "De madrugada, o Kloxus coleta, descarta repetições e ordena o que importa — aprendendo com cada Sim e cada Não. A pauta chega por e-mail às 7h.",
         },
-        { title: "Escreva e exporte", body: "Para LinkedIn, X, blog ou newsletter." },
+        {
+          title: "Escreva e exporte",
+          body: "Um texto vira post do LinkedIn, thread do X, HTML e Markdown.",
+        },
       ],
       cardsTitle: "Feito para quem escreve",
       cards: [
@@ -361,6 +381,14 @@ export const dict = {
         {
           q: "Quem escolhe as notícias?",
           a: "Você escolhe, nunca a IA. O Kloxus só sugere.",
+        },
+        {
+          q: "A que horas a pauta chega?",
+          a: "O Radar coleta, separa repetições e ordena de madrugada; a pauta montada chega ao seu e-mail às 7h.",
+        },
+        {
+          q: "Serve para equipe ou inteligência de mercado?",
+          a: "Ainda não — inteligência de mercado e clipping de equipe são caminhos de expansão; hoje o Radar é para quem publica sobre um setor.",
         },
       ],
       closingTitle: "Sua próxima pauta começa aqui.",

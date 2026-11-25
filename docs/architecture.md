@@ -4,52 +4,55 @@ How Kloxus is built, and why — the map for reading this repository cold.
 Product framing lives in the [README](../README.md); every dated call
 below links into the running log in [decisions.md](decisions.md).
 
-## The pipeline
+## The shipped loop
 
 Two loops share one Postgres database: a **global ingestion loop** that
-polls sources once for every workspace, and a **per-issue run** that
-turns the shared pool into one reviewed edition.
+polls sources once for every workspace, and a **per-Radar matching
+loop** that turns the shared pool into each person's morning brief.
 
 ```mermaid
 flowchart TB
     subgraph Global["Global ingestion — internal/ingest (D29)"]
         CAT["source_catalog<br/>full-text RSS + signal sources<br/>policy per source: launch | signal | hold | blocked"]
         CAT --> SCH["scheduler<br/>per-source interval · robots re-check · host throttle<br/>candidates bounded to 7 days / 60 per source"]
-        SCH --> POOL[("items + item_embedding<br/>shared, workspace-agnostic pool")]
+        SCH --> DD["dedupe<br/>canonical URL + SimHash"]
+        DD --> EMB["embed once at ingest<br/>Voyage, or the deterministic local embedder"]
+        EMB --> POOL[("items + item_embedding<br/>shared, workspace-agnostic pool")]
     end
 
-    subgraph Run["Per-issue run — internal/pipeline"]
-        COL["collect<br/>catalog picks + the workspace's own sources"] --> DD["dedupe<br/>canonical URL + SimHash"]
-        DD --> RNK["triage = ranking<br/>stage 1: embedding score vs Rocchio profile, FTS fallback<br/>stage 2: Voyage rerank of the top 100"]
-        RNK --> STL["storylist<br/>ranked stories for the board"]
-        STL --> DOS["dossier + deepdive<br/>facts and quotes with [n] sources"]
-        DOS --> REV{"human review<br/>approve / reject / swap, with reasons"}
-        REV --> DRF["draft + citecheck<br/>factual sentences without a source get flagged"]
-        DRF --> APR{"human approval<br/>stored receipt"}
-        APR --> OUT["export — renditions<br/>fixed per-destination templates"]
-        APR -. "send — publishing flag + explicit audience" .-> MAIL["Resend email<br/>confirmed readers only"]
+    subgraph Match["Per-Radar matching — internal/rank, internal/rerank"]
+        POOL --> S1["stage 1: embedding score vs the Radar's Rocchio profile<br/>Postgres FTS as the zero-cost fallback"]
+        S1 --> S2["stage 2: Voyage rerank over the top 100<br/>cached 24 h, fail-soft to the stage-1 order"]
+        S2 --> DECK["the day's deck — Hoje"]
     end
 
-    POOL --> COL
-    REV -. "rejection reasons" .-> GDE["editorial guide"]
-    GDE -. "feeds the next run" .-> RNK
+    subgraph Loop["The writing loop — frontend + internal/web"]
+        DECK --> MAIL["brief assembled ~06:30<br/>deck email by 7 a.m. via Resend"]
+        DECK --> PICK["you tick today's stories<br/>every Yes / No / 👍 / 👎 reteaches the match"]
+        PICK --> PAUTA["pauta — one autosaved text box per story<br/>your words only"]
+        PAUTA --> EXP["export — 4 renditions<br/>LinkedIn · X thread · HTML · Markdown"]
+    end
 ```
 
-Phase A (prepare) runs collect through deepdive and stops for the human
-review; Phase B (draft + citecheck) runs only on the reviewed lineup.
-Approving re-runs the readiness checks and stores a receipt — document
-version, checks, timestamp (D21) — and post-approval edits void it.
-Export forks the approved text into per-destination renditions through
-fixed templates with no model involved (`internal/web/renditions.go`);
-sending requires the approved issue plus an explicit `test | readers`
-audience and only ever mails confirmed addresses (D33).
+- **Ingestion is global**: one scheduler polls the shared catalog for
+  every workspace — N users still mean one request per source per
+  interval, and new items are deduplicated, classified and embedded once
+  for everyone (D29).
+- **Matching is per-Radar**: the beat (plus its editorias) is the query;
+  story-level *Yes* / *No* / thumbs feedback is the supervision signal
+  that keeps retraining the match.
+- **The email is the delivery**: a claimed Radar gets the assembled deck
+  in its inbox every morning; the same deck waits in the app.
+- **Generative AI is optional**: `KLOXUS_LLM_MODE` picks the posture —
+  `auto` allows real calls inside hard caps, `off` runs the whole loop
+  deterministically at $0 (D35). Under the owner freeze on paid AI
+  (D37/D40) the deployed app takes the deterministic path.
 
-Every model-dependent step has two implementations behind the same seam:
-a guarded Anthropic call and a deterministic, zero-cost path.
-`KLOXUS_LLM_MODE` picks the posture — `auto` allows real calls inside
-hard caps, `off` runs the whole pipeline deterministically (D35). Under
-the current owner freeze on paid AI (D37/D40) the deployed app takes the
-deterministic path.
+The earlier newsletter-issue pipeline (`internal/pipeline`: collect →
+dedupe → triage → storylist → dossier → deepdive → draft → citecheck,
+then human approval and reader send) stays in the tree **parked** under
+the same freeze — it is not part of the shipped loop and is not wired
+into the product flow.
 
 ## Stack, and why
 
@@ -61,21 +64,20 @@ deterministic path.
 | Hosting | Fly.io — `kloxus` app (`fly.toml`, gru) + `kloxus-demo` (`fly.demo.toml`) | The feed scheduler runs inside the web process, so one machine stays up (a fully stopped app would stop ingesting). The fixture demo is the fallback URL and is never touched by deploys (D36). |
 | Model calls | Anthropic behind `llm.Provider` (`internal/llm`) | `Anthropic`, `Replay` (recorded fixtures), `Recorder` and `None` share one interface, so the test bed and demo cost nothing and real calls are a config choice. Every call passes prompt-size caps, a per-run USD cap, a global daily cap and a kill switch (D32, D40). |
 | Embeddings + rerank | Voyage AI (`voyage-4-lite`, `rerank-2.5-lite`) plus a deterministic local embedder | `internal/voyage` is a thin HTTP client with per-group rate limits, hard daily USD caps and a cost ledger (D60). `internal/embedding` is a free feature-hashing embedder (256-dim) + lexicon classifier that needs no model call and works with or without pgvector (D57). Stage-2 rerank runs once per run over the stage-1 top 100, cached 24 h, fail-soft to the stage-1 order (D63). |
-| Email | Resend (`internal/delivery`) | Sending-only key restricted to the sender domain; confirmed addresses only; global and per-workspace daily caps sized under the free tier (D33). |
-| Payments | AbacatePay PIX (`internal/payments`) | Readers pay the creator — Kloxus never holds money (D8). A one-time PIX charge grants 30 days of access because PIX has no recurring rail in test mode (D34, D58). |
+| Email | Resend (`internal/delivery`) | Sending-only key restricted to the sender domain; confirmed addresses only; global and per-workspace daily caps sized under the free tier (D33). Carries the magic-link claim and the morning deck email. |
+| Payments | AbacatePay PIX (`internal/payments`) | Parked — the reader-checkout demo is not part of the shipped loop (D34, D58). |
 | Fetch + search | Firecrawl (`internal/sources`) | Sponsor credits; monitors/scrapes sources without RSS and backs topic discovery, always inside the source policy (D14, D30). |
 
 ## Standing rules
 
-- **The AI never writes the commentary.** The only editable region of an
-  issue is the author's own text; AI output is atom content in the
+- **The AI never writes the person's text.** The only editable region of
+  a pauta is the author's own writing; AI output is atom content in the
   document schema, not user-editable prose.
-- **Every factual sentence carries a source.** Citation markers (`[n]`)
-  are produced with the text and re-checked deterministically;
-  unsupported sentences are flagged and block approval.
-- **Nothing is sent without human approval.** Approval requires all
-  readiness checks green; send and rendition are refused on anything but
-  an approved issue.
+- **Every story keeps its source.** Each card and each exported line
+  links back to the outlet that published it.
+- **Nothing leaves without an explicit action.** Kloxus assembles and
+  suggests; the person picks the stories, writes, and exports — the app
+  publishes nothing on its own.
 - **Publisher rules are respected.** Per-source catalog policies,
   robots.txt re-checked daily, no mirrors or endpoint workarounds, and a
   custom-URL SSRF guard (D29).
@@ -99,7 +101,7 @@ in [decisions.md](decisions.md):
 | D31 | Daily Journal joins as a `signal` source via its public API only, with a hard daily request cap. | Reversed — D41 removed it, D57 restored it, D61 removed it again; the client stays in the tree dormant, opt-in off |
 | D32 | Real LLM calls are guarded: per-workspace budget, global daily cap, kill switch, retries, panic recovery; a second provider fits the same `Provider` interface. | Active; caps hardened by D40 |
 | D33 | Email via Resend with a sending-only restricted key, confirmed addresses only, daily caps; a magic-link claim is the auth model. | Active |
-| D34 | Reader checkout demonstrates the paywall with a single Kloxus test-mode AbacatePay key. | Amended by D58 — one-time PIX granting 30 days |
+| D34 | Reader checkout demonstrates the paywall with a single Kloxus test-mode AbacatePay key. | Amended by D58 — one-time PIX granting 30 days; parked, not in the shipped loop |
 | D35 | `KLOXUS_LLM_MODE=off` runs a documented deterministic pipeline at $0. | Active — the posture the app runs under the D37 freeze |
 | D36 | Every PR to `main` deploys the shared `kloxus` Fly app and is verified by a fixed routine, serialized through release windows (KLOX-26 ledger); `kloxus-demo` is never touched. | Active |
 
@@ -107,17 +109,17 @@ in [decisions.md](decisions.md):
 
 - `internal/ingest` — global scheduler, feed fetching, robots, the
   dormant Daily Journal API client.
-- `internal/pipeline` — the run: `stage_collect`, `stage_dedupe`,
-  `stage_triage`, `stage_storylist`, `stage_dossier`, `stage_deepdive`,
-  `stage_draft`, `stage_citecheck`; `stage1.go` + `rank.go` are the
-  deterministic ranking path.
-- `internal/dedupe`, `internal/rank`, `internal/rerank`, `internal/embed`,
-  `internal/embedding`, `internal/voyage` — free dedupe and the
-  two-stage ranking engine.
+- `internal/rank`, `internal/rerank`, `internal/embed`,
+  `internal/embedding`, `internal/voyage`, `internal/dedupe` — free
+  dedupe and the two-stage matching engine.
+- `internal/pipeline` — the parked generative issue pipeline
+  (`stage_collect` … `stage_citecheck`); `stage1.go` + `rank.go` are the
+  deterministic ranking path it shares with the deck.
 - `internal/store` — Postgres repositories, workspace-scoped, embedded
   migrations under `migrations/`.
-- `internal/web` — the `/api/v1` server: board, review, approve/send
-  gates, renditions, reader surface.
+- `internal/web` — the `/api/v1` server: onboarding, match, today's
+  deck, the pauta editor, export renditions, the deck mailer.
 - `internal/llm`, `internal/editorial`, `internal/delivery`,
-  `internal/payments` — providers, the editorial guide, mail and PIX.
+  `internal/payments` — providers, the (parked) editorial guide, mail
+  and PIX.
 - `frontend/` — the React SPA built into `internal/web/appdist`.
