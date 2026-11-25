@@ -218,6 +218,17 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	if row.EmailedAt != "" {
 		return nil
 	}
+	var cards []pautaCardView
+	if err := json.Unmarshal([]byte(row.CardsJSON), &cards); err != nil {
+		slog.Warn("pauta day: malformed cards json", "day", day, "err", err)
+	}
+	cards = visiblePautaCards(ctx, wdb, pub.ID, cards)
+	if len(cards) == 0 {
+		// Nothing new to tell: stamp the day handled without spending
+		// the recipient's daily mail — another of their radars may
+		// still have stories worth one note (KLOX-256/258).
+		return wdb.MarkPautaDayEmailed(ctx, pub.ID, day)
+	}
 	owner, _, err := pool.WorkspaceOwner(ctx, wsID)
 	if err != nil {
 		return err
@@ -242,11 +253,6 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		return wdb.MarkPautaDayEmailed(ctx, pub.ID, day)
 	}
 
-	var cards []pautaCardView
-	if err := json.Unmarshal([]byte(row.CardsJSON), &cards); err != nil {
-		slog.Warn("pauta day: malformed cards json", "day", day, "err", err)
-	}
-	cards = visiblePautaCards(ctx, wdb, pub.ID, cards)
 	base := strings.TrimRight(s.d.Cfg.PublicURL, "/")
 	if base == "" {
 		base = fmt.Sprintf("http://localhost:%d", s.d.Cfg.Port)
@@ -264,11 +270,25 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	}
 	// the sign-in link keeps the account's language — without it an EN
 	// owner dropped back to PT after every mail click (KLOX-232)
-	linkLang := wdb.UILang(ctx)
-	if linkLang != "en" && linkLang != "pt" {
-		linkLang = "pt"
+	lang := wdb.UILang(ctx)
+	if lang != "en" && lang != "pt" {
+		lang = "pt"
 	}
-	link := base + "/claim?t=" + url.QueryEscape(token) + "&lang=" + linkLang
+	link := base + "/claim?t=" + url.QueryEscape(token) + "&lang=" + lang
+
+	// The mail itself speaks the account's language (KLOX-258): PT is
+	// the default; an EN account gets the subject, greeting, button
+	// and link notice in English.
+	subject := "Suas notícias de hoje estão prontas"
+	greeting := "Bom dia! As notícias do seu radar **%s** de hoje estão prontas:"
+	button := "Abrir minhas notícias"
+	notice := "O link assina este navegador na sua conta salva e vale por 72 horas."
+	if lang == "en" {
+		subject = "Your stories for today are ready"
+		greeting = "Good morning! Today's stories for your Radar **%s**:"
+		button = "Open my stories"
+		notice = "The link signs this browser into your saved account and is valid for 72 hours."
+	}
 
 	// The one-click unsubscribe link (KLOX-257): its own token, stored
 	// hashed — never the sign-in token, never a reader MAC. Each send
@@ -288,7 +308,7 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Bom dia! As notícias do seu radar **%s** de hoje estão prontas:\n\n", pub.Name)
+	fmt.Fprintf(&b, greeting+"\n\n", pub.Name)
 	for i, c := range cards {
 		if i >= pautaMailTop {
 			break
@@ -299,13 +319,10 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		}
 		b.WriteString("\n")
 	}
-	if len(cards) > 0 {
-		b.WriteString("\n")
-	}
-	fmt.Fprintf(&b, "[Abrir minhas notícias](%s)\n\nO link assina este navegador na sua conta salva e vale por 72 horas.", link)
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "[%s](%s)\n\n%s", button, link, notice)
 	fmt.Fprintf(&b, "\n\n---\n*[%s](%s)*", unsubLabel, unsubLink)
 
-	subject := "Suas notícias de hoje estão prontas"
 	md := b.String()
 	if _, err := s.sendMail(ctx, wdb, &delivery.Message{
 		To:      []string{owner},
