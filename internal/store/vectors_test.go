@@ -1,0 +1,91 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"github.com/sthefanocordeiro/kloxus/internal/embed"
+	"testing"
+	"time"
+)
+
+func TestParseVector(t *testing.T) {
+	if v := ParseVector("[1,0.5,-2e-1]"); len(v) != 3 || v[1] != 0.5 || v[2] != -0.2 {
+		t.Fatalf("ParseVector = %v", v)
+	}
+	if ParseVector("") != nil || ParseVector("[a,b]") != nil || ParseVector("[]") != nil {
+		t.Fatal("empty or malformed literals must parse to nil")
+	}
+}
+
+func TestStage1Persistence(t *testing.T) {
+	pool := openPool(t)
+	db := openOn(t, pool)
+	ctx := context.Background()
+
+	pubID, err := db.SeedPublication(ctx, testPub())
+	if err != nil {
+		t.Fatalf("SeedPublication: %v", err)
+	}
+	srcs, err := db.Sources(ctx, pubID)
+	if err != nil || len(srcs) == 0 {
+		t.Fatalf("Sources: %v", err)
+	}
+	nonce := fmt.Sprintf("s1-%d", time.Now().UnixNano())
+	seed := func(ext, title, body string) int64 {
+		var id int64
+		if err := db.QueryRowContext(ctx,
+			`INSERT INTO items (workspace_id, source_id, external_id, url, title, content_text, kind, published_at)
+			 VALUES ($1,$2,$3,$4,$5,$6,'article',$7) RETURNING id`,
+			db.ws, srcs[0].ID, nonce+ext, "https://x.example/"+nonce+ext, title, body,
+			time.Now().UTC().Format(time.RFC3339)).Scan(&id); err != nil {
+			t.Fatalf("insert %s: %v", ext, err)
+		}
+		return id
+	}
+	fin := seed("a", "Banco Central amplia regras do Pix", "O Pix ganha novas regras de segurança para bancos e fintechs.")
+	srv := seed("b", "Servidor de arquivos em um único binário", "Um servidor de arquivos para toda a rede.")
+
+	// FTS: only the on-theme item matches an OR query of theme terms.
+	got, err := db.FTSRank(ctx, []int64{fin, srv}, []string{"pix", "fintech", "banco"})
+	if err != nil {
+		t.Fatalf("FTSRank: %v", err)
+	}
+	if got[fin] <= 0 || got[srv] != 0 {
+		t.Fatalf("FTS rank = %v, want only the fintech item", got)
+	}
+	if m, _ := db.FTSRank(ctx, []int64{fin}, nil); len(m) != 0 {
+		t.Fatalf("no terms must rank nothing: %v", m)
+	}
+
+	// Vectors round-trip through the pool's writer and the DB reader.
+	vec := make([]float32, 512)
+	vec[3] = 1
+	if err := pool.SaveItemEmbeddings(ctx, "voyage-4-lite", 512, []embed.Vector{{ItemID: fin, Literal: embed.Literal(vec)}}); err != nil {
+		t.Fatalf("SaveItemEmbeddings: %v", err)
+	}
+	vs, err := db.ItemVectors(ctx, "voyage-4-lite", []int64{fin, srv})
+	if err != nil || len(vs) != 1 || len(vs[fin]) != 512 || vs[fin][3] != 1 {
+		t.Fatalf("ItemVectors = %d rows, %v", len(vs), err)
+	}
+	if other, _ := db.ItemVectors(ctx, "another-model", []int64{fin}); len(other) != 0 {
+		t.Fatal("vectors of another model must not load")
+	}
+
+	// Profile: missing, saved, replaced on a new hash.
+	if _, err := db.GetPublicationProfile(ctx, pubID); err == nil {
+		t.Fatal("no profile yet: want sql.ErrNoRows")
+	}
+	if err := db.SavePublicationProfile(ctx, pubID, embed.Literal(vec), "", "h1"); err != nil {
+		t.Fatalf("SavePublicationProfile: %v", err)
+	}
+	p, err := db.GetPublicationProfile(ctx, pubID)
+	if err != nil || p.ProfileHash != "h1" || len(p.ThemeVec) != 512 || p.SkipVec != nil {
+		t.Fatalf("profile = %+v, %v", p, err)
+	}
+	if err := db.SavePublicationProfile(ctx, pubID, embed.Literal(vec), embed.Literal(vec), "h2"); err != nil {
+		t.Fatalf("SavePublicationProfile 2: %v", err)
+	}
+	if p, _ = db.GetPublicationProfile(ctx, pubID); p.ProfileHash != "h2" || len(p.SkipVec) != 512 {
+		t.Fatalf("profile after update = %+v", p)
+	}
+}
