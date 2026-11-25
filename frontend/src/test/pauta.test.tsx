@@ -22,7 +22,7 @@ vi.mock("../api", async (orig) => {
 });
 
 const state = (): PautaState => ({
-  issue_id: 5, number: 1, status: "drafted", opening: "",
+  issue_id: 5, number: 1, status: "drafted", opening: "", title: "Primeira",
   entries: [
     { story_id: 1, title: "Primeira", url: "https://a.test/1", outlet: "A", date: "2026-11-23T10:00:00Z", text: "" },
     { story_id: 2, title: "Segunda", url: "https://b.test/2", outlet: "B", date: "", text: "" },
@@ -118,5 +118,30 @@ describe("Escrever (KLOX-168)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove story: Primeira" }));
     expect(screen.queryByRole("link", { name: "Primeira" })).toBeNull();
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+  });
+
+  // KLOX-199: the pauta is named by its first story everywhere —
+  // clicking the name in the editor renames it; "" restores the
+  // automatic name
+  it("shows the pauta name and renames it on click", async () => {
+    renderPage();
+    // the editor header is the same name the list shows
+    expect(await screen.findByRole("button", { name: "Primeira" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Primeira" }));
+    const input = screen.getByLabelText("Brief name");
+    fireEvent.change(input, { target: { value: "Meu resumo da semana" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+    expect(vi.mocked(api.pautaSave).mock.calls.at(-1)![1].title).toBe("Meu resumo da semana");
+    expect(screen.getByRole("button", { name: "Meu resumo da semana" })).toBeTruthy();
+  });
+
+  it("does not send a title when the name was never edited", async () => {
+    renderPage();
+    await screen.findByRole("link", { name: "Primeira" });
+    fireEvent.change(screen.getByLabelText(/Opening/), { target: { value: "oi" } });
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+    expect(vi.mocked(api.pautaSave).mock.calls.at(-1)![1].title).toBeUndefined();
   });
 });

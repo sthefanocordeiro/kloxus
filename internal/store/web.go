@@ -115,6 +115,15 @@ func (db *DB) SetIssueStatus(ctx context.Context, id int64, status string) error
 	return err
 }
 
+// SetIssueSubject updates an issue's subject — the pauta rename stores
+// the author's name here (KLOX-199); it feeds the mail subject and the
+// public page heading, never the exported text.
+func (db *DB) SetIssueSubject(ctx context.Context, id int64, subject string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE issues SET subject = $1 WHERE workspace_id = $2 AND id = $3`, subject, db.ws, id)
+	return err
+}
+
 // MarkIssueTestSent stamps a test send on the issue without touching
 // its status — the after-sending screen and public page read the
 // marker, the lifecycle stays editable (KLOX-53).
