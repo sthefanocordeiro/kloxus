@@ -50,6 +50,7 @@ const pt = {
   opening: "Abrindo…",
   seeToday: "Ver as notícias de hoje",
   hoursAgo: "há {n} h",
+  justNow: "agora",
 };
 
 const en: typeof pt = {
@@ -99,6 +100,7 @@ const en: typeof pt = {
   opening: "Opening…",
   seeToday: "See today's stories",
   hoursAgo: "{n} h ago",
+  justNow: "just now",
 };
 
 export type StartStrings = typeof pt;

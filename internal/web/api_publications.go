@@ -47,6 +47,9 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
 		"llm_mode": s.d.Cfg.LLMMode,
 		"claimed":  owner != "", "owner_email": owner, "mail": mail,
+		// the account's saved interface language — "" when the owner
+		// never picked one (KLOX-232)
+		"lang": db(r).UILang(r.Context()),
 		"mail_transport": transport, "mail_webhook": mailWebhook,
 		"mail_stale_sent": staleSent,
 		"publishing":      s.d.Cfg.PublishingEnabled,
@@ -584,7 +587,10 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 		def.Name = pub.Name
 	}
 	if in.Topic != nil {
-		def.Topic = strings.TrimSpace(*in.Topic)
+		// the field holds the creator's words alone (the chips' labels
+		// never reach it) — re-fold the stored editorias so the ranking
+		// keeps seeing them (KLOX-232)
+		def.Topic = topicWithNiches(strings.TrimSpace(*in.Topic), nichesFromTopic(pub.Topic))
 	}
 	if def.Audience == "" {
 		def.Audience = pub.Audience

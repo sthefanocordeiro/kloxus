@@ -86,9 +86,25 @@ export function absolutizeHtml(html: string, origin: string): string {
 }
 
 // standaloneHtml wraps a body fragment as a complete downloadable file.
-export function standaloneHtml(title: string, body: string): string {
+// lang is the interface language the file was exported from (KLOX-232).
+export function standaloneHtml(title: string, body: string, lang = "pt-BR"): string {
   const esc = title.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return `<!doctype html>\n<html lang="pt-BR">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${esc}</title>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+  return `<!doctype html>\n<html lang="${lang}">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${esc}</title>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+}
+
+// downloadName turns the brief's first line into a filename-safe slug
+// ("Brazil fintech watch" → "brazil-fintech-watch.html"), falling back
+// to "brief" when the text yields nothing (KLOX-232).
+export function downloadName(title: string, ext: string): string {
+  const slug = title
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+    .replace(/-+$/g, "");
+  return `${slug || "brief"}.${ext}`;
 }
 
 // htmlToPlain is the text/plain companion of a rich copy.

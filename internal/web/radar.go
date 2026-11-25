@@ -58,9 +58,11 @@ var nicheOrder = []string{
 }
 
 // nichesFromTopic recovers the editorias a radar's theme still names.
-// Cadastro folds each picked editoria's label into the topic
+// Cadastro folds each picked editoria's label into the stored topic
 // (apiRadarCreate), so the chips need no stored column — and radars
-// created before the field existed report theirs too (KLOX-207).
+// created before the field existed report theirs too (KLOX-207). The
+// labels stay a storage/ranking detail only: the API strips them out of
+// the theme field so the editorias show as chips alone (KLOX-232).
 func nichesFromTopic(topic string) []string {
 	low := strings.ToLower(topic)
 	out := []string{}
@@ -70,6 +72,49 @@ func nichesFromTopic(topic string) []string {
 		}
 	}
 	return out
+}
+
+// topicWithNiches folds the picked editorias' labels into the stored
+// topic: the ranking embeds the theme text, so the niches travel inside
+// it — never shown back to the creator (topicWithoutNiches strips them
+// for display).
+func topicWithNiches(about string, niches []string) string {
+	topic := about
+	for _, n := range niches {
+		if !strings.Contains(strings.ToLower(topic), nicheLabels[n]) {
+			if topic != "" {
+				topic += ", "
+			}
+			topic += nicheLabels[n]
+		}
+	}
+	return topic
+}
+
+// topicWithoutNiches is the inverse view of topicWithNiches: it drops
+// the comma parts that are exactly a niche label, keeping the creator's
+// own words. A label embedded mid-part stays — that is their text, not
+// a folded beat.
+func topicWithoutNiches(topic string) string {
+	parts := strings.Split(topic, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		beat := false
+		for _, l := range nicheLabels {
+			if strings.EqualFold(p, l) {
+				beat = true
+				break
+			}
+		}
+		if !beat {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 // paywalledSources are catalog slugs behind a reader paywall: a radar only
@@ -154,15 +199,7 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// the profile text the ranking embeds: the person's words, then the
 	// chosen niches
-	topic := about
-	for _, n := range niches {
-		if !strings.Contains(strings.ToLower(topic), nicheLabels[n]) {
-			if topic != "" {
-				topic += ", "
-			}
-			topic += nicheLabels[n]
-		}
-	}
+	topic := topicWithNiches(about, niches)
 	name := radarName(topic)
 	if about != "" {
 		name = radarName(about)

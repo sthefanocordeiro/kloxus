@@ -11,7 +11,7 @@ import {
   Rss,
 } from "lucide-react";
 import { api, pautaPath } from "./api";
-import { useT, type Lang, type T } from "./i18n";
+import { LANG_KEY, useT, type Lang, type T } from "./i18n";
 import { cn } from "./lib/cn";
 import { BackButton } from "./components/BackButton";
 import { ClaimEmail } from "./components/ClaimEmail";
@@ -84,6 +84,18 @@ export function AppShell() {
   const { pathname } = useLocation();
   const publishing = usePublishing();
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, retry: false, staleTime: Infinity });
+  // the account's saved language seeds this browser only when the person
+  // never picked one here — a local choice always wins (KLOX-232)
+  useEffect(() => {
+    const l = ws.data?.lang;
+    if (l !== "en" && l !== "pt") return;
+    try {
+      if (localStorage.getItem(LANG_KEY) !== null) return;
+    } catch {
+      return; // storage denied: keep this session's choice
+    }
+    setLang(l);
+  }, [ws.data?.lang, setLang]);
 
   const pubM = matchPath("/publications/:id/*", pathname) ?? matchPath("/publications/:id", pathname);
   const issueM = matchIssue(pathname);

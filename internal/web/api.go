@@ -319,7 +319,9 @@ type apiPaywall struct {
 func publicationView(p *store.Publication) apiPublication {
 	v := apiPublication{
 		ID: p.ID, Slug: p.Slug, Name: p.Name, Custom: p.Custom, Language: p.Language,
-		Topic: p.Topic, Audience: p.Audience,
+		// the stored topic folds the editorias' labels in for ranking —
+		// the theme field shows the creator's words alone (KLOX-232)
+		Topic: topicWithoutNiches(p.Topic), Audience: p.Audience,
 		// the stored line stays canonical for fixture-stable prompts —
 		// the response localizes the one English sentence (KLOX-56)
 		EditorialLine: localizeEditorialLine(p.EditorialLine, p.Language),

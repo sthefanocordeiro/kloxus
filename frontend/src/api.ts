@@ -17,6 +17,8 @@ export interface Workspace {
   // KLOXUS_PUBLISHING (KLOX-122): the reader-facing surface (send,
   // readers, public pages, paywall) is hidden unless the server says on
   publishing?: boolean;
+  // the account's saved interface language ("" = never picked, KLOX-232)
+  lang?: "en" | "pt" | "";
 }
 
 // One newsletter section as the builder edits it: id is the stable
@@ -321,6 +323,10 @@ export const api = {
       clearSession();
       return r;
     }),
+  // the language toggle saves the choice on the account so a fresh
+  // browser (and the next magic link) lands in it (KLOX-232)
+  saveLang: (lang: string) =>
+    request<{ ok: boolean }>("POST", "/api/v1/workspace/lang", { lang }),
   // resolve-or-create: a successful answer means this browser holds a
   // session, so the marker goes down for the public pages to read
   workspace: () =>

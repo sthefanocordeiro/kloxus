@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  absolutizeHtml, charCount, foldIndex, htmlToPlain, splitForX, standaloneHtml, xCount, X_LIMIT,
+  absolutizeHtml, charCount, downloadName, foldIndex, htmlToPlain, splitForX, standaloneHtml, xCount, X_LIMIT,
 } from "../lib/renditions";
 
 describe("renditions helpers", () => {
@@ -62,5 +62,16 @@ describe("renditions helpers", () => {
   it("wraps a standalone file and derives plain text", () => {
     expect(standaloneHtml("A & B", "<p>x</p>")).toContain("<title>A &amp; B</title>");
     expect(htmlToPlain("<h1>T</h1><p>um</p><p>dois</p>")).toBe("T\ndum\ndois".replace("T\nd", "T\n"));
+  });
+
+  it("marks the standalone file with the interface language (KLOX-232)", () => {
+    expect(standaloneHtml("T", "<p>x</p>", "en")).toContain('<html lang="en">');
+    expect(standaloneHtml("T", "<p>x</p>")).toContain('<html lang="pt-BR">');
+  });
+
+  it("slugs the download name from the piece title", () => {
+    expect(downloadName("Edição nº 42: Pix vira débito automático?", "html")).toBe("edicao-n-42-pix-vira-debito-automatico.html");
+    expect(downloadName("LinkedIn carousel", "md")).toBe("linkedin-carousel.md");
+    expect(downloadName("???", "md")).toBe("brief.md");
   });
 });

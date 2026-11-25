@@ -255,7 +255,13 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		store.TSUTC(time.Now().Add(pautaMailLinkTTL))); err != nil {
 		return err
 	}
-	link := base + "/claim?t=" + url.QueryEscape(token) + "&lang=pt"
+	// the sign-in link keeps the account's language — without it an EN
+	// owner dropped back to PT after every mail click (KLOX-232)
+	linkLang := wdb.UILang(ctx)
+	if linkLang != "en" && linkLang != "pt" {
+		linkLang = "pt"
+	}
+	link := base + "/claim?t=" + url.QueryEscape(token) + "&lang=" + linkLang
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Bom dia! As notícias do seu radar **%s** de hoje estão prontas:\n\n", pub.Name)

@@ -150,7 +150,7 @@ export function Today() {
                     <p className="mt-1 text-xs text-muted">
                       {c.outlet}
                       {c.outlets > 1 && ` · ${s.outlets.replace("{n}", String(c.outlets))}`}
-                      {c.age_hours !== null && ` · ${s.hoursAgo.replace("{n}", String(Math.round(c.age_hours)))}`}
+                      {c.age_hours !== null && ` · ${Math.round(c.age_hours) < 1 ? s.justNow : s.hoursAgo.replace("{n}", String(Math.round(c.age_hours)))}`}
                     </p>
                     {c.summary && <p className="mt-2 text-sm">{c.summary}</p>}
                   </div>

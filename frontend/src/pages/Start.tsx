@@ -286,7 +286,7 @@ function Calibrate({ pubID, s, onDone }: { pubID: number; s: StartStrings; onDon
           <p className="mt-1 text-xs text-muted">
             {card.outlet}
             {card.outlets > 1 && ` · ${fill(s.outlets, { n: card.outlets })}`}
-            {card.age_hours !== null && ` · ${fill(s.hoursAgo, { n: Math.round(card.age_hours) })}`}
+            {card.age_hours !== null && ` · ${Math.round(card.age_hours) < 1 ? s.justNow : fill(s.hoursAgo, { n: Math.round(card.age_hours) })}`}
           </p>
           {card.summary && <p className="mt-3 text-sm">{card.summary}</p>}
           <div className="mt-5 flex items-center gap-3">

@@ -42,6 +42,26 @@ func (db *DB) WorkspaceOwner(ctx context.Context) (email, claimedAt string, err 
 	return
 }
 
+// UILang returns the interface language saved on the account ("" when
+// the owner never picked one — the client then falls back to its own
+// storage and the browser language, KLOX-232).
+func (db *DB) UILang(ctx context.Context) string {
+	var v string
+	if err := db.QueryRowContext(ctx,
+		`SELECT ui_lang FROM workspaces WHERE id = $1`, db.ws).Scan(&v); err != nil {
+		return ""
+	}
+	return v
+}
+
+// SetUILang saves the interface language on the account so a magic link
+// and a fresh browser land in the same language (KLOX-232).
+func (db *DB) SetUILang(ctx context.Context, lang string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE workspaces SET ui_lang = $1 WHERE id = $2`, lang, db.ws)
+	return err
+}
+
 // --- magic links ---
 
 // SaveMagicLink stores a hashed claim token for this workspace.

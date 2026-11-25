@@ -32,13 +32,15 @@ describe("DestinationStep", () => {
     await waitFor(() => expect(create).toHaveBeenCalledWith(1, "markdown"));
   });
 
-  it("counts LinkedIn characters with line breaks and shows the ver-mais fold", async () => {
+  it("counts LinkedIn characters with line breaks and shows the see-more fold", async () => {
     const text = "Título\n\n" + "palavra ".repeat(60).trim();
     setup([mk(1, "linkedin", { body_text: text })]);
     const counter = await screen.findByTestId("counter");
     expect(counter.textContent).toContain(String(Array.from(text).length).replace(/\B(?=(\d{3})+(?!\d))/g, ","));
     expect(counter.textContent).toContain("3,000");
-    expect(screen.getByTestId("fold-preview").textContent).toContain("ver mais");
+    // the fold mark follows the interface language — the test browser
+    // is en-US, so it reads "… see more" (KLOX-232)
+    expect(screen.getByTestId("fold-preview").textContent).toContain("see more");
   });
 
   it("suggests a main story when several stories meet a social format", async () => {
