@@ -27,6 +27,10 @@ import (
 const researchSourceExcerpt = 1200
 const researchMaxSources = 3
 
+// researchMaxTokens bounds the research reply — title, summary, facts
+// and a draft body for one story, a compact JSON payload.
+const researchMaxTokens = 4096
+
 // Research is the cached per-story payload. It doubles as the item's
 // dossier (Fontes e fatos) and carries the AI pauta draft body.
 type Research struct {
@@ -167,7 +171,7 @@ func (rc *Researcher) generate(ctx context.Context, story *store.Story, items []
 	if err != nil {
 		return nil, err
 	}
-	req := llm.Request{Model: rc.Model, Template: "research", User: user, MaxTokens: 4096}
+	req := llm.Request{Model: rc.Model, Template: "research", User: user, MaxTokens: researchMaxTokens}
 	if err := llm.CheckSize(req); err != nil {
 		return nil, err
 	}

@@ -36,7 +36,7 @@ func (r *Runner) stageDossier(ctx context.Context, pub *store.Publication, st *p
 	dItems := make([]dItem, len(entries))
 	for i, e := range entries {
 		for j, it := range e.sources {
-			dItems[i].Sources = append(dItems[i].Sources, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, 1200)})
+			dItems[i].Sources = append(dItems[i].Sources, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, dossierSourceMaxLen)})
 		}
 		dItems[i].Ref = e.ref
 		dItems[i].Title = e.title

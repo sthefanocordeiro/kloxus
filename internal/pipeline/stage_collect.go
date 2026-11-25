@@ -49,7 +49,7 @@ func (r *Runner) stageCollect(ctx context.Context, pub *store.Publication, st *p
 				}
 				continue
 			}
-			if err := r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+strutil.Cut(err.Error(), 120)); err != nil {
+			if err := r.DB.MarkSourceFetched(ctx, s.ID, "", "error: "+strutil.Cut(err.Error(), fetchErrorMaxLen)); err != nil {
 				slog.Warn("mark source fetched failed", "source", s.ID, "err", err)
 			}
 			continue // one bad source must not abort the run

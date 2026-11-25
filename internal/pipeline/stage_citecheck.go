@@ -171,7 +171,7 @@ func (r *Runner) stageCitecheck(ctx context.Context, pub *store.Publication, st 
 	for _, e := range entries {
 		de, ok := draftByRef[e.ref]
 		if ok && de.body != "" && !refRe.MatchString(de.body) {
-			addFlag(int64(e.ref), strutil.Cut(de.body, 120), "entry has no citations")
+			addFlag(int64(e.ref), strutil.Cut(de.body, flagExcerptMaxLen), "entry has no citations")
 		}
 	}
 	flagsJSON, _ := json.Marshal(res.Flagged)

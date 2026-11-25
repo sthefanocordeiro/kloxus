@@ -165,6 +165,11 @@ var (
 	docCiteRe    = regexp.MustCompile(`\[(\d+)\]`)
 )
 
+// excerptMaxLen caps excerpts in the document model (best-evidence
+// passage, source excerpt) — enough to orient the reader, short enough
+// for the card layout.
+const excerptMaxLen = 320
+
 // docVersion is the document's optimistic-concurrency token: a hash of
 // everything a mutation may touch (body, flags, commentary, status).
 // Every document mutation must send it back; a stale value → conflict.
@@ -358,7 +363,7 @@ func bestEvidence(d *pipeline.Dossier, ref int, sentence, fallback string) strin
 	if best == "" {
 		return fallback
 	}
-	return strutil.Truncate(best, 320)
+	return strutil.Truncate(best, excerptMaxLen)
 }
 
 // docContext is everything the document parser needs from the store,
@@ -623,7 +628,7 @@ func (p *docBodyParser) loadItemSources(it *docItem, dossier *pipeline.Dossier) 
 		src := docSource{Ref: ds.Ref, Name: ds.Name, URL: ds.URL, ItemID: ds.ItemID}
 		if ds.ItemID != 0 {
 			if stored, ok := p.dc.items[ds.ItemID]; ok {
-				src.Excerpt = strutil.Truncate(stored.ContentText, 320)
+				src.Excerpt = strutil.Truncate(stored.ContentText, excerptMaxLen)
 				src.Date = stored.PublishedAt
 				it.openings[ds.Ref] = src.Excerpt
 				if src.Name == "" {

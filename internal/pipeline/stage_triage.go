@@ -46,7 +46,7 @@ func (r *Runner) stageTriage(ctx context.Context, pub *store.Publication, st *ph
 		s := stories[si]
 		snip := ""
 		if len(s.Items) > 0 {
-			snip = strutil.Cut(s.Items[0].ContentText, 400)
+			snip = strutil.Cut(s.Items[0].ContentText, triageSnippetMaxLen)
 		}
 		ts[i] = triStory{Ref: i + 1, Title: s.Title, Outlets: strings.Join(s.Outlets(), ", "), Snippet: snip}
 	}

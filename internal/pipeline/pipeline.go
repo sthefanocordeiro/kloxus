@@ -175,6 +175,40 @@ func (r *Runner) complete(ctx context.Context, req llm.Request) (resp llm.Respon
 	return r.LLM.Complete(ctx, req)
 }
 
+// Prompt-size limits, output budgets and step caps. Each name carries
+// the reason for the value so a change is deliberate, not a typo.
+const (
+	// callMaxTokens is the fallback output ceiling for r.call steps
+	// without a stepMaxTokens entry — every prompt asks for a single
+	// JSON object, and 8k output tokens stays well above the largest
+	// expected reply while capping the cost of a runaway completion.
+	callMaxTokens = 8192
+
+	// triageSnippetMaxLen caps each story excerpt in the triage prompt
+	// so dozens of stories fit in context without one long article
+	// crowding the rest out.
+	triageSnippetMaxLen = 400
+
+	// dossierSourceMaxLen caps each source's text sent to the dossier,
+	// deepdive and alternative-dossier prompts: enough for lede and
+	// body without spending the context on a whole article.
+	dossierSourceMaxLen = 1200
+
+	// fetchErrorMaxLen caps the message stored on a source after a
+	// failed fetch — it surfaces in the sources list, where a long
+	// error would dominate the layout.
+	fetchErrorMaxLen = 120
+
+	// flagExcerptMaxLen caps the draft excerpt attached to a
+	// no-citations flag so the flagged list stays scannable.
+	flagExcerptMaxLen = 120
+
+	// deepDiveCap bounds how many top-scored items get the extra
+	// deepdive pass; each dive is a full model call over all of the
+	// item's sources, so it stays small regardless of lineup size.
+	deepDiveCap = 3
+)
+
 // stepMaxTokens sets the output ceiling each prompt template needs —
 // every model call carries max_tokens (KLOX-44). Long-form steps keep
 // the 32k ceiling real-feed runs proved they need: an 8k cap truncated
@@ -203,7 +237,7 @@ func (r *Runner) call(ctx context.Context, model, name string, data any, out any
 	}
 	maxTok := stepMaxTokens[name]
 	if maxTok == 0 {
-		maxTok = 8192
+		maxTok = callMaxTokens
 	}
 	req := llm.Request{Model: model, Template: name, User: user, MaxTokens: maxTok}
 	resp, err := r.complete(ctx, req)
@@ -750,7 +784,7 @@ func (r *Runner) alternativeDossier(ctx context.Context, pub *store.Publication,
 	}
 	var srcs []dSrc
 	for j, it := range items {
-		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, 1200)})
+		srcs = append(srcs, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, dossierSourceMaxLen)})
 	}
 	var dossiers []Dossier
 	resp, err := r.call(ctx, r.DraftModel, "dossier", map[string]any{

@@ -97,6 +97,26 @@ func RequestKeyed(p Provider) bool {
 	return false
 }
 
+const (
+	// anthropicDefaultBaseURL is the production Messages API endpoint;
+	// Anthropic.BaseURL overrides it (tests, gateways, proxies).
+	anthropicDefaultBaseURL = "https://api.anthropic.com"
+
+	// anthropicVersionHeader names the required API-version header and
+	// anthropicAPIVersion pins its value — Anthropic rejects calls
+	// without it, so a version bump is a deliberate, tested change.
+	anthropicVersionHeader = "anthropic-version"
+	anthropicAPIVersion    = "2023-06-01"
+
+	// anthropicTimeout bounds a single API call: completions can take a
+	// while, but a hung request must not stall a whole run.
+	anthropicTimeout = 120 * time.Second
+
+	// errBodyMaxLen caps how much of a non-200 response body is copied
+	// into the returned error message.
+	errBodyMaxLen = 400
+)
+
 // Anthropic calls the Anthropic messages API (real mode).
 type Anthropic struct {
 	APIKey  string
@@ -138,7 +158,7 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 	}
 	base := a.BaseURL
 	if base == "" {
-		base = "https://api.anthropic.com"
+		base = anthropicDefaultBaseURL
 	}
 	body, err := json.Marshal(anthropicRequest{
 		Model:     req.Model,
@@ -155,10 +175,10 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 	}
 	httpReq.Header.Set("content-type", "application/json")
 	httpReq.Header.Set("x-api-key", a.APIKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set(anthropicVersionHeader, anthropicAPIVersion)
 	client := a.HTTP
 	if client == nil {
-		client = httpx.Client(120 * time.Second)
+		client = httpx.Client(anthropicTimeout)
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -170,7 +190,7 @@ func (a Anthropic) Complete(ctx context.Context, req Request) (Response, error) 
 		return Response{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Response{}, &StatusError{Provider: "anthropic", Status: resp.StatusCode, Body: strutil.Truncate(string(raw), 400)}
+		return Response{}, &StatusError{Provider: "anthropic", Status: resp.StatusCode, Body: strutil.Truncate(string(raw), errBodyMaxLen)}
 	}
 	var ar anthropicResponse
 	if err := json.Unmarshal(raw, &ar); err != nil {

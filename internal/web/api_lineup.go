@@ -417,6 +417,10 @@ func (s *Server) candidateViews(r *http.Request, cands []store.RankedCandidate, 
 // one-line summary only, at most 120 suggestions.
 const rerankCap = 120
 
+// rerankMaxTokens bounds the rerank reply — a JSON array of positions
+// for the capped candidate list.
+const rerankMaxTokens = 2048
+
 // apiRerank is the user-triggered "Ordenar pela minha linha editorial"
 // (KLOX-67 §7.2): one Haiku call re-orders the ranked pool by the
 // publication's editorial line, persisted as new triage scores. Capped
@@ -491,7 +495,7 @@ func (s *Server) apiRerank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := s.d.LLM.Complete(ctx, llm.Request{
-		Model: s.d.Cfg.ModelTriage, Template: "rerank", User: user, MaxTokens: 2048,
+		Model: s.d.Cfg.ModelTriage, Template: "rerank", User: user, MaxTokens: rerankMaxTokens,
 	})
 	if err != nil {
 		reply(false)
@@ -688,6 +692,11 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, resp)
 }
 
+// storySnippetMaxLen caps a member article's excerpt in the story
+// response — long enough to judge the story, short enough for the
+// side sheet's card layout.
+const storySnippetMaxLen = 400
+
 // apiStory serves a ranked story's member articles for the board's
 // side sheet when no dossier exists yet.
 func (s *Server) apiStory(w http.ResponseWriter, r *http.Request) {
@@ -711,7 +720,7 @@ func (s *Server) apiStory(w http.ResponseWriter, r *http.Request) {
 		row := map[string]any{
 			"id": it.ID, "title": it.Title, "url": "/a/" + fmt.Sprint(it.ID),
 			"outlet": n, "published_at": it.PublishedAt,
-			"snippet": strutil.Truncate(it.ContentText, 400),
+			"snippet": strutil.Truncate(it.ContentText, storySnippetMaxLen),
 		}
 		if it.Signal() {
 			// Link-level signal: shown as "via <source>" with its link —

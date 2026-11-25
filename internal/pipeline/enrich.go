@@ -25,6 +25,10 @@ const enrichBatchSize = 40
 // so a 40-item call stays well under the 20k-input target.
 const enrichExcerptRunes = 600
 
+// enrichMaxTokens bounds the batch enrich reply — one small JSON row
+// per item, so 8k covers a full 40-item batch with headroom.
+const enrichMaxTokens = 8192
+
 // EnrichmentKinds is the fixed editorial classification the model must
 // pick from (§7.2). Slugs keep Portuguese accents out of the stored
 // values; labels carry the prompt's PT names.
@@ -148,7 +152,7 @@ func (e *Enricher) enrichBatch(ctx context.Context, items []store.UnenrichedItem
 	if err != nil {
 		return 0, err
 	}
-	req := llm.Request{Model: e.Model, Template: "enrich", User: user, MaxTokens: 8192}
+	req := llm.Request{Model: e.Model, Template: "enrich", User: user, MaxTokens: enrichMaxTokens}
 	if err := llm.CheckSize(req); err != nil {
 		return 0, err
 	}

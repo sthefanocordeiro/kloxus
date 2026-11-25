@@ -24,8 +24,8 @@ func (r *Runner) stageDeepdive(ctx context.Context, pub *store.Publication, st *
 	r.stepStart("deepdive")
 	start := time.Now()
 	topN := r.MaxDeepDives
-	if topN <= 0 || topN > 3 {
-		topN = 3
+	if topN <= 0 || topN > deepDiveCap {
+		topN = deepDiveCap
 	}
 	sorted := append([]entry{}, entries...)
 	sort.Slice(sorted, func(a, b int) bool { return sorted[a].score > sorted[b].score })
@@ -45,7 +45,7 @@ func (r *Runner) stageDeepdive(ctx context.Context, pub *store.Publication, st *
 		dj := d.promptJSON()
 		di := ddItem{Ref: e.ref, Title: e.title, Dossier: string(dj)}
 		for j, it := range e.sources {
-			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, 1200)})
+			di.Sources = append(di.Sources, dSrc{Ref: j + 1, URL: it.URL, Text: strutil.Cut(it.ContentText, dossierSourceMaxLen)})
 		}
 		ddItems = append(ddItems, di)
 	}

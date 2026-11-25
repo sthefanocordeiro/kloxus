@@ -17,6 +17,22 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
+const (
+	// guideMaxTokens bounds guide generation — the guide is a short
+	// editorial charter, not a long-form document.
+	guideMaxTokens = 2048
+
+	// ruleDupMinSim is the token-Jaccard threshold above which two
+	// rejection rules merge as near-duplicates: high enough to fold
+	// differently-worded variants of one objection together without
+	// collapsing genuinely different objections.
+	ruleDupMinSim = 0.6
+
+	// ruleMaxLen caps one normalized rule line — a rule is a short
+	// imperative, so anything longer is an untrimmed reason.
+	ruleMaxLen = 120
+)
+
 // Rebuild regenerates the guide from the publication's decisions.
 // Preferred path: the model condenses decisions into rules. Fallback —
 // a nil provider (llm_mode=off, KLOX-55) or a demo replay without a
@@ -134,7 +150,7 @@ func Rebuild(ctx context.Context, db *store.DB, pub *store.Publication, provider
 		content = buildGuide(reasons, ctxs)
 	} else {
 		resp, err := provider.Complete(ctx, llm.Request{
-			Model: model, Template: "guide", User: user, MaxTokens: 2048,
+			Model: model, Template: "guide", User: user, MaxTokens: guideMaxTokens,
 		})
 		switch {
 		case errors.Is(err, llm.ErrMissingFixture):
@@ -216,7 +232,7 @@ func buildGuide(reasons, ctxs []string) string {
 			// superset of the other, or two+ shared content bigrams —
 			// the same objection in different words (the shorter, more
 			// general phrasing wins).
-			if jaccard(t, rt) >= 0.6 || subset(t, rt) || subset(rt, t) ||
+			if jaccard(t, rt) >= ruleDupMinSim || subset(t, rt) || subset(rt, t) ||
 				sharedBigrams(bg, bigramList[i]) >= 2 {
 				dup = i
 				break
@@ -290,7 +306,7 @@ func ruleFor(reason string) string {
 	rule = guideSubject.ReplaceAllString(rule, "")
 	rule = strings.TrimSpace(rule)
 	rule = strings.TrimRight(rule, ".! \t")
-	rule = strutil.Cut(rule, 120)
+	rule = strutil.Cut(rule, ruleMaxLen)
 	if r := []rune(rule); len(r) > 0 && unicode.IsLower(r[0]) {
 		rule = string(unicode.ToUpper(r[0])) + string(r[1:])
 	}

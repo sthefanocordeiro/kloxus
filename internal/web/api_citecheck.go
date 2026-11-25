@@ -13,6 +13,16 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
+const (
+	// citecheckApproveMaxTokens bounds the approval-time batch
+	// citecheck — one JSON verdict per sentence across the issue.
+	citecheckApproveMaxTokens = 4096
+
+	// citecheckMaxTokens bounds the single-sentence citecheck recheck —
+	// it returns one small JSON verdict object.
+	citecheckMaxTokens = 512
+)
+
 // approveCiteCheck runs the one Haiku inverted-meaning pass at
 // approval. It writes a response and returns true only when a verdict
 // blocked approval; every failure mode (caps, kill switch, provider
@@ -84,7 +94,7 @@ func (s *Server) approveCiteCheck(w http.ResponseWriter, r *http.Request, iss *s
 		return false
 	}
 	resp, err := s.d.LLM.Complete(ctx, llm.Request{
-		Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 4096,
+		Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: citecheckApproveMaxTokens,
 	})
 	if err != nil {
 		slog.Info("approval citecheck skipped", "err", err)
@@ -290,7 +300,7 @@ func (s *Server) dossierSupports(r *http.Request, d *pipeline.Dossier, dc *docCo
 	user, err := editCitecheckPrompt(d, itemRef, text)
 	if err == nil && d.Origin != "manual" && !s.d.Cfg.LLMOff() {
 		if resp, err := s.d.LLM.Complete(r.Context(), llm.Request{
-			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: 512,
+			Model: s.d.Cfg.ModelTriage, Template: "citecheck", User: user, MaxTokens: citecheckMaxTokens,
 		}); err == nil {
 			if json.Unmarshal([]byte(resp.Text), &checks) == nil && len(checks) > 0 {
 				return checks[0].Verdict == "ok"
