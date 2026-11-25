@@ -3,10 +3,8 @@
 -- summarised twice, by any workspace or run. model='deterministic'
 -- rows come from the zero-cost template (metadata only, never source
 -- prose); a model name marks an LLM-written row if one is ever enabled.
-CREATE TABLE IF NOT EXISTS item_summaries (
-  item_id    BIGINT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
-  summary    TEXT NOT NULL,
-  kind       TEXT NOT NULL,
-  model      TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS'))
-);
+--
+-- KLOX-222: the CREATE TABLE for item_summaries was consolidated into
+-- 0016_ranking_embeddings.sql — this file used to create it a second
+-- time (harmless under IF NOT EXISTS, but a real duplicate definition).
+-- The file is kept so the recorded version stays a no-op marker.
