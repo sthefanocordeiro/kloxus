@@ -3,6 +3,7 @@ package web
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestPautaLines(t *testing.T) {
@@ -40,5 +41,28 @@ func TestItemTextVerbatim(t *testing.T) {
 	doc = testDoc(t, "## Top\n\n### H <!-- item 1 -->\n\nUm fato [1] e outro [2] aqui.\n")
 	if got := doc.Sections[0].Items[0].Text; got != "Um fato e outro aqui." {
 		t.Fatalf("mid-line cites text = %q", got)
+	}
+}
+
+// TestPautaMailDueAtSaoPauloWindow (KLOX-268): the 07:00 schedule is
+// evaluated in America/Sao_Paulo and has only a short catch-up grace —
+// 10:00 UTC is 07:00 SP, while the reported 01:15 UTC next-day deploy
+// tick (22:15 SP) is outside it.
+func TestPautaMailDueAtSaoPauloWindow(t *testing.T) {
+	cases := []struct {
+		name string
+		at   time.Time
+		want bool
+	}{
+		{"before SP seven", time.Date(2026, 11, 24, 9, 59, 59, 0, time.UTC), false},
+		{"exact SP seven", time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC), true},
+		{"inside grace", time.Date(2026, 11, 24, 10, 29, 59, 0, time.UTC), true},
+		{"grace end excluded", time.Date(2026, 11, 24, 10, 30, 0, 0, time.UTC), false},
+		{"evening catchup refused", time.Date(2026, 11, 25, 1, 15, 0, 0, time.UTC), false},
+	}
+	for _, tc := range cases {
+		if got := pautaMailDueAt(tc.at); got != tc.want {
+			t.Errorf("%s: pautaMailDueAt(%s) = %v, want %v", tc.name, tc.at, got, tc.want)
+		}
 	}
 }

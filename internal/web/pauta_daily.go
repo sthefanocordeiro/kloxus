@@ -6,7 +6,8 @@ package web
 // the shared ingest collected, card summaries from the cache, zero
 // model calls — and stores it so Hoje opens ready. At 07:00 a "sua
 // pauta de hoje está pronta" mail goes to radars with a saved account
-// (one transactional mail per day, per workspace).
+// inside a short catch-up window (one transactional mail per recipient
+// per day).
 
 import (
 	"context"
@@ -30,9 +31,15 @@ import (
 const (
 	pautaBuildHour, pautaBuildMin = 6, 30
 	pautaMailHour                 = 7
-	pautaActiveWindow             = 7 * 24 * time.Hour
-	pautaMailLinkTTL              = 72 * time.Hour
-	pautaMailTop                  = 3
+	// pautaMailWindow is the short catch-up grace after 07:00. A deploy
+	// or restart inside it still delivers the morning note; hours later
+	// the day is left unsent instead of landing as a 22:15 "morning" mail
+	// (KLOX-268). The window covers the 10-minute sweep budget with room
+	// for one retrying tick.
+	pautaMailWindow   = 30 * time.Minute
+	pautaActiveWindow = 7 * 24 * time.Hour
+	pautaMailLinkTTL  = 72 * time.Hour
+	pautaMailTop      = 3
 	// pautaRadarBudget bounds one radar's build+mail inside the sweep:
 	// a live BuildStories takes seconds, so a stuck radar that eats the
 	// whole tick is pathological — cut it and let the next tick retry.
@@ -50,6 +57,15 @@ var pautaLoc = func() *time.Location {
 
 // pautaDayOf is the stored pauta's day key: the São Paulo date.
 func pautaDayOf(t time.Time) string { return t.In(pautaLoc).Format("2006-01-02") }
+
+// pautaMailDueAt reports whether t is inside that São Paulo day's 07:00
+// send window. The half-open interval includes the exact 07:00 tick and
+// excludes the end of the catch-up grace.
+func pautaMailDueAt(t time.Time) bool {
+	local := t.In(pautaLoc)
+	start := time.Date(local.Year(), local.Month(), local.Day(), pautaMailHour, 0, 0, 0, pautaLoc)
+	return !local.Before(start) && local.Before(start.Add(pautaMailWindow))
+}
 
 // dropPautaDay removes today's stored pauta after an interaction that
 // changes the ranking (Sim/Não, skip, Escrever, a new calibration
@@ -98,9 +114,11 @@ func visiblePautaCards(ctx context.Context, wdb *store.DB, pubID int64, views []
 
 // RunDailyPauta ticks until ctx ends. Each tick builds the missing
 // pauta for the current São Paulo day (after 06:30) and mails claimed
-// radars (after 07:00). Both sides are idempotent at the row level, so
-// a restart or a slow sweep simply resumes where pauta_days says it
-// stopped — a build skipped at 06:30 still runs before the 07:00 mail.
+// radars inside the 07:00 catch-up window. Both sides are idempotent at
+// the row level, so a restart or a slow sweep simply resumes where
+// pauta_days says it stopped — a build skipped at 06:30 still runs
+// before the 07:00 mail, while a restart hours later does not turn the
+// morning mail into an evening one (KLOX-268).
 func (s *Server) RunDailyPauta(ctx context.Context, pool *store.Pool, interval time.Duration) {
 	if pool == nil {
 		return
@@ -129,7 +147,7 @@ func (s *Server) DailyPautaTick(ctx context.Context, pool *store.Pool, now time.
 	day := pautaDayOf(now)
 	buildDue := local.Hour() > pautaBuildHour ||
 		(local.Hour() == pautaBuildHour && local.Minute() >= pautaBuildMin)
-	mailDue := s.d.DailyPautaMail && local.Hour() >= pautaMailHour
+	mailDue := s.d.DailyPautaMail && pautaMailDueAt(now)
 	if !buildDue && !mailDue {
 		return
 	}
