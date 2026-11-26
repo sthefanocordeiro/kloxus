@@ -12,20 +12,14 @@
 > A deterministic fixture demo runs locally with no API keys:
 > `go run ./cmd/kloxus demo`.
 
-Kloxus is the editorial back office for people who publish about a
-sector every day — the analyst, the consultant, the banker who posts
-about fintech, the HR professional who writes about careers. The
-bottleneck is not the writing; it is the invisible work before it:
-opening dozens of sites, throwing away duplicates, deciding what
-matters. Kloxus automates that flow. Overnight it collects audited
-sources, removes duplicates and ranks what matters with embeddings and
-a reranker that learn from every Yes/No. The brief is assembled at
-~06:30 and — on mornings with new stories — lands in your inbox by
-7 a.m., one click to stop it. You pick the stories, write,
-and one text becomes a LinkedIn post, an X thread, HTML and Markdown.
-What it never does is write for you: the opinion stays yours. The same
-machinery later extends to market intelligence and team clipping —
-today it serves one person who publishes about a sector.
+Kloxus automates the daily news-triage workflow for people who publish
+about a sector every day — on LinkedIn, X, a blog, a newsletter or an
+internal channel. One shared engine polls an audited catalog of
+Brazilian sources, drops duplicates, matches each story to the user's
+Radar with embeddings and a reranker, and rebuilds the day's stories
+every morning. The person picks the stories and writes; Kloxus turns
+that one text into LinkedIn, X-thread, HTML and Markdown versions. It
+never writes the commentary.
 
 > **HackBrazil 2026** — track *Logística & Automação* (Logistics and
 > Automation). This is the
@@ -33,6 +27,44 @@ today it serves one person who publishes about a sector.
 > Supabase, real magic-link email via Resend, one Go binary on Fly.io.
 > The reasoning lives in
 > [docs/decisions.md](docs/decisions.md) (D27 onward).
+
+---
+
+## For the jury — 2 minutes
+
+- **App:** https://kloxus.fly.dev · **Repo:** this repository ·
+  **Video:** being recorded for the submission (see
+  [docs/submission.md](docs/submission.md))
+- **Try it:** e-mail → magic link → create a Radar → Match →
+  **Today's stories** → click 3 cards → **Build brief** → write →
+  **Export** → **Copy**.
+
+**What is automated**
+
+- scheduled global polling of the audited source catalog
+- robots.txt and publisher-terms checks per source
+- dedupe — canonical URL + SimHash near-duplicate text
+- one embedding pass per item at ingest
+- two-stage per-Radar ranking (cosine vs the Rocchio profile, then a
+  Voyage rerank of the top candidates)
+- learning from every Yes/No calibration and 👍/👎
+- the 06:30 daily build of each Radar's stories
+- four output formats rendered from fixed templates — no model involved
+- the 07:00 morning email carrying the day's stories
+
+**Real production numbers** — production Postgres and the LLM ledger,
+queried 2026-11-25 (UTC), nothing estimated:
+
+| Metric | Value |
+| --- | --- |
+| Active audited sources | 29 |
+| Items collected per day | ~2,450 |
+| Folded into existing stories by dedupe | 3.6% of items |
+| Stories per Radar per day | ~6.5 |
+| Build brief time | ~2–3 s per Radar |
+| Voyage cost per day | ≈US$0.22–0.24 |
+
+The same engine fits team clipping and market-intelligence briefs.
 
 ---
 
@@ -44,12 +76,12 @@ One loop, five screens — cadastro → Radar → notícias → escrever → exp
 | --- | --- |
 | **Sign up** | E-mail in, magic link out (Resend). No password, no form beyond the address. |
 | **Create your Radar** | Name it and say what you cover. Pick among **18 editorias** — from *política* and *economia* to *tecnologia*, *agronegócio* and *cultura*. Kloxus assigns the curated sources for you; one Radar per account. |
-| **Match** | A short calibration deck — real stories from the last 48 h. *Yes* / *No* on each one teaches the Radar your sector. |
-| **Today's stories** | Every morning, a deck of stories from the feed catalog matched to your Radar — outlet and timestamp on each card. Click a card to pick it for the brief; 👍 / 👎 keeps training the match. On days with new stories the assembled brief also arrives by email at 7 a.m. — every send carries a one-click unsubscribe. |
-| **Write → Export** | The *pauta*: an optional opening plus one autosaved text box per story — your words only. Export to **4 formats**: LinkedIn post (3,000 chars), X post (280, auto thread split), rich-text HTML for newsletter/blog/intranet, or a `.md` download ready for Ghost, Notion and Obsidian. |
+| **Match** | A short calibration set — real stories from the last 48 h. *Yes* / *No* on each one teaches the Radar your sector. |
+| **Today's stories** | Every morning, a set of stories from the feed catalog matched to your Radar — outlet and timestamp on each card. Click a card to pick it for the brief; 👍 / 👎 keeps training the match. On days with new stories the assembled brief also arrives by email at 7 a.m. — every send carries a one-click unsubscribe. |
+| **Write → Export** | The *pauta*: an optional opening plus one autosaved text box per story — your words only. Export to **4 formats**: LinkedIn post (3,000 chars), X post (280, auto thread split), rich-text HTML for newsletter/blog/intranet — with image upload in the editor and a `.html` download — or a `.md` download ready for Ghost, Notion and Obsidian. |
 
-The interface is bilingual (pt-BR / EN), and the morning email follows
-the account language. A claimed Radar also gets the day's deck by email
+The interface speaks pt-BR and EN, and the morning email follows
+the account language. A claimed Radar also gets the day's stories by email
 on mornings with new stories — assembled at ~06:30, in the inbox by
 7 a.m. (America/Sao_Paulo), with a one-click unsubscribe in every send.
 
@@ -74,10 +106,15 @@ on mornings with new stories — assembled at ~06:30, in the inbox by
 
 ## Editorial principles
 
+- **Source rules come first.** Only catalog feeds whose terms allow this
+  use are fetched — robots.txt is re-checked daily, per-source policies
+  (full text vs links-only) are enforced, and refused sources stay
+  refused. The source audit and the accept/reject list live in
+  [docs/decisions.md](docs/decisions.md) (D29, D67).
 - **Authorship belongs to the writer.** Kloxus finds, dedupes and matches; it never writes the commentary. The editor only holds the writer's own text.
 - **Every story keeps its source.** Each card and each exported line links back to the outlet that published it.
 - **Curation is not reproduction.** Headlines, short excerpts and links — never a republication of someone else's article.
-- **The human decides what ships.** Nothing is exported, emailed or published without an explicit action, and sources are only the ones the catalog allows (robots and publisher rules respected, no workarounds).
+- **The human decides what ships.** Nothing leaves Kloxus without an explicit export by the user, and sources are only the ones the catalog allows (robots and publisher rules respected, no workarounds).
 - **Writer data is not used to train models.**
 - **Budget is a feature, not a hope.** Paid calls sit behind per-run token/USD ceilings, a shared daily cap, a per-account run cap and a live kill switch — and the core loop keeps working with all of them off.
 
@@ -98,8 +135,8 @@ on mornings with new stories — assembled at ~06:30, in the inbox by
                                 │
         ┌───────────────────────┴────────────────────────┐
         ▼                                                ▼
-  each Radar: theme + 18 editorias               daily deck ("Hoje"),
-  → match → rerank → learn from                  tick → pauta → export
+  each Radar: theme + 18 editorias               daily stories ("Hoje"),
+  → match → rerank → learn from                  pick → brief → export
     every Yes/No and thumbs                      in 4 formats
 ```
 
@@ -122,9 +159,9 @@ on mornings with new stories — assembled at ~06:30, in the inbox by
 | Data | Postgres on Supabase (pgvector when available, TEXT fallback otherwise); every tenant row is `workspace_id`-scoped |
 | Matching | Voyage embeddings + reranker; deterministic feature-hash classifier and Postgres FTS as zero-cost fallbacks |
 | Generative | Anthropic Claude (Haiku/Sonnet) — optional, capped, behind a live kill switch |
-| Mail | Resend — magic links, the daily deck email, delivery/bounce webhooks; local outbox transport without a key |
+| Mail | Resend — magic links + the morning email, delivery/bounce webhooks; local outbox transport without a key |
 | Ops | Fly.io (`gru`), one always-on machine so the scheduler never sleeps; health check on `/healthz` |
-| Optional | Firecrawl (page monitoring/scrape), AbacatePay test-mode reader payments |
+| Optional | Firecrawl — on-demand page scrape/watch for user-added sources (configured in production, daily scrape cap); legacy publishing surface (reader pages, PIX checkout, sending) dormant behind `KLOXUS_PUBLISHING=off` (D64) |
 
 ## Running locally
 
@@ -166,7 +203,7 @@ Real mode — `go run ./cmd/kloxus serve` — reads `.env` (see
 | --- | --- |
 | `cmd/kloxus` | CLI: `demo`, `serve`, `run`, `ingest`, `record`, `issue`, `sources`, `guide`, `costs`, `coverage` |
 | `internal/web` | `net/http` server: `/api/v1`, embedded SPA, claim/magic-link, webhooks, outbox |
-| `internal/pipeline` | collect → dedupe → triage → storylist → dossier → draft → citecheck (generative path) |
+| `internal/pipeline` | the live flow: `BuildStories` (dedupe/cluster) → `Pauta` (stage-1 rank + MMR) → brief; the generative issue stages `dossier → deepdive → draft → citecheck` are inactive legacy |
 | `internal/ingest` | the global feed scheduler, robots-aware fetcher, retention |
 | `internal/rank`, `internal/rerank`, `internal/embed`, `internal/embedding` | the matching engine: FTS + hash classifier + Voyage |
 | `internal/store` | Postgres repositories and the migrator (`migrations/`) |
