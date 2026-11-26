@@ -372,7 +372,7 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		To:      []string{owner},
 		Subject: subject,
 		Text:    md,
-		HTML:    renderPautaMailHTML(lang, day, pub.Name, stories, base, unsubLink),
+		HTML:    renderPautaMailHTML(lang, day, pub.Name, stories, link, unsubLink),
 		Kind:    "pauta",
 		// RFC 8058: the same endpoint the footer link lands on — mail
 		// clients POST it for one-click unsubscribes (KLOX-257).

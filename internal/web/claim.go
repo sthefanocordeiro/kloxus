@@ -238,12 +238,12 @@ func (s *Server) claimPage(w http.ResponseWriter, r *http.Request) {
 	title, blurb, button, note := "Confirm your email to create your Radar",
 		"Confirming signs this browser in as the owner (%s).",
 		"Confirm and continue",
-		"The link works once and expires 15 minutes after it was sent."
+		"The link works once and expires after the period stated in the email."
 	if ptLang(lang) {
 		title, blurb, button, note = "Confirme seu e-mail para criar seu Radar",
 			"Ao confirmar, este navegador fica associado ao e-mail %s.",
 			"Confirmar e continuar",
-			"O link funciona uma vez e expira 15 minutos depois de enviado."
+			"O link funciona uma vez e expira depois do prazo informado no e-mail."
 	}
 	fmt.Fprintf(w, claimShell(lang, `<h1 style="font-size:1.5rem;line-height:1.25;margin:0 0 .75rem">%s</h1>`+
 		`<p style="margin:0 0 1.5rem;color:#111814">`+blurb+`</p>`+
@@ -349,10 +349,10 @@ func claimFail(w http.ResponseWriter, lang string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)
 	title, body := "Link expired or already used",
-		"Links work once and expire after 15 minutes. Go back to Kloxus and request a new one."
+		"Links work once and expire after the period stated in the email. Go back to Kloxus and request a new one."
 	if ptLang(lang) {
 		title, body = "Link expirado ou já usado",
-			"O link funciona uma vez e expira em 15 minutos. Volte ao Kloxus e peça um novo."
+			"O link funciona uma vez e expira depois do prazo informado no e-mail. Volte ao Kloxus e peça um novo."
 	}
 	fmt.Fprintf(w, claimShell(lang, `<h1 style="font-size:1.5rem;margin:0 0 .75rem">%s</h1>`+
 		`<p style="margin:0;color:#5b6660">%s</p>`), html.EscapeString(title), html.EscapeString(body))

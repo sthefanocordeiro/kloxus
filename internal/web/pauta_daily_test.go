@@ -349,6 +349,24 @@ func TestDailyPautaMail(t *testing.T) {
 		t.Fatalf("claim page = %d", rr.Code)
 	}
 
+	// The footer "Abrir no Kloxus" is the same kind of 72h claim as the
+	// text part, aimed at today's briefing — without it the HTML-only
+	// recipient lands signed out on the bare origin.
+	openRe := regexp.MustCompile(`href="([^"]*next=%2Fpublications[^"]*)"[^>]*>Abrir no Kloxus`)
+	om := openRe.FindStringSubmatch(msg.HTML)
+	if len(om) == 0 {
+		t.Fatal("HTML has no magic link to open today's briefing")
+	}
+	openURL, err := url.Parse(html.UnescapeString(om[1]))
+	if err != nil {
+		t.Fatalf("parse open link: %v", err)
+	}
+	if openURL.Path != "/claim" || openURL.Query().Get("t") == "" ||
+		openURL.Query().Get("lang") != "pt" ||
+		openURL.Query().Get("next") != fmt.Sprintf("/publications/%d/today", pubA) {
+		t.Fatalf("open link = %q, want claim for /publications/%d/today", openURL.String(), pubA)
+	}
+
 	// The first story CTA signs the browser in and lands on the real
 	// composer deep link with the story pre-linked (KLOX-267).
 	ctaRe := regexp.MustCompile(`href="([^"]*next=%2Fcompor[^"]*)"`)
