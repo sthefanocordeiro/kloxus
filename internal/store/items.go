@@ -25,7 +25,8 @@ type Item struct {
 	Author        string
 	PublishedAt   string
 	ContentText   string
-	Kind          string // article | signal
+	Kind          string   // article | signal
+	Categories    []string // publisher-supplied editorial labels; empty means no signal
 	Meta          ItemMeta
 	BodyTruncated bool
 	FetchedAt     string
@@ -48,16 +49,16 @@ func (it Item) Signal() bool { return it.Kind == "signal" }
 const itemCols = `i.id, i.source_id, i.catalog_id,
 	COALESCE(s.name, c.name, ''), COALESCE(s.url, c.url, ''), COALESCE(s.type, 'rss'),
 	i.external_id, i.url, i.canonical_url, i.title, i.author, i.published_at,
-	i.content_text, i.kind, i.meta_json, i.body_truncated, i.fetched_at`
+	i.content_text, i.kind, i.categories::text, i.meta_json, i.body_truncated, i.fetched_at`
 
 func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	var it Item
 	var sourceID, catalogID sql.NullInt64
 	var externalID, canon, published, author sql.NullString
-	var meta string
+	var meta, categories string
 	err := row.Scan(&it.ID, &sourceID, &catalogID, &it.SourceName, &it.SourceURL,
 		&it.SourceType, &externalID, &it.URL, &canon, &it.Title, &author,
-		&published, &it.ContentText, &it.Kind, &meta, &it.BodyTruncated, &it.FetchedAt)
+		&published, &it.ContentText, &it.Kind, &categories, &meta, &it.BodyTruncated, &it.FetchedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +68,9 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	it.CanonicalURL = canon.String
 	it.Author = author.String
 	it.PublishedAt = published.String
+	if categories != "" && categories != "[]" {
+		json.Unmarshal([]byte(categories), &it.Categories)
+	}
 	if meta != "" && meta != "{}" {
 		json.Unmarshal([]byte(meta), &it.Meta)
 	}
@@ -74,7 +78,10 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 }
 
 // SaveItems inserts collected items (idempotent per source+external_id).
-// Workspace-source items are never promo-tagged here: the deals filter
+// fetched_at stays first-inserted; publisher categories are the one field
+// refreshed on conflict when a non-empty replacement arrives, mirroring the
+// shared-catalog repoll contract. Workspace-source items are never
+// promo-tagged here: the deals filter
 // is a catalog-ingestion concern (D41) — these items come from the
 // editor's own picks, and tagging them would change the recorded/demo
 // candidate sets the deterministic replays depend on. Returns the
@@ -82,15 +89,24 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 func (db *DB) SaveItems(ctx context.Context, sourceID int64, raw []sources.RawItem, canonical func(string) string) (int, error) {
 	added := 0
 	for _, r := range raw {
-		res, err := db.ExecContext(ctx, `INSERT INTO items
-			(workspace_id, source_id, external_id, url, canonical_url, title, author, published_at, content_text, kind)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'article')
-			ON CONFLICT (source_id, external_id) DO NOTHING`,
-			db.ws, sourceID, r.ExternalID, r.URL, canonical(r.URL), r.Title, r.Author, NormalizeTS(r.PublishedAt), r.ContentText)
+		var inserted bool
+		err := db.QueryRowContext(ctx, `INSERT INTO items
+			(workspace_id, source_id, external_id, url, canonical_url, title, author, published_at, content_text, categories, kind)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,'article')
+			ON CONFLICT (source_id, external_id)
+			DO UPDATE SET categories = EXCLUDED.categories
+			WHERE jsonb_array_length(EXCLUDED.categories) > 0
+			   AND items.categories IS DISTINCT FROM EXCLUDED.categories
+			RETURNING (xmax = 0)`,
+			db.ws, sourceID, r.ExternalID, r.URL, canonical(r.URL), r.Title, r.Author,
+			NormalizeTS(r.PublishedAt), r.ContentText, categoriesJSON(r.Categories)).Scan(&inserted)
+		if err == sql.ErrNoRows {
+			continue // existing row whose categories the feed did not change
+		}
 		if err != nil {
 			return added, err
 		}
-		if n, _ := res.RowsAffected(); n > 0 {
+		if inserted {
 			added++
 		}
 	}

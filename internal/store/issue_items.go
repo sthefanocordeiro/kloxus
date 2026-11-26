@@ -143,23 +143,24 @@ type bundlePair struct {
 // bundleItem mirrors one items row with the source/coalesce aliases
 // itemCols produces — nullable columns decode through pointers.
 type bundleItem struct {
-	ID            int64   `json:"id"`
-	SourceID      *int64  `json:"source_id"`
-	CatalogID     *int64  `json:"catalog_id"`
-	SourceName    string  `json:"source_name"`
-	SourceURL     string  `json:"source_url"`
-	SourceType    string  `json:"source_type"`
-	ExternalID    *string `json:"external_id"`
-	URL           string  `json:"url"`
-	CanonicalURL  *string `json:"canonical_url"`
-	Title         string  `json:"title"`
-	Author        *string `json:"author"`
-	PublishedAt   *string `json:"published_at"`
-	ContentText   string  `json:"content_text"`
-	Kind          string  `json:"kind"`
-	Meta          string  `json:"meta_json"`
-	BodyTruncated bool    `json:"body_truncated"`
-	FetchedAt     string  `json:"fetched_at"`
+	ID            int64    `json:"id"`
+	SourceID      *int64   `json:"source_id"`
+	CatalogID     *int64   `json:"catalog_id"`
+	SourceName    string   `json:"source_name"`
+	SourceURL     string   `json:"source_url"`
+	SourceType    string   `json:"source_type"`
+	ExternalID    *string  `json:"external_id"`
+	URL           string   `json:"url"`
+	CanonicalURL  *string  `json:"canonical_url"`
+	Title         string   `json:"title"`
+	Author        *string  `json:"author"`
+	PublishedAt   *string  `json:"published_at"`
+	ContentText   string   `json:"content_text"`
+	Kind          string   `json:"kind"`
+	Categories    []string `json:"categories"`
+	Meta          string   `json:"meta_json"`
+	BodyTruncated bool     `json:"body_truncated"`
+	FetchedAt     string   `json:"fetched_at"`
 }
 
 // IssueDocBundle loads the whole document context in one query — see
@@ -190,7 +191,7 @@ func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundl
 		                   COALESCE(s.url, c.url, '') AS source_url,
 		                   COALESCE(s.type, 'rss') AS source_type,
 		                   it.external_id, it.url, it.canonical_url, it.title, it.author,
-		                   it.published_at, it.content_text, it.kind, it.meta_json,
+		                   it.published_at, it.content_text, it.kind, it.categories, it.meta_json,
 		                   it.body_truncated, it.fetched_at
 		            FROM items it
 		            LEFT JOIN sources s ON s.id = it.source_id
@@ -248,7 +249,7 @@ func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundl
 			ID: it.ID, SourceName: it.SourceName, SourceURL: it.SourceURL,
 			SourceType: it.SourceType, URL: it.URL, Title: it.Title,
 			ContentText: it.ContentText, Kind: it.Kind,
-			BodyTruncated: it.BodyTruncated, FetchedAt: it.FetchedAt,
+			Categories: it.Categories, BodyTruncated: it.BodyTruncated, FetchedAt: it.FetchedAt,
 		}
 		if it.SourceID != nil {
 			item.SourceID = *it.SourceID

@@ -184,14 +184,29 @@ type CatalogItem struct {
 	Author        string
 	PublishedAt   string
 	ContentText   string
-	Kind          string // article | signal
+	Kind          string   // article | signal
+	Categories    []string // publisher-supplied feed/API labels, verbatim
 	Meta          map[string]any
 	BodyTruncated bool
 }
 
+// categoriesJSON encodes the category column. nil and empty both mean
+// "the publisher supplied no labels" and are stored as the JSON empty
+// array — never NULL — so absence needs no special case in readers.
+func categoriesJSON(categories []string) string {
+	if categories == nil {
+		categories = []string{}
+	}
+	data, _ := json.Marshal(categories)
+	return string(data)
+}
+
 // SaveCatalogItems upserts fetched items into the shared items table.
 // fetched_at is kept from the first insert — a re-poll must not make an
-// old story look new to workspace runs.
+// old story look new to workspace runs. Categories are the one feed field
+// refreshed on conflict when the publisher supplies a non-empty replacement;
+// title, body, policy metadata and fetched_at all keep their first-inserted
+// values, so enrichment cannot be degraded by an ordinary repoll.
 func (p *Pool) SaveCatalogItems(ctx context.Context, catalogID int64, raw []CatalogItem) (int, error) {
 	added := 0
 	for _, r := range raw {
@@ -207,15 +222,26 @@ func (p *Pool) SaveCatalogItems(ctx context.Context, catalogID int64, raw []Cata
 			meta = map[string]any{}
 		}
 		data, _ := json.Marshal(meta)
-		res, err := p.db.ExecContext(ctx, `INSERT INTO items
-			(source_id, catalog_id, external_id, url, canonical_url, title, author, published_at, content_text, kind, meta_json, body_truncated)
-			VALUES (NULL,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-			ON CONFLICT (catalog_id, external_id) WHERE catalog_id IS NOT NULL DO NOTHING`,
-			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author, NormalizeTS(r.PublishedAt), r.ContentText, kind, string(data), r.BodyTruncated)
+		var id int64
+		var inserted bool
+		err := p.db.QueryRowContext(ctx, `INSERT INTO items
+			(source_id, catalog_id, external_id, url, canonical_url, title, author, published_at, content_text, kind, categories, meta_json, body_truncated)
+			VALUES (NULL,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+			ON CONFLICT (catalog_id, external_id) WHERE catalog_id IS NOT NULL
+			DO UPDATE SET categories = EXCLUDED.categories
+			WHERE jsonb_array_length(EXCLUDED.categories) > 0
+			   AND items.categories IS DISTINCT FROM EXCLUDED.categories
+			RETURNING id, (xmax = 0)`,
+			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author,
+			NormalizeTS(r.PublishedAt), r.ContentText, kind, categoriesJSON(r.Categories), string(data), r.BodyTruncated).
+			Scan(&id, &inserted)
+		if err == sql.ErrNoRows {
+			continue // existing row whose categories the feed did not change
+		}
 		if err != nil {
 			return added, err
 		}
-		if n, _ := res.RowsAffected(); n > 0 {
+		if inserted {
 			added++
 		}
 	}
@@ -355,19 +381,23 @@ func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogIt
 		var id int64
 		var inserted bool
 		err := tx.QueryRowContext(ctx, `INSERT INTO items
-			(source_id, catalog_id, external_id, url, canonical_url, title, author, published_at, content_text, kind, meta_json, body_truncated)
-			VALUES (NULL,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			(source_id, catalog_id, external_id, url, canonical_url, title, author, published_at, content_text, kind, categories, meta_json, body_truncated)
+			VALUES (NULL,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
 			ON CONFLICT (catalog_id, external_id) WHERE catalog_id IS NOT NULL
 			DO UPDATE SET title = EXCLUDED.title, published_at = EXCLUDED.published_at,
 				content_text = EXCLUDED.content_text, kind = EXCLUDED.kind,
+				categories = CASE WHEN jsonb_array_length(EXCLUDED.categories) > 0
+					THEN EXCLUDED.categories ELSE items.categories END,
 				meta_json = EXCLUDED.meta_json, body_truncated = EXCLUDED.body_truncated
 			WHERE items.title IS DISTINCT FROM EXCLUDED.title
 			   OR items.published_at IS DISTINCT FROM EXCLUDED.published_at
 			   OR items.content_text IS DISTINCT FROM EXCLUDED.content_text
+			   OR (jsonb_array_length(EXCLUDED.categories) > 0
+			       AND items.categories IS DISTINCT FROM EXCLUDED.categories)
 			   OR items.meta_json IS DISTINCT FROM EXCLUDED.meta_json
 			RETURNING id, (xmax = 0)`,
 			catalogID, r.ExternalID, r.URL, r.CanonicalURL, r.Title, r.Author,
-			NormalizeTS(r.PublishedAt), r.ContentText, kind, string(data), r.BodyTruncated).
+			NormalizeTS(r.PublishedAt), r.ContentText, kind, categoriesJSON(r.Categories), string(data), r.BodyTruncated).
 			Scan(&id, &inserted)
 		if err == sql.ErrNoRows {
 			continue // unchanged — the DO UPDATE WHERE skipped it

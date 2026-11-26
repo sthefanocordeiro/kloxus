@@ -387,15 +387,21 @@ func termsCount(terms termSet, hay string, words map[string]bool) int {
 }
 
 // storySearchText folds the story's matchable text once — its own
-// title, member headlines and any enrichment topic tags — into a
-// phrase haystack plus the whole-word set single-token terms test
-// against (KLOX-94).
+// title, member headlines, publisher-supplied categories and any
+// enrichment topic tags — into a phrase haystack plus the whole-word set
+// single-token terms test against (KLOX-94). Categories count as evidence
+// for both positive matching and reject terms; they never weaken the
+// editorial guardrails (KLOX-278).
 func storySearchText(s *store.Story, enrich map[int64]*store.ItemEnrichment) (string, map[string]bool) {
 	var b strings.Builder
 	b.WriteString(s.Title)
 	for i := range s.Items {
 		b.WriteString(" ")
 		b.WriteString(s.Items[i].Title)
+		for _, cat := range s.Items[i].Categories {
+			b.WriteString(" ")
+			b.WriteString(cat)
+		}
 		if e := enrich[s.Items[i].ID]; e != nil {
 			for _, tg := range e.Topics {
 				b.WriteString(" ")
@@ -405,6 +411,31 @@ func storySearchText(s *store.Story, enrich map[int64]*store.ItemEnrichment) (st
 	}
 	hay := foldText(b.String())
 	return hay, FoldedTokens(hay)
+}
+
+// categoryOnTopic reports whether any publisher-supplied category matches
+// the Radar's declared theme/editoria. Comparison is case- and
+// accent-insensitive through foldText/FoldedTokens, while storage keeps
+// the publisher's original spelling. An item with no categories simply
+// returns false — absence is no signal, never a penalty. Matching is
+// per publisher label: two separate categories must not combine into a
+// multi-word topic phrase neither one actually says.
+func categoryOnTopic(pub *store.Publication, s *store.Story) bool {
+	if pub == nil {
+		return false
+	}
+	topic := phraseTerms(pub.Topic)
+	if len(topic) == 0 {
+		return false
+	}
+	for i := range s.Items {
+		for _, cat := range s.Items[i].Categories {
+			if phraseAny(topic, FoldedTokens(foldText(cat))) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // termStopwords are the function words a topic phrase contributes that

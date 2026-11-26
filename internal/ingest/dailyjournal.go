@@ -265,6 +265,7 @@ func (d *DailyJournal) ToCatalogItem(it DJItem) store.CatalogItem {
 		PublishedAt:  it.PublishedAt,
 		ContentText:  body,
 		Kind:         "article",
+		Categories:   append([]string(nil), it.Categories...),
 		Meta: map[string]any{
 			"description":    it.Description,
 			"categories":     it.Categories,

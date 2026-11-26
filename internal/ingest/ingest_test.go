@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -127,8 +129,12 @@ func (f *fakeStore) SaveDJItems(_ context.Context, id int64, raw []store.Catalog
 		store.MergeDJDetail(old.Meta, old.ContentText, &it)
 		om, _ := json.Marshal(old.Meta)
 		nm, _ := json.Marshal(it.Meta)
+		categoriesChanged := len(it.Categories) > 0 && !slices.Equal(old.Categories, it.Categories)
 		if old.Title != it.Title || old.PublishedAt != it.PublishedAt ||
-			old.ContentText != it.ContentText || string(om) != string(nm) {
+			old.ContentText != it.ContentText || categoriesChanged || string(om) != string(nm) {
+			if len(it.Categories) == 0 {
+				it.Categories = old.Categories
+			}
 			f.items[id][i] = it
 			changed++
 		}
@@ -178,6 +184,7 @@ const testFeed = `<?xml version="1.0"?><rss version="2.0"><channel>
 <title>Test Feed</title>
 <item><title>Story one</title><link>http://example.com/a?utm_source=feed&amp;x=1</link>
 <guid>g1</guid><pubDate>Thu, 13 Nov 2026 10:00:00 GMT</pubDate>
+<category>Agro</category><category>Agronegócio</category><category>agro</category><category> </category>
 <content:encoded xmlns:content="http://purl.org/rss/1.0/modules/content/"><![CDATA[<p>Body <b>one</b></p><div class="oferta-box">ad</div>]]></content:encoded>
 </item></channel></rss>`
 
@@ -326,6 +333,17 @@ func TestFeedNormalize(t *testing.T) {
 	}
 	if it.Kind != "article" {
 		t.Fatalf("kind=%q want article", it.Kind)
+	}
+	if got := strings.Join(it.Categories, "|"); got != "Agro|Agronegócio" {
+		t.Fatalf("categories=%q want publisher labels trimmed and deduped", got)
+	}
+}
+
+func TestNormalizeCategoriesStableDedupe(t *testing.T) {
+	got := sources.NormalizeCategories([]string{" Agro ", "agro", "", "Economia", "Economia", "Brasil"})
+	want := []string{"Agro", "Economia", "Brasil"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("normalizeCategories=%v want %v", got, want)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/mmcdole/gofeed"
 	"github.com/sthefanocordeiro/kloxus/internal/decode"
 	"github.com/sthefanocordeiro/kloxus/internal/httpx"
+	"github.com/sthefanocordeiro/kloxus/internal/sources"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
@@ -269,6 +270,7 @@ func normalizeFeed(feed *gofeed.Feed, cs *store.CatalogSource) []store.CatalogIt
 			Author:       author,
 			PublishedAt:  pub,
 			Kind:         "article",
+			Categories:   sources.NormalizeCategories(e.Categories),
 			Meta:         map[string]any{},
 		}
 		switch cs.BodyMode {

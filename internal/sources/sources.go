@@ -30,7 +30,8 @@ type RawItem struct {
 	Author      string
 	PublishedAt string
 	ContentText string
-	Outlet      string // feed channel title / page name, when known
+	Outlet      string   // feed channel title / page name, when known
+	Categories  []string // publisher RSS/Atom category labels, verbatim
 }
 
 // Fetcher collects raw items from one source definition.
@@ -129,9 +130,33 @@ func parseFeed(r io.Reader, name string) ([]RawItem, error) {
 			PublishedAt: published,
 			ContentText: strings.TrimSpace(content),
 			Outlet:      strings.TrimSpace(feed.Title),
+			Categories:  NormalizeCategories(it.Categories),
 		})
 	}
 	return out, nil
+}
+
+// NormalizeCategories keeps the publisher's category text verbatim while
+// trimming outer whitespace, dropping empties and removing duplicate labels
+// in first-seen order. The duplicate key folds case only; accent-insensitive
+// comparison belongs to matching, not storage, so the stored evidence never
+// loses the publisher's spelling.
+func NormalizeCategories(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, c := range in {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		key := strings.ToLower(c)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, c)
+	}
+	return out
 }
 
 func authorName(it *gofeed.Item) string {

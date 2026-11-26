@@ -45,7 +45,7 @@ func TestCapturedFetcherServesRecordedFeed(t *testing.T) {
 	fsys := fstest.MapFS{
 		"feeds/" + FeedFixtureName("rss", url): {Data: []byte(`<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Real Outlet</title>
-<item><guid>g1</guid><link>https://real.example/a1</link><title>Story</title><description>d</description></item>
+<item><guid>g1</guid><link>https://real.example/a1</link><title>Story</title><description>d</description><category> Agro </category><category>agro</category><category>Economia</category></item>
 </channel></rss>`)},
 	}
 	items, err := (CapturedFetcher{FS: fsys}).Fetch(context.Background(), "rss", url)
@@ -54,6 +54,9 @@ func TestCapturedFetcherServesRecordedFeed(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Title != "Story" {
 		t.Fatalf("items = %+v", items)
+	}
+	if got := items[0].Categories; len(got) != 2 || got[0] != "Agro" || got[1] != "Economia" {
+		t.Fatalf("categories = %v, want trimmed first-seen labels", got)
 	}
 }
 
