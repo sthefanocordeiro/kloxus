@@ -50,8 +50,7 @@ never writes the commentary.
 - learning from every Yes/No calibration and 👍/👎
 - the 06:30 daily build of each Radar's stories
 - four output formats rendered from fixed templates — no model involved
-- the 07:00 morning email carrying the day's stories *(turning on
-  during submission week — daily-mail relight in flight)*
+- the 07:00 morning email carrying the day's stories *(on in production)*
 
 **Real production numbers** — production Postgres and the LLM ledger,
 queried 2026-11-25 (UTC), nothing estimated:
@@ -78,15 +77,14 @@ One loop, five screens — cadastro → Radar → notícias → escrever → exp
 | **Sign up** | E-mail in, magic link out (Resend). No password, no form beyond the address. |
 | **Create your Radar** | Name it and say what you cover. Pick among **18 editorias** — from *política* and *economia* to *tecnologia*, *agronegócio* and *cultura*. Kloxus assigns the curated sources for you; one Radar per account. |
 | **Match** | A short calibration set — real stories from the last 48 h. *Yes* / *No* on each one teaches the Radar your sector. |
-| **Today's stories** | Every morning, a set of stories from the feed catalog matched to your Radar — outlet and timestamp on each card. Click a card to pick it for the brief; 👍 / 👎 keeps training the match. On days with new stories the assembled brief also arrives by email at 7 a.m. — every send carries a one-click unsubscribe *(the morning send is off in production today — daily-mail relight in flight)*. |
+| **Today's stories** | Every morning, a set of stories from the feed catalog matched to your Radar — outlet and timestamp on each card. Click a card to pick it for the brief; 👍 / 👎 keeps training the match. On days with new stories the assembled brief also arrives by email at 7 a.m. — every send carries a one-click unsubscribe *(on in production)*. |
 | **Write → Export** | The *pauta*: an optional opening plus one autosaved text box per story — your words only. Export to **4 formats**: LinkedIn post (3,000 chars), X post (280, auto thread split), rich-text HTML for newsletter/blog/intranet — with image upload in the editor and a `.html` download — or a `.md` download ready for Ghost, Notion and Obsidian. |
 
 The interface speaks pt-BR and EN, and the morning email follows
 the account language. A claimed Radar also gets the day's stories by email
 on mornings with new stories — assembled at ~06:30, in the inbox by
 7 a.m. (America/Sao_Paulo), with a one-click unsubscribe in every send.
-*(The 7 a.m. send is off in production today — it returns with the
-daily-mail relight in flight.)*
+*(The 7 a.m. send is on in production.)*
 
 <p align="center">
   <img src="docs/screenshots/01-landing.png" width="720" alt="Landing — The research is ready. The writing is yours.">
@@ -162,7 +160,7 @@ daily-mail relight in flight.)*
 | Data | Postgres on Supabase (pgvector when available, TEXT fallback otherwise); every tenant row is `workspace_id`-scoped |
 | Matching | Voyage embeddings + reranker; deterministic feature-hash classifier and Postgres FTS as zero-cost fallbacks |
 | Generative | Anthropic Claude (Haiku/Sonnet) — optional, capped, behind a live kill switch |
-| Mail | Resend — magic links + the morning email *(off in production today — relight in flight)*, delivery/bounce webhooks; local outbox transport without a key |
+| Mail | Resend — magic links + the morning email *(on in production)*, delivery/bounce webhooks; local outbox transport without a key |
 | Ops | Fly.io (`gru`), one always-on machine so the scheduler never sleeps; health check on `/healthz` |
 | Optional | Firecrawl — on-demand page scrape/watch for user-added sources (configured in production, daily scrape cap); legacy publishing surface (reader pages, PIX checkout, sending) dormant behind `KLOXUS_PUBLISHING=off` (D64) |
 
