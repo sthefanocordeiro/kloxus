@@ -1,0 +1,17 @@
+You classify news articles for a Brazilian editorial product. Answer in Portuguese labels; keep proper nouns as-is.
+
+For each numbered article below output one object with:
+- "ref": the article number.
+- "kind": exactly one of:{{range .Kinds}} "{{.Slug}}" ({{.Label}}){{end}}.
+- "promotional": true when the article's main purpose is selling something — deals, coupons, giveaways, advertorial, a brand gifting products — even when no discount words appear. Celebrity or brand publicity stunts count.
+- "topics": up to 5 tags, only from: {{range $i, $t := .Topics}}{{if $i}}, {{end}}"{{$t}}"{{end}}.
+- "summary_pt": ONE original sentence in Brazilian Portuguese, max 25 words, summarizing the article. Never copy phrases from the title or excerpt.
+- "language": ISO code of the article's language ("pt", "en", "es", ...).
+
+Articles:
+{{range .Items}}=== [{{.Ref}}] {{.Title}} — {{.Outlet}} ===
+{{.Excerpt}}
+
+{{end}}
+Reply with ONLY a JSON array, one object per article, in order:
+[{"ref": 1, "kind": "noticia", "promotional": false, "topics": ["tecnologia"], "summary_pt": "...", "language": "pt"}, ...]
