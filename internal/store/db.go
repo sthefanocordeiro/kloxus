@@ -133,12 +133,78 @@ func (p *Pool) For(workspaceID string) *DB {
 	return &DB{db: p.db, ws: workspaceID}
 }
 
+// sqlQuerier is the small surface both the pool root and a transaction
+// implement. Repository methods route through it so a transaction-scoped
+// DB runs the exact same SQL inside the open transaction.
+type sqlQuerier interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 // DB is a workspace-scoped repository. The ws field is the tenant
 // boundary: injected into every WHERE clause and INSERT it makes
 // cross-workspace access impossible at the store layer.
 type DB struct {
 	db *sql.DB
+	tx *sql.Tx
 	ws string
+}
+
+// executor returns the transaction when one is active, or the pool root.
+func (db *DB) executor() sqlQuerier {
+	if db.tx != nil {
+		return db.tx
+	}
+	return db.db
+}
+
+// txHandle is either a real transaction or a nested view of one. Nested
+// commit/rollback are intentionally no-ops: the outer transaction remains
+// the atomic boundary, and its failure still rolls every write back.
+type txHandle struct {
+	sqlQuerier
+	commit   func() error
+	rollback func() error
+}
+
+func (tx *txHandle) Commit() error   { return tx.commit() }
+func (tx *txHandle) Rollback() error { return tx.rollback() }
+
+// beginTx starts a transaction, or joins the already-open one. Store
+// methods that historically managed their own transaction use this so they
+// can also compose inside a larger atomic unit.
+func (db *DB) beginTx(ctx context.Context) (*txHandle, error) {
+	if db.tx != nil {
+		return &txHandle{
+			sqlQuerier: db.tx,
+			commit:     func() error { return nil },
+			rollback:   func() error { return nil },
+		}, nil
+	}
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &txHandle{sqlQuerier: tx, commit: tx.Commit, rollback: tx.Rollback}, nil
+}
+
+// WithTx runs fn inside one database transaction. When the handle is
+// already transaction-scoped it runs fn inline: the outer transaction is
+// the atomic boundary, so a later failure still rolls every write back.
+func (db *DB) WithTx(ctx context.Context, fn func(*DB) error) error {
+	if db.tx != nil {
+		return fn(db)
+	}
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := fn(&DB{db: db.db, tx: tx, ws: db.ws}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Workspace returns the id this handle is scoped to.
@@ -151,21 +217,21 @@ func (db *DB) Close() error { return nil }
 // Ping verifies the underlying pool answers.
 func (db *DB) Ping() error { return db.db.Ping() }
 
-// ExecContext runs a raw statement against the shared pool. Callers are
-// responsible for scoping tenant tables themselves; repo methods are
-// the safe path.
+// ExecContext runs a raw statement against the shared pool — or the open
+// transaction on a transaction-scoped handle. Callers are responsible for
+// scoping tenant tables themselves; repo methods are the safe path.
 func (db *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return db.db.ExecContext(ctx, query, args...)
+	return db.executor().ExecContext(ctx, query, args...)
 }
 
-// QueryContext runs a raw query against the shared pool.
+// QueryContext runs a raw query against the shared pool or transaction.
 func (db *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return db.db.QueryContext(ctx, query, args...)
+	return db.executor().QueryContext(ctx, query, args...)
 }
 
-// QueryRowContext runs a raw query against the shared pool.
+// QueryRowContext runs a raw query against the shared pool or transaction.
 func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	return db.db.QueryRowContext(ctx, query, args...)
+	return db.executor().QueryRowContext(ctx, query, args...)
 }
 
 // migrateLockKey serializes migrate() across every session — concurrent

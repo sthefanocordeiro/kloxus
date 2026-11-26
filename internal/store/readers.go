@@ -59,7 +59,7 @@ func (db *DB) CancelSubscription(ctx context.Context, readerID int64) error {
 // Both writes commit together — a half-written unsubscribe would either keep
 // sending to the reader or make an active subscription look unusable.
 func (db *DB) UnsubscribeReader(ctx context.Context, readerID int64) error {
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}

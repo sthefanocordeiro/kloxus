@@ -59,7 +59,7 @@ func (s Story) Outlets() []string {
 // links and story rows are deleted in one transaction so a failure cannot
 // leave link rows pointing at stories that are gone (or vice versa).
 func (db *DB) ClearStories(ctx context.Context, pubID int64) error {
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func (db *DB) CreateStories(ctx context.Context, pubID int64, drafts []StoryDraf
 	for i, d := range drafts {
 		titles[i], simhashes[i], keys[i] = d.Title, d.Simhash, d.DedupeKey
 	}
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -385,7 +385,7 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 // one and deletes the secondaries. All merges commit together — a failure on
 // one duplicate must not leave a half-merged cluster behind.
 func (db *DB) MergeStories(ctx context.Context, primary int64, secondaries []int64) error {
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}

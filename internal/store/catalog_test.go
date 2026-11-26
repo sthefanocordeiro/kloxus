@@ -6,6 +6,9 @@ package store
 // 30-day body retention.
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -166,5 +169,115 @@ func TestRetentionPurgesBodies(t *testing.T) {
 	}
 	if body != "body" {
 		t.Fatal("recent body was purged")
+	}
+}
+
+// TestSaveDJItemsTransactional proves the content update and semantic-row
+// cleanup are one atomic write: when the enrichment cleanup fails, the item
+// keeps its prior text and both deterministic semantic rows. After the
+// failure is removed the same update commits and cleans both rows.
+func TestSaveDJItemsTransactional(t *testing.T) {
+	pool := openPool(t)
+	ctx := context.Background()
+	cs := testCatalogEntry(t, pool, "dj-transactional")
+
+	raw := []CatalogItem{{
+		ExternalID: "djtx-1", URL: "https://dj.example/story", CanonicalURL: "https://dj.example/story",
+		Title: "Original DJ story", ContentText: "original body", PublishedAt: "2026-11-21T10:00:00Z",
+		Kind: "article", Meta: map[string]any{"slug": "djtx-1"},
+	}}
+	if a, c, err := pool.SaveDJItems(ctx, cs.ID, raw); err != nil || a != 1 || c != 0 {
+		t.Fatalf("initial SaveDJItems a=%d c=%d err=%v", a, c, err)
+	}
+	var itemID int64
+	if err := pool.db.QueryRowContext(ctx,
+		`SELECT id FROM items WHERE catalog_id = $1 AND external_id = $2`, cs.ID, "djtx-1").Scan(&itemID); err != nil {
+		t.Fatalf("item id: %v", err)
+	}
+	vector := "[0" + strings.Repeat(",0", 255) + "]"
+	if err := pool.SaveEmbeddings(ctx, []ItemEmbedding{{ItemID: itemID, Vector: vector, Model: "local-test"}}); err != nil {
+		t.Fatalf("SaveEmbeddings: %v", err)
+	}
+	if _, err := pool.db.ExecContext(ctx, `INSERT INTO item_enrichment
+		(item_id, ai_kind, promotional, topics_json, summary_pt, language, model)
+		VALUES ($1,'noticia',false,'[]','','pt','local-test')`, itemID); err != nil {
+		t.Fatalf("insert enrichment: %v", err)
+	}
+
+	fn := fmt.Sprintf("klox263_fail_dj_cleanup_%d", cs.ID)
+	trg := fmt.Sprintf("klox263_fail_dj_cleanup_%d", cs.ID)
+	if _, err := pool.db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE OR REPLACE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF OLD.item_id = %d THEN
+				RAISE EXCEPTION 'forced dj semantic cleanup failure';
+			END IF;
+			RETURN OLD;
+		END;
+		$$`, fn, itemID)); err != nil {
+		t.Fatalf("create failure function: %v", err)
+	}
+	if _, err := pool.db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE TRIGGER %s BEFORE DELETE ON item_enrichment
+		FOR EACH ROW EXECUTE FUNCTION %s()`, trg, fn)); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+	var once sync.Once
+	drop := func() {
+		once.Do(func() {
+			if _, err := pool.db.ExecContext(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON item_enrichment`, trg)); err != nil {
+				t.Errorf("drop failure trigger: %v", err)
+			}
+			if _, err := pool.db.ExecContext(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, fn)); err != nil {
+				t.Errorf("drop failure function: %v", err)
+			}
+		})
+	}
+	t.Cleanup(drop)
+
+	raw[0].Title = "Revised DJ story"
+	raw[0].ContentText = "revised body"
+	_, _, err := pool.SaveDJItems(ctx, cs.ID, raw)
+	if err == nil || !strings.Contains(err.Error(), "forced dj semantic cleanup failure") {
+		t.Fatalf("SaveDJItems error = %v, want forced cleanup failure", err)
+	}
+	var title, body string
+	if err := pool.db.QueryRowContext(ctx,
+		`SELECT title, content_text FROM items WHERE id = $1`, itemID).Scan(&title, &body); err != nil {
+		t.Fatal(err)
+	}
+	if title != "Original DJ story" || body != "original body" {
+		t.Fatalf("failed cleanup left updated item: title=%q body=%q", title, body)
+	}
+	var embeddings, enrichments int
+	if err := pool.db.QueryRowContext(ctx, `SELECT count(*) FROM item_embedding WHERE item_id = $1`, itemID).Scan(&embeddings); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.db.QueryRowContext(ctx, `SELECT count(*) FROM item_enrichment WHERE item_id = $1`, itemID).Scan(&enrichments); err != nil {
+		t.Fatal(err)
+	}
+	if embeddings != 1 || enrichments != 1 {
+		t.Fatalf("failed cleanup left partial semantic state: embeddings=%d enrichments=%d", embeddings, enrichments)
+	}
+
+	drop()
+	if a, c, err := pool.SaveDJItems(ctx, cs.ID, raw); err != nil || a != 0 || c != 1 {
+		t.Fatalf("success SaveDJItems a=%d c=%d err=%v", a, c, err)
+	}
+	if err := pool.db.QueryRowContext(ctx,
+		`SELECT title, content_text FROM items WHERE id = $1`, itemID).Scan(&title, &body); err != nil {
+		t.Fatal(err)
+	}
+	if title != "Revised DJ story" || body != "revised body" {
+		t.Fatalf("committed item: title=%q body=%q", title, body)
+	}
+	if err := pool.db.QueryRowContext(ctx, `SELECT count(*) FROM item_embedding WHERE item_id = $1`, itemID).Scan(&embeddings); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.db.QueryRowContext(ctx, `SELECT count(*) FROM item_enrichment WHERE item_id = $1 AND model LIKE 'local-%'`, itemID).Scan(&enrichments); err != nil {
+		t.Fatal(err)
+	}
+	if embeddings != 0 || enrichments != 0 {
+		t.Fatalf("successful update left stale semantic rows: embeddings=%d enrichments=%d", embeddings, enrichments)
 	}
 }

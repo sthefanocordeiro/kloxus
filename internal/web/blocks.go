@@ -8,6 +8,7 @@ package web
 // change. Every op carries the document version like a sentence edit
 // and reverts an approved issue to drafted.
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -315,8 +316,15 @@ func (s *Server) insertItemBlock(r *http.Request, iss *store.Issue, section stri
 
 // nextPosition returns the next lineup position inside a section.
 func nextPosition(r *http.Request, issueID int64, section string) int {
+	return nextPositionDB(r.Context(), db(r), issueID, section)
+}
+
+// nextPositionDB is nextPosition on an explicit store handle — transactional
+// callers must pass their transaction-scoped handle so the position reads
+// the same lineup the atomic write is about to change.
+func nextPositionDB(ctx context.Context, d *store.DB, issueID int64, section string) int {
 	max := 0
-	if iis, err := db(r).IssueItems(r.Context(), issueID); err == nil {
+	if iis, err := d.IssueItems(ctx, issueID); err == nil {
 		for _, ii := range iis {
 			if ii.Section == section && ii.Position >= max {
 				max = ii.Position + 1

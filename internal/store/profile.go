@@ -21,7 +21,7 @@ type PublicationProfile struct {
 func (db *DB) GetPublicationProfile(ctx context.Context, pubID int64) (*PublicationProfile, error) {
 	var theme, skip, acc, rej sql.NullString
 	p := &PublicationProfile{}
-	err := db.db.QueryRowContext(ctx,
+	err := db.QueryRowContext(ctx,
 		`SELECT pp.theme_vec::text, pp.skip_vec::text, pp.accepted_mean::text, pp.rejected_mean::text,
 		        pp.n_accepted, pp.n_rejected, pp.profile_hash
 		 FROM publication_profiles pp
@@ -50,7 +50,7 @@ func (db *DB) SavePublicationProfile(ctx context.Context, pubID int64, themeLit,
 		}
 		return s
 	}
-	_, err := db.db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO publication_profiles (publication_id, theme_vec, skip_vec, profile_hash)
 		 SELECT $1, $2`+cast+`, $3`+cast+`, $4
 		 WHERE EXISTS (SELECT 1 FROM publications WHERE id = $1 AND workspace_id = $5)
@@ -64,7 +64,7 @@ func (db *DB) SavePublicationProfile(ctx context.Context, pubID int64, themeLit,
 // vectorOK reports whether the database has pgvector (see Pool.probeVector).
 func (db *DB) vectorOK(ctx context.Context) bool {
 	var n int
-	if err := db.db.QueryRowContext(ctx,
+	if err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM pg_extension WHERE extname = 'vector'`).Scan(&n); err != nil {
 		return false
 	}

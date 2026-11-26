@@ -158,7 +158,7 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 	var id int64
 	sections, _ := json.Marshal(p.Sections)
 	paywall, _ := json.Marshal(p.Paywall)
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -268,7 +268,7 @@ func (db *DB) SetPublicationTemplate(ctx context.Context, pubID int64, want stri
 // design and stays — it is the legal record of what went out. Returns
 // sql.ErrNoRows when the publication does not exist in the workspace.
 func (db *DB) DeletePublication(ctx context.Context, pubID int64) error {
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}

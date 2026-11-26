@@ -171,66 +171,87 @@ func (s *Server) apiTodayWrite(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 404, "not_found", "story not found — reload today's pauta")
 		return
 	}
-	dropPautaDay(r, db(r), pub.ID) // a story left today's pauta
-	issues, err := db(r).ListIssues(ctx, pub.ID)
-	if apiDBErr(w, r, err, "pieces") {
-		return
-	}
-	section := ""
-	iss := openPiece(issues)
+
+	var iss *store.Issue
 	created := false
-	if iss == nil {
-		id, _, err := db(r).CreateNextIssue(ctx, pub.ID,
-			func(n int) string { return fmt.Sprintf("%s — pauta %d", pub.Name, n) }, "", config.PostSections())
+	addBlock := false
+	section := ""
+	err = db(r).WithTx(ctx, func(txdb *store.DB) error {
+		// The snapshot delete, optional issue creation, lineup write, compose
+		// and decision are one atomic boundary: a compose failure cannot
+		// leave a numbered but half-empty piece behind.
+		if err := txdb.DeletePautaDay(ctx, pub.ID, pautaDayOf(time.Now())); err != nil {
+			return err
+		}
+		issues, err := txdb.ListIssues(ctx, pub.ID)
+		if err != nil {
+			return err
+		}
+		iss = openPiece(issues)
+		if iss == nil {
+			id, _, err := txdb.CreateNextIssue(ctx, pub.ID,
+				func(n int) string { return fmt.Sprintf("%s — pauta %d", pub.Name, n) }, "", config.PostSections())
+			if err != nil {
+				return err
+			}
+			if iss, err = txdb.GetIssue(ctx, id); err != nil {
+				return err
+			}
+			created = true
+		}
+		secs := issueSections(iss, pub)
+		if len(secs) == 0 {
+			return &txHTTPError{status: 409, code: "blocked", msg: "the radar has no section to hold the pauta"}
+		}
+		section = secs[0].Title
+
+		written := 0
+		if !created {
+			doc, err := buildIssueDocument(ctx, txdb, iss, pub)
+			if err != nil {
+				return err
+			}
+			for _, sec := range doc.Sections {
+				for _, it := range sec.Items {
+					written += len(it.Sentences)
+				}
+			}
+		}
+		if written > 0 {
+			// writing began: the editor's block insert owns the placement
+			addBlock = true
+			return nil
+		}
+
+		if old, err := txdb.IssueItemByStory(ctx, iss.ID, in.StoryID); err == nil {
+			if err := txdb.SetIssueItemPlacement(ctx, old.ID, section, old.Position, store.ItemApproved); err != nil {
+				return err
+			}
+		} else if _, err := txdb.CreateIssueItem(ctx, store.IssueItem{
+			IssueID: iss.ID, StoryID: in.StoryID, Section: section,
+			Score: story.TriageScore, Reason: story.TriageReason,
+			Status: store.ItemApproved, Origin: "manual", Position: nextPositionDB(ctx, txdb, iss.ID, section),
+		}); err != nil {
+			return err
+		}
+		runner := &pipeline.Runner{DB: txdb}
+		if _, err := runner.ComposeSkeleton(ctx, pubWithIssueSections(iss, pub), iss.ID); err != nil {
+			return &txHTTPError{status: 409, code: "blocked", msg: err.Error()}
+		}
+		return txdb.RecordDecision(ctx, pub.ID, 0, "manual_compose", "pauta de hoje became a piece for manual writing")
+	})
+	if err != nil {
+		if he := asTxHTTPError(err); he != nil {
+			apiErr(w, he.status, he.code, he.msg)
+			return
+		}
 		if apiDBErr(w, r, err, "piece") {
 			return
 		}
-		if iss, err = db(r).GetIssue(ctx, id); apiDBErr(w, r, err, "piece") {
-			return
-		}
-		created = true
 	}
-	secs := issueSections(iss, pub)
-	if len(secs) == 0 {
-		apiErr(w, 409, "blocked", "the radar has no section to hold the pauta")
-		return
-	}
-	section = secs[0].Title
-
-	written := 0
-	if !created {
-		doc, err := buildIssueDocument(ctx, db(r), iss, pub)
-		if apiDBErr(w, r, err, "document") {
-			return
-		}
-		for _, sec := range doc.Sections {
-			for _, it := range sec.Items {
-				written += len(it.Sentences)
-			}
-		}
-	}
-	if written > 0 {
-		// writing began: the editor's block insert owns the placement
+	if addBlock {
 		apiJSON(w, 200, map[string]any{"issue_id": iss.ID, "add_block": true, "section": section})
 		return
 	}
-
-	if old, err := db(r).IssueItemByStory(ctx, iss.ID, in.StoryID); err == nil {
-		if apiDBErr(w, r, db(r).SetIssueItemPlacement(ctx, old.ID, section, old.Position, store.ItemApproved), "item") {
-			return
-		}
-	} else if _, err := db(r).CreateIssueItem(ctx, store.IssueItem{
-		IssueID: iss.ID, StoryID: in.StoryID, Section: section,
-		Score: story.TriageScore, Reason: story.TriageReason,
-		Status: store.ItemApproved, Origin: "manual", Position: nextPosition(r, iss.ID, section),
-	}); apiDBErr(w, r, err, "item") {
-		return
-	}
-	runner := &pipeline.Runner{DB: db(r)}
-	if _, err := runner.ComposeSkeleton(ctx, pubWithIssueSections(iss, pub), iss.ID); err != nil {
-		apiErr(w, 409, "blocked", err.Error())
-		return
-	}
-	db(r).RecordDecision(ctx, pub.ID, 0, "manual_compose", "pauta de hoje became a piece for manual writing")
 	apiJSON(w, 200, map[string]any{"issue_id": iss.ID, "created": created})
 }

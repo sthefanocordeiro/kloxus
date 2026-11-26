@@ -98,10 +98,12 @@ func (p *Pool) EnrichmentsForItems(ctx context.Context, ids []int64) (map[int64]
 // EnrichmentsForItems is the workspace-scoped convenience for the same
 // global table.
 func (db *DB) EnrichmentsForItems(ctx context.Context, ids []int64) (map[int64]*ItemEnrichment, error) {
-	return enrichmentsForItems(ctx, db.db, ids)
+	return enrichmentsForItems(ctx, db.executor(), ids)
 }
 
-func enrichmentsForItems(ctx context.Context, q *sql.DB, ids []int64) (map[int64]*ItemEnrichment, error) {
+func enrichmentsForItems(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, ids []int64) (map[int64]*ItemEnrichment, error) {
 	out := map[int64]*ItemEnrichment{}
 	if len(ids) == 0 {
 		return out, nil

@@ -54,34 +54,56 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 // approve returns the same receipt, never a new timestamp.
 func (s *Server) recordApproval(r *http.Request, iss *store.Issue, pub *store.Publication, checks []apiCheck) (*store.ApprovalReceipt, error) {
 	ctx := r.Context()
-	if iss.Status != store.IssueApproved {
-		if err := db(r).SetIssueStatus(ctx, iss.ID, store.IssueApproved); err != nil {
-			return nil, err
-		}
-		iss.Status = store.IssueApproved // the receipt attests to the approved document
-		db(r).RecordDecision(ctx, iss.PublicationID, 0, "approve", approveDecisionReason(iss.ID))
-	}
-	rec, err := db(r).ApprovalReceipt(ctx, iss.ID)
-	if err != sql.ErrNoRows {
-		return rec, err
-	}
 	if checks == nil {
 		checks = s.readinessChecks(r, iss, pub, nil)
 	}
 	cj, _ := json.Marshal(checks)
-	rec = &store.ApprovalReceipt{
-		IssueID: iss.ID, Number: iss.Number,
-		DocumentVersion: docVersion(iss),
-		// the approver is the claimed owner — an anonymous session has
-		// no name to show, so it stays empty rather than leaking the
-		// workspace label (§2 never-show, KLOX-64)
-		Approver:   s.workspaceOwner(ctx, db(r)),
-		ChecksJSON: string(cj),
-	}
-	if err := db(r).SaveApprovalReceipt(ctx, rec); err != nil {
+	approver := s.workspaceOwner(ctx, db(r))
+	approvedDoc := *iss
+	approvedDoc.Status = store.IssueApproved // the receipt attests to the approved document
+
+	var out *store.ApprovalReceipt
+	err := db(r).WithTx(ctx, func(txdb *store.DB) error {
+		if iss.Status != store.IssueApproved {
+			if err := txdb.SetIssueStatus(ctx, iss.ID, store.IssueApproved); err != nil {
+				return err
+			}
+			if err := txdb.RecordDecision(ctx, iss.PublicationID, 0, "approve", approveDecisionReason(iss.ID)); err != nil {
+				return err
+			}
+		}
+		rec, err := txdb.ApprovalReceipt(ctx, iss.ID)
+		if err != sql.ErrNoRows {
+			if err != nil {
+				return err
+			}
+			out = rec
+			return nil
+		}
+		rec = &store.ApprovalReceipt{
+			IssueID: iss.ID, Number: iss.Number,
+			DocumentVersion: docVersion(&approvedDoc),
+			// the approver is the claimed owner — an anonymous session has
+			// no name to show, so it stays empty rather than leaking the
+			// workspace label (§2 never-show, KLOX-64)
+			Approver:   approver,
+			ChecksJSON: string(cj),
+		}
+		if err := txdb.SaveApprovalReceipt(ctx, rec); err != nil {
+			return err
+		}
+		rec, err = txdb.ApprovalReceipt(ctx, iss.ID)
+		if err != nil {
+			return err
+		}
+		out = rec
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	return db(r).ApprovalReceipt(ctx, iss.ID)
+	iss.Status = store.IssueApproved
+	return out, nil
 }
 
 func (s *Server) apiSend(w http.ResponseWriter, r *http.Request) {

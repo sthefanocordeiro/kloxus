@@ -20,7 +20,7 @@ func (db *DB) RerankScores(ctx context.Context, pubID int64, hash, model string,
 		return out, nil
 	}
 	since := now.UTC().Add(-RerankCacheTTL).Format(tsLayout)
-	rows, err := db.db.QueryContext(ctx,
+	rows, err := db.QueryContext(ctx,
 		`SELECT rs.item_id, rs.score FROM rerank_scores rs
 		 JOIN publications pu ON pu.id = rs.publication_id
 		 WHERE rs.publication_id = $1 AND pu.workspace_id = $2 AND rs.profile_hash = $3
@@ -45,7 +45,7 @@ func (db *DB) RerankScores(ctx context.Context, pubID int64, hash, model string,
 func (db *DB) SaveRerankScores(ctx context.Context, pubID int64, hash, model string, scores map[int64]float64, now time.Time) error {
 	ts := now.UTC().Format(tsLayout)
 	for id, s := range scores {
-		if _, err := db.db.ExecContext(ctx,
+		if _, err := db.ExecContext(ctx,
 			`INSERT INTO rerank_scores (publication_id, item_id, profile_hash, model, score, created_at)
 			 SELECT $1, $2, $3, $4, $5, $6
 			 WHERE EXISTS (SELECT 1 FROM publications WHERE id = $1 AND workspace_id = $7)

@@ -19,35 +19,30 @@ import (
 // is allocated; nil stores an empty subject.
 func (db *DB) CreateNextIssue(ctx context.Context, pubID int64, subjectForNumber func(int) string, bodyMD string, sections []config.Section) (int64, int, error) {
 	secs, _ := json.Marshal(sections)
-	tx, err := db.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer tx.Rollback()
-	var locked int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT id FROM publications WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
-		db.ws, pubID).Scan(&locked); err != nil {
-		return 0, 0, err
-	}
-	var number int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(number), 0) + 1 FROM issues WHERE workspace_id = $1 AND publication_id = $2`,
-		db.ws, pubID).Scan(&number); err != nil {
-		return 0, 0, err
-	}
-	subject := ""
-	if subjectForNumber != nil {
-		subject = subjectForNumber(number)
-	}
 	var id int64
-	if err := tx.QueryRowContext(ctx,
-		`INSERT INTO issues (workspace_id, publication_id, number, subject, body_md, sections_json) VALUES ($1,$2,$3,$4,$5,$6)
-		 RETURNING id`,
-		db.ws, pubID, number, subject, bodyMD, string(secs)).Scan(&id); err != nil {
-		return 0, 0, err
-	}
-	if err := tx.Commit(); err != nil {
+	var number int
+	err := db.WithTx(ctx, func(txdb *DB) error {
+		var locked int64
+		if err := txdb.QueryRowContext(ctx,
+			`SELECT id FROM publications WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+			db.ws, pubID).Scan(&locked); err != nil {
+			return err
+		}
+		if err := txdb.QueryRowContext(ctx,
+			`SELECT COALESCE(MAX(number), 0) + 1 FROM issues WHERE workspace_id = $1 AND publication_id = $2`,
+			db.ws, pubID).Scan(&number); err != nil {
+			return err
+		}
+		subject := ""
+		if subjectForNumber != nil {
+			subject = subjectForNumber(number)
+		}
+		return txdb.QueryRowContext(ctx,
+			`INSERT INTO issues (workspace_id, publication_id, number, subject, body_md, sections_json) VALUES ($1,$2,$3,$4,$5,$6)
+			 RETURNING id`,
+			db.ws, pubID, number, subject, bodyMD, string(secs)).Scan(&id)
+	})
+	if err != nil {
 		return 0, 0, err
 	}
 	return id, number, nil
@@ -80,23 +75,20 @@ func (db *DB) IssueBody(ctx context.Context, pubID int64, number int) (string, e
 // invalidates any stored approval receipt. Both writes commit together so a
 // failed receipt cleanup cannot leave an edited issue looking approved.
 func (db *DB) UpdateIssue(ctx context.Context, issueID int64, status, bodyMD, flagsJSON string) error {
-	tx, err := db.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE issues SET status = $1, body_md = $2, flags_json = $3 WHERE workspace_id = $4 AND id = $5`,
-		status, bodyMD, flagsJSON, db.ws, issueID); err != nil {
-		return err
-	}
-	if status != IssueApproved {
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM approval_receipts WHERE workspace_id = $1 AND issue_id = $2`, db.ws, issueID); err != nil {
+	return db.WithTx(ctx, func(txdb *DB) error {
+		if _, err := txdb.ExecContext(ctx,
+			`UPDATE issues SET status = $1, body_md = $2, flags_json = $3 WHERE workspace_id = $4 AND id = $5`,
+			status, bodyMD, flagsJSON, db.ws, issueID); err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		if status != IssueApproved {
+			if _, err := txdb.ExecContext(ctx,
+				`DELETE FROM approval_receipts WHERE workspace_id = $1 AND issue_id = $2`, db.ws, issueID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // Issue is a stored issue row.
@@ -250,7 +242,7 @@ func (db *DB) ScheduleIssue(ctx context.Context, id int64, at string) error {
 	if err != nil {
 		return err
 	}
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -288,7 +280,7 @@ func parseScheduledAt(s string) (time.Time, error) {
 // a failure must not leave a drafted issue still holding a receipt or a
 // pending send job.
 func (db *DB) RevertIssueToDraft(ctx context.Context, id int64) error {
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}

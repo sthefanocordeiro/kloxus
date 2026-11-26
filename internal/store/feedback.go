@@ -26,7 +26,7 @@ const maxFeedbackMembers = 12
 // storyVector is the normalized mean of a story's member vectors for
 // model (nil when the story was rebuilt away or has no embeddings).
 func (db *DB) storyVector(ctx context.Context, storyID int64, model string) ([]float32, error) {
-	rows, err := db.db.QueryContext(ctx,
+	rows, err := db.QueryContext(ctx,
 		`SELECT e.embedding::text FROM story_items si
 		 JOIN stories s ON s.id = si.story_id
 		 JOIN item_embeddings e ON e.item_id = si.item_id AND e.model = $2
@@ -61,7 +61,7 @@ func (db *DB) ApplyFeedback(ctx context.Context, pubID, storyID int64, model, ki
 	if err != nil || v == nil {
 		return err
 	}
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ type StoryAnswer struct {
 // the Rocchio fold which only shifts weights. The latest answer per
 // key wins, so a re-dealt card answered again overwrites the first.
 func (db *DB) SaveStoryAnswers(ctx context.Context, pubID int64, keys []string, answer, title string) error {
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ type SectionProfile struct {
 
 // SectionProfiles returns the cached vectors of a publication by section id.
 func (db *DB) SectionProfiles(ctx context.Context, pubID int64) (map[string]SectionProfile, error) {
-	rows, err := db.db.QueryContext(ctx,
+	rows, err := db.QueryContext(ctx,
 		`SELECT sp.section_id, sp.vec::text, sp.topic_hash FROM section_profiles sp
 		 JOIN publications pu ON pu.id = sp.publication_id
 		 WHERE sp.publication_id = $1 AND pu.workspace_id = $2`, pubID, db.ws)
@@ -235,7 +235,7 @@ func (db *DB) SaveSectionProfile(ctx context.Context, pubID int64, sectionID str
 	if db.vectorOK(ctx) {
 		cast = "::vector"
 	}
-	_, err := db.db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO section_profiles (publication_id, section_id, vec, topic_hash)
 		 SELECT $1, $2, $3`+cast+`, $4
 		 WHERE EXISTS (SELECT 1 FROM publications WHERE id = $1 AND workspace_id = $5)

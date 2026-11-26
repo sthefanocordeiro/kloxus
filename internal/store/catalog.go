@@ -284,6 +284,17 @@ func MergeDJDetail(storedMeta map[string]any, storedText string, in *CatalogItem
 // recomputes them on the next pass. Idempotent: replaying the same
 // payload changes nothing.
 func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogItem) (added, changed int, err error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+	defer func() {
+		if err != nil {
+			added, changed = 0, 0 // a rolled-back batch did not add or change anything
+		}
+	}()
+
 	// Load the stored rows' meta + body once so list-only refreshes
 	// don't clobber a detail fetch (MergeDJDetail).
 	extIDs := make([]string, 0, len(raw))
@@ -295,16 +306,16 @@ func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogIt
 		text string
 	}{}
 	if len(extIDs) > 0 {
-		srows, err := p.db.QueryContext(ctx,
+		srows, err := tx.QueryContext(ctx,
 			`SELECT external_id, content_text, meta_json FROM items
 			 WHERE catalog_id = $1 AND external_id = ANY($2)`, catalogID, extIDs)
 		if err != nil {
 			return 0, 0, err
 		}
-		defer srows.Close()
 		for srows.Next() {
 			var ext, text, mj string
 			if err := srows.Scan(&ext, &text, &mj); err != nil {
+				srows.Close()
 				return 0, 0, err
 			}
 			var m map[string]any
@@ -317,6 +328,10 @@ func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogIt
 			}{m, text}
 		}
 		if err := srows.Err(); err != nil {
+			srows.Close()
+			return 0, 0, err
+		}
+		if err := srows.Close(); err != nil {
 			return 0, 0, err
 		}
 	}
@@ -339,7 +354,7 @@ func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogIt
 		data, _ := json.Marshal(meta)
 		var id int64
 		var inserted bool
-		err := p.db.QueryRowContext(ctx, `INSERT INTO items
+		err := tx.QueryRowContext(ctx, `INSERT INTO items
 			(source_id, catalog_id, external_id, url, canonical_url, title, author, published_at, content_text, kind, meta_json, body_truncated)
 			VALUES (NULL,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 			ON CONFLICT (catalog_id, external_id) WHERE catalog_id IS NOT NULL
@@ -370,15 +385,20 @@ func (p *Pool) SaveDJItems(ctx context.Context, catalogID int64, raw []CatalogIt
 	if len(changedIDs) > 0 {
 		// Stale deterministic semantic rows are dropped, never
 		// rewritten in place — the sweep recomputes them next pass.
-		// AI enrichment rows (model not 'local-%') survive.
-		if _, err := p.db.ExecContext(ctx,
+		// AI enrichment rows (model not 'local-%') survive. Both deletes
+		// commit with the content update above: a failure cannot leave a
+		// revised item carrying half-cleaned stale semantic state.
+		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM item_embedding WHERE item_id = ANY($1)`, changedIDs); err != nil {
 			return added, changed, err
 		}
-		if _, err := p.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM item_enrichment WHERE item_id = ANY($1) AND model LIKE 'local-%'`, changedIDs); err != nil {
 			return added, changed, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
 	}
 	return added, changed, nil
 }
