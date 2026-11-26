@@ -23,7 +23,8 @@ never writes the commentary.
 
 > **HackBrazil 2026** — track *Logística & Automação* (Logistics and
 > Automation). This is the
-> hosted real app: a curated catalog of 29 live feeds, Postgres on
+> hosted real app: a curated catalog of 31 audited feeds — 20 currently
+> active — Postgres on
 > Supabase, real magic-link email via Resend, one Go binary on Fly.io.
 > The reasoning lives in
 > [docs/decisions.md](docs/decisions.md) (D27 onward).
@@ -53,16 +54,16 @@ never writes the commentary.
 - the 07:00 morning email carrying the day's stories *(on in production)*
 
 **Real production numbers** — production Postgres and the LLM ledger,
-queried 2026-11-25 (UTC), nothing estimated:
+queried 2026-11-26 (UTC), nothing estimated:
 
 | Metric | Value |
 | --- | --- |
-| Active audited sources | 29 |
+| Audited sources active / total | 20 / 31 |
 | Items collected per day | ~2,450 |
 | Folded into existing stories by dedupe | 3.6% of items |
 | Stories per Radar per day | ~6.5 |
 | Build brief time | ~2–3 s per Radar |
-| Voyage cost per day | ≈US$0.22–0.24 |
+| Voyage embedding cost per day | ≈US$0.005 average |
 
 The same engine fits team clipping and market-intelligence briefs.
 
@@ -122,7 +123,7 @@ on mornings with new stories — assembled at ~06:30, in the inbox by
 ## How it works
 
 ```
-                 curated feed catalog (29 active sources: g1, InfoMoney,
+                 curated feed catalog (20 active of 31 audited: g1, InfoMoney,
                   Agência Brasil, Finsiders, Tecnoblog, Olhar Digital…)
                                 │  global poll · conditional GET ·
                                 │  robots-aware · one fetch for all
