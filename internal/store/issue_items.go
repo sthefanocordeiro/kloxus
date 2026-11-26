@@ -245,6 +245,12 @@ func (db *DB) IssueDocBundle(ctx context.Context, issueID int64) (*IssueDocBundl
 		return nil, fmt.Errorf("decoding cited items for %d: %w", issueID, err)
 	}
 	for _, it := range items {
+		if len(it.Categories) == 0 {
+			// scanItem leaves the empty column as nil; keep the bundle's
+			// representation identical so callers can compare the two read
+			// paths without a nil-vs-empty-slice artifact.
+			it.Categories = nil
+		}
 		item := &Item{
 			ID: it.ID, SourceName: it.SourceName, SourceURL: it.SourceURL,
 			SourceType: it.SourceType, URL: it.URL, Title: it.Title,
