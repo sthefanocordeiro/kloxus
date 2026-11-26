@@ -150,28 +150,33 @@ func TestStage1CategoryConjunctionDoesNotClearOffTopicWithoutSubjectEvidence(t *
 
 	story := detStory(1, "Safra tem nova projeção", "2026-11-25T10:00:00Z", 1)
 	story.Items[0].ID = itemID
-	r := &Runner{DB: db, Embedder: emb}
-	without := r.rankStage1(ctx, pub, []store.Story{story}, []string{""}, nil)
-	if without.Hidden[0] != rank.HiddenOffTopic {
-		t.Fatalf("uncategorized orthogonal story hidden=%q want off_topic", without.Hidden[0])
-	}
 
-	story.Items[0].Categories = []string{"AGRONEGOCIO"}
-	categoryOnly := r.rankStage1(ctx, pub, []store.Story{story}, []string{""}, nil)
-	if categoryOnly.Hidden[0] != rank.HiddenOffTopic {
-		t.Fatalf("category alone cleared off_topic despite editoria+subjects: hidden=%q", categoryOnly.Hidden[0])
+	categoryOnlyStory := story
+	categoryOnlyStory.ID = 2
+	categoryOnlyStory.Items = append([]store.Item(nil), story.Items...)
+	categoryOnlyStory.Items[0].Categories = []string{"AGRONEGOCIO"}
+
+	bothStory := categoryOnlyStory
+	bothStory.ID = 3
+	bothStory.Title = "Pecuária tem nova projeção"
+	bothStory.Items = append([]store.Item(nil), categoryOnlyStory.Items...)
+	bothStory.Items[0].Title = "Pecuária tem nova projeção"
+
+	r := &Runner{DB: db, Embedder: emb}
+	ranked := r.rankStage1(ctx, pub, []store.Story{story, categoryOnlyStory, bothStory}, []string{"", "", ""}, nil)
+	if ranked.Hidden[0] != rank.HiddenOffTopic {
+		t.Fatalf("uncategorized orthogonal story hidden=%q want off_topic", ranked.Hidden[0])
 	}
-	if got := categoryOnly.Scores[0] - without.Scores[0]; got != 0 {
+	if ranked.Hidden[1] != rank.HiddenOffTopic {
+		t.Fatalf("category alone cleared off_topic despite editoria+subjects: hidden=%q", ranked.Hidden[1])
+	}
+	if got := ranked.Scores[1] - ranked.Scores[0]; got != 0 {
 		t.Fatalf("category alone changed stage1 score by %v", got)
 	}
-
-	story.Title = "Pecuária tem nova projeção"
-	story.Items[0].Title = "Pecuária tem nova projeção"
-	both := r.rankStage1(ctx, pub, []store.Story{story}, []string{""}, nil)
-	if both.Hidden[0] != rank.HiddenNone {
-		t.Fatalf("category plus subject evidence did not clear off_topic: hidden=%q", both.Hidden[0])
+	if ranked.Hidden[2] != rank.HiddenNone {
+		t.Fatalf("category plus subject evidence did not clear off_topic: hidden=%q", ranked.Hidden[2])
 	}
-	if got := both.Scores[0] - without.Scores[0]; got < categoryMatchBoost-0.001 || got > categoryMatchBoost+0.001 {
+	if got := ranked.Scores[2] - ranked.Scores[0]; got < categoryMatchBoost-0.001 || got > categoryMatchBoost+0.001 {
 		t.Fatalf("category+subject score delta=%v want about %v", got, categoryMatchBoost)
 	}
 }
