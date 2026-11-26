@@ -23,7 +23,7 @@ never writes the commentary.
 
 > **HackBrazil 2026** — track *Logística & Automação* (Logistics and
 > Automation). This is the
-> hosted real app: a curated catalog of 31 audited feeds — 21 currently
+> hosted real app: a curated catalog of 31 audited feeds — 20 currently
 > active — Postgres on
 > Supabase, real magic-link email via Resend, one Go binary on Fly.io.
 > The reasoning lives in
@@ -58,7 +58,7 @@ queried 2026-11-26 (UTC), nothing estimated:
 
 | Metric | Value |
 | --- | --- |
-| Audited sources active / total | 21 / 31 |
+| Audited sources active / total | 20 / 31 |
 | Items collected per day | ~2,450 |
 | Folded into existing stories by dedupe | 3.6% of items |
 | Stories per Radar per day | ~6.5 |
@@ -123,7 +123,7 @@ on mornings with new stories — assembled at ~06:30, in the inbox by
 ## How it works
 
 ```
-                 curated feed catalog (21 active of 31 audited: g1, InfoMoney,
+                 curated feed catalog (20 active of 31 audited: g1, InfoMoney,
                   Agência Brasil, Finsiders, Tecnoblog, Olhar Digital…)
                                 │  global poll · conditional GET ·
                                 │  robots-aware · one fetch for all
