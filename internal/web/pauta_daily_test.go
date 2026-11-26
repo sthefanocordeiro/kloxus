@@ -412,7 +412,10 @@ func TestDailyPautaMailSkipsStalePauta(t *testing.T) {
 		t.Fatalf("today pauta: %v", err)
 	}
 	srv.DailyPautaTick(ctx, pool, now)
-	for _, m := range fake.messages() {
+	// The sweep walks every active workspace on the shared pool, so
+	// only this radar's owner may be checked — other workspaces' mails
+	// are their own tests' business.
+	for _, m := range dailyMailTo(fake, owner) {
 		t.Fatalf("repeat pauta mailed: %v", m.Subject)
 	}
 	if row, _ := db.PautaDay(ctx, pub, day); row == nil || row.EmailedAt == "" {
@@ -621,7 +624,7 @@ func TestDailyPautaMailNoNews(t *testing.T) {
 
 	srv.DailyPautaTick(ctx, pool, now)
 
-	for _, m := range fake.messages() {
+	for _, m := range dailyMailTo(fake, owner) {
 		t.Fatalf("mail sent with no stories: %v", m.Subject)
 	}
 	if row, _ := db.PautaDay(ctx, pub, day); row == nil || row.EmailedAt == "" {
