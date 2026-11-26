@@ -223,10 +223,12 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		slog.Warn("pauta day: malformed cards json", "day", day, "err", err)
 	}
 	cards = visiblePautaCards(ctx, wdb, pub.ID, cards)
-	if len(cards) == 0 {
-		// Nothing new to tell: stamp the day handled without spending
-		// the recipient's daily mail — another of their radars may
-		// still have stories worth one note (KLOX-256/258).
+	// Sem notícias novas no dia, nada sai (KLOX-256/258): the mail
+	// announces what the overnight build found — a pauta that is empty
+	// or only repeats the previous snapshot has nothing to announce,
+	// and skipping here keeps the owner's one-mail-a-day slot free for
+	// another radar of theirs that does carry new stories.
+	if !hasNewPautaCards(ctx, wdb, pub.ID, day, cards) {
 		return wdb.MarkPautaDayEmailed(ctx, pub.ID, day)
 	}
 	owner, _, err := pool.WorkspaceOwner(ctx, wsID)
@@ -346,4 +348,51 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	// Refused and fallback are the day's one attempt too — the ledger
 	// row says why, and the spec asks for one mail a day.
 	return wdb.MarkPautaDayEmailed(ctx, pub.ID, day)
+}
+
+// hasNewPautaCards reports whether today's pauta offers a story the
+// radar did not already offer — the "notícias novas no dia" the 07:00
+// mail exists for (KLOX-256). A card counts as new when none of its
+// stable feedback keys (canonical URL, SimHash) appeared in the
+// previous stored pauta; a card without keys cannot be proven old and
+// counts as new, as does every card of a first-ever snapshot.
+func hasNewPautaCards(ctx context.Context, wdb *store.DB, pubID int64, day string, cards []pautaCardView) bool {
+	if len(cards) == 0 {
+		return false
+	}
+	prev, err := wdb.PrevPautaDay(ctx, pubID, day)
+	if err != nil {
+		return true // no earlier snapshot — everything is new
+	}
+	var prevCards []pautaCardView
+	if err := json.Unmarshal([]byte(prev.CardsJSON), &prevCards); err != nil {
+		return true // an unreadable snapshot can't prove a repeat
+	}
+	seen := make(map[string]bool)
+	for _, c := range prevCards {
+		for _, k := range c.Keys {
+			seen[k] = true
+		}
+	}
+	for _, c := range cards {
+		keys := c.Keys
+		if len(keys) == 0 {
+			// same resolution as the rejection filter above: snapshots
+			// predating card keys look the story up live
+			if st, err := wdb.StoryWithItems(ctx, c.StoryID); err == nil && st != nil {
+				keys = st.FeedbackKeys()
+			}
+		}
+		fresh := len(keys) == 0
+		for _, k := range keys {
+			if !seen[k] {
+				fresh = true
+				break
+			}
+		}
+		if fresh {
+			return true
+		}
+	}
+	return false
 }

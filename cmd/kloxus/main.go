@@ -408,7 +408,7 @@ func serveUI(cfg *config.Config, pool *store.Pool, db *store.DB, fetcher sources
 	srv := web.New(web.Deps{
 		WS: deps.wsm, Cfg: cfg, Fetcher: fetcher, LLM: provider, Guard: guard,
 		Monitor: deps.monitor, Scraper: deps.scraper, Mailer: deps.mailer, Seed: seed, Pool: pool,
-		Pay: deps.pay,
+		Pay: deps.pay, DailyPautaMail: cfg.DailyPautaMail,
 	})
 	// The schedulers share the shutdown signal so a detached sweep
 	// can't outlive the process's decision to exit.

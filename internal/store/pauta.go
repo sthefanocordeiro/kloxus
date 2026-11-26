@@ -39,6 +39,22 @@ func (db *DB) PautaDay(ctx context.Context, pubID int64, day string) (*PautaDay,
 	return &p, nil
 }
 
+// PrevPautaDay loads the most recent stored pauta strictly before the
+// given day — the previous snapshot the 07:00 mail diffs against to
+// find the day's new stories (KLOX-256). sql.ErrNoRows when none.
+func (db *DB) PrevPautaDay(ctx context.Context, pubID int64, day string) (*PautaDay, error) {
+	var p PautaDay
+	err := db.QueryRowContext(ctx, `
+		SELECT cards_json, built_at, emailed_at FROM pauta_days
+		WHERE workspace_id = $1 AND publication_id = $2 AND day < $3
+		ORDER BY day DESC LIMIT 1`,
+		db.ws, pubID, day).Scan(&p.CardsJSON, &p.BuiltAt, &p.EmailedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 // DeletePautaDay drops a stored pauta — an interaction that changes the
 // ranking (Sim/Não, skip, Escrever, a new calibration deal) makes the
 // next Hoje rebuild live.
