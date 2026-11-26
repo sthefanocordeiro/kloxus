@@ -1,9 +1,25 @@
 # Kloxus JSON API — `/api/v1`
 
-The v2 contract: the existing behaviour exposed as JSON. The product
-rules do not change — the AI never writes commentary, nothing is sent
-without explicit approval, every factual sentence links to a source. The
-interface shows state; the server decides it.
+> **Production status — legacy publishing surface dormant.** The hosted
+> product is the Radar → Today → brief → export loop and runs with
+> `KLOXUS_PUBLISHING=off`. Large parts of this file document the
+> pre-pivot newsletter pipeline kept only as internal regression and
+> migration reference: sending issues to readers, reader pages and
+> subscriptions, paywall/checkout, approval receipts, the citation-check
+> workflow, section-based composition and the editorial guide. They are
+> not live user-facing production features. With publishing off, the
+> reader/paywall/send/outbox routes return 404 before workspace
+> resolution; the remaining legacy endpoints are not part of the hosted
+> Radar journey. Do not read this file as saying that paywall, reader
+> sending, approval, fact checking, sections or an editorial guide exist
+> in the submitted product.
+
+This is a mixed legacy/reference contract, not a map of the submitted
+Radar product. Routes shared with the current Radar loop are still live;
+objects and routes tied to the pre-pivot newsletter pipeline — approval
+receipts, citation checking, section-based composition, reader sending,
+paywall, public reader pages and the editorial guide — are dormant or
+internal-only as described above.
 
 - **Auth/isolation:** the same workspace cookie, rate limits and
   per-visitor isolation as the HTML routes. No other auth in demo mode.
@@ -14,6 +30,9 @@ interface shows state; the server decides it.
   `message` and, for blocked actions, `reasons` — each with a code, a
   message and a `target` pointing at what must be fixed
   (`{kind: "section"|"sentence"|"item"|"issue", ref}`).
+
+The error-shape example below comes from the legacy issue pipeline; it
+illustrates the envelope only, not a live production action.
 
 ```json
 HTTP/1.1 409 Conflict
@@ -303,6 +322,15 @@ data: {"id": "a1b2c3d4", "kind": "prepare", "status": "done", "issue_id": 1, "�
 ```
 
 ## Issues
+
+> **Legacy newsletter pipeline — dormant reference only.** Everything
+> from this section through **Editorial guide** describes the pre-pivot
+> issue pipeline retained for regression/migration reference. It is not
+> part of the hosted Radar journey, and it does not mean approval,
+> citation checking, sections, reader sending, paywall or an editorial
+> guide exist as user-facing submitted features. With
+> `KLOXUS_PUBLISHING=off`, the send/hold/after, outbox, paywall and
+> reader-facing routes in this legacy block return 404.
 
 ### `GET /api/v1/publications/{id}/issues`
 ```json
