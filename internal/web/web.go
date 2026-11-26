@@ -125,6 +125,10 @@ func (s *Server) registerPublicRoutes() {
 	m.HandleFunc("GET /claim/", s.claimPage)
 	m.HandleFunc("POST /claim", s.claimConfirm)
 	m.HandleFunc("POST /claim/", s.claimConfirm)
+	m.HandleFunc("GET /login", s.loginPage)
+	m.HandleFunc("GET /login/", s.loginPage)
+	m.HandleFunc("POST /login", s.loginConfirm)
+	m.HandleFunc("POST /login/", s.loginConfirm)
 	m.HandleFunc("GET /confirm-sub", s.confirmSub)
 	m.HandleFunc("GET /confirm-sub/", s.confirmSub)
 	m.HandleFunc("POST /unsub", s.unsubOneClick) // RFC 8058 one-click
@@ -154,6 +158,7 @@ func (s *Server) registerAPIRoutes() {
 	m.HandleFunc("POST /api/v1/workspace/lang", s.apiWorkspaceLang)
 	m.HandleFunc("POST /api/v1/workspace/daily-mail", s.apiWorkspaceDailyMail)
 	m.HandleFunc("POST /api/v1/workspace/claim", s.apiClaimStart)
+	m.HandleFunc("POST /api/v1/auth/login", s.apiLoginStart)
 	m.HandleFunc("POST /api/v1/logout", s.apiLogout)
 	m.HandleFunc("POST /api/v1/p/{slug}/subscribe", s.apiSubscribe)
 	m.HandleFunc("POST /api/v1/p/{slug}/checkout", s.apiPayCheckout)
@@ -350,6 +355,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/webhooks/") || strings.HasPrefix(r.URL.Path, "/api/v1/admin/") ||
 		r.URL.Path == "/claim" || strings.HasPrefix(r.URL.Path, "/claim/") ||
+		r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/login/") ||
 		r.URL.Path == "/confirm-sub" || strings.HasPrefix(r.URL.Path, "/confirm-sub/") ||
 		r.URL.Path == "/daily-mail/unsub" || strings.HasPrefix(r.URL.Path, "/daily-mail/unsub/") ||
 		(r.Method == http.MethodPost && (r.URL.Path == "/unsub" || strings.HasPrefix(r.URL.Path, "/unsub/"))) {
@@ -426,6 +432,7 @@ func (s *Server) noWorkspaceRoute(r *http.Request) bool {
 	case "GET /", "GET /app", "GET /app/",
 		"GET /api/v1/p/{slug}", "GET /api/v1/p/{slug}/{num}",
 		"GET /api/v1/p/{slug}/pay/{ref}", "GET /api/v1/unsub",
+		"POST /api/v1/auth/login",
 		"POST /api/v1/p/{slug}/subscribe", "POST /api/v1/p/{slug}/checkout",
 		"GET /api/v1/", "POST /api/v1/", "PUT /api/v1/",
 		"PATCH /api/v1/", "DELETE /api/v1/":

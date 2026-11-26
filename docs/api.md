@@ -109,19 +109,45 @@ address once in the pre-launch `waitlist` table (`source = "claim"`) —
 the launch-invitation list now fills from people who actually entered
 the product. The landing page no longer collects emails.
 
+### `POST /api/v1/auth/login`
+`{"email": "creator@example.com", "lang": "pt"}` — starts account
+recovery without resolving or creating a visitor workspace. When the
+address owns a workspace, a single-use sign-in link (15 min) is mailed;
+only the token hash is stored. Rate-limited to five links per email per
+hour (`429 rate_limited`). The accepted response is deliberately generic
+so account existence is not exposed:
+```json
+{"sent": true, "email": "creator@example.com"}
+```
+In outbox-only demo mode a known-account response also carries
+`delivery:"outbox"` and `login_url` so local verification can open the
+mailed link without an inbox.
+
+### `GET /login?t={token}` → `POST /login?t={token}` — not JSON
+The account sign-in link uses the same scanner-safe two-step contract as
+the claim link. The explicit `POST` spends the token and signs the
+confirming browser into the owned workspace that carries the account's
+Radar, then redirects to `/publications`. Legacy duplicate ownership can
+leave more than one workspace with a Radar on one email; in that case the
+confirm page first renders an explicit workspace choice and spends the
+token only after the choice posts back.
+
 ### `GET /claim?t={token}` → `POST /claim?t={token}` — not JSON
 The emailed link is two-step so mail-scanner prefetches can't spend it:
 `GET` only validates the token and renders a confirm page (`400` page
 when the link is invalid, spent or expired); the page's explicit `POST`
-spends it — must still be unexpired and unused. The workspace becomes
-owned by the link's email and the browser that confirmed is signed in
-via the workspace cookie — whichever browser that is. Redirects to
-`/start` ("Criar seu Radar"), which forwards to the existing Radar when
-the owner already has one.
+spends it — must still be unexpired and unused. For a first claim the
+workspace becomes owned by the link's email and the browser that
+confirmed is signed in via the workspace cookie — whichever browser that
+is — then redirects to `/start` ("Criar seu Radar"). When the email
+already owns a workspace, confirmation is account recovery instead: it
+signs into the workspace carrying the existing Radar (or renders the
+explicit multi-Radar choice) and redirects to `/publications`, never
+claiming the empty workaround session that minted the link.
 
 Emailed links are built on `KLOXUS_PUBLIC_URL` when configured, not the
 request host — the app may answer on throwaway verification hosts, but
-mail must point at the canonical deployment. `GET /claim/`,
+mail must point at the canonical deployment. `GET /claim/`, `GET /login/`,
 `GET /confirm-sub/` and `POST /unsub/` (a stray trailing slash on the
 emailed link) resolve to the same handlers.
 

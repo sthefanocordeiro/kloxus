@@ -1112,9 +1112,11 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 		return rr
 	}
 
-	// visitor A claims their workspace by email
+	// visitor A claims their workspace by email (run-unique: ownership is
+	// account-wide now, and hosted workspaces can outlive one test run)
+	ownerEmail := fmt.Sprintf("host-%d@hackbrazil.dev", time.Now().UnixNano())
 	cookieA := strings.SplitN(serve("GET", "/api/v1/workspace", "", nil).Header().Get("Set-Cookie"), ";", 2)[0]
-	rr := serve("POST", "/api/v1/workspace/claim", cookieA, map[string]string{"email": "host@hackbrazil.dev"})
+	rr := serve("POST", "/api/v1/workspace/claim", cookieA, map[string]string{"email": ownerEmail})
 	if rr.Code != 200 {
 		t.Fatalf("claim = %d %s", rr.Code, shortBody(rr))
 	}
@@ -1153,7 +1155,7 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 		t.Fatalf("claim did not set the workspace cookie: %q", set)
 	}
 	// and the workspace is now owned
-	if email, _, err := mgr.Pool().WorkspaceOwner(ctx, wsA.ID); err != nil || email != "host@hackbrazil.dev" {
+	if email, _, err := mgr.Pool().WorkspaceOwner(ctx, wsA.ID); err != nil || email != ownerEmail {
 		t.Fatalf("owner = %q %v", email, err)
 	}
 }

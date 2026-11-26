@@ -32,13 +32,15 @@ export function useSiteEntry() {
     enabled: hasSessionMarker(),
   });
   const start = useMutation({ mutationFn: api.workspace });
-  const [dest, setDest] = useState<"/start" | "/publications" | null>(null);
-  const go = (d: "/start" | "/publications") => {
+  const [dest, setDest] = useState<"/start" | null>(null);
+  const go = (d: "/start") => {
     setDest(d);
     start.mutate(undefined, { onSuccess: () => nav(d) });
   };
   const create = () => go("/start");
-  const signIn = () => go("/publications");
+  // Sign-in is account recovery, not session creation: the public form
+  // mails a link and the confirmed link is what enters the workspace.
+  const signIn = () => nav("/entrar");
   // re-fires whichever entry the visitor last picked — the 429 card's
   // "Tentar de novo" goes through here
   const retry = () => dest && go(dest);

@@ -44,6 +44,7 @@ function renderApp() {
             <Route path="/" element={<Landing />} />
             <Route path="/start" element={<div>onboarding screen</div>} />
             <Route path="/publications" element={<div>publications screen</div>} />
+            <Route path="/entrar" element={<div>sign-in screen</div>} />
             <Route path="/termos" element={<TermsPage />} />
             <Route path="/privacidade" element={<PrivacyPage />} />
           </Routes>
@@ -98,6 +99,16 @@ describe("Landing", () => {
     expect(await screen.findByRole("link", { name: /dashboard/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: /dashboard/i }));
     expect(await screen.findByText("publications screen")).toBeInTheDocument();
+  });
+
+  // KLOX-272: "Already have an account" is account recovery, not the
+  // workspace-create path that used to strand returning users in an
+  // empty workspace.
+  it("opens the sign-in recovery page without creating a workspace", async () => {
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: /already have an account\? sign in/i }));
+    expect(await screen.findByText("sign-in screen")).toBeInTheDocument();
+    expect(api.workspace).not.toHaveBeenCalled();
   });
 
   // KLOX-194: a fresh visit fires no session-touching call — the
