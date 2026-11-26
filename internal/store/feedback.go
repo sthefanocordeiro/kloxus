@@ -130,11 +130,16 @@ type StoryAnswer struct {
 // the Rocchio fold which only shifts weights. The latest answer per
 // key wins, so a re-dealt card answered again overwrites the first.
 func (db *DB) SaveStoryAnswers(ctx context.Context, pubID int64, keys []string, answer, title string) error {
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	for _, k := range keys {
 		if k == "" {
 			continue
 		}
-		if _, err := db.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO story_feedback (workspace_id, publication_id, story_key, answer, title)
 			VALUES ($1,$2,$3,$4,$5)
 			ON CONFLICT (publication_id, story_key)
@@ -143,7 +148,7 @@ func (db *DB) SaveStoryAnswers(ctx context.Context, pubID int64, keys []string, 
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // RejectedStoryFeedback lists the publication's "no" answers — the

@@ -290,12 +290,8 @@ func (s *Server) apiPautaCreate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "story_ids is required")
 		return
 	}
-	number, err := db(r).NextIssueNumber(ctx, pub.ID)
-	if apiDBErr(w, r, err, "pauta") {
-		return
-	}
-	id, err := db(r).CreateIssue(ctx, pub.ID, number,
-		fmt.Sprintf("%s — pauta %d", pub.Name, number), "", config.PostSections())
+	id, _, err := db(r).CreateNextIssue(ctx, pub.ID,
+		func(n int) string { return fmt.Sprintf("%s — pauta %d", pub.Name, n) }, "", config.PostSections())
 	if apiDBErr(w, r, err, "pauta") {
 		return
 	}

@@ -55,16 +55,25 @@ func (s Story) Outlets() []string {
 // ClearStories removes a publication's stories (for a fresh run).
 // Old issue_items keep a dangling story_id by design: their rendered
 // content lives in dossiers and the issue body, not in the stories table
-// — which is why issue_items.story_id carries no foreign key.
+// — which is why issue_items.story_id carries no foreign key. The member
+// links and story rows are deleted in one transaction so a failure cannot
+// leave link rows pointing at stories that are gone (or vice versa).
 func (db *DB) ClearStories(ctx context.Context, pubID int64) error {
-	if _, err := db.ExecContext(ctx,
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM story_items WHERE workspace_id = $1 AND story_id IN
 			(SELECT id FROM stories WHERE workspace_id = $1 AND publication_id = $2)`, db.ws, pubID); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx,
-		`DELETE FROM stories WHERE workspace_id = $1 AND publication_id = $2`, db.ws, pubID)
-	return err
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM stories WHERE workspace_id = $1 AND publication_id = $2`, db.ws, pubID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // CreateStory inserts a story group. dedupeKey is the canonical URL the
@@ -373,24 +382,30 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 }
 
 // MergeStories moves all items from the secondary stories into the primary
-// one and deletes the secondaries.
+// one and deletes the secondaries. All merges commit together — a failure on
+// one duplicate must not leave a half-merged cluster behind.
 func (db *DB) MergeStories(ctx context.Context, primary int64, secondaries []int64) error {
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	for _, sec := range secondaries {
-		if _, err := db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE story_items si SET story_id = $1
 			 WHERE workspace_id = $2 AND story_id = $3
 			   AND NOT EXISTS (SELECT 1 FROM story_items x WHERE x.story_id = $1 AND x.item_id = si.item_id)`,
 			primary, db.ws, sec); err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM story_items WHERE workspace_id = $1 AND story_id = $2`, db.ws, sec); err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM stories WHERE workspace_id = $1 AND id = $2`, db.ws, sec); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }

@@ -56,13 +56,25 @@ func (db *DB) CancelSubscription(ctx context.Context, readerID int64) error {
 
 // UnsubscribeReader records an email unsubscribe: the subscription is
 // canceled and the reader row is stamped so sends can honor the opt-out.
+// Both writes commit together — a half-written unsubscribe would either keep
+// sending to the reader or make an active subscription look unusable.
 func (db *DB) UnsubscribeReader(ctx context.Context, readerID int64) error {
-	if _, err := db.ExecContext(ctx,
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE readers SET unsubscribed_at = $1 WHERE workspace_id = $2 AND id = $3`,
 		NowUTC(), db.ws, readerID); err != nil {
 		return err
 	}
-	return db.CancelSubscription(ctx, readerID)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE subscriptions SET status = 'canceled' WHERE workspace_id = $1 AND reader_id = $2 AND status = 'active'`,
+		db.ws, readerID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ReaderUnsubscribed reports whether the reader opted out of emails.

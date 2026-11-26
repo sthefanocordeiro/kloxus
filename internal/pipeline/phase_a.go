@@ -66,11 +66,6 @@ func (r *Runner) RunPhaseA(ctx context.Context, pub *store.Publication) (*Result
 // the publication's localized edition word and the issue snapshots the
 // section definitions as they are now.
 func (r *Runner) createIssue(ctx context.Context, pub *store.Publication, st *phaseAState) error {
-	number, err := r.DB.NextIssueNumber(ctx, pub.ID)
-	if err != nil {
-		return err
-	}
-	st.res.Number = number
 	// the stored subject mirrors assembleIssue's body heading — the
 	// issue chrome, mail subject, and export title all render it as-is
 	// (KLOX-56).
@@ -81,11 +76,12 @@ func (r *Runner) createIssue(ctx context.Context, pub *store.Publication, st *ph
 	// The issue snapshots the publication's section definitions: builder
 	// edits land on the next edition, not the one already in progress
 	// (KLOX-65).
-	issueID, err := r.DB.CreateIssue(ctx, pub.ID, number,
-		fmt.Sprintf("%s — %s %d", pub.Name, word, number), "", pub.Sections)
+	issueID, number, err := r.DB.CreateNextIssue(ctx, pub.ID,
+		func(n int) string { return fmt.Sprintf("%s — %s %d", pub.Name, word, n) }, "", pub.Sections)
 	if err != nil {
 		return err
 	}
+	st.res.Number = number
 	st.issueID = issueID
 	st.res.IssueID = issueID
 	r.DB.AttachRuns(ctx, pub.ID, issueID)

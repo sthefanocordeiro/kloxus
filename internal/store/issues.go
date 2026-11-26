@@ -11,13 +11,46 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 )
 
-// NextIssueNumber returns the next sequential issue number for a publication.
-func (db *DB) NextIssueNumber(ctx context.Context, pubID int64) (int, error) {
-	var n int
-	err := db.QueryRowContext(ctx,
+// CreateNextIssue inserts an issue at the publication's next sequential
+// number and returns both ids. The publication row lock serializes number
+// allocation across concurrent callers (including other app processes), and
+// the UNIQUE(publication_id, number) constraint remains the database-level
+// guard. subjectForNumber is invoked inside the transaction after the number
+// is allocated; nil stores an empty subject.
+func (db *DB) CreateNextIssue(ctx context.Context, pubID int64, subjectForNumber func(int) string, bodyMD string, sections []config.Section) (int64, int, error) {
+	secs, _ := json.Marshal(sections)
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+	var locked int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM publications WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+		db.ws, pubID).Scan(&locked); err != nil {
+		return 0, 0, err
+	}
+	var number int
+	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(number), 0) + 1 FROM issues WHERE workspace_id = $1 AND publication_id = $2`,
-		db.ws, pubID).Scan(&n)
-	return n, err
+		db.ws, pubID).Scan(&number); err != nil {
+		return 0, 0, err
+	}
+	subject := ""
+	if subjectForNumber != nil {
+		subject = subjectForNumber(number)
+	}
+	var id int64
+	if err := tx.QueryRowContext(ctx,
+		`INSERT INTO issues (workspace_id, publication_id, number, subject, body_md, sections_json) VALUES ($1,$2,$3,$4,$5,$6)
+		 RETURNING id`,
+		db.ws, pubID, number, subject, bodyMD, string(secs)).Scan(&id); err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return id, number, nil
 }
 
 // CreateIssue inserts an issue and returns its id. sections snapshots
@@ -44,19 +77,26 @@ func (db *DB) IssueBody(ctx context.Context, pubID int64, number int) (string, e
 }
 
 // UpdateIssue sets status, body and flags on an issue. A re-draft
-// invalidates any stored approval receipt.
+// invalidates any stored approval receipt. Both writes commit together so a
+// failed receipt cleanup cannot leave an edited issue looking approved.
 func (db *DB) UpdateIssue(ctx context.Context, issueID int64, status, bodyMD, flagsJSON string) error {
-	_, err := db.ExecContext(ctx,
-		`UPDATE issues SET status = $1, body_md = $2, flags_json = $3 WHERE workspace_id = $4 AND id = $5`,
-		status, bodyMD, flagsJSON, db.ws, issueID)
+	tx, err := db.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if status != IssueApproved {
-		_, err = db.ExecContext(ctx,
-			`DELETE FROM approval_receipts WHERE workspace_id = $1 AND issue_id = $2`, db.ws, issueID)
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE issues SET status = $1, body_md = $2, flags_json = $3 WHERE workspace_id = $4 AND id = $5`,
+		status, bodyMD, flagsJSON, db.ws, issueID); err != nil {
+		return err
 	}
-	return err
+	if status != IssueApproved {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM approval_receipts WHERE workspace_id = $1 AND issue_id = $2`, db.ws, issueID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Issue is a stored issue row.
@@ -196,7 +236,8 @@ func (db *DB) MarkIssueTestSent(ctx context.Context, id int64) error {
 }
 
 // ScheduleIssue locks an issue for a future send and queues the
-// dispatch job that delivers it at that time.
+// dispatch job that delivers it at that time. The status flip, replacement
+// of any prior pending job, and the new queue entry commit together.
 func (db *DB) ScheduleIssue(ctx context.Context, id int64, at string) error {
 	// Parse first: a malformed 'at' must not commit the status flip.
 	// The stored value is normalized RFC3339 UTC (KLOX-223) — callers
@@ -205,16 +246,31 @@ func (db *DB) ScheduleIssue(ctx context.Context, id int64, at string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx,
+	payload, err := json.Marshal(map[string]any{"issue_id": id})
+	if err != nil {
+		return err
+	}
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE issues SET status = 'scheduled', scheduled_at = $1 WHERE workspace_id = $2 AND id = $3`,
 		t.UTC().Format(time.RFC3339), db.ws, id); err != nil {
 		return err
 	}
-	if err := db.CancelJobs(ctx, JobKindSendIssue, id); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM jobs WHERE workspace_id = $1 AND kind = $2 AND ref_id = $3 AND status = 'pending'`,
+		db.ws, JobKindSendIssue, id); err != nil {
 		return err
 	}
-	_, err = db.EnqueueJob(ctx, JobKindSendIssue, id, map[string]any{"issue_id": id}, t)
-	return err
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO jobs (workspace_id, kind, ref_id, payload_json, run_at) VALUES ($1,$2,$3,$4,$5)`,
+		db.ws, JobKindSendIssue, id, string(payload), TSUTC(t)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // parseScheduledAt accepts the RFC3339 the API stores (and, for
@@ -228,17 +284,30 @@ func parseScheduledAt(s string) (time.Time, error) {
 
 // RevertIssueToDraft returns an approved issue to drafted and drops its
 // approval receipt — post-approval edits invalidate the approval. Any
-// queued send goes with it.
+// queued send goes with it. The three cleanup writes are one transaction:
+// a failure must not leave a drafted issue still holding a receipt or a
+// pending send job.
 func (db *DB) RevertIssueToDraft(ctx context.Context, id int64) error {
-	if err := db.SetIssueStatus(ctx, id, IssueDrafted); err != nil {
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	if err := db.CancelJobs(ctx, JobKindSendIssue, id); err != nil {
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE issues SET status = $1, scheduled_at = '' WHERE workspace_id = $2 AND id = $3`,
+		IssueDrafted, db.ws, id); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx,
-		`DELETE FROM approval_receipts WHERE workspace_id = $1 AND issue_id = $2`, db.ws, id)
-	return err
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM jobs WHERE workspace_id = $1 AND kind = $2 AND ref_id = $3 AND status = 'pending'`,
+		db.ws, JobKindSendIssue, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM approval_receipts WHERE workspace_id = $1 AND issue_id = $2`, db.ws, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ApprovalReceipt is the stored record of an issue approval.
