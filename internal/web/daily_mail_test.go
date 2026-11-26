@@ -285,6 +285,14 @@ func TestDailyPautaMailToggleOff(t *testing.T) {
 	if rr.Code != 200 || apiJSON(t, rr)["daily_mail"] != true {
 		t.Fatalf("toggle on = %d %s", rr.Code, rr.Body.String())
 	}
+	// KLOX-256: re-enabling only re-arms the mail — it still needs
+	// "notícias novas no dia". The fixture replays an identical pauta,
+	// so seed the new day with a card the 24th snapshot did not carry
+	// (what the overnight build would have stored for a real novelty).
+	fresh := "[" + pautaMailCard(9, "Notícia nova", "Fonte Z", "u:toggle-fresh") + "]"
+	if err := db.SavePautaDay(ctx, mustPubID(t, db), "2026-11-25", fresh); err != nil {
+		t.Fatalf("next-day pauta: %v", err)
+	}
 	srv.DailyPautaTick(ctx, pool, spAt(2026, 11, 25, 7, 5))
 	if n := len(dailyMailTo(fake, owner)); n != 1 {
 		t.Fatalf("mails after re-enabling = %d, want 1", n)
