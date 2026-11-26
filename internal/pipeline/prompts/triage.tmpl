@@ -5,7 +5,8 @@ Language for output: {{.Language}}
 
 Editorial line:
 {{.EditorialLine}}
-{{if .Guide}}
+{{if .RejectTerms}}Reject terms — the editorial line excludes these themes, score them 0: {{.RejectTerms}}
+{{end}}{{if .Guide}}
 Editorial guide (refined by the editor's past decisions — apply it):
 {{.Guide}}
 {{end}}
