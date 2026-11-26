@@ -640,37 +640,48 @@ func (s *Server) apiLineup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// apply: place every entry, then remove what fell out of the lineup
+	// apply: place every entry, then remove what fell out of the lineup.
+	// The batch is one logical lineup replacement, so every placement and
+	// removal commits together or the prior lineup stays untouched.
 	reIncluded := false
-	positions := map[string]int{}
-	for _, e := range in.Entries {
-		positions[e.Section]++
-		pos := positions[e.Section] - 1
-		if ii, err := db(r).IssueItemByStory(ctx, iss.ID, e.StoryID); err == nil {
-			if ii.Status == store.ItemRejected {
-				reIncluded = true
-			}
-			if apiDBErr(w, r, db(r).SetIssueItemPlacement(ctx, ii.ID, e.Section, pos, store.ItemApproved), "item") {
-				return
-			}
-		} else {
-			c := valid[e.StoryID]
-			if _, err := db(r).CreateIssueItem(ctx, store.IssueItem{
-				IssueID: iss.ID, StoryID: e.StoryID, Section: e.Section,
-				Score: c.Story.TriageScore, Reason: c.Story.TriageReason,
-				Status: store.ItemApproved, Origin: "manual", Position: pos,
-			}); apiDBErr(w, r, err, "item") {
-				return
-			}
-		}
-	}
-	items, _ := db(r).IssueItems(ctx, iss.ID)
-	for _, ii := range items {
-		if (ii.Status == store.ItemPending || ii.Status == store.ItemApproved) && !seen[ii.StoryID] {
-			if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, ii.ID, store.ItemRemoved), "item") {
-				return
+	err = db(r).WithTx(ctx, func(txdb *store.DB) error {
+		positions := map[string]int{}
+		for _, e := range in.Entries {
+			positions[e.Section]++
+			pos := positions[e.Section] - 1
+			if ii, err := txdb.IssueItemByStory(ctx, iss.ID, e.StoryID); err == nil {
+				if ii.Status == store.ItemRejected {
+					reIncluded = true
+				}
+				if err := txdb.SetIssueItemPlacement(ctx, ii.ID, e.Section, pos, store.ItemApproved); err != nil {
+					return err
+				}
+			} else {
+				c := valid[e.StoryID]
+				if _, err := txdb.CreateIssueItem(ctx, store.IssueItem{
+					IssueID: iss.ID, StoryID: e.StoryID, Section: e.Section,
+					Score: c.Story.TriageScore, Reason: c.Story.TriageReason,
+					Status: store.ItemApproved, Origin: "manual", Position: pos,
+				}); err != nil {
+					return err
+				}
 			}
 		}
+		items, err := txdb.IssueItems(ctx, iss.ID)
+		if err != nil {
+			return err
+		}
+		for _, ii := range items {
+			if (ii.Status == store.ItemPending || ii.Status == store.ItemApproved) && !seen[ii.StoryID] {
+				if err := txdb.SetIssueItemStatus(ctx, ii.ID, store.ItemRemoved); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if apiDBErr(w, r, err, "item") {
+		return
 	}
 
 	// re-including a rejected story undoes the rejection: the guide
