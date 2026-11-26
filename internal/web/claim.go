@@ -176,6 +176,33 @@ func (s *Server) apiClaimStart(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, resp)
 }
 
+// claimNextTarget accepts only internal app paths a mailed sign-in link
+// is allowed to deep-link into. Anything absolute, protocol-relative or
+// outside the small app whitelist falls back to /start — a claim URL is
+// a credential and must never become an open redirect.
+func claimNextTarget(raw string) string {
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return "/start"
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.IsAbs() || u.Host != "" || u.Path == "" {
+		return "/start"
+	}
+	ok := u.Path == "/start" || u.Path == "/compor" || strings.HasPrefix(u.Path, "/publications/")
+	if !ok {
+		return "/start"
+	}
+	return u.RequestURI()
+}
+
+func claimNextQuery(r *http.Request) string {
+	next := r.URL.Query().Get("next")
+	if next == "" {
+		return ""
+	}
+	return "&amp;next=" + url.QueryEscape(next)
+}
+
 // claimPage lands the emailed magic link without spending it. Mail
 // scanners prefetch every link in a message, so a GET that consumed the
 // single-use token left the user's real click "already expired" — the
@@ -211,21 +238,21 @@ func (s *Server) claimPage(w http.ResponseWriter, r *http.Request) {
 	title, blurb, button, note := "Confirm your email to create your Radar",
 		"Confirming signs this browser in as the owner (%s).",
 		"Confirm and continue",
-		"The link works once and expires 15 minutes after it was sent."
+		"The link works once and expires after the period stated in the email."
 	if ptLang(lang) {
 		title, blurb, button, note = "Confirme seu e-mail para criar seu Radar",
 			"Ao confirmar, este navegador fica associado ao e-mail %s.",
 			"Confirmar e continuar",
-			"O link funciona uma vez e expira 15 minutos depois de enviado."
+			"O link funciona uma vez e expira depois do prazo informado no e-mail."
 	}
 	fmt.Fprintf(w, claimShell(lang, `<h1 style="font-size:1.5rem;line-height:1.25;margin:0 0 .75rem">%s</h1>`+
 		`<p style="margin:0 0 1.5rem;color:#111814">`+blurb+`</p>`+
-		`<form method="POST" action="/claim?t=%s&amp;lang=%s"><button type="submit" `+
+		`<form method="POST" action="/claim?t=%s&amp;lang=%s%s"><button type="submit" `+
 		`style="font:inherit;font-weight:600;padding:.7em 1.5em;border:0;border-radius:.6rem;`+
 		`background:#0e3b2e;color:#fff;cursor:pointer">%s</button></form>`+
 		`<p style="margin:1.5rem 0 0;color:#5b6660;font-size:.85rem">%s</p>`),
 		html.EscapeString(title), html.EscapeString(email),
-		url.QueryEscape(token), url.QueryEscape(lang),
+		url.QueryEscape(token), url.QueryEscape(lang), claimNextQuery(r),
 		html.EscapeString(button), html.EscapeString(note))
 }
 
@@ -295,7 +322,7 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 		// claimed workspace.
 		s.d.WS.SetCookie(w, r, wsID)
 	}
-	target := "/start"
+	target := claimNextTarget(r.URL.Query().Get("next"))
 	// the language the link carried follows the confirmed session into
 	// the app — the account keeps it and the SPA picks it off the URL
 	// (KLOX-232). /claim never resolves a request workspace, so the
@@ -304,10 +331,15 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 		if err := claimed.SetUILang(r.Context(), lang); err != nil {
 			slog.Warn("ui_lang save failed", "err", err, "rid", reqIDFromCtx(r.Context()))
 		}
-		target += "?lang=" + lang
+		sep := "?"
+		if strings.Contains(target, "?") {
+			sep = "&"
+		}
+		target += sep + "lang=" + lang
 	}
-	// straight on to "Criar seu Radar" (/start) — the screen forwards to
-	// the existing Radar when the owner already has one
+	// Without next this is /start ("Criar seu Radar", which forwards an
+	// existing owner); the daily mail deep-links next to the briefing or
+	// to the composer with the story pre-linked (KLOX-267).
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
@@ -317,10 +349,10 @@ func claimFail(w http.ResponseWriter, lang string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)
 	title, body := "Link expired or already used",
-		"Links work once and expire after 15 minutes. Go back to Kloxus and request a new one."
+		"Links work once and expire after the period stated in the email. Go back to Kloxus and request a new one."
 	if ptLang(lang) {
 		title, body = "Link expirado ou já usado",
-			"O link funciona uma vez e expira em 15 minutos. Volte ao Kloxus e peça um novo."
+			"O link funciona uma vez e expira depois do prazo informado no e-mail. Volte ao Kloxus e peça um novo."
 	}
 	fmt.Fprintf(w, claimShell(lang, `<h1 style="font-size:1.5rem;margin:0 0 .75rem">%s</h1>`+
 		`<p style="margin:0;color:#5b6660">%s</p>`), html.EscapeString(title), html.EscapeString(body))

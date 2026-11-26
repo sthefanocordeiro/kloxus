@@ -222,6 +222,26 @@ func (s *Server) buildPautaDay(ctx context.Context, wdb *store.DB, pub *store.Pu
 	return nil
 }
 
+// mintPautaMailLink stores one hashed 72-hour magic link and returns its
+// absolute /claim URL. next is an internal SPA path the confirmed session
+// should land on; /claim validates it before redirecting.
+func mintPautaMailLink(ctx context.Context, wdb *store.DB, owner, lang, base, next string) (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	if err := wdb.SaveMagicLink(ctx, hashToken(token), owner,
+		store.TSUTC(time.Now().Add(pautaMailLinkTTL))); err != nil {
+		return "", err
+	}
+	link := base + "/claim?t=" + url.QueryEscape(token) + "&lang=" + lang
+	if next != "" {
+		link += "&next=" + url.QueryEscape(next)
+	}
+	return link, nil
+}
+
 // mailPautaDay sends the one daily "pauta pronta" mail to a radar with
 // a saved account — skipped silently for anonymous workspaces and any
 // radar whose day was already handled (sent, refused or skipped).
@@ -277,24 +297,37 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	if base == "" {
 		base = fmt.Sprintf("http://localhost:%d", s.d.Cfg.Port)
 	}
-	// A fresh sign-in link so the mail opens the radar on any device —
-	// same magic-link claim as "save your Kloxus", with a mail-sized TTL.
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return err
-	}
-	token := base64.RawURLEncoding.EncodeToString(raw)
-	if err := wdb.SaveMagicLink(ctx, hashToken(token), owner,
-		store.TSUTC(time.Now().Add(pautaMailLinkTTL))); err != nil {
-		return err
-	}
 	// the sign-in link keeps the account's language — without it an EN
 	// owner dropped back to PT after every mail click (KLOX-232)
 	lang := wdb.UILang(ctx)
 	if lang != "en" && lang != "pt" {
 		lang = "pt"
 	}
-	link := base + "/claim?t=" + url.QueryEscape(token) + "&lang=" + lang
+
+	// A fresh sign-in link so the mail opens the radar on any device —
+	// same magic-link claim as "save your Kloxus", with a mail-sized TTL.
+	// The confirmed session lands on today's briefing, not /start.
+	openNext := fmt.Sprintf("/publications/%d/today", pub.ID)
+	link, err := mintPautaMailLink(ctx, wdb, owner, lang, base, openNext)
+	if err != nil {
+		return err
+	}
+
+	// One real deep link per story (KLOX-267): the CTA signs the browser
+	// in and drops the author in the composer with this story pre-linked.
+	top := cards
+	if len(top) > pautaMailTop {
+		top = top[:pautaMailTop]
+	}
+	stories := make([]pautaMailStory, 0, len(top))
+	for _, c := range top {
+		next := fmt.Sprintf("/compor?pub=%d&noticia=%d", pub.ID, c.StoryID)
+		postLink, err := mintPautaMailLink(ctx, wdb, owner, lang, base, next)
+		if err != nil {
+			return err
+		}
+		stories = append(stories, pautaMailStory{Card: c, PostURL: postLink})
+	}
 
 	// The mail itself speaks the account's language (KLOX-258): PT is
 	// the default; an EN account gets the subject, greeting, button
@@ -329,10 +362,8 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 
 	var b strings.Builder
 	fmt.Fprintf(&b, greeting+"\n\n", pub.Name)
-	for i, c := range cards {
-		if i >= pautaMailTop {
-			break
-		}
+	for i, st := range stories {
+		c := st.Card
 		fmt.Fprintf(&b, "%d. %s", i+1, c.Title)
 		if c.Outlet != "" {
 			b.WriteString(" — " + c.Outlet)
@@ -341,6 +372,17 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	}
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "[%s](%s)\n\n%s", button, link, notice)
+	if len(stories) > 0 {
+		b.WriteString("\n\n")
+		if lang == "en" {
+			b.WriteString("Create a post from a story:")
+		} else {
+			b.WriteString("Criar post a partir de uma notícia:")
+		}
+		for i, st := range stories {
+			fmt.Fprintf(&b, "\n%d. %s", i+1, st.PostURL)
+		}
+	}
 	fmt.Fprintf(&b, "\n\n---\n*[%s](%s)*", unsubLabel, unsubLink)
 
 	md := b.String()
@@ -348,7 +390,7 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 		To:      []string{owner},
 		Subject: subject,
 		Text:    md,
-		HTML:    delivery.RenderHTML(subject, md, base),
+		HTML:    renderPautaMailHTML(lang, day, pub.Name, stories, link, unsubLink),
 		Kind:    "pauta",
 		// RFC 8058: the same endpoint the footer link lands on — mail
 		// clients POST it for one-click unsubscribes (KLOX-257).

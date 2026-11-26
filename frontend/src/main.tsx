@@ -69,6 +69,8 @@ const router = createBrowserRouter([
       { path: "/publications", lazy: () => import("./pages/Publications").then((m) => ({ Component: m.Publications })) },
       { path: "/publications/:id", lazy: () => import("./pages/PublicationPage").then((m) => ({ Component: m.PublicationPage })) },
       { path: "/publications/:id/today", lazy: () => import("./pages/Today").then((m) => ({ Component: m.Today })) },
+      // deep link target of the daily briefing CTA (KLOX-267)
+      { path: "/compor", lazy: () => import("./pages/ComposeRedirect").then((m) => ({ Component: m.ComposeRedirect })) },
       { path: "/publications/:id/sources", lazy: () => import("./pages/Sources").then((m) => ({ Component: m.SourcesPage })) },
       { path: "/publications/:id/settings", element: <SettingsRedirect /> },
       { path: "/pauta/:id", lazy: () => import("./pages/PautaPage").then((m) => ({ Component: m.PautaPage })) },
