@@ -10,7 +10,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +35,9 @@ var spZone = time.FixedZone("America/Sao_Paulo", -3*3600)
 
 // pautaMailOn is the DailyPautaMail setting pautaHosted builds with.
 var pautaMailOn = true
+
+// pautaMailTopForTest mirrors the server constant (unexported).
+const pautaMailTopForTest = 3
 
 func spAt(y int, mo time.Month, d, h, mi int) time.Time {
 	return time.Date(y, mo, d, h, mi, 0, 0, spZone)
@@ -297,6 +303,30 @@ func TestDailyPautaMail(t *testing.T) {
 	if !strings.Contains(msg.Text, "/claim?t=") {
 		t.Fatalf("mail has no sign-in link: %s", msg.Text)
 	}
+	// KLOX-267: the HTML part is the KLOX-251 email template — no
+	// author-commentary block, one teal create-post CTA per top story,
+	// and the KLOX-257 unsubscribe in the footer.
+	if !strings.Contains(msg.HTML, `lang="pt-BR"`) || !strings.Contains(msg.HTML, "Seu Radar de hoje") {
+		t.Fatalf("HTML is not the PT Radar briefing:\n%s", msg.HTML)
+	}
+	if n := strings.Count(msg.HTML, "Criar post com essa notícia →"); n != pautaMailTopForTest {
+		t.Fatalf("story CTAs = %d, want %d", n, pautaMailTopForTest)
+	}
+	for _, want := range []string{
+		"background-color:#0f766e",
+		"next=%2Fcompor%3Fpub%3D",
+		"Descadastrar deste Radar",
+		"https://kloxus.test/daily-mail/unsub?t=",
+	} {
+		if !strings.Contains(msg.HTML, want) {
+			t.Fatalf("HTML lacks %q", want)
+		}
+	}
+	for _, banned := range []string{"Seu comentário", "commentary", "<script", "<link"} {
+		if strings.Contains(msg.HTML, banned) {
+			t.Fatalf("HTML contains banned %q", banned)
+		}
+	}
 	if _, err := dbA.MailByIdemKey(ctx, "pauta/"+dbA.Workspace()+"/"+day); err != nil {
 		t.Fatalf("ledger row: %v", err)
 	}
@@ -317,6 +347,30 @@ func TestDailyPautaMail(t *testing.T) {
 	}
 	if rr := pautaServe(t, srv, "GET", "/claim?t="+mm[1], "", nil); rr.Code != 200 {
 		t.Fatalf("claim page = %d", rr.Code)
+	}
+
+	// The first story CTA signs the browser in and lands on the real
+	// composer deep link with the story pre-linked (KLOX-267).
+	ctaRe := regexp.MustCompile(`href="([^"]*next=%2Fcompor[^"]*)"`)
+	cm := ctaRe.FindStringSubmatch(msg.HTML)
+	if len(cm) == 0 {
+		t.Fatal("no composer CTA link in the HTML mail")
+	}
+	cta, err := url.Parse(html.UnescapeString(cm[1]))
+	if err != nil {
+		t.Fatalf("parse CTA: %v", err)
+	}
+	claimPath := cta.RequestURI()
+	if rr := pautaServe(t, srv, "GET", claimPath, "", nil); rr.Code != 200 {
+		t.Fatalf("story claim page = %d", rr.Code)
+	} else if !strings.Contains(rr.Body.String(), "next=") {
+		t.Fatal("claim confirm form dropped the composer next path")
+	}
+	rr := pautaServe(t, srv, "POST", claimPath, "", nil)
+	loc := rr.Header().Get("Location")
+	if rr.Code != 303 || !strings.HasPrefix(loc, "/compor?pub=") ||
+		!strings.Contains(loc, "&noticia=") || !strings.Contains(loc, "&lang=pt") {
+		t.Fatalf("story claim = %d → %q, want composer deep link", rr.Code, loc)
 	}
 
 	// A second tick sends nothing new to the owner.
@@ -598,6 +652,16 @@ func TestDailyPautaMailLang(t *testing.T) {
 		if !strings.Contains(pt.Text, want) {
 			t.Fatalf("PT body lacks %q:\n%s", want, pt.Text)
 		}
+	}
+	if !strings.Contains(en.HTML, "Create a post with this story →") ||
+		!strings.Contains(en.HTML, "Unsubscribe from this Radar") ||
+		!strings.Contains(en.HTML, `lang="en"`) {
+		t.Fatal("EN HTML is not the English Radar template")
+	}
+	if !strings.Contains(pt.HTML, "Criar post com essa notícia →") ||
+		!strings.Contains(pt.HTML, "Descadastrar deste Radar") ||
+		!strings.Contains(pt.HTML, `lang="pt-BR"`) {
+		t.Fatal("PT HTML is not the Portuguese Radar template")
 	}
 }
 
