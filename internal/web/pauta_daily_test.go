@@ -685,3 +685,128 @@ func TestDailyPautaMailUnsubscribed(t *testing.T) {
 		t.Fatal("no refused pauta mail in the ledger for the suppressed owner")
 	}
 }
+
+// TestDailyPautaMailSaoPauloSchedule (KLOX-268): the schedule is read
+// in America/Sao_Paulo, not UTC — 09:59 UTC is still before the mail
+// window and 10:00 UTC is exactly 07:00 in São Paulo.
+func TestDailyPautaMailSaoPauloSchedule(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+	day := "2026-11-24"
+
+	cookie, db := pautaVisitor(t, mgr)
+	pub := pautaRadar(t, srv, cookie)
+	owner := fmt.Sprintf("schedule-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := db.SavePautaDay(ctx, pub, day,
+		"["+pautaMailCard(1, "A", "X", "u:a")+"]"); err != nil {
+		t.Fatalf("today pauta: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE workspaces SET last_seen_at = $1 WHERE id = $2`,
+		"2026-11-24 09:30:00", db.Workspace()); err != nil {
+		t.Fatalf("touch workspace: %v", err)
+	}
+
+	srv.DailyPautaTick(ctx, pool, time.Date(2026, 11, 24, 9, 59, 0, 0, time.UTC)) // 06:59 SP
+	if n := len(dailyMailTo(fake, owner)); n != 0 {
+		t.Fatalf("mails before 07:00 SP = %d, want 0", n)
+	}
+	srv.DailyPautaTick(ctx, pool, time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)) // 07:00 SP
+	if n := len(dailyMailTo(fake, owner)); n != 1 {
+		t.Fatalf("mails at 07:00 SP = %d, want 1", n)
+	}
+}
+
+// TestDailyPautaMailNoEveningCatchup (KLOX-268): a deploy or restart
+// hours after the window must not turn the first tick into a 22:15
+// "morning" mail. The day is left unstamped, not marked as handled.
+func TestDailyPautaMailNoEveningCatchup(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+	day := "2026-11-24"
+
+	cookie, db := pautaVisitor(t, mgr)
+	pub := pautaRadar(t, srv, cookie)
+	owner := fmt.Sprintf("catchup-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := db.SavePautaDay(ctx, pub, day,
+		"["+pautaMailCard(1, "A", "X", "u:a")+"]"); err != nil {
+		t.Fatalf("today pauta: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE workspaces SET last_seen_at = $1 WHERE id = $2`,
+		"2026-11-25 00:30:00", db.Workspace()); err != nil {
+		t.Fatalf("touch workspace: %v", err)
+	}
+
+	// 01:15 UTC on the 25th is 22:15 in São Paulo on the 24th — the
+	// exact shape of the reported deploy-time catch-up.
+	srv.DailyPautaTick(ctx, pool, time.Date(2026, 11, 25, 1, 15, 0, 0, time.UTC))
+	if n := len(dailyMailTo(fake, owner)); n != 0 {
+		t.Fatalf("evening catch-up mails = %d, want 0", n)
+	}
+	row, err := db.PautaDay(ctx, pub, day)
+	if err != nil {
+		t.Fatalf("pauta day: %v", err)
+	}
+	if row.EmailedAt != "" {
+		t.Fatal("evening tick stamped the mail as handled")
+	}
+}
+
+// TestDailyPautaMailScopeActiveWorkspaces (KLOX-268): the mail pass is
+// bounded to workspaces visited inside the 7-day window even when a
+// stale workspace already has a stored pauta waiting.
+func TestDailyPautaMailScopeActiveWorkspaces(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+	now := spAt(2026, 11, 24, 7, 5)
+	day := spDayOf(now)
+	cards := "[" + pautaMailCard(1, "A", "X", "u:a") + "]"
+
+	activeCookie, activeDB := pautaVisitor(t, mgr)
+	activePub := pautaRadar(t, srv, activeCookie)
+	activeOwner := fmt.Sprintf("active-scope-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, activeDB.Workspace(), activeOwner); err != nil {
+		t.Fatalf("claim active: %v", err)
+	}
+	if err := activeDB.SavePautaDay(ctx, activePub, day, cards); err != nil {
+		t.Fatalf("active pauta: %v", err)
+	}
+	if _, err := activeDB.ExecContext(ctx,
+		`UPDATE workspaces SET last_seen_at = $1 WHERE id = $2`,
+		store.TSUTC(now.Add(-time.Hour)), activeDB.Workspace()); err != nil {
+		t.Fatalf("touch active workspace: %v", err)
+	}
+
+	staleCookie, staleDB := pautaVisitor(t, mgr)
+	stalePub := pautaRadar(t, srv, staleCookie)
+	staleOwner := fmt.Sprintf("stale-scope-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, staleDB.Workspace(), staleOwner); err != nil {
+		t.Fatalf("claim stale: %v", err)
+	}
+	if err := staleDB.SavePautaDay(ctx, stalePub, day, cards); err != nil {
+		t.Fatalf("stale pauta: %v", err)
+	}
+	if _, err := staleDB.ExecContext(ctx,
+		`UPDATE workspaces SET last_seen_at = $1 WHERE id = $2`,
+		store.TSUTC(now.Add(-8*24*time.Hour)), staleDB.Workspace()); err != nil {
+		t.Fatalf("age stale workspace: %v", err)
+	}
+
+	srv.DailyPautaTick(ctx, pool, now)
+	if n := len(dailyMailTo(fake, activeOwner)); n != 1 {
+		t.Fatalf("active workspace mails = %d, want 1", n)
+	}
+	if n := len(dailyMailTo(fake, staleOwner)); n != 0 {
+		t.Fatalf("stale workspace mails = %d, want 0", n)
+	}
+}
