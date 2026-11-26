@@ -8,26 +8,26 @@ Track: **Logística & Automação** (Logistics and Automation).
 
 - Repository: https://github.com/sthefanocordeiro/kloxus
 - Hosted app: https://kloxus.fly.dev (real app: live sources, Postgres on Supabase, Resend email)
-- Deterministic fixture demo (offline fallback): https://kloxus-demo.fly.dev
+- Deterministic demo: `go run ./cmd/kloxus demo` locally — fixture sources, no API keys
 - Video: **TBD — owner records in English, ≤3 minutes, unlisted YouTube**
 
 ## Paste-ready copy
 
 ### Tagline (EN)
 
-Kloxus automates the invisible work of people who write about a sector every day: it watches the sources, separates what matters and delivers the ready brief by 7 a.m. The writing stays theirs.
+Kloxus automates the daily news-triage workflow for people who publish about a sector every day — on LinkedIn, X, a blog, a newsletter or an internal channel.
 
 ### Tagline (PT-BR)
 
-A Kloxus automatiza o trabalho invisível de quem comenta um setor todo dia: acompanhar as fontes, separar o que importa e entregar a pauta pronta às 7h. A escrita continua sua.
+A Kloxus automatiza a triagem diária de notícias para quem publica todo dia sobre um setor — no LinkedIn, no X, num blog, numa newsletter ou num canal interno.
 
 ### Description (EN)
 
-People who publish about a sector every day — the analyst, the consultant, the banker who posts about fintech, the HR professional who writes about careers — lose hours to the manual work before writing: opening dozens of sites, discarding repeats, deciding what matters. Kloxus automates that flow. Overnight it collects audited sources, removes duplicates and ranks what matters with embeddings and a reranker that learn from every Yes/No. The brief is assembled at ~06:30 and reaches the inbox by 7 a.m. The person picks the stories, writes, and one text becomes a LinkedIn post, an X thread, HTML and Markdown. The AI never writes the opinion, and every source's own rules are respected.
+Kloxus automates the daily news-triage workflow for people who publish about a sector every day — on LinkedIn, X, a blog, a newsletter or an internal channel. One shared engine polls an audited catalog of Brazilian sources, drops duplicates, matches each story to the user's Radar with embeddings and a reranker, and rebuilds the day's stories every morning. The person picks the stories and writes; Kloxus turns that one text into LinkedIn, X-thread, HTML and Markdown versions. It never writes the commentary.
 
 ### Description (PT-BR)
 
-Quem publica sobre um setor todo dia — o analista, o consultor, o bancário que posta sobre fintech, o profissional de RH que escreve sobre carreira — perde horas no trabalho manual que vem antes de escrever: abrir dezenas de sites, descartar repetições, decidir o que importa. A Kloxus automatiza esse fluxo. De madrugada, ela coleta fontes auditadas, remove duplicatas e ordena o que importa com embeddings e um reranker que aprendem com cada Sim/Não. A pauta é montada ~6h30 e chega por e-mail às 7h. A pessoa escolhe as notícias, escreve, e um texto vira post do LinkedIn, thread do X, HTML e Markdown. A IA nunca escreve a opinião, e as regras de cada fonte são respeitadas.
+A Kloxus automatiza a triagem diária de notícias para quem publica todo dia sobre um setor — no LinkedIn, no X, num blog, numa newsletter ou num canal interno. Um motor compartilhado lê um catálogo auditado de fontes brasileiras, remove duplicatas, cruza cada notícia com o Radar do usuário usando embeddings e um reranker, e monta as notícias do dia toda manhã. A pessoa escolhe e escreve; a Kloxus transforma esse texto em versões para LinkedIn, thread do X, HTML e Markdown. A IA nunca escreve o comentário.
 
 ## Hosted app checklist
 
@@ -41,7 +41,7 @@ Quem publica sobre um setor todo dia — o analista, o consultor, o bancário qu
 1. Landing → **Create your Radar** → confirm the email magic link.
 2. Name the Radar and say what you cover — topics plus optional beats; Kloxus assigns the curated sources.
 3. **Match**: the calibration deck — real stories from the last 48 h, Yes/No on each one.
-4. **Today's stories**: the morning deck matched to the Radar; tick the stories that go into the brief, 👍 / 👎 to keep training the match. (A claimed Radar gets the same deck by email at 7 a.m.)
+4. **Today's stories**: the morning deck matched to the Radar; click the cards that go into the brief, 👍 / 👎 to keep training the match. (A claimed Radar gets the same deck by email at 7 a.m. on days with new stories.)
 5. **Write**: the pauta — an optional opening plus one autosaved text box per story, the person's words only.
 6. **Export**: one text → LinkedIn post, X thread (auto split at 280), rich-text HTML, and a `.md` download.
 7. Optional: switch the interface EN ↔ pt-BR; show that source links on every card lead to the original outlet.

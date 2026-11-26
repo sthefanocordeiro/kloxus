@@ -129,6 +129,14 @@ func (s *Server) registerPublicRoutes() {
 	m.HandleFunc("GET /confirm-sub/", s.confirmSub)
 	m.HandleFunc("POST /unsub", s.unsubOneClick) // RFC 8058 one-click
 	m.HandleFunc("POST /unsub/", s.unsubOneClick)
+	// The daily pauta mail's own unsubscribe (KLOX-257): the creator's
+	// account notice, not the reader surface — answers with
+	// KLOXUS_PUBLISHING=off. GET lands the "Não quero mais" link, POST
+	// answers RFC 8058 List-Unsubscribe-Post.
+	m.HandleFunc("GET /daily-mail/unsub", s.dailyMailUnsub)
+	m.HandleFunc("GET /daily-mail/unsub/", s.dailyMailUnsub)
+	m.HandleFunc("POST /daily-mail/unsub", s.dailyMailUnsub)
+	m.HandleFunc("POST /daily-mail/unsub/", s.dailyMailUnsub)
 
 	// Old /app/* URLs forward to the same paths at the root; anything
 	// else GETable falls through to the SPA.
@@ -144,6 +152,7 @@ func (s *Server) registerAPIRoutes() {
 	m := s.mux
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
 	m.HandleFunc("POST /api/v1/workspace/lang", s.apiWorkspaceLang)
+	m.HandleFunc("POST /api/v1/workspace/daily-mail", s.apiWorkspaceDailyMail)
 	m.HandleFunc("POST /api/v1/workspace/claim", s.apiClaimStart)
 	m.HandleFunc("POST /api/v1/logout", s.apiLogout)
 	m.HandleFunc("POST /api/v1/p/{slug}/subscribe", s.apiSubscribe)
@@ -342,6 +351,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/webhooks/") || strings.HasPrefix(r.URL.Path, "/api/v1/admin/") ||
 		r.URL.Path == "/claim" || strings.HasPrefix(r.URL.Path, "/claim/") ||
 		r.URL.Path == "/confirm-sub" || strings.HasPrefix(r.URL.Path, "/confirm-sub/") ||
+		r.URL.Path == "/daily-mail/unsub" || strings.HasPrefix(r.URL.Path, "/daily-mail/unsub/") ||
 		(r.Method == http.MethodPost && (r.URL.Path == "/unsub" || strings.HasPrefix(r.URL.Path, "/unsub/"))) {
 		// Webhooks and admin calls carry provider auth, and emailed links
 		// their own token — resolving would mint a junk workspace per

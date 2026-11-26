@@ -133,7 +133,7 @@ export const dict = {
         },
         {
           q: "Does the AI write for me?",
-          a: "No. It finds and summarizes the stories. The writing is yours.",
+          a: "No. It finds, groups and ranks the stories. The writing is yours.",
         },
         {
           q: "Which sources can I use?",
@@ -242,6 +242,7 @@ export const dict = {
       signOut: "Sign out",
       creating: "Create your Radar",
       language: "Language",
+      dailyMail: "Receive the day's stories by email",
     },
     steps: {
       of: (n: number, m: number) => `Step ${n} of ${m}`,
@@ -372,7 +373,7 @@ export const dict = {
         },
         {
           q: "A IA escreve por mim?",
-          a: "Não. Ela encontra e resume as notícias. A escrita é sua.",
+          a: "Não. Ela encontra, agrupa e ordena as notícias. A escrita é sua.",
         },
         {
           q: "Quais fontes posso usar?",
@@ -481,6 +482,7 @@ export const dict = {
       signOut: "Sair",
       creating: "Crie seu Radar",
       language: "Idioma",
+      dailyMail: "Receber as notícias do dia por e-mail",
     },
     steps: {
       of: (n: number, m: number) => `Passo ${n} de ${m}`,

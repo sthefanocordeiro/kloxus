@@ -125,6 +125,100 @@ func (db *DB) ConsumeMagicLink(ctx context.Context, tokenHash, now string) (emai
 	return
 }
 
+// --- daily pauta mail (KLOX-257) ---
+
+// DailyMailEnabled reports whether the account still wants the 07:00
+// "notícias do dia" mail — saved accounts are opted in by default; the
+// account-menu toggle and the mailed unsubscribe link stamp the same
+// daily_mail_off_at column.
+func (db *DB) DailyMailEnabled(ctx context.Context) (bool, error) {
+	var off string
+	err := db.QueryRowContext(ctx,
+		`SELECT daily_mail_off_at FROM workspaces WHERE id = $1`, db.ws).Scan(&off)
+	return off == "", err
+}
+
+// SetDailyMail flips the account-menu toggle for every workspace the
+// owner holds — the opt-out is owner-keyed like the daily mail claim
+// (KLOX-154), so one "Receber as notícias do dia" switch can't fight
+// another claimed radar's stale stamp.
+func (db *DB) SetDailyMail(ctx context.Context, owner string, enabled bool) error {
+	off := ""
+	if !enabled {
+		off = NowUTC()
+	}
+	_, err := db.ExecContext(ctx,
+		`UPDATE workspaces SET daily_mail_off_at = $1 WHERE owner_email = $2`, off, owner)
+	return err
+}
+
+// SaveDailyMailToken stores the hash of the one-click unsubscribe token
+// the next daily mail carries — each send replaces it, so only the
+// newest mailed link resolves an account.
+func (db *DB) SaveDailyMailToken(ctx context.Context, tokenHash string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE workspaces SET daily_mail_token_hash = $1 WHERE id = $2`, tokenHash, db.ws)
+	return err
+}
+
+// DailyMailOptedOut reports whether the owner already stamped the
+// unsubscribe on any of their workspaces — the check is owner-keyed
+// because the one-mail-a-day claim is (KLOX-154): a click in one
+// radar's mail must stop every radar's mail to that address.
+func (p *Pool) DailyMailOptedOut(ctx context.Context, owner string) (bool, error) {
+	return dailyMailOptedOut(ctx, p.db, owner)
+}
+
+// DailyMailOptedOut is the local-mode variant on a workspace handle.
+func (db *DB) DailyMailOptedOut(ctx context.Context, owner string) (bool, error) {
+	return dailyMailOptedOut(ctx, db, owner)
+}
+
+func dailyMailOptedOut(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, owner string) (bool, error) {
+	var n int
+	err := q.QueryRowContext(ctx,
+		`SELECT count(*) FROM workspaces WHERE owner_email = $1 AND daily_mail_off_at <> ''`,
+		owner).Scan(&n)
+	return n > 0, err
+}
+
+// UnsubscribeDailyMail stamps the opt-out on every workspace the
+// token's owner holds and returns the account's saved interface
+// language for the confirmation page; found=false when no token hash
+// matched. The update is one statement keyed on the token's owner so a
+// second claimed radar can't keep mailing the address tomorrow.
+func (p *Pool) UnsubscribeDailyMail(ctx context.Context, tokenHash string) (lang string, found bool, err error) {
+	return unsubscribeDailyMail(ctx, p.db, tokenHash)
+}
+
+// UnsubscribeDailyMail is the local-mode variant on a workspace handle.
+func (db *DB) UnsubscribeDailyMail(ctx context.Context, tokenHash string) (lang string, found bool, err error) {
+	return unsubscribeDailyMail(ctx, db, tokenHash)
+}
+
+func unsubscribeDailyMail(ctx context.Context, q interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, tokenHash string) (lang string, found bool, err error) {
+	res, err := q.ExecContext(ctx, `
+		UPDATE workspaces SET daily_mail_off_at = $2
+		WHERE owner_email <> ''
+		  AND owner_email = (SELECT owner_email FROM workspaces
+		                     WHERE daily_mail_token_hash = $1)`,
+		tokenHash, NowUTC())
+	if err != nil {
+		return "", false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "", false, nil
+	}
+	_ = q.QueryRowContext(ctx,
+		`SELECT ui_lang FROM workspaces WHERE daily_mail_token_hash = $1`, tokenHash).Scan(&lang)
+	return lang, true, nil
+}
+
 // --- readers ---
 
 // Reader is a stored reader row with its confirmation state.

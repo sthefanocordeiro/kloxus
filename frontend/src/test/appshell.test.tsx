@@ -24,6 +24,7 @@ vi.mock("../api", async (importOriginal) => {
       issue: vi.fn(),
       publication: vi.fn(),
       publications: vi.fn(),
+      setDailyMail: vi.fn(),
     },
   };
 });
@@ -437,5 +438,57 @@ describe("AppShell menus close on navigation (KLOX-213)", () => {
     await waitFor(() => {
       expect(screen.queryByRole("navigation", { name: "More" })).toBeNull();
     });
+  });
+});
+
+// KLOX-257: the account menu carries the "Receber as notícias do dia
+// por e-mail" toggle for saved accounts — ON by default, wired to
+// POST /api/v1/workspace/daily-mail.
+describe("AppShell daily-mail toggle (KLOX-257)", () => {
+  beforeEach(() => {
+    vi.mocked(api.workspace).mockResolvedValue({
+      id: "w1",
+      label: "w",
+      mode: "demo",
+      hosted: false,
+      llm_mode: "off",
+      publishing: true,
+      claimed: true,
+      owner_email: "ana@x.dev",
+      daily_mail: true,
+    });
+    vi.mocked(api.publications).mockResolvedValue([pub]);
+    vi.mocked(api.publication).mockResolvedValue({ publication: pub });
+    vi.mocked(api.setDailyMail).mockResolvedValue({ daily_mail: false });
+  });
+
+  it("is checked for saved accounts and saves the flip", async () => {
+    renderAt("/publications/42");
+    await screen.findByText("pub screen");
+
+    fireEvent.click(screen.getByRole("button", { name: "Account" }));
+    const toggle = await screen.findByRole("checkbox", { name: "Receive the day's stories by email" });
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(api.setDailyMail).toHaveBeenCalledWith(false));
+  });
+
+  it("is hidden for anonymous sessions", async () => {
+    vi.mocked(api.workspace).mockResolvedValue({
+      id: "w1",
+      label: "w",
+      mode: "demo",
+      hosted: false,
+      llm_mode: "off",
+      publishing: true,
+      claimed: false,
+    });
+    renderAt("/publications/42");
+    await screen.findByText("pub screen");
+
+    fireEvent.click(screen.getByRole("button", { name: "Account" }));
+    await screen.findByText("Save with your email");
+    expect(screen.queryByRole("checkbox", { name: "Receive the day's stories by email" })).toBeNull();
   });
 });
