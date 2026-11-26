@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, NavLink, Outlet, matchPath, useLocation } from "react-router-dom";
 import {
   CircleUser,
@@ -9,7 +9,7 @@ import {
   Newspaper,
   Rss,
 } from "lucide-react";
-import { api, pautaPath } from "./api";
+import { api, pautaPath, type Workspace } from "./api";
 import { LANG_KEY, useT, type Lang, type T } from "./i18n";
 import { cn } from "./lib/cn";
 import { BackButton } from "./components/BackButton";
@@ -252,7 +252,7 @@ export function AppShell() {
                 </button>
               )}
             >
-              <AccountMenu claimed={ws.data?.claimed} email={ws.data?.owner_email} />
+              <AccountMenu claimed={ws.data?.claimed} email={ws.data?.owner_email} dailyMail={ws.data?.daily_mail} />
             </Drop>
           </div>
         </header>
@@ -383,8 +383,23 @@ function LangSwitch({ lang, setLang, className }: { lang: Lang; setLang: (l: Lan
   );
 }
 
-function AccountMenu({ claimed, email }: { claimed?: boolean; email?: string }) {
+function AccountMenu({ claimed, email, dailyMail }: { claimed?: boolean; email?: string; dailyMail?: boolean }) {
   const { t } = useT();
+  const qc = useQueryClient();
+  const [savingMail, setSavingMail] = useState(false);
+  // the morning-email toggle (KLOX-257): optimistic on the workspace
+  // query cache; a failed save resyncs from the server
+  const flipDailyMail = async (next: boolean) => {
+    setSavingMail(true);
+    qc.setQueryData<Workspace>(["workspace"], (w) => (w ? { ...w, daily_mail: next } : w));
+    try {
+      await api.setDailyMail(next);
+    } catch {
+      qc.invalidateQueries({ queryKey: ["workspace"] });
+    } finally {
+      setSavingMail(false);
+    }
+  };
   // "Sair" ends the session — a claimed account comes back with an
   // e-mail link
   const leave = async (to: string) => {
@@ -402,6 +417,16 @@ function AccountMenu({ claimed, email }: { claimed?: boolean; email?: string }) 
       {claimed && email ? (
         <>
           <p className="text-sm text-ink">{t.nav.savedWith(email)}</p>
+          <label className="flex h-11 w-full cursor-pointer items-center gap-3 rounded-[var(--radius-btn)] px-2 text-sm font-medium text-ink hover:bg-surface">
+            <input
+              type="checkbox"
+              checked={dailyMail ?? true}
+              disabled={savingMail}
+              onChange={(e) => flipDailyMail(e.target.checked)}
+              className="h-4 w-4 accent-teal"
+            />
+            {t.nav.dailyMail}
+          </label>
           <div className="grid gap-1 border-t border-line pt-2">
             <button type="button" className={item} onClick={() => leave("/")}>
               <LogOut size={16} aria-hidden className="text-muted" />

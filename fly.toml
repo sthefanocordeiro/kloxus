@@ -6,8 +6,9 @@ primary_region = "gru"
 
 [build]
 
-# The real app (D27): live feeds + Anthropic. The fixture demo stays on
-# kloxus-demo as the fallback URL.
+# The real app (D27): live feeds + Anthropic. The fixture demo keeps its
+# own app and config (kloxus-demo / fly.demo.toml) and is never touched
+# by deploys of this file.
 [env]
 KLOXUS_MODE = "real"
 KLOXUS_INGEST = "true"
@@ -17,12 +18,14 @@ KLOXUS_OUT_DIR = "/data/out"
 KLOXUS_PUBLIC_URL = "https://kloxus.fly.dev"
 # KLOX-126: a banca on one network opens fresh workspaces.
 KLOXUS_NEW_SESSIONS_PER_IP_HOUR = "30"
-# KLOX-95: the AI engine is on — real Anthropic calls inside the
-# KLOX-67 guards (≤2 runs/workspace/day, ≤200k tokens/run, ≤$0.25/run,
-# ≤$1/day, kill switch on /admin/llm). The deployed KLOXUS_LLM_MODE
-# secret overrides this; the release window removes the secret so this
-# file is the single source of truth (fly secrets unset
-# KLOXUS_LLM_MODE -a kloxus).
+# AI posture (verified in production 2026-11-25): Generative AI (Claude)
+# is enabled in production under hard caps and a live kill switch;
+# matching uses Voyage embeddings and reranking, and the AI never writes
+# the commentary. Real Anthropic calls run inside the KLOX-67 guards
+# (≤2 runs/workspace/day, ≤200k tokens/run, ≤$0.25/run, ≤$1/day, kill
+# switch on /admin/llm). No KLOXUS_LLM_MODE secret is deployed, so this
+# file is the single source of truth; a deployed secret would override
+# it (fly secrets unset KLOXUS_LLM_MODE -a kloxus to restore).
 KLOXUS_LLM_MODE = "auto"
 # KLOX-256: the 07:00 "your stories are ready" mail — one per saved
 # account per day, skipped when the radar's pauta has nothing new.

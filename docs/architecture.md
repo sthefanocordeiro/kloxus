@@ -41,12 +41,14 @@ flowchart TB
 - **Matching is per-Radar**: the beat (plus its editorias) is the query;
   story-level *Yes* / *No* / thumbs feedback is the supervision signal
   that keeps retraining the match.
-- **The email is the delivery**: a claimed Radar gets the assembled deck
-  in its inbox every morning; the same deck waits in the app.
-- **Generative AI is optional**: `KLOXUS_LLM_MODE` picks the posture —
-  `auto` allows real calls inside hard caps, `off` runs the whole loop
-  deterministically at $0 (D35). Under the owner freeze on paid AI
-  (D37/D40) the deployed app takes the deterministic path.
+- **The email is the delivery**: on mornings with new stories a claimed
+  Radar gets the assembled deck in its inbox; the same deck waits in the
+  app, and every send carries a one-click unsubscribe.
+- **Generative AI (Claude) is enabled in production under hard caps and
+  a live kill switch; matching uses Voyage embeddings and reranking,
+  and the AI never writes the commentary.** `KLOXUS_LLM_MODE` picks the
+  posture — `auto` allows real calls inside the caps, `off` runs the
+  whole loop deterministically at $0 (D35).
 
 The earlier newsletter-issue pipeline (`internal/pipeline`: collect →
 dedupe → triage → storylist → dossier → deepdive → draft → citecheck,

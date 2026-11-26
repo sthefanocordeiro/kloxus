@@ -43,6 +43,13 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 		staleSent = s.staleSent(r.Context(), db(r))
 	}
+	// the account-menu "Receber as notícias do dia por e-mail" toggle
+	// (KLOX-257) — ON for saved accounts until stamped off
+	dailyMail, err := db(r).DailyMailEnabled(r.Context())
+	if err != nil {
+		apiErr(w, 500, "internal", "could not read mail settings")
+		return
+	}
 	apiJSON(w, 200, map[string]any{
 		"id": ws.ID, "label": ws.Label, "mode": s.d.Cfg.Mode, "hosted": s.d.WS.Hosted(),
 		"llm_mode": s.d.Cfg.LLMMode,
@@ -52,6 +59,7 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 		"lang": db(r).UILang(r.Context()),
 		"mail_transport": transport, "mail_webhook": mailWebhook,
 		"mail_stale_sent": staleSent,
+		"daily_mail":      dailyMail,
 		"publishing":      s.d.Cfg.PublishingEnabled,
 	})
 }

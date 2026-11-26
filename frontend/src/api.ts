@@ -19,6 +19,9 @@ export interface Workspace {
   publishing?: boolean;
   // the account's saved interface language ("" = never picked, KLOX-232)
   lang?: "en" | "pt" | "";
+  // the "Receber as notícias do dia por e-mail" toggle — ON for saved
+  // accounts until the owner turns it off (KLOX-257)
+  daily_mail?: boolean;
 }
 
 // One newsletter section as the builder edits it: id is the stable
@@ -333,6 +336,9 @@ export const api = {
   // browser (and the next magic link) lands in it (KLOX-232)
   saveLang: (lang: string) =>
     request<{ ok: boolean }>("POST", "/api/v1/workspace/lang", { lang }),
+  // the daily-morning-email toggle in the account menu (KLOX-257)
+  setDailyMail: (enabled: boolean) =>
+    request<{ daily_mail: boolean }>("POST", "/api/v1/workspace/daily-mail", { enabled }),
   // resolve-or-create: a successful answer means this browser holds a
   // session, so the marker goes down for the public pages to read
   workspace: () =>

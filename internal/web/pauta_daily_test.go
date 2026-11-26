@@ -443,39 +443,6 @@ func TestDailyPautaMailSkipsStalePauta(t *testing.T) {
 	}
 }
 
-// TestDailyPautaMailSkipsEmptyPauta (KLOX-256): sem notícias no dia,
-// nenhum e-mail sai — an empty pauta is stamped handled, never mailed.
-func TestDailyPautaMailSkipsEmptyPauta(t *testing.T) {
-	ctx := context.Background()
-	fake := &fakeSender{}
-	srv, pool, mgr := pautaHosted(t, fake)
-	now := spAt(2026, 12, 3, 7, 5)
-	day := spDayOf(now)
-
-	cookie, db := pautaVisitor(t, mgr)
-	pautaRadar(t, srv, cookie)
-	pub := mustPubID(t, db)
-	owner := fmt.Sprintf("empty-%d@hackbrazil.dev", time.Now().UnixNano())
-	if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if _, err := db.ExecContext(ctx,
-		`UPDATE workspaces SET last_seen_at = $1 WHERE id = $2`,
-		store.TSUTC(now.Add(-time.Hour)), db.Workspace()); err != nil {
-		t.Fatalf("touch workspace: %v", err)
-	}
-	if err := db.SavePautaDay(ctx, pub, day, "[]"); err != nil {
-		t.Fatalf("empty pauta: %v", err)
-	}
-	srv.DailyPautaTick(ctx, pool, now)
-	for _, m := range fake.messages() {
-		t.Fatalf("empty pauta mailed: %v", m.Subject)
-	}
-	if row, _ := db.PautaDay(ctx, pub, day); row == nil || row.EmailedAt == "" {
-		t.Fatal("empty day was not stamped")
-	}
-}
-
 // TestDailyPautaMailLoginPriority (KLOX-256 / D33): magic links keep
 // the full daily cap — the morning mail yields the last quarter as
 // sign-in headroom, so a saturated mail day refuses the alert but
@@ -557,5 +524,161 @@ func TestDailyPautaMailLoginPriority(t *testing.T) {
 	}
 	if !sent {
 		t.Fatal("magic link did not reach the sender")
+	}
+}
+
+// TestDailyPautaMailLang (KLOX-258): the daily mail speaks the
+// account's language — an EN account gets the English subject,
+// greeting, button and link notice with "&lang=en" on the sign-in
+// link; a PT account keeps the Portuguese copy.
+func TestDailyPautaMailLang(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+
+	ownerEN := fmt.Sprintf("en-%d@hackbrazil.dev", time.Now().UnixNano())
+	cookieEN, dbEN := pautaVisitor(t, mgr)
+	pautaRadar(t, srv, cookieEN)
+	if err := dbEN.SetUILang(ctx, "en"); err != nil {
+		t.Fatalf("set lang: %v", err)
+	}
+	if err := pool.ClaimWorkspace(ctx, dbEN.Workspace(), ownerEN); err != nil {
+		t.Fatalf("claim en: %v", err)
+	}
+
+	ownerPT := fmt.Sprintf("pt-%d@hackbrazil.dev", time.Now().UnixNano())
+	cookiePT, dbPT := pautaVisitor(t, mgr)
+	pautaRadar(t, srv, cookiePT)
+	if err := dbPT.SetUILang(ctx, "pt"); err != nil {
+		t.Fatalf("set lang: %v", err)
+	}
+	if err := pool.ClaimWorkspace(ctx, dbPT.Workspace(), ownerPT); err != nil {
+		t.Fatalf("claim pt: %v", err)
+	}
+
+	srv.DailyPautaTick(ctx, pool, spAt(2026, 11, 24, 7, 5))
+
+	mailTo := func(owner string) *delivery.Message {
+		for _, m := range fake.messages() {
+			for _, to := range m.To {
+				if to == owner {
+					return m
+				}
+			}
+		}
+		return nil
+	}
+	en := mailTo(ownerEN)
+	if en == nil || en.Subject != "Your stories for today are ready" {
+		t.Fatalf("EN mail = %+v", en)
+	}
+	for _, want := range []string{
+		"Good morning! Today's stories for your Radar",
+		"[Open my stories](",
+		"is valid for 72 hours",
+		"&lang=en",
+	} {
+		if !strings.Contains(en.Text, want) {
+			t.Fatalf("EN body lacks %q:\n%s", want, en.Text)
+		}
+	}
+	pt := mailTo(ownerPT)
+	if pt == nil || pt.Subject != "Suas notícias de hoje estão prontas" {
+		t.Fatalf("PT mail = %+v", pt)
+	}
+	for _, want := range []string{
+		"Bom dia! As notícias do seu radar",
+		"[Abrir minhas notícias](",
+		"vale por 72 horas",
+		"&lang=pt",
+	} {
+		if !strings.Contains(pt.Text, want) {
+			t.Fatalf("PT body lacks %q:\n%s", want, pt.Text)
+		}
+	}
+}
+
+// TestDailyPautaMailNoNews (KLOX-256/258): a radar whose built pauta
+// has no stories sends nothing — the day is stamped handled and the
+// owner's daily claim stays free for another of their radars.
+func TestDailyPautaMailNoNews(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+	now := spAt(2026, 11, 24, 7, 5)
+	day := spDayOf(now)
+
+	cookie, db := pautaVisitor(t, mgr)
+	pub := pautaRadar(t, srv, cookie)
+	owner := fmt.Sprintf("nonews-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	// The 06:30 build ran and ranked nothing — an empty snapshot.
+	if err := db.SavePautaDay(ctx, pub, day, `[]`); err != nil {
+		t.Fatalf("save empty pauta: %v", err)
+	}
+
+	srv.DailyPautaTick(ctx, pool, now)
+
+	for _, m := range fake.messages() {
+		t.Fatalf("mail sent with no stories: %v", m.Subject)
+	}
+	if row, _ := db.PautaDay(ctx, pub, day); row == nil || row.EmailedAt == "" {
+		t.Fatal("empty pauta never stamped handled")
+	}
+	// The daily claim was not spent: the next day the same owner can
+	// still be mailed once real stories land.
+	if ok, err := pool.ClaimPautaMail(ctx, owner, day); err != nil || !ok {
+		t.Fatalf("empty pauta spent the owner's daily claim (ok=%v, err=%v)", ok, err)
+	}
+}
+
+// TestDailyPautaMailUnsubscribed (KLOX-258): an address that opted out
+// is never mailed — the send is refused into the ledger and the day is
+// still stamped handled, today and tomorrow. The one-click endpoint
+// and account toggle land with KLOX-257; the suppression list is the
+// opt-out seam the sweep already honors.
+func TestDailyPautaMailUnsubscribed(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSender{}
+	srv, pool, mgr := pautaHosted(t, fake)
+	day := spDayOf(spAt(2026, 11, 24, 7, 5))
+
+	cookie, db := pautaVisitor(t, mgr)
+	pub := pautaRadar(t, srv, cookie)
+	owner := fmt.Sprintf("unsub-%d@hackbrazil.dev", time.Now().UnixNano())
+	if err := pool.ClaimWorkspace(ctx, db.Workspace(), owner); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := pool.SuppressEmail(ctx, owner, "unsubscribed"); err != nil {
+		t.Fatalf("suppress: %v", err)
+	}
+
+	srv.DailyPautaTick(ctx, pool, spAt(2026, 11, 24, 7, 5))
+	srv.DailyPautaTick(ctx, pool, spAt(2026, 11, 25, 7, 5))
+
+	for _, m := range fake.messages() {
+		for _, to := range m.To {
+			if to == owner {
+				t.Fatalf("suppressed owner mailed: %v", m.Subject)
+			}
+		}
+	}
+	if row, _ := db.PautaDay(ctx, pub, day); row == nil || row.EmailedAt == "" {
+		t.Fatal("suppressed radar's day never stamped handled")
+	}
+	mails, err := db.OutboxEmails(ctx)
+	if err != nil {
+		t.Fatalf("OutboxEmails: %v", err)
+	}
+	refused := 0
+	for _, m := range mails {
+		if m.Kind == "pauta" && m.To == owner && m.Status == "refused" {
+			refused++
+		}
+	}
+	if refused == 0 {
+		t.Fatal("no refused pauta mail in the ledger for the suppressed owner")
 	}
 }
