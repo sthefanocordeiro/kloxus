@@ -20,7 +20,20 @@ frontend/node_modules/
 *.tsbuildinfo
 frontend/.e2e-data
 frontend/test-results/
+frontend/playwright-report/
 
 .rec-data/
 frontend/recordings/
 .omc/
+
+# agent runtime artifacts
+.multica/
+/AGENTS.md
+
+# local scratch (KLOX-68 evidence runs)
+.local/
+.polish-shots/
+frontend/test-results/
+
+# local audit snapshots — reports live in docs/audits/ (KLOX-216, KLOX-239)
+Claude outputs/

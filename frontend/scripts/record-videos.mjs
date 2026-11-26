@@ -13,7 +13,7 @@ async function prepare(page) {
   await page.getByRole("button", { name: "Prepare next issue" }).click();
   await page.waitForURL(/\/issues\/\d+/, { timeout: 120000 });
   await page
-    .locator('section[aria-label="Pautas"] p.font-doc, [aria-label="Pautas"] p.font-doc')
+    .locator('section[aria-label="Suggestions"] p.font-doc, [aria-label="Suggestions"] p.font-doc')
     .first()
     .waitFor({ timeout: 120000 });
 }
@@ -46,14 +46,14 @@ async function dragCard(page, card, target) {
   await page.waitForTimeout(1500);
 
   // drag a bench card into Quick links
-  const benchCard = page.locator('section[aria-label="Pautas"] .card-in').nth(1);
-  const target = page.locator('[data-section="Quick links"]');
+  const benchCard = page.locator('section[aria-label="Suggestions"] .card-in').nth(1);
+  const target = page.locator('[data-section="Links rápidos"]');
   await dragCard(page, benchCard, target);
   await page.waitForTimeout(1200);
 
   // drag an issue card back to the bench
-  const issueCard = page.locator('[data-section="Worth knowing"] .card-in').first();
-  const bench = page.locator('section[aria-label="Pautas"]');
+  const issueCard = page.locator('[data-section="Vale saber"] .card-in').first();
+  const bench = page.locator('section[aria-label="Suggestions"]');
   await dragCard(page, issueCard, bench);
   await page.waitForTimeout(1200);
 
@@ -77,17 +77,17 @@ async function dragCard(page, card, target) {
   // bench tab → add a story → issue tab → draft
   await page.getByRole("button", { name: /This issue/ }).click();
   await page.waitForTimeout(800);
-  await page.getByRole("button", { name: /^Pautas/ }).click();
+  await page.getByRole("button", { name: /^Suggestions/ }).click();
   await page.waitForTimeout(500);
   await page
-    .locator('section[aria-label="Pautas"]')
+    .locator('section[aria-label="Suggestions"]')
     .getByRole("button", { name: "Add to issue", exact: true })
     .nth(1)
     .click();
   await page.waitForTimeout(500);
   const chooser = page.getByRole("dialog");
   if (await chooser.isVisible()) {
-    await chooser.getByRole("button", { name: /Quick links/ }).click();
+    await chooser.getByRole("button", { name: /Links rápidos/ }).click();
   }
   await page.waitForTimeout(1200);
   await page.getByRole("button", { name: /This issue/ }).click();
