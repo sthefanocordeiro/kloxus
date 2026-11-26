@@ -289,10 +289,19 @@ func TestDailyPautaMailToggleOff(t *testing.T) {
 	// "notícias novas no dia". The fixture replays an identical pauta,
 	// so seed the new day with a card the 24th snapshot did not carry
 	// (what the overnight build would have stored for a real novelty).
+	pubID := mustPubID(t, db)
 	fresh := "[" + pautaMailCard(9, "Notícia nova", "Fonte Z", "u:toggle-fresh") + "]"
-	if err := db.SavePautaDay(ctx, mustPubID(t, db), "2026-11-25", fresh); err != nil {
+	if err := db.SavePautaDay(ctx, pubID, "2026-11-25", fresh); err != nil {
 		t.Fatalf("next-day pauta: %v", err)
 	}
+	// The package shares one Postgres and the sweep walks every active
+	// workspace — drop the seed so the next test's PrevPautaDay for
+	// this workspace falls back to the fixture snapshots again.
+	t.Cleanup(func() {
+		if err := db.DeletePautaDay(ctx, pubID, "2026-11-25"); err != nil {
+			t.Errorf("seed cleanup: %v", err)
+		}
+	})
 	srv.DailyPautaTick(ctx, pool, spAt(2026, 11, 25, 7, 5))
 	if n := len(dailyMailTo(fake, owner)); n != 1 {
 		t.Fatalf("mails after re-enabling = %d, want 1", n)
