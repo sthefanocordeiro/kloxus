@@ -125,6 +125,82 @@ func (db *DB) ConsumeMagicLink(ctx context.Context, tokenHash, now string) (emai
 	return
 }
 
+// --- account recovery sign-in links (KLOX-272) ---
+
+// OwnedWorkspace is one workspace belonging to an email account, with
+// enough shape to prefer the real Radar over accidental empty sessions.
+type OwnedWorkspace struct {
+	ID           string
+	LastSeenAt   string
+	ClaimedAt    string
+	Publications int
+}
+
+// WorkspacesByOwner lists every workspace claimed by email, useful
+// first: workspaces carrying publications come before empty duplicate
+// sessions, then most recently seen first.
+func (p *Pool) WorkspacesByOwner(ctx context.Context, email string) ([]OwnedWorkspace, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT w.id, w.last_seen_at, w.claimed_at, count(p.id)
+		FROM workspaces w
+		LEFT JOIN publications p ON p.workspace_id = w.id
+		WHERE w.owner_email = $1
+		GROUP BY w.id, w.last_seen_at, w.claimed_at
+		ORDER BY count(p.id) DESC, w.last_seen_at DESC`, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OwnedWorkspace
+	for rows.Next() {
+		var ow OwnedWorkspace
+		if err := rows.Scan(&ow.ID, &ow.LastSeenAt, &ow.ClaimedAt, &ow.Publications); err != nil {
+			return nil, err
+		}
+		out = append(out, ow)
+	}
+	return out, rows.Err()
+}
+
+// SaveLoginLink stores a hashed account-recovery token.
+func (p *Pool) SaveLoginLink(ctx context.Context, tokenHash, email, expiresAt string) error {
+	_, err := p.db.ExecContext(ctx,
+		`INSERT INTO login_links (token_hash, email, expires_at) VALUES ($1,$2,$3)`,
+		tokenHash, email, expiresAt)
+	return err
+}
+
+// RecentLoginLinks counts recovery links minted for an email since a
+// timestamp — the account-login rate limit.
+func (p *Pool) RecentLoginLinks(ctx context.Context, email, since string) (int, error) {
+	var n int
+	err := p.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM login_links WHERE email = $1 AND created_at >= $2`,
+		email, since).Scan(&n)
+	return n, err
+}
+
+// PeekLoginLink resolves a recovery token without spending it — the GET
+// side of the two-step sign-in, which mail-scanner prefetches must leave
+// intact (sql.ErrNoRows on invalid, spent or expired).
+func (p *Pool) PeekLoginLink(ctx context.Context, tokenHash, now string) (email string, err error) {
+	err = p.db.QueryRowContext(ctx, `
+		SELECT email FROM login_links
+		WHERE token_hash = $1 AND used_at = '' AND expires_at > $2`,
+		tokenHash, now).Scan(&email)
+	return
+}
+
+// ConsumeLoginLink atomically spends a recovery token: it must exist,
+// be unused and unexpired (sql.ErrNoRows on anything else).
+func (p *Pool) ConsumeLoginLink(ctx context.Context, tokenHash, now string) (email string, err error) {
+	err = p.db.QueryRowContext(ctx, `
+		UPDATE login_links SET used_at = $2
+		WHERE token_hash = $1 AND used_at = '' AND expires_at > $2
+		RETURNING email`, tokenHash, now).Scan(&email)
+	return
+}
+
 // --- daily pauta mail (KLOX-257) ---
 
 // DailyMailEnabled reports whether the account still wants the 07:00

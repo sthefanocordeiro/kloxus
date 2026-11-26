@@ -61,6 +61,16 @@ export const dict = {
       claimed: (email: string) => `saved with ${email}`,
       hint: "Confirm your email to save your work.",
     },
+    signin: {
+      title: "Sign back in",
+      lede: "Enter the email you used for your Radar. We will send you a one-time sign-in link.",
+      emailLabel: "Email",
+      action: "Send sign-in link",
+      sending: "Sending…",
+      sent: (email: string) => `If this email has a Kloxus account, we sent a sign-in link to ${email}. It expires in 15 minutes.`,
+      openLink: "Open the sign-in link",
+      createInstead: "Create a new Radar",
+    },
     reader: {
       forPaying: "For paying readers",
       unlockHint: "Subscribe to keep reading this and the paid sections.",
@@ -300,6 +310,16 @@ export const dict = {
       openLink: "Abrir o link",
       claimed: (email: string) => `salvo com ${email}`,
       hint: "Confirme seu e-mail para salvar seu trabalho.",
+    },
+    signin: {
+      title: "Entrar de novo",
+      lede: "Digite o e-mail que você usou no seu Radar. Vamos enviar um link de acesso único.",
+      emailLabel: "E-mail",
+      action: "Enviar link de acesso",
+      sending: "Enviando…",
+      sent: (email: string) => `Se este e-mail tiver uma conta no Kloxus, enviamos um link de acesso para ${email}. Ele expira em 15 minutos.`,
+      openLink: "Abrir o link de acesso",
+      createInstead: "Criar um novo Radar",
     },
     reader: {
       forPaying: "Para assinantes",

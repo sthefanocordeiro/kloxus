@@ -53,6 +53,11 @@ const router = createBrowserRouter([
     errorElement: <ErrorPage />,
   },
   {
+    path: "/entrar",
+    lazy: () => import("./pages/SignIn").then((m) => ({ Component: m.SignIn })),
+    errorElement: <ErrorPage />,
+  },
+  {
     lazy: () => import("./AppShell").then((m) => ({ Component: m.AppShell })),
     errorElement: <ErrorPage />,
     hydrateFallbackElement: (

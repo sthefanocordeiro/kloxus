@@ -380,6 +380,12 @@ export const api = {
     request<{ sent: boolean; email: string; delivery?: string; claim_url?: string; refused?: string; outbox_email_id?: number }>(
       "POST", "/api/v1/workspace/claim", { email, lang },
     ),
+  // Account recovery (KLOX-272): public sign-in by email — unlike the
+  // workspace claim, this must not resolve or create a visitor session.
+  login: (email: string, lang: string) =>
+    request<{ sent: boolean; email: string; delivery?: string; login_url?: string }>(
+      "POST", "/api/v1/auth/login", { email, lang },
+    ),
   // Reader double opt-in: mails a confirm link; nothing is sent to the
   // reader until they open it. query carries the sealed ?tok.
   subscribe: (slug: string, email: string, query = "") =>

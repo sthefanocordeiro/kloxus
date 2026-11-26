@@ -54,11 +54,12 @@ async function waitRun(page: Page, rid: number) {
 
 // approvedIssue drives the API path to an approved issue — the same
 // choreography smoke.sh uses, minus the browser.
-async function approvedIssue(page: Page): Promise<number> {
+async function approvedIssue(page: Page): Promise<{ iid: number; ownerEmail: string }> {
   await apiPost(page, "/api/v1/demo/new");
   // creating a radar needs the claimed owner (KLOX-161) — under the
   // synthetic provider the claim itself must report resend delivery
-  const claim = await claimOwner(page, "smoke@kloxus.dev");
+  const ownerEmail = `smoke-${Date.now()}-${Math.floor(Math.random() * 1e9)}@kloxus.dev`;
+  const claim = await claimOwner(page, ownerEmail);
   expect(claim?.delivery).toBe("resend");
   const proposal = (await apiGet(page, "/api/v1/proposal")).proposal;
   const pub = await apiPost(
@@ -153,12 +154,12 @@ async function approvedIssue(page: Page): Promise<number> {
   const readiness = await apiGet(page, `/api/v1/issues/${iid}/readiness`);
   expect(readiness.ready, `not ready: ${JSON.stringify(readiness.checks)}`).toBe(true);
   await apiPost(page, `/api/v1/issues/${iid}/approve`);
-  return iid;
+  return { iid, ownerEmail };
 }
 
 test("provider failure falls back to the outbox — and recovery sends", async ({ page }) => {
   test.skip(!fakeLive, "fake-live mode only");
-  const iid = await approvedIssue(page); // already claimed
+  const { iid, ownerEmail } = await approvedIssue(page); // already claimed
 
   // intentional failure: the provider must not count as success — the
   // message lands in the ledger as fallback and the issue stays
@@ -192,13 +193,13 @@ test("provider failure falls back to the outbox — and recovery sends", async (
   });
   expect(sent.delivery).toBe("resend");
   expect(sent.sent).toBe(1);
-  expect(sent.to).toEqual(["smoke@kloxus.dev"]);
+  expect(sent.to).toEqual([ownerEmail]);
   expect(sent.issue.status).toBe("approved");
   expect(sent.outbox_email_id).toBe(failed.outbox_email_id);
   const reqs = await fakeRequests(page);
   expect(reqs.count - before).toBe(1);
   const last = reqs.requests.at(-1)!;
-  expect(last.to).toEqual(["smoke@kloxus.dev"]);
+  expect(last.to).toEqual([ownerEmail]);
   expect(last.auth).toBe("Bearer re_local_verify_synthetic");
   const smail = await apiGet(page, `/api/v1/outbox/${sent.outbox_email_id}`);
   expect(smail.email.provider).toBe("resend");
