@@ -331,7 +331,7 @@ func (p *Pool) Suppressed(ctx context.Context, emails []string) (map[string]bool
 
 // Suppressed is the local-mode variant on a workspace handle.
 func (db *DB) Suppressed(ctx context.Context, emails []string) (map[string]bool, error) {
-	return suppressedQuery(ctx, db.db, emails)
+	return suppressedQuery(ctx, db.executor(), emails)
 }
 
 func suppressedQuery(ctx context.Context, q interface {

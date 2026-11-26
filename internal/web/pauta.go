@@ -9,10 +9,12 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
@@ -48,6 +50,24 @@ type pautaEntryView struct {
 	Outlet      string `json:"outlet"`
 	Date        string `json:"date"`
 	Text        string `json:"text"`
+}
+
+// txHTTPError carries the API response a transactional flow would have
+// written inline before transactions made the write boundary explicit.
+type txHTTPError struct {
+	status int
+	code   string
+	msg    string
+}
+
+func (e *txHTTPError) Error() string { return e.msg }
+
+func asTxHTTPError(err error) *txHTTPError {
+	var he *txHTTPError
+	if errors.As(err, &he) {
+		return he
+	}
+	return nil
 }
 
 var pautaCiteRe = regexp.MustCompile(`\[(\d+)\]`)
@@ -225,6 +245,28 @@ func (s *Server) savePauta(ctx context.Context, d *store.DB, iss *store.Issue, p
 	return 0, ""
 }
 
+// savePautaAtomic makes one pauta save an all-or-nothing write: lineup
+// updates, commentary/title, dossiers and the composed body either commit
+// together or leave the prior pauta untouched.
+func (s *Server) savePautaAtomic(ctx context.Context, d *store.DB, iss *store.Issue, pub *store.Publication, in pautaIn) (int, string) {
+	var code int
+	var msg string
+	err := d.WithTx(ctx, func(txdb *store.DB) error {
+		code, msg = s.savePauta(ctx, txdb, iss, pub, in)
+		if code != 0 {
+			return &txHTTPError{status: code, code: "pauta", msg: msg}
+		}
+		return nil
+	})
+	if err == nil {
+		return 0, ""
+	}
+	if he := asTxHTTPError(err); he != nil {
+		return he.status, he.msg
+	}
+	return 500, "could not save the pauta"
+}
+
 // pautaView reads the issue back as ordered entries with free text.
 func (s *Server) pautaView(ctx context.Context, d *store.DB, iss *store.Issue, pub *store.Publication) (map[string]any, []pautaEntryView, error) {
 	doc, err := buildIssueDocument(ctx, d, iss, pub)
@@ -290,28 +332,36 @@ func (s *Server) apiPautaCreate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "story_ids is required")
 		return
 	}
-	number, err := db(r).NextIssueNumber(ctx, pub.ID)
-	if apiDBErr(w, r, err, "pauta") {
-		return
-	}
-	id, err := db(r).CreateIssue(ctx, pub.ID, number,
-		fmt.Sprintf("%s — pauta %d", pub.Name, number), "", config.PostSections())
-	if apiDBErr(w, r, err, "pauta") {
-		return
-	}
-	iss, err := db(r).GetIssue(ctx, id)
-	if apiDBErr(w, r, err, "pauta") {
-		return
-	}
 	var in pautaIn
 	for _, sid := range req.StoryIDs {
 		in.Entries = append(in.Entries, pautaEntryIn{StoryID: sid})
 	}
-	if code, msg := s.savePauta(ctx, db(r), iss, pub, in); code != 0 {
-		apiErr(w, code, "pauta", msg)
-		return
+	var id int64
+	err = db(r).WithTx(ctx, func(txdb *store.DB) error {
+		var err error
+		id, _, err = txdb.CreateNextIssue(ctx, pub.ID,
+			func(n int) string { return fmt.Sprintf("%s — pauta %d", pub.Name, n) }, "", config.PostSections())
+		if err != nil {
+			return err
+		}
+		iss, err := txdb.GetIssue(ctx, id)
+		if err != nil {
+			return err
+		}
+		if code, msg := s.savePauta(ctx, txdb, iss, pub, in); code != 0 {
+			return &txHTTPError{status: code, code: "pauta", msg: msg}
+		}
+		return txdb.DeletePautaDay(ctx, pub.ID, pautaDayOf(time.Now()))
+	})
+	if err != nil {
+		if he := asTxHTTPError(err); he != nil {
+			apiErr(w, he.status, he.code, he.msg)
+			return
+		}
+		if apiDBErr(w, r, err, "pauta") {
+			return
+		}
 	}
-	dropPautaDay(r, db(r), pub.ID) // picked stories leave today's list
 	apiJSON(w, 201, map[string]any{"issue_id": id})
 }
 
@@ -353,7 +403,7 @@ func (s *Server) apiPautaSave(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
 		return
 	}
-	if code, msg := s.savePauta(r.Context(), db(r), iss, pub, in); code != 0 {
+	if code, msg := s.savePautaAtomic(r.Context(), db(r), iss, pub, in); code != 0 {
 		apiErr(w, code, "pauta", msg)
 		return
 	}

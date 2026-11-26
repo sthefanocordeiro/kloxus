@@ -28,7 +28,7 @@ func (db *DB) SetProgress(ctx context.Context, key string) error {
 // sequence values are not reused afterwards; nothing may assume them
 // (D16's id-1 deep links died with the old id-sequence reset).
 func (db *DB) Reset(ctx context.Context) error {
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}

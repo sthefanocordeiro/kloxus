@@ -288,9 +288,9 @@ type IssueEdit struct {
 	Flags       []Flag // nil leaves flags_json untouched
 	Decision    string // kind; "" skips the decisions insert
 	Reason      string
-	// RevertApproved mirrors revertApproved: when the stored issue is
-	// still 'approved', the edit puts it back to 'drafted', drops its
-	// approval receipt and cancels the queued send — the EXISTS guards
+	// RevertApproved mirrors the editor's approval-revert rule: when the
+	// stored issue is still 'approved', the edit puts it back to 'drafted',
+	// drops its approval receipt and cancels the queued send — the EXISTS guards
 	// read the pre-statement snapshot, so a stale caller flag cannot
 	// touch a non-approved issue's receipt or jobs.
 	RevertApproved bool

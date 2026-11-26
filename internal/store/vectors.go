@@ -34,7 +34,7 @@ func (db *DB) ItemVectors(ctx context.Context, model string, ids []int64) (map[i
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := db.db.QueryContext(ctx,
+	rows, err := db.QueryContext(ctx,
 		`SELECT item_id, embedding::text FROM item_embeddings
 		 WHERE model = $1 AND item_id = ANY($2)`, model, ids)
 	if err != nil {
@@ -63,7 +63,7 @@ func (db *DB) FTSRank(ctx context.Context, ids []int64, terms []string) (map[int
 	if len(ids) == 0 || len(terms) == 0 {
 		return out, nil
 	}
-	rows, err := db.db.QueryContext(ctx,
+	rows, err := db.QueryContext(ctx,
 		`SELECT id, ts_rank_cd(fts, to_tsquery('portuguese', $2))
 		 FROM items WHERE id = ANY($1) AND fts @@ to_tsquery('portuguese', $2)`,
 		ids, strings.Join(terms, " | "))

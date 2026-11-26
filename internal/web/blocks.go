@@ -8,6 +8,7 @@ package web
 // change. Every op carries the document version like a sentence edit
 // and reverts an approved issue to drafted.
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -157,26 +158,54 @@ func (s *Server) respondBlock(w http.ResponseWriter, r *http.Request, iss *store
 	apiJSON(w, 200, resp)
 }
 
-// saveBlockBody persists a rewritten body — same edit path as sentence
-// ops, so post-approval edits void the approval (KLOX-66 §8).
-func (s *Server) saveBlockBody(w http.ResponseWriter, r *http.Request, iss *store.Issue, body string, flags []store.Flag) bool {
+func effectiveBlockFlags(iss *store.Issue, flags []store.Flag) []store.Flag {
 	if flags == nil {
-		flags = iss.Flags
+		return iss.Flags
 	}
-	err := db(r).SaveIssueEdit(r.Context(), iss.ID, store.IssueEdit{
-		PubID: iss.PublicationID, Body: body, Flags: flags,
+	return flags
+}
+
+// saveBlockBodyEdit persists a rewritten body on an explicit store handle —
+// same edit path as sentence ops, so post-approval edits void the approval
+// (KLOX-66 §8). Transactional callers pass their scoped handle so the body
+// write joins the same atomic boundary as the lineup change it belongs to.
+func saveBlockBodyEdit(ctx context.Context, d *store.DB, iss *store.Issue, body string, flags []store.Flag) error {
+	return d.SaveIssueEdit(ctx, iss.ID, store.IssueEdit{
+		PubID: iss.PublicationID, Body: body, Flags: effectiveBlockFlags(iss, flags),
 		Decision: "block_edit", Reason: "composer block op",
 		RevertApproved: iss.Status == store.IssueApproved,
 	})
-	if apiDBErr(w, r, err, "issue") {
-		return false
-	}
+}
+
+func applyBlockBodyState(iss *store.Issue, body string, flags []store.Flag) {
 	iss.BodyMD = body
-	iss.Flags = flags
+	iss.Flags = effectiveBlockFlags(iss, flags)
 	if iss.Status == store.IssueApproved {
 		iss.Status = store.IssueDrafted
 	}
+}
+
+// saveBlockBody persists a rewritten body through the request's store handle.
+func (s *Server) saveBlockBody(w http.ResponseWriter, r *http.Request, iss *store.Issue, body string, flags []store.Flag) bool {
+	if apiDBErr(w, r, saveBlockBodyEdit(r.Context(), db(r), iss, body, flags), "issue") {
+		return false
+	}
+	applyBlockBodyState(iss, body, flags)
 	return true
+}
+
+// spliceBlockBody inserts seg at pos inside sec's stored body span.
+func spliceBlockBody(body, section string, sec *docSection, pos int, seg string) string {
+	if sec.spanStart < 0 {
+		// the snapshot section has no `## ` heading in the body yet —
+		// append the section and the block at the end.
+		return tidyBody(strings.TrimRight(body, "\n") + "\n\n## " + section + "\n\n" + seg + "\n")
+	}
+	off := sec.spanEnd
+	if pos < len(sec.Blocks) {
+		off = sec.Blocks[pos].spanStart
+	}
+	return tidyBody(body[:off] + seg + "\n\n" + body[off:])
 }
 
 // apiBlockInsert appends a block inside a section: a pauta (story_id —
@@ -209,44 +238,49 @@ func (s *Server) apiBlockInsert(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "position is out of range for this section")
 		return
 	}
-	var seg string
+	ctx := r.Context()
 	if in.Kind == "item" {
-		line, msg := s.insertItemBlock(r, iss, in.Section, in.StoryID)
-		if msg != "" {
-			apiErr(w, 409, "blocked", msg)
-			return
+		// A pauta insert is one logical edit: creating/placing the issue
+		// item, preparing its dossier and writing the item block either all
+		// commit or the retry can still insert the same story cleanly.
+		var body string
+		err := db(r).WithTx(ctx, func(txdb *store.DB) error {
+			seg, msg := s.insertItemBlock(ctx, txdb, iss, in.Section, in.StoryID)
+			if msg != "" {
+				return &txHTTPError{status: 409, code: "blocked", msg: msg}
+			}
+			if pos < len(sec.Blocks) && sec.Blocks[pos].Kind != "item" {
+				// the block that follows the new item needs its own boundary —
+				// without it that block folds into the item on re-parse
+				seg += "\n\n" + endItemMarker
+			}
+			body = spliceBlockBody(iss.BodyMD, in.Section, sec, pos, seg)
+			return saveBlockBodyEdit(ctx, txdb, iss, body, nil)
+		})
+		if err != nil {
+			if he := asTxHTTPError(err); he != nil {
+				apiErr(w, he.status, he.code, he.msg)
+				return
+			}
+			if apiDBErr(w, r, err, "issue") {
+				return
+			}
 		}
-		seg = line
-	} else {
-		line, okv := blockLine(in.Kind, in.Text, in.URL)
-		if !okv {
-			apiErr(w, 400, "validation",
-				"block needs a valid kind (item|heading|divider|link|image|embed|text) and content")
-			return
-		}
-		seg = line
+		applyBlockBodyState(iss, body, nil)
+		s.respondBlock(w, r, iss, doc, nil)
+		return
 	}
-	if in.Kind != "item" && needsEndItem(sec, pos) {
+
+	seg, okv := blockLine(in.Kind, in.Text, in.URL)
+	if !okv {
+		apiErr(w, 400, "validation",
+			"block needs a valid kind (item|heading|divider|link|image|embed|text) and content")
+		return
+	}
+	if needsEndItem(sec, pos) {
 		seg = endItemMarker + "\n\n" + seg
 	}
-	if in.Kind == "item" && pos < len(sec.Blocks) && sec.Blocks[pos].Kind != "item" {
-		// the block that follows the new item needs its own boundary —
-		// without it that block folds into the item on re-parse
-		seg += "\n\n" + endItemMarker
-	}
-	body := iss.BodyMD
-	if sec.spanStart < 0 {
-		// the snapshot section has no `## ` heading in the body yet —
-		// append the section and the block at the end.
-		body = strings.TrimRight(body, "\n") + "\n\n## " + in.Section + "\n\n" + seg + "\n"
-	} else {
-		off := sec.spanEnd
-		if pos < len(sec.Blocks) {
-			off = sec.Blocks[pos].spanStart
-		}
-		body = body[:off] + seg + "\n\n" + body[off:]
-	}
-	body = tidyBody(body)
+	body := spliceBlockBody(iss.BodyMD, in.Section, sec, pos, seg)
 	if !s.saveBlockBody(w, r, iss, body, nil) {
 		return
 	}
@@ -255,18 +289,19 @@ func (s *Server) apiBlockInsert(w http.ResponseWriter, r *http.Request) {
 
 // insertItemBlock puts a pauta into the edition: the issue item joins
 // the lineup as approved/manual, gets a deterministic manual dossier
-// (no model call), and returns the stored heading + sources lines.
-func (s *Server) insertItemBlock(r *http.Request, iss *store.Issue, section string, storyID int64) (string, string) {
-	ctx := r.Context()
+// (no model call), and returns the stored heading + sources lines. The
+// caller owns the transaction boundary that joins these writes with the
+// document body edit.
+func (s *Server) insertItemBlock(ctx context.Context, d *store.DB, iss *store.Issue, section string, storyID int64) (string, string) {
 	if storyID == 0 {
 		return "", "story_id is required for a pauta block"
 	}
-	story, err := db(r).StoryWithItems(ctx, storyID)
+	story, err := d.StoryWithItems(ctx, storyID)
 	if err != nil || story.PublicationID != iss.PublicationID {
 		return "", "story not found in this newsletter"
 	}
 	var ii *store.IssueItem
-	if old, err := db(r).IssueItemByStory(ctx, iss.ID, storyID); err == nil {
+	if old, err := d.IssueItemByStory(ctx, iss.ID, storyID); err == nil {
 		if old.Status == store.ItemPending || old.Status == store.ItemApproved {
 			return "", "this story is already in the edition"
 		}
@@ -274,34 +309,34 @@ func (s *Server) insertItemBlock(r *http.Request, iss *store.Issue, section stri
 		if old.Status == store.ItemRejected {
 			return "", "this story was rejected — undo the rejection on the board first"
 		}
-		if err := db(r).SetIssueItemPlacement(ctx, old.ID, section, nextPosition(r, iss.ID, section), store.ItemApproved); err != nil {
+		if err := d.SetIssueItemPlacement(ctx, old.ID, section, nextPositionDB(ctx, d, iss.ID, section), store.ItemApproved); err != nil {
 			return "", "could not place the story"
 		}
 		ii = old
 	} else {
-		id, err := db(r).CreateIssueItem(ctx, store.IssueItem{
+		id, err := d.CreateIssueItem(ctx, store.IssueItem{
 			IssueID: iss.ID, StoryID: storyID, Section: section,
 			Status: store.ItemApproved, Origin: "manual",
-			Position: nextPosition(r, iss.ID, section),
+			Position: nextPositionDB(ctx, d, iss.ID, section),
 		})
 		if err != nil {
 			return "", "could not add the story"
 		}
 		ii = &store.IssueItem{ID: id, StoryID: storyID, Section: section}
 	}
-	if err := pipeline.EnsureManualDossiers(ctx, db(r), iss.ID); err != nil {
+	if err := pipeline.EnsureManualDossiers(ctx, d, iss.ID); err != nil {
 		return "", "could not prepare the story's sources"
 	}
-	var d pipeline.Dossier
-	if dj, err := db(r).Dossier(ctx, ii.ID); err != nil || json.Unmarshal([]byte(dj), &d) != nil {
+	var dj pipeline.Dossier
+	if raw, err := d.Dossier(ctx, ii.ID); err != nil || json.Unmarshal([]byte(raw), &dj) != nil {
 		return "", "the story has no reference material"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "### %s <!-- item %d -->\n\n", oneLine(story.Title), d.Ref)
-	if len(d.Sources) > 0 {
+	fmt.Fprintf(&b, "### %s <!-- item %d -->\n\n", oneLine(story.Title), dj.Ref)
+	if len(dj.Sources) > 0 {
 		b.WriteString("**Sources:** ")
 		parts := []string{}
-		for _, ds := range d.Sources {
+		for _, ds := range dj.Sources {
 			name := oneLine(ds.Name)
 			if name == "" {
 				name = "source"
@@ -315,8 +350,15 @@ func (s *Server) insertItemBlock(r *http.Request, iss *store.Issue, section stri
 
 // nextPosition returns the next lineup position inside a section.
 func nextPosition(r *http.Request, issueID int64, section string) int {
+	return nextPositionDB(r.Context(), db(r), issueID, section)
+}
+
+// nextPositionDB is nextPosition on an explicit store handle — transactional
+// callers must pass their transaction-scoped handle so the position reads
+// the same lineup the atomic write is about to change.
+func nextPositionDB(ctx context.Context, d *store.DB, issueID int64, section string) int {
 	max := 0
-	if iis, err := db(r).IssueItems(r.Context(), issueID); err == nil {
+	if iis, err := d.IssueItems(ctx, issueID); err == nil {
 		for _, ii := range iis {
 			if ii.Section == section && ii.Position >= max {
 				max = ii.Position + 1
@@ -474,12 +516,6 @@ func (s *Server) apiBlockRemove(w http.ResponseWriter, r *http.Request) {
 	body = tidyBody(body[:start] + body[cutEnd:])
 	var flags []store.Flag
 	if blk.Kind == "item" {
-		if it := doc.findItem(blk.Ref); it != nil && it.IssueItemID != 0 {
-			if err := db(r).SetIssueItemStatus(r.Context(), it.IssueItemID, store.ItemRemoved); err != nil {
-				apiDBErr(w, r, err, "issue")
-				return
-			}
-		}
 		// flags keyed to the removed item die with it
 		flags = iss.Flags[:0]
 		for _, f := range iss.Flags {
@@ -488,9 +524,22 @@ func (s *Server) apiBlockRemove(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if !s.saveBlockBody(w, r, iss, body, flags) {
+	// Removing a pauta is one logical edit: the lineup status and the
+	// document body cannot diverge when the body write fails.
+	err := db(r).WithTx(r.Context(), func(txdb *store.DB) error {
+		if blk.Kind == "item" {
+			if it := doc.findItem(blk.Ref); it != nil && it.IssueItemID != 0 {
+				if err := txdb.SetIssueItemStatus(r.Context(), it.IssueItemID, store.ItemRemoved); err != nil {
+					return err
+				}
+			}
+		}
+		return saveBlockBodyEdit(r.Context(), txdb, iss, body, flags)
+	})
+	if apiDBErr(w, r, err, "issue") {
 		return
 	}
+	applyBlockBodyState(iss, body, flags)
 	s.respondBlock(w, r, iss, doc, nil)
 }
 

@@ -104,14 +104,19 @@ func TestMigrateAndSeed(t *testing.T) {
 		t.Fatalf("Sources: %v len=%d", err, len(srcs))
 	}
 
-	if n, _ := db.NextIssueNumber(ctx, pub.ID); n != 1 {
-		t.Fatalf("NextIssueNumber = %d", n)
+	issueID, n, err := db.CreateNextIssue(ctx, pub.ID,
+		func(n int) string { return "s" + strconv.Itoa(n) }, "body", nil)
+	if err != nil {
+		t.Fatalf("CreateNextIssue: %v", err)
 	}
-	if _, err := db.CreateIssue(ctx, pub.ID, 1, "s", "body", nil); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
+	if n != 1 {
+		t.Fatalf("first number = %d", n)
 	}
-	if n, _ := db.NextIssueNumber(ctx, pub.ID); n != 2 {
-		t.Fatalf("NextIssueNumber after create = %d", n)
+	if _, n, err := db.CreateNextIssue(ctx, pub.ID, nil, "", nil); err != nil || n != 2 {
+		t.Fatalf("second CreateNextIssue = n%d, %v", n, err)
+	}
+	if issueID == 0 {
+		t.Fatal("CreateNextIssue returned zero id")
 	}
 	body, err := db.IssueBody(ctx, pub.ID, 1)
 	if err != nil || body != "body" {

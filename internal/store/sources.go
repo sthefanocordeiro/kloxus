@@ -10,7 +10,7 @@ import (
 // with it — stories and past issues keep their own rows, only the raw
 // fetch links are dropped.
 func (db *DB) DeleteSource(ctx context.Context, pubID, sourceID int64) error {
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}

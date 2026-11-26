@@ -151,18 +151,25 @@ func (db *DB) CreatePublication(ctx context.Context, p *config.Publication) (int
 }
 
 // SeedPublication inserts a publication definition and its sources.
-// Idempotent on slug; returns the publication id.
+// Idempotent on slug; returns the publication id. The publication row and
+// source attachments commit together so a failed template refresh cannot
+// leave a publication with only part of its source set applied.
 func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64, error) {
 	var id int64
 	sections, _ := json.Marshal(p.Sections)
 	paywall, _ := json.Marshal(p.Paywall)
-	err := db.QueryRowContext(ctx,
+	tx, err := db.beginTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	err = tx.QueryRowContext(ctx,
 		`SELECT id FROM publications WHERE workspace_id = $1 AND slug = $2`, db.ws, p.Slug).Scan(&id)
 	if err == nil {
 		// Existing workspace: refresh publication config from the current
 		// template (paywall price, sections, etc.) while keeping the
 		// visitor's issues, decisions, sources and readers.
-		if _, err := db.ExecContext(ctx, `UPDATE publications SET
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET
 			name=$1, language=$2, topic=$3, audience=$4, editorial_line=$5, reject_terms=$6, tone=$7,
 			frequency=$8, sections_json=$9, paywall_json=$10, ai_disclosure=$11
 			WHERE workspace_id = $12 AND id = $13`,
@@ -171,19 +178,22 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 			return 0, err
 		}
 		for _, s := range p.Sources {
-			if _, err := db.ExecContext(ctx,
+			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO sources (workspace_id, publication_id, type, url) VALUES ($1,$2,$3,$4)
 				 ON CONFLICT (publication_id, url) DO NOTHING`,
 				db.ws, id, s.Type, s.URL); err != nil {
 				return 0, err
 			}
 		}
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
 		return id, nil
 	}
 	if err != sql.ErrNoRows {
 		return 0, err
 	}
-	err = db.QueryRowContext(ctx, `INSERT INTO publications
+	err = tx.QueryRowContext(ctx, `INSERT INTO publications
 		(workspace_id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING id`,
@@ -193,12 +203,15 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 		return 0, err
 	}
 	for _, s := range p.Sources {
-		if _, err := db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO sources (workspace_id, publication_id, type, url) VALUES ($1,$2,$3,$4)
 			 ON CONFLICT (publication_id, url) DO NOTHING`,
 			db.ws, id, s.Type, s.URL); err != nil {
 			return 0, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
 	return id, nil
 }
@@ -255,7 +268,7 @@ func (db *DB) SetPublicationTemplate(ctx context.Context, pubID int64, want stri
 // design and stays — it is the legal record of what went out. Returns
 // sql.ErrNoRows when the publication does not exist in the workspace.
 func (db *DB) DeletePublication(ctx context.Context, pubID int64) error {
-	tx, err := db.db.BeginTx(ctx, nil)
+	tx, err := db.beginTx(ctx)
 	if err != nil {
 		return err
 	}

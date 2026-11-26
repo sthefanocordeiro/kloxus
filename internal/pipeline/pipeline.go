@@ -329,6 +329,7 @@ func (r *Runner) stepStart(name string) {
 		r.OnStep(name)
 	}
 }
+
 // sourceTexts batch-loads the stored body of every item a dossier
 // cites, keyed by item id — the corpus the citation floor and the
 // originality rule check against.
@@ -717,10 +718,19 @@ func assembleIssue(pub *store.Publication, number int, entries []entry, drafts m
 	return b.String()
 }
 
-// SubstituteAlternative replaces an issue item with the best-scored story
-// not already in the issue (triage ranking), generating a dossier for it.
-// The new item starts as pending; the old one is marked 'alternative'.
-func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publication, iss *store.Issue, old *store.IssueItem) (*store.IssueItem, error) {
+// AlternativeSubstitution is the prepared content of an alternative
+// swap. The dossier (including any model call) is computed before the
+// write boundary so the database transaction only covers the write
+// statements themselves.
+type AlternativeSubstitution struct {
+	Candidate   *store.Story
+	DossierJSON string
+}
+
+// PrepareAlternative picks the best-scored story not already in the
+// issue and builds its dossier. It performs no writes; CommitAlternative
+// applies the swap atomically.
+func (r *Runner) PrepareAlternative(ctx context.Context, pub *store.Publication, iss *store.Issue) (*AlternativeSubstitution, error) {
 	cand, err := r.DB.BestAlternative(ctx, pub.ID, iss.ID)
 	if err != nil {
 		return nil, err // sql.ErrNoRows → no candidate
@@ -739,30 +749,61 @@ func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publicati
 		}
 	}
 	newRef := maxRef + 1
-	newID, err := r.DB.CreateIssueItem(ctx, store.IssueItem{
-		IssueID: iss.ID,
-		StoryID: cand.ID,
-		Section: old.Section,
-		Score:   cand.TriageScore,
-		Reason:  cand.TriageReason,
-		Status:  store.ItemPending,
-		Origin:  "alternative",
+	d := r.alternativeDossier(ctx, pub, cand, newRef)
+	data, err := json.Marshal(d)
+	if err != nil {
+		return nil, err
+	}
+	return &AlternativeSubstitution{Candidate: cand, DossierJSON: string(data)}, nil
+}
+
+// CommitAlternative writes one prepared swap: the new pending item, its
+// dossier and the old item's alternative status either all commit or the
+// edition is left exactly as it was. Best-effort feedback stays outside
+// this boundary.
+func (r *Runner) CommitAlternative(ctx context.Context, iss *store.Issue, old *store.IssueItem, sub *AlternativeSubstitution) (*store.IssueItem, error) {
+	var newID int64
+	err := r.DB.WithTx(ctx, func(txdb *store.DB) error {
+		id, err := txdb.CreateIssueItem(ctx, store.IssueItem{
+			IssueID: iss.ID,
+			StoryID: sub.Candidate.ID,
+			Section: old.Section,
+			Score:   sub.Candidate.TriageScore,
+			Reason:  sub.Candidate.TriageReason,
+			Status:  store.ItemPending,
+			Origin:  "alternative",
+		})
+		if err != nil {
+			return err
+		}
+		newID = id
+		if err := txdb.SaveDossier(ctx, id, sub.DossierJSON); err != nil {
+			return err
+		}
+		return txdb.SetIssueItemStatus(ctx, old.ID, store.ItemAlternative)
 	})
 	if err != nil {
 		return nil, err
 	}
-	d := r.alternativeDossier(ctx, pub, cand, newRef)
-	data, _ := json.Marshal(d)
-	if err := r.DB.SaveDossier(ctx, newID, string(data)); err != nil {
+	return r.DB.GetIssueItem(ctx, newID)
+}
+
+// SubstituteAlternative replaces an issue item with the best-scored story
+// not already in the issue (triage ranking), generating a dossier for it.
+// The new item starts as pending; the old one is marked 'alternative'.
+func (r *Runner) SubstituteAlternative(ctx context.Context, pub *store.Publication, iss *store.Issue, old *store.IssueItem) (*store.IssueItem, error) {
+	sub, err := r.PrepareAlternative(ctx, pub, iss)
+	if err != nil {
 		return nil, err
 	}
-	if err := r.DB.SetIssueItemStatus(ctx, old.ID, store.ItemAlternative); err != nil {
+	newII, err := r.CommitAlternative(ctx, iss, old, sub)
+	if err != nil {
 		return nil, err
 	}
 	// a swap means the creator declined the old story: it is rejected
 	// feedback for the Rocchio profile (KLOX-112).
 	RecordFeedback(ctx, r.DB, pub.ID, old.ID, store.FeedbackReject)
-	return r.DB.GetIssueItem(ctx, newID)
+	return newII, nil
 }
 
 // alternativeDossier builds the dossier for an alternative story. Real

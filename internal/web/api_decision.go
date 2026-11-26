@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -10,6 +11,25 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/pipeline"
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
+
+// applyDecisionStatusTx writes a lineup decision and the approval
+// invalidation it causes in one transaction: the edition can never carry
+// a new item state beside a still-valid approval receipt.
+func applyDecisionStatusTx(ctx context.Context, d *store.DB, iss *store.Issue, iid int64, status string) error {
+	err := d.WithTx(ctx, func(txdb *store.DB) error {
+		if err := txdb.SetIssueItemStatus(ctx, iid, status); err != nil {
+			return err
+		}
+		if iss.Status == store.IssueApproved {
+			return txdb.RevertIssueToDraft(ctx, iss.ID)
+		}
+		return nil
+	})
+	if err == nil && iss.Status == store.IssueApproved {
+		iss.Status = store.IssueDrafted
+	}
+	return err
+}
 
 // apiDecision applies one triage decision: approve | reject |
 // alternative | undo. Same rules as the HTML route.
@@ -60,7 +80,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, 409, "not_rejected", "undo applies only to a rejected item")
 			return
 		}
-		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, store.ItemPending), "item") {
+		if apiDBErr(w, r, applyDecisionStatusTx(ctx, db(r), iss, iid, store.ItemPending), "item") {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "undo", "")
@@ -72,7 +92,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		finish(iid)
 		return
 	case "approve":
-		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, store.ItemApproved), "item") {
+		if apiDBErr(w, r, applyDecisionStatusTx(ctx, db(r), iss, iid, store.ItemApproved), "item") {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "approve", in.Reason)
@@ -85,7 +105,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 					Target: &apiTarget{Kind: "item", Ref: fmt.Sprint(iid)}})
 			return
 		}
-		if apiDBErr(w, r, db(r).SetIssueItemStatus(ctx, iid, store.ItemRejected), "item") {
+		if apiDBErr(w, r, applyDecisionStatusTx(ctx, db(r), iss, iid, store.ItemRejected), "item") {
 			return
 		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "reject", in.Reason)
@@ -103,7 +123,7 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 			TriageModel: s.d.Cfg.ModelTriage, DraftModel: s.d.Cfg.ModelDraft,
 			PaceStep: s.stepPacer(), Deterministic: s.d.Cfg.LLMOff(),
 		}
-		newII, err := runner.SubstituteAlternative(ctx, pub, iss, ii)
+		sub, err := runner.PrepareAlternative(ctx, pub, iss)
 		if err == sql.ErrNoRows {
 			apiErr(w, 409, "no_alternative", "there is no alternative candidate for this item")
 			return
@@ -111,16 +131,33 @@ func (s *Server) apiDecision(w http.ResponseWriter, r *http.Request) {
 		if apiDBErr(w, r, err, "item") {
 			return
 		}
+		var newII *store.IssueItem
+		err = db(r).WithTx(ctx, func(txdb *store.DB) error {
+			txrunner := *runner
+			txrunner.DB = txdb
+			var err error
+			newII, err = txrunner.CommitAlternative(ctx, iss, ii, sub)
+			if err != nil {
+				return err
+			}
+			if iss.Status == store.IssueApproved {
+				return txdb.RevertIssueToDraft(ctx, iss.ID)
+			}
+			return nil
+		})
+		if apiDBErr(w, r, err, "item") {
+			return
+		}
+		if iss.Status == store.IssueApproved {
+			iss.Status = store.IssueDrafted
+		}
 		db(r).RecordDecision(ctx, iss.PublicationID, iid, "alternative",
 			fmt.Sprintf("replaced by item %d (score %.1f)", newII.ID, newII.Score))
+		pipeline.RecordFeedback(ctx, db(r), iss.PublicationID, ii.ID, store.FeedbackReject)
 		ii = newII
 	default:
 		apiErr(w, 400, "validation", "kind must be approve|reject|alternative|undo")
 		return
-	}
-	if iss.Status == store.IssueApproved {
-		// a decision after approval returns the issue to draft
-		db(r).RevertIssueToDraft(ctx, iss.ID)
 	}
 	finish(ii.ID)
 }
