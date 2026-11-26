@@ -25,6 +25,25 @@ func TestTopicNicheFoldRoundTrip(t *testing.T) {
 	if n := nichesFromTopic(stored); len(n) != 2 {
 		t.Fatalf("niches = %v", n)
 	}
+
+	// KLOX-274's smoke case: the typed theme exactly matches the picked
+	// editoria. It is represented once as chip state; the visible themes
+	// keep the creator's other topics.
+	smoke := topicWithNiches("agronegócio, pecuária, clima no campo, commodities agrícolas", []string{"agronegocio"})
+	if got := topicWithoutNiches(smoke); got != "pecuária, clima no campo, commodities agrícolas" {
+		t.Fatalf("smoke view topic = %q", got)
+	}
+	if n := nichesFromTopic(smoke); len(n) != 1 || n[0] != "agronegocio" {
+		t.Fatalf("smoke niches = %v", n)
+	}
+
+	// canonical labels with uppercase letters still are not duplicated
+	if got := topicWithNiches("brasil e cidades", []string{"brasil-cidades"}); got != "brasil e cidades" {
+		t.Fatalf("case-folded label duplicated: %q", got)
+	}
+	if got := cleanNiches([]string{"economia", "bogus", "economia", " agronegocio "}); len(got) != 2 || got[0] != "economia" || got[1] != "agronegocio" {
+		t.Fatalf("cleanNiches = %v", got)
+	}
 }
 
 func TestNicheMapsCover18Editorias(t *testing.T) {

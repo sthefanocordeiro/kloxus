@@ -346,6 +346,9 @@ func publicationView(p *store.Publication) apiPublication {
 		v.Paywall.PaidSections = []string{}
 	}
 	v.Niches = nichesFromTopic(p.Topic)
+	if v.Niches == nil {
+		v.Niches = []string{}
+	}
 	return v
 }
 

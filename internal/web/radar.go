@@ -74,6 +74,22 @@ func nichesFromTopic(topic string) []string {
 	return out
 }
 
+// cleanNiches keeps valid editoria keys once, in the order the caller
+// sent them. Unknown keys are ignored here as they are at radar create.
+func cleanNiches(in []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, n := range in {
+		n = strings.TrimSpace(n)
+		if _, ok := nicheSources[n]; !ok || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
+}
+
 // topicWithNiches folds the picked editorias' labels into the stored
 // topic: the ranking embeds the theme text, so the niches travel inside
 // it — never shown back to the creator (topicWithoutNiches strips them
@@ -81,7 +97,7 @@ func nichesFromTopic(topic string) []string {
 func topicWithNiches(about string, niches []string) string {
 	topic := about
 	for _, n := range niches {
-		if !strings.Contains(strings.ToLower(topic), nicheLabels[n]) {
+		if !strings.Contains(strings.ToLower(topic), strings.ToLower(nicheLabels[n])) {
 			if topic != "" {
 				topic += ", "
 			}
@@ -166,12 +182,7 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 			apiReason{Code: "name_long", Message: "keep the name under 60 characters"})
 		return
 	}
-	var niches []string
-	for _, n := range in.Niches {
-		if _, ok := nicheSources[n]; ok {
-			niches = append(niches, n)
-		}
-	}
+	niches := cleanNiches(in.Niches)
 	if about == "" && len(niches) == 0 {
 		apiErr(w, 400, "validation", "say what you talk about",
 			apiReason{Code: "about_empty", Message: "describe your topic or pick a niche"})

@@ -574,6 +574,9 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 		// the keep-if-empty convention can't tell the two apart (KLOX-94).
 		Topic       *string `json:"topic"`
 		RejectTerms *string `json:"reject_terms"`
+		// Niches rides a pointer so an absent key keeps the stored
+		// editorias while an explicit empty list clears them (KLOX-274).
+		Niches *[]string `json:"niches"`
 	}
 	if _, err := apiDecode(r, &in); err != nil {
 		apiErr(w, 400, "bad_json", "request body is not valid JSON")
@@ -594,11 +597,20 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 	if def.Name == "" {
 		def.Name = pub.Name
 	}
-	if in.Topic != nil {
-		// the field holds the creator's words alone (the chips' labels
-		// never reach it) — re-fold the stored editorias so the ranking
-		// keeps seeing them (KLOX-232)
-		def.Topic = topicWithNiches(strings.TrimSpace(*in.Topic), nichesFromTopic(pub.Topic))
+	if in.Topic != nil || in.Niches != nil {
+		// The visible theme holds the creator's words alone; exact
+		// comma-separated editoria labels are chip state, not themes.
+		// Re-fold the selected editorias so the ranking keeps seeing
+		// them without duplicating them in the field (KLOX-232/KLOX-274).
+		base := topicWithoutNiches(pub.Topic)
+		if in.Topic != nil {
+			base = topicWithoutNiches(strings.TrimSpace(*in.Topic))
+		}
+		niches := nichesFromTopic(pub.Topic)
+		if in.Niches != nil {
+			niches = cleanNiches(*in.Niches)
+		}
+		def.Topic = topicWithNiches(base, niches)
 	}
 	if def.Audience == "" {
 		def.Audience = pub.Audience

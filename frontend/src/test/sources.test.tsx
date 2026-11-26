@@ -17,6 +17,7 @@ vi.mock("../api", async (orig) => {
       sources: vi.fn(),
       sourceCatalog: vi.fn(),
       sourceConfirm: vi.fn(),
+      updatePublication: vi.fn(),
       deletePublication: vi.fn(),
     },
   };
@@ -170,9 +171,10 @@ describe("SourcesPage suggested count (KLOX-235)", () => {
   });
 });
 
-// KLOX-235: the editorias chips derive from the theme text and edit it
-// back — unticking a chip strips its cadastro label, ticking appends it.
-describe("SourcesPage editoria chips (KLOX-235)", () => {
+// KLOX-274: editorias are their own API field. The Radar screen shows
+// them as chips even though their labels are folded out of the topic
+// text, and saving sends the chip state back explicitly.
+describe("SourcesPage editoria chips (KLOX-274)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.setItem("kloxus.lang", "en");
@@ -184,15 +186,12 @@ describe("SourcesPage editoria chips (KLOX-235)", () => {
       llm_mode: "off",
       publishing: true,
     });
-    vi.mocked(api.publication).mockResolvedValue({
-      publication: { ...pub, topic: "fintech, economia" },
-      latest_issue: { id: 1 } as IssueSummary,
-    });
     vi.mocked(api.sources).mockResolvedValue([]);
     vi.mocked(api.sourceCatalog).mockResolvedValue({ offered: [] });
+    vi.mocked(api.updatePublication).mockResolvedValue(pub);
   });
 
-  it("derives chips from the theme and rewrites it on toggle", async () => {
+  function renderPage() {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={qc}>
@@ -205,23 +204,52 @@ describe("SourcesPage editoria chips (KLOX-235)", () => {
         </LangProvider>
       </QueryClientProvider>,
     );
+  }
+
+  it("keeps Agronegócio active and the smoke topics understandable after creation", async () => {
+    vi.mocked(api.publication).mockResolvedValue({
+      publication: {
+        ...pub,
+        topic: "pecuária, clima no campo, commodities agrícolas",
+        niches: ["agronegocio"],
+      },
+      latest_issue: { id: 1 } as IssueSummary,
+    });
+    renderPage();
 
     const topic = await screen.findByLabelText("Topics");
-    expect(topic).toHaveValue("fintech, economia");
-    // "economia" in the theme turns the Economy chip on
+    expect(topic).toHaveValue("pecuária, clima no campo, commodities agrícolas");
+    expect(screen.getByRole("button", { name: "Agribusiness" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText(/stay here as chips/i)).toBeVisible();
+  });
+
+  it("saves explicit chip changes without rewriting the visible topics", async () => {
+    vi.mocked(api.publication).mockResolvedValue({
+      publication: { ...pub, topic: "fintech", niches: ["economia"] },
+      latest_issue: { id: 1 } as IssueSummary,
+    });
+    renderPage();
+
+    const topic = await screen.findByLabelText("Topics");
+    expect(topic).toHaveValue("fintech");
     const economy = screen.getByRole("button", { name: "Economy" });
     const politics = screen.getByRole("button", { name: "Politics" });
     expect(economy).toHaveAttribute("aria-pressed", "true");
-    expect(politics).toHaveAttribute("aria-pressed", "false");
 
-    // unticking strips the label and rejoins the remaining topics
     fireEvent.click(economy);
-    expect(topic).toHaveValue("fintech");
     expect(economy).toHaveAttribute("aria-pressed", "false");
+    expect(topic).toHaveValue("fintech");
 
-    // ticking appends the cadastro label (pt), and the chip re-derives on
     fireEvent.click(politics);
-    expect(topic).toHaveValue("fintech, política");
     expect(politics).toHaveAttribute("aria-pressed", "true");
+    expect(topic).toHaveValue("fintech");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(api.updatePublication).toHaveBeenCalledWith(
+        "42",
+        expect.objectContaining({ topic: "fintech", niches: ["politica"] }),
+      ),
+    );
   });
 });
