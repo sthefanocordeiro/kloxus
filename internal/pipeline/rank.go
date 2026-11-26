@@ -220,18 +220,33 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 	// de dados" stops reading as on-topic.
 	reject := parseTerms(pub.RejectTerms)
 	skip := skipTerms(pub.EditorialLine)
-	theme := phraseTerms(pub.Topic)
-	needText := len(reject)+len(skip)+len(theme) > 0
-	// The folded keyword set the tags match against — the publication's
-	// declared topic plus the editorial line minus its skip clauses,
-	// so "pule games" never counts "games" as a theme word.
-	posText := PositiveEditorialText(pub)
+	editorias, subjects := splitTopicRoles(pub.Topic)
+	positiveTopic := pub.Topic
+	if editorias != "" && subjects != "" {
+		// With both roles present, editoria vocabulary is not subject
+		// evidence. The typed subjects alone drive the ordinary on-topic
+		// reading; a compatible publisher category is scored separately
+		// through editorialCategoryBoost.
+		positiveTopic = subjects
+	}
+	theme := phraseTerms(positiveTopic)
+	needRejectText := len(reject)+len(skip) > 0
+	needPositiveText := len(theme) > 0
+	// The folded keyword set the tags match against - the positive topic
+	// vocabulary plus the editorial line minus its skip clauses, so "pule
+	// games" never counts "games" as a theme word.
+	posLine, _ := editorialLineSplit(pub.EditorialLine)
+	posText := strings.TrimSpace(positiveTopic + " " + posLine)
 	tokens := FoldedTokens(posText)
 	for i := range stories {
 		var hay string
 		var words map[string]bool
-		if needText {
+		if needRejectText {
 			hay, words = storySearchText(&stories[i], enrich)
+		}
+		var positiveWords map[string]bool
+		if needPositiveText {
+			_, positiveWords = storyPositiveSearchText(&stories[i], enrich)
 		}
 		if (len(reject) > 0 && termsAny(reject, hay, words)) || phraseAny(skip, words) {
 			scores[i] -= rejectPenalty
@@ -261,7 +276,7 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 			}
 		}
 		if !onTopic {
-			onTopic = phraseAny(theme, words)
+			onTopic = phraseAny(theme, positiveWords)
 		}
 		if haveKind {
 			scores[i] += bestW
@@ -272,6 +287,14 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 				reasons[i] += " · no tema"
 			} else {
 				reasons[i] += " · on topic"
+			}
+		}
+		if editorialCategoryBoost(pub, &stories[i], enrich) {
+			scores[i] += categoryMatchBoost
+			if pt {
+				reasons[i] += " · categoria da editoria"
+			} else {
+				reasons[i] += " · matching publisher category"
 			}
 		}
 	}
@@ -386,21 +409,35 @@ func termsCount(terms termSet, hay string, words map[string]bool) int {
 	return n
 }
 
-// storySearchText folds the story's matchable text once — its own
+// storySearchText folds the story's guardrail text once - its own
 // title, member headlines, publisher-supplied categories and any
-// enrichment topic tags — into a phrase haystack plus the whole-word set
+// enrichment topic tags - into a phrase haystack plus the whole-word set
 // single-token terms test against (KLOX-94). Categories count as evidence
-// for both positive matching and reject terms; they never weaken the
-// editorial guardrails (KLOX-278).
+// for reject/non-editorial guardrails; they never weaken those guardrails
+// (KLOX-278).
 func storySearchText(s *store.Story, enrich map[int64]*store.ItemEnrichment) (string, map[string]bool) {
+	return storySearchTextMode(s, enrich, true)
+}
+
+// storyPositiveSearchText is the positive topic/subject matching view.
+// It deliberately excludes publisher-supplied categories: a category is
+// evidence of the editoria, never evidence that one of the creator's
+// typed subjects is present (KLOX-278).
+func storyPositiveSearchText(s *store.Story, enrich map[int64]*store.ItemEnrichment) (string, map[string]bool) {
+	return storySearchTextMode(s, enrich, false)
+}
+
+func storySearchTextMode(s *store.Story, enrich map[int64]*store.ItemEnrichment, withCategories bool) (string, map[string]bool) {
 	var b strings.Builder
 	b.WriteString(s.Title)
 	for i := range s.Items {
 		b.WriteString(" ")
 		b.WriteString(s.Items[i].Title)
-		for _, cat := range s.Items[i].Categories {
-			b.WriteString(" ")
-			b.WriteString(cat)
+		if withCategories {
+			for _, cat := range s.Items[i].Categories {
+				b.WriteString(" ")
+				b.WriteString(cat)
+			}
 		}
 		if e := enrich[s.Items[i].ID]; e != nil {
 			for _, tg := range e.Topics {
@@ -414,17 +451,22 @@ func storySearchText(s *store.Story, enrich map[int64]*store.ItemEnrichment) (st
 }
 
 // categoryOnTopic reports whether any publisher-supplied category matches
-// the Radar's declared theme/editoria. Comparison is case- and
-// accent-insensitive through foldText/FoldedTokens, while storage keeps
-// the publisher's original spelling. An item with no categories simply
-// returns false — absence is no signal, never a penalty. Matching is
-// per publisher label: two separate categories must not combine into a
-// multi-word topic phrase neither one actually says.
+// an editoria recovered from the Radar's stored topic. Comparison is
+// case- and accent-insensitive through foldText/FoldedTokens, while
+// storage keeps the publisher's original spelling. An item with no
+// categories simply returns false - absence is no signal, never a
+// penalty. Matching is per publisher label: two separate categories must
+// not combine into a multi-word editoria phrase neither one actually says.
 func categoryOnTopic(pub *store.Publication, s *store.Story) bool {
 	if pub == nil {
 		return false
 	}
-	topic := phraseTerms(pub.Topic)
+	editorias, _ := splitTopicRoles(pub.Topic)
+	return categoryMatchesEditoria(editorias, s)
+}
+
+func categoryMatchesEditoria(editorias string, s *store.Story) bool {
+	topic := phraseTerms(editorias)
 	if len(topic) == 0 {
 		return false
 	}
@@ -436,6 +478,52 @@ func categoryOnTopic(pub *store.Publication, s *store.Story) bool {
 		}
 	}
 	return false
+}
+
+// subjectEvidence reports whether the story has evidence of at least one
+// typed subject, independent of publisher categories. The evidence is the
+// same deterministic vocabulary the free ranking already uses: story and
+// member headlines plus enrichment topic tags. Publisher categories are
+// intentionally absent from this view.
+func subjectEvidence(subjects string, s *store.Story, enrich map[int64]*store.ItemEnrichment) bool {
+	if strings.TrimSpace(subjects) == "" {
+		return false
+	}
+	_, words := storyPositiveSearchText(s, enrich)
+	if phraseAny(phraseTerms(subjects), words) {
+		return true
+	}
+	tokens := FoldedTokens(subjects)
+	for i := range s.Items {
+		e := enrich[s.Items[i].ID]
+		if e == nil {
+			continue
+		}
+		for _, tag := range e.Topics {
+			if TopicMatches(tag, tokens, subjects) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// editorialCategoryBoost is the conjunction required before a publisher
+// category may reinforce relevance or lift the embedding floor:
+//
+//   - no editoria recovered: no editorial category boost at all;
+//   - editoria without typed subjects: a compatible category is enough;
+//   - editoria plus typed subjects: both the compatible category and
+//     independent evidence of one subject are required.
+func editorialCategoryBoost(pub *store.Publication, s *store.Story, enrich map[int64]*store.ItemEnrichment) bool {
+	if pub == nil {
+		return false
+	}
+	editorias, subjects := splitTopicRoles(pub.Topic)
+	if editorias == "" || !categoryMatchesEditoria(editorias, s) {
+		return false
+	}
+	return subjects == "" || subjectEvidence(subjects, s, enrich)
 }
 
 // termStopwords are the function words a topic phrase contributes that
@@ -969,26 +1057,36 @@ func pickLineupVec(stories []store.Story, scores []float64, reasons []string, pu
 	order := storyOrder(stories, scores)
 	slots := make([]int, len(sections))
 	secTopics := make([]termSet, len(sections))
-	needText := len(rejectTerms)+len(skipAlts) > 0
+	needRejectText := len(rejectTerms)+len(skipAlts) > 0
+	needPositiveText := false
 	for i, sec := range sections {
 		slots[i] = sec.Items
 		secTopics[i] = parseTerms(sec.Topic)
 		if len(secTopics[i]) > 0 {
-			needText = true
+			needPositiveText = true
 		}
 	}
-	// Search text is built once per story — and only when some rule
-	// actually reads it — since it walks every member headline.
-	hay := make([]string, len(stories))
-	words := make([]map[string]bool, len(stories))
-	if needText {
+	// Search text is built once per story - and only when some rule
+	// actually reads it - since it walks every member headline. Positive
+	// section matching excludes publisher categories; reject matching keeps
+	// them because editorial guards may use every publisher-supplied label.
+	rejectHay := make([]string, len(stories))
+	rejectWords := make([]map[string]bool, len(stories))
+	if needRejectText {
 		for i := range stories {
-			hay[i], words[i] = storySearchText(&stories[i], enrich)
+			rejectHay[i], rejectWords[i] = storySearchText(&stories[i], enrich)
+		}
+	}
+	positiveHay := make([]string, len(stories))
+	positiveWords := make([]map[string]bool, len(stories))
+	if needPositiveText {
+		for i := range stories {
+			positiveHay[i], positiveWords[i] = storyPositiveSearchText(&stories[i], enrich)
 		}
 	}
 	rejected := func(idx int) bool {
-		return (len(rejectTerms) > 0 && termsAny(rejectTerms, hay[idx], words[idx])) ||
-			phraseAny(skipAlts, words[idx])
+		return (len(rejectTerms) > 0 && termsAny(rejectTerms, rejectHay[idx], rejectWords[idx])) ||
+			phraseAny(skipAlts, rejectWords[idx])
 	}
 	placed := make([]bool, len(stories))
 	outlets := map[string]int{}
@@ -1055,7 +1153,7 @@ func pickLineupVec(stories []store.Story, scores []float64, reasons []string, pu
 						if !eligible(idx) {
 							continue
 						}
-						if h := termsCount(secTopics[si], hay[idx], words[idx]); h > topicHits {
+						if h := termsCount(secTopics[si], positiveHay[idx], positiveWords[idx]); h > topicHits {
 							topicHits, pick = h, idx
 						}
 					}

@@ -125,14 +125,7 @@ var paywalledSources = map[string]bool{"valor": true, "folha": true}
 // defaultNicheSources is what a person who picked no chip gets.
 var defaultNicheSources = []string{"tecnoblog", "canaltech", "infomoney", "techcrunch"}
 
-var nicheLabels = map[string]string{
-	"politica": "política", "economia": "economia", "mercado-financeiro": "mercado financeiro e investimentos",
-	"financas-pessoais": "finanças pessoais", "negocios": "negócios e empresas", "startups": "startups e inovação",
-	"carreira": "carreira e trabalho", "tecnologia": "tecnologia", "agronegocio": "agronegócio",
-	"internacional": "internacional", "brasil-cidades": "Brasil e cidades", "justica-direito": "justiça e direito",
-	"saude": "saúde", "educacao": "educação", "ciencia": "ciência", "meio-ambiente": "meio ambiente e sustentabilidade",
-	"cultura": "cultura e entretenimento", "estilo-vida": "estilo de vida e consumo",
-}
+var nicheLabels = pipeline.NicheLabels
 
 // radarName is a short display name from the free text.
 func radarName(about string) string {

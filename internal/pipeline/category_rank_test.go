@@ -28,7 +28,7 @@ func TestCategoryTopicBonus(t *testing.T) {
 	if scores[0] != scores[1]+2 {
 		t.Fatalf("category boost missing or asymmetric: %v", scores)
 	}
-	if !strings.Contains(reasons[0], "no tema") || strings.Contains(reasons[1], "no tema") {
+	if !strings.Contains(reasons[0], "categoria da editoria") || strings.Contains(reasons[1], "categoria da editoria") {
 		t.Fatalf("category topic reasons wrong: %q / %q", reasons[0], reasons[1])
 	}
 	if !categoryOnTopic(pub, &stories[0]) || categoryOnTopic(pub, &stories[1]) {
@@ -69,26 +69,36 @@ func TestCategoryNonEditorialStillWins(t *testing.T) {
 	}
 }
 
-// TestCategoryOnTopicUsesRadarTopicOnly: only the Radar's declared
-// editoria/topic is the positive category vocabulary. Editorial-line prose
-// must not concatenate into the topic phrase, and distinct category labels
-// must not combine into a phrase neither one states.
-func TestCategoryOnTopicUsesRadarTopicOnly(t *testing.T) {
-	pub := &store.Publication{Topic: "agronegócio", EditorialLine: "priorize economia"}
+// TestCategoryOnTopicUsesRecoveredEditoriaOnly: only an editoria
+// recovered from the Radar's stored topic is positive category vocabulary.
+// Typed subjects are not editoria evidence, editorial-line prose must not
+// concatenate into the editoria phrase, and distinct category labels must
+// not combine into a phrase neither one states.
+func TestCategoryOnTopicUsesRecoveredEditoriaOnly(t *testing.T) {
+	pub := &store.Publication{Topic: "pecuária, agronegócio", EditorialLine: "priorize economia"}
 	story := detStory(1, "x", "2026-01-01T00:00:00Z", 1)
 	story.Items[0].Categories = []string{"agronegócio"}
 	if !categoryOnTopic(pub, &story) {
-		t.Fatal("editorial line concatenation must not stop an exact topic category match")
+		t.Fatal("exact editoria category should match")
+	}
+	story.Items[0].Categories = []string{"pecuária"}
+	if categoryOnTopic(pub, &story) {
+		t.Fatal("typed subject must not act as editoria category evidence")
 	}
 
-	pub.Topic = "banco central"
-	story.Items[0].Categories = []string{"banco", "central"}
+	pub.Topic = "finanças pessoais"
+	story.Items[0].Categories = []string{"finanças", "pessoais"}
 	if categoryOnTopic(pub, &story) {
 		t.Fatal("separate categories must not combine into a phrase neither one states")
 	}
-	story.Items[0].Categories = []string{"Banco Central"}
+	story.Items[0].Categories = []string{"Finanças Pessoais"}
 	if !categoryOnTopic(pub, &story) {
-		t.Fatal("one multi-word publisher category should match a multi-word topic")
+		t.Fatal("one multi-word publisher category should match a multi-word editoria")
+	}
+
+	pub.Topic = "banco central"
+	if categoryOnTopic(pub, &story) {
+		t.Fatal("category must not match a typed subject when no editoria is marked")
 	}
 }
 
