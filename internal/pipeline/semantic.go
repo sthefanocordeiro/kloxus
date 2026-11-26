@@ -93,7 +93,11 @@ func localEnrichment(it store.UnembeddedRow) store.ItemEnrichment {
 	if err := json.Unmarshal([]byte(it.MetaJSON), &meta); err != nil {
 		slog.Warn("item enrichment: malformed meta json", "err", err)
 	}
-	res := embedding.Classify(it.Title, it.ContentText, meta.Categories)
+	categories := it.Categories
+	if len(categories) == 0 {
+		categories = meta.Categories // rows ingested before the dedicated column
+	}
+	res := embedding.Classify(it.Title, it.ContentText, categories)
 	summary := meta.Description
 	if summary == "" {
 		summary = it.ContentText

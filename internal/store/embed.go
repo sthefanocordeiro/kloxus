@@ -9,6 +9,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 )
 
 // ItemEmbedding is one stored semantic row.
@@ -82,7 +83,8 @@ type UnembeddedRow struct {
 	ID          int64
 	Title       string
 	ContentText string
-	MetaJSON    string // raw meta_json — DJ categories ride in it
+	Categories  []string
+	MetaJSON    string // raw meta_json — legacy DJ categories ride in it
 }
 
 // UnembeddedItems lists items missing an embedding row at the given
@@ -100,7 +102,7 @@ func (p *Pool) UnembeddedItems(ctx context.Context, model string, limit int) ([]
 // another package's test items on the shared DATABASE_URL.
 func (p *Pool) UnembeddedItemsFor(ctx context.Context, ws, model string, limit int) ([]UnembeddedRow, error) {
 	rows, err := p.db.QueryContext(ctx, `
-		SELECT it.id, it.title, it.content_text, it.meta_json
+		SELECT it.id, it.title, it.content_text, it.categories::text, it.meta_json
 		FROM items it
 		LEFT JOIN item_embedding ie ON ie.item_id = it.id AND ie.model = $1
 		WHERE ie.item_id IS NULL AND it.kind <> 'promo'
@@ -114,9 +116,11 @@ func (p *Pool) UnembeddedItemsFor(ctx context.Context, ws, model string, limit i
 	var out []UnembeddedRow
 	for rows.Next() {
 		var u UnembeddedRow
-		if err := rows.Scan(&u.ID, &u.Title, &u.ContentText, &u.MetaJSON); err != nil {
+		var categories string
+		if err := rows.Scan(&u.ID, &u.Title, &u.ContentText, &categories, &u.MetaJSON); err != nil {
 			return nil, err
 		}
+		json.Unmarshal([]byte(categories), &u.Categories)
 		out = append(out, u)
 	}
 	return out, rows.Err()

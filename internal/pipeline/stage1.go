@@ -37,6 +37,12 @@ var Stage1Config = rank.DefaultConfig()
 // the lineup and the stored triage_score already use.
 const stage1Scale = 10.0
 
+// categoryMatchBoost is the same +2 the heuristic gives an on-topic
+// enrichment tag. A matching publisher category is explicit item-level
+// evidence; absent or generic labels add nothing. Editorial reject and
+// non-editorial penalties are an order of magnitude larger and still win.
+const categoryMatchBoost = 2.0
+
 // ftsMinToken drops short tokens from the FTS query.
 const ftsMinToken = 3
 
@@ -258,9 +264,28 @@ func (r *Runner) rankStage1(ctx context.Context, pub *store.Publication, stories
 			PTPub:   pt,
 			English: rank.IsEnglish(langSample(s)),
 		})
+		catBoost := editorialCategoryBoost(pub, s, enrich)
 		out.Scores[i] = res.Score*stage1Scale + editorialPenalty(s, pub, enrich)
+		if catBoost {
+			out.Scores[i] += categoryMatchBoost
+		}
 		out.Rel[i], out.Hidden[i] = res.Rel, res.Hidden
+		if catBoost && res.Hidden == rank.HiddenOffTopic {
+			// A publisher's editoria label can lift an embedding-floor false
+			// negative only under the owner-approved role conjunction: with
+			// typed subjects present, independent subject evidence must exist
+			// too. This clears only off_topic: English and every reject/promo/
+			// non-editorial guard keep their normal force.
+			out.Hidden[i] = rank.HiddenNone
+		}
 		reason := baseReasons[i]
+		if catBoost {
+			if pt {
+				reason += " · categoria da editoria"
+			} else {
+				reason += " · matching publisher category"
+			}
+		}
 		src := "emb"
 		if res.Fallback {
 			src = "fts"

@@ -359,10 +359,10 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 		var it Item
 		var sourceID, catalogID sql.NullInt64
 		var externalID, canon, published, author sql.NullString
-		var meta string
+		var meta, categories string
 		if err := itemRows.Scan(&storyID, &it.ID, &sourceID, &catalogID, &it.SourceName, &it.SourceURL,
 			&it.SourceType, &externalID, &it.URL, &canon, &it.Title, &author,
-			&published, &it.ContentText, &it.Kind, &meta, &it.BodyTruncated, &it.FetchedAt); err != nil {
+			&published, &it.ContentText, &it.Kind, &categories, &meta, &it.BodyTruncated, &it.FetchedAt); err != nil {
 			return nil, err
 		}
 		it.SourceID = sourceID.Int64
@@ -371,6 +371,9 @@ func (db *DB) StoriesWithItems(ctx context.Context, pubID int64) ([]Story, error
 		it.CanonicalURL = canon.String
 		it.Author = author.String
 		it.PublishedAt = published.String
+		if categories != "" && categories != "[]" {
+			json.Unmarshal([]byte(categories), &it.Categories)
+		}
 		if meta != "" && meta != "{}" {
 			json.Unmarshal([]byte(meta), &it.Meta)
 		}
