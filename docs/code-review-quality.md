@@ -13,6 +13,10 @@ the Fly deploy versions recorded on the serialized release ledger
 (KLOX-26, per decision D36). "Still present" notes were re-verified on
 `main` @ `8ff7995a`.
 
+86 findings across four reviews; 37 fixed and deployed, including
+**all 8 high-severity findings** (DB A1–A4, frontend A1–A3, tests A1).
+The remaining medium/low items are registered debt with code pointers.
+
 Status legend:
 
 - **Fixed** — implemented in the named card, merged via the linked PR,
@@ -87,7 +91,7 @@ schema-integrity mediums were fixed; the remaining structural debt is open.
 | M6 | read-modify-write `MAX(number)+1` outside a tx (`NextIssueNumber`) | **Open** — unchanged (`internal/store/issues.go:18`) | — |
 | M7 | multi-statement writes without a transaction (`ScheduleIssue`, `ClearStories`…) | **Open** — unchanged (`internal/store/issues.go:200`, `stories.go:59`) | — |
 | M8 | append-only tables without retention; `PurgeOldBodies` a single table-wide UPDATE | **Open** — unchanged (`internal/store/catalog.go:557`) | — |
-| M9 | `subscriptions.magic_token` stored in plaintext (vs `magic_links.token_hash`) | **Open** — unchanged (`migrations/0001_init.sql:169`) | — |
+| M9 | `subscriptions.magic_token` stored in plaintext (vs `magic_links.token_hash`) | **Open** — unchanged (`migrations/0001_init.sql:169`); dormant surface, D64 — the token only resolves on reader-facing routes that return 404 in production while `KLOXUS_PUBLISHING` is off (`internal/web/web.go`, `isPublishingPath`) | — |
 | B1–B10 | statuses without CHECK, NULL-vs-`''` dual convention, JSON-in-TEXT, `score DESC` NULLS-first (`issue_items.go:61`), dead indexes, unpaginated `ListIssues` selecting `body_md`, `waitlist` off-convention, fragile `splitStatements`, naming, UNIQUE admitting NULLs | **Open** — all still observable on `main` | — |
 
 ## KLOX-190 — frontend React (9/30 fixed)
@@ -111,7 +115,7 @@ a POST inside `useQuery`, and pattern inconsistencies.
 | M7 | pauta autosave loses keystrokes on tab close; no retry after failed persist | **Fixed** (`beforeunload` + `error` state + retry, `internal` verification on `main`) | KLOX-196 · [PR #140](https://github.com/sthefanocordeiro/kloxus/pull/140) · v231 |
 | M8 | incomplete ARIA: `aria-haspopup="menu"` without menu semantics; tablist without tabpanel | **Deferred** — still present (`AppShell.tsx:249,296`; `Destinations.tsx:707`) | — |
 | M9 | `window.prompt` for link insertion | **Deferred** — still present (`Destinations.tsx:514`) | — |
-| B | 18 low items: three coexisting i18n patterns, `fill()` vs `.replace` split, inconsistent loading states, `role="alert"` coverage, `useSiteEntry` instantiated per-section, `useMutation` for a GET, inconsistent `useOutletContext`, full-page reload to toggle preview, `UnsubPage` raw fetch + destructive GET, duplicated `?sem_texto=`, duplicated `FORMAT_LABEL`, ref writes during render, missing pending guard on Calibrate, 660-line `DestinationStep`, `IssueRedirect` NaN path, add-news error collapsing into "no other news", double `["workspace"]` subscription, `key={i}` | **Deferred** — scoped out pre-freeze; most still present (spot-verified: `Today.tsx:15`/`PublicationPage.tsx:11`, `PautaPage.tsx:384`, `ReaderPage.tsx:101,386`, `AppShell.tsx:86-87`). Note: `role="alert"` coverage has since grown to 18 uses across 8 files, and the add-news path now renders `errText` (`PautaPage.tsx:219`) | — |
+| B | 18 low items: three coexisting i18n patterns, `fill()` vs `.replace` split, inconsistent loading states, `role="alert"` coverage, `useSiteEntry` instantiated per-section, `useMutation` for a GET, inconsistent `useOutletContext`, full-page reload to toggle preview, `UnsubPage` raw fetch + destructive GET (dormant surface, D64), duplicated `?sem_texto=`, duplicated `FORMAT_LABEL`, ref writes during render, missing pending guard on Calibrate, 660-line `DestinationStep`, `IssueRedirect` NaN path, add-news error collapsing into "no other news", double `["workspace"]` subscription, `key={i}` | **Deferred** — scoped out pre-freeze; most still present (spot-verified: `Today.tsx:15`/`PublicationPage.tsx:11`, `PautaPage.tsx:384`, `ReaderPage.tsx:101,386` (dormant surface, D64), `AppShell.tsx:86-87`). Note: `role="alert"` coverage has since grown to 18 uses across 8 files, and the add-news path now renders `errText` (`PautaPage.tsx:219`) | — |
 
 ## KLOX-191 — e2e / unit test suite (5/16 fixed)
 
@@ -128,8 +132,8 @@ main flow stopping one step before "export".
 | M2 | mutating specs ran without the transport preflight | **Fixed** (`preflight` inside `onboard()`) | KLOX-215 · [PR #157](https://github.com/sthefanocordeiro/kloxus/pull/157) · v249 |
 | M3 | helper/spec duplication (claim helpers, dead `claimIfSynthetic`, duplicated "legal pages", cross-language copy of `supportedSentence`/`approvedIssue` vs `smoke.sh`) | **Partial** — helpers unified, dead code removed, "legal pages" deduplicated, `approvedIssue`↔`smoke.sh` cross-commented; the word-extraction helper still lives in both languages | KLOX-215 · [PR #157](https://github.com/sthefanocordeiro/kloxus/pull/157) · v249 |
 | M4 | e2e main flow stops before actually exporting | **Fixed** (`pauta-flow.spec.ts` now drives Copy + asserts `exported`/`exported_formats` via API) | KLOX-215 · [PR #157](https://github.com/sthefanocordeiro/kloxus/pull/157) · v249 |
-| M5 | surfaces with no tests (`Sources`, `Settings`, `Publications`, `ReaderPage`, `markdown`, `ClaimEmail`, `SiteChrome`, `ErrorPage`, `BackButton`, most of `api.ts`) | **Deferred** — partially mitigated: new vitest specs for `sources`, `publications`, `landing`, `start`, `stepcounter`, `today` exist; `ReaderPage`/`markdown`/`SiteChrome`/`ErrorPage`/`api.ts` internals still untested | — |
-| B1 | `waitRun` manual polling discards the last status | **Deferred** — unchanged (`e2e/fallback.spec.ts:50`) | — |
+| M5 | surfaces with no tests (`Sources`, `Settings`, `Publications`, `ReaderPage` (dormant surface, D64), `markdown`, `ClaimEmail`, `SiteChrome`, `ErrorPage`, `BackButton`, most of `api.ts`) | **Deferred** — partially mitigated: new vitest specs for `sources`, `publications`, `landing`, `start`, `stepcounter`, `today` exist; `ReaderPage` (dormant surface, D64)/`markdown`/`SiteChrome`/`ErrorPage`/`api.ts` internals still untested | — |
+| B1 | `waitRun` manual polling discards the last status | **Deferred** — unchanged (`e2e/fallback.spec.ts:50`); dormant surface, D64 — legacy send journey, skipped unless `KLOXUS_PUBLISHING=on` | — |
 | B2 | positional `querySelectorAll("button")[1]` selector | **Fixed incidentally** — rewritten as `within(first).getByRole("button", …)` when the buttons became icons (KLOX-200 · [PR #145](https://github.com/sthefanocordeiro/kloxus/pull/145)); not a dedicated fix card | — |
 | B3 | singular `getByRole("link")` assumes exactly one link | **Deferred** — unchanged (`src/test/publication.test.tsx:101`) | — |
 | B4 | obfuscated `replace("T\nd","T\n")` test string | **Deferred** — unchanged (`src/test/renditions.test.ts:64`) | — |
@@ -138,13 +142,23 @@ main flow stopping one step before "export".
 | B7 | `test.exclude` replaces vitest defaults instead of extending `configDefaults` | **Deferred** — unchanged (`vite.config.ts:24`) | — |
 | B8 | `webServer.timeout: 120_000` can flake cold local boots | **Deferred** — unchanged (`playwright.config.ts:75`) | — |
 | B9 | `no-publishing` spec gated on env, not the target's actual flag | **Deferred** — unchanged (`e2e/no-publishing.spec.ts:7-10`) | — |
-| B10 | stale comments referencing deleted specs (`compose.spec.ts`, `journey.spec.ts`) | **Deferred** — unchanged (`e2e/fallback.spec.ts:38,97`) | — |
+| B10 | stale comments referencing deleted specs (`compose.spec.ts`, `journey.spec.ts`) | **Deferred** — unchanged (`e2e/fallback.spec.ts:38,97`); dormant surface, D64 — legacy send journey, skipped unless `KLOXUS_PUBLISHING=on` | — |
 
 ## Process notes (for the jury)
 
 - Every fix card ran the full relay: author → QA PASS on the exact head
   SHA → CTO technical approval on the same SHA → merge → serialized
   deploy window (ledger: KLOX-26, decision D36) → hosted smoke + e2e.
+- "QA" and "CTO" in that relay are AI agents directed by the owner
+  (Sthéfano Cordeiro), and so are the fix authors: the author → QA →
+  CTO → deploy-window pipeline is operated end to end by agents — the
+  same kind of automation the product demos, applied to the project
+  itself.
+- "Dormant surface, D64" marks findings on the reader-facing product
+  (sending, readers, public pages) hidden behind `KLOXUS_PUBLISHING`,
+  which is off in production: those routes 404 at one server choke
+  point and the legacy send e2e specs skip unless the flag is on. The
+  debt is real but unreachable while the surface stays off.
 - Three DB cards were re-scoped and consolidated during execution rather
   than silently dropped: KLOX-218/219 folded into KLOX-223, KLOX-221
   closed as a duplicate of KLOX-222 (recorded on the KLOX-217 epic).
