@@ -76,15 +76,6 @@ func dropFlagRaw(iss *store.Issue, itemRef int64, raw string) ([]store.Flag, boo
 	return out, dropped
 }
 
-// revertApproved returns an approved issue to drafted after an edit —
-// which also invalidates the stored approval receipt.
-func revertApproved(r *http.Request, iss *store.Issue) {
-	if iss.Status == store.IssueApproved {
-		db(r).RevertIssueToDraft(r.Context(), iss.ID)
-		iss.Status = store.IssueDrafted
-	}
-}
-
 // checkDocVersion enforces the document's optimistic-concurrency token:
 // every document mutation must send back the version it read. A stale
 // or missing version answers 409 conflict with the fresh document.
@@ -660,17 +651,27 @@ func (s *Server) apiCommentary(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, 400, "validation", "section is required")
 		return
 	}
-	c := iss.Commentary
-	if c == nil {
-		c = map[string]string{}
+	c := map[string]string{}
+	for section, text := range iss.Commentary {
+		c[section] = text
 	}
 	c[in.Section] = in.Text
-	if apiDBErr(w, r, db(r).SaveCommentary(r.Context(), iss.ID, c), "issue") {
+	err = db(r).WithTx(r.Context(), func(txdb *store.DB) error {
+		if err := txdb.SaveCommentary(r.Context(), iss.ID, c); err != nil {
+			return err
+		}
+		if iss.Status == store.IssueApproved {
+			return txdb.RevertIssueToDraft(r.Context(), iss.ID)
+		}
+		return nil
+	})
+	if apiDBErr(w, r, err, "issue") {
 		return
 	}
-	revertApproved(r, iss)
-	// docVersion below must see the just-written commentary — when
-	// iss.Commentary was nil, c is a fresh map that iss does not alias
+	if iss.Status == store.IssueApproved {
+		iss.Status = store.IssueDrafted
+	}
+	// docVersion below must see the just-written commentary.
 	iss.Commentary = c
 	apiJSON(w, 200, map[string]any{
 		"commentary": map[string]string{"section": in.Section, "text": in.Text},

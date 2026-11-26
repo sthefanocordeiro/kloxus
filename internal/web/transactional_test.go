@@ -121,6 +121,42 @@ func installIssueUpdateFailure(t *testing.T, db *store.DB, issueID int64) func()
 	return drop
 }
 
+func installApprovalRevertFailure(t *testing.T, db *store.DB, issueID int64) func() {
+	t.Helper()
+	fn := fmt.Sprintf("klox263_fail_revert_%d", issueID)
+	trg := fn
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE OR REPLACE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.workspace_id = '%s' AND NEW.id = %d AND OLD.status = 'approved' AND NEW.status = 'drafted' THEN
+				RAISE EXCEPTION 'forced approval revert failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$`, fn, db.Workspace(), issueID)); err != nil {
+		t.Fatalf("create approval revert failure function: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE TRIGGER %s BEFORE UPDATE ON issues
+		FOR EACH ROW EXECUTE FUNCTION %s()`, trg, fn)); err != nil {
+		t.Fatalf("create approval revert failure trigger: %v", err)
+	}
+	var once sync.Once
+	drop := func() {
+		once.Do(func() {
+			if _, err := db.ExecContext(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON issues`, trg)); err != nil {
+				t.Errorf("drop approval revert failure trigger: %v", err)
+			}
+			if _, err := db.ExecContext(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, fn)); err != nil {
+				t.Errorf("drop approval revert failure function: %v", err)
+			}
+		})
+	}
+	t.Cleanup(drop)
+	return drop
+}
+
 func installPlacementFailure(t *testing.T, db *store.DB, issueItemID int64, position int) func() {
 	t.Helper()
 	fn := fmt.Sprintf("klox263_fail_placement_%d_%d", issueItemID, position)
@@ -157,6 +193,42 @@ func installPlacementFailure(t *testing.T, db *store.DB, issueItemID int64, posi
 	return drop
 }
 
+func installAlternativeStatusFailure(t *testing.T, db *store.DB, issueItemID int64) func() {
+	t.Helper()
+	fn := fmt.Sprintf("klox263_fail_alt_status_%d", issueItemID)
+	trg := fn
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE OR REPLACE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.workspace_id = '%s' AND NEW.id = %d AND NEW.status = 'alternative' AND OLD.status <> 'alternative' THEN
+				RAISE EXCEPTION 'forced alternative status failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$`, fn, db.Workspace(), issueItemID)); err != nil {
+		t.Fatalf("create alternative status failure function: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+		CREATE TRIGGER %s BEFORE UPDATE ON issue_items
+		FOR EACH ROW EXECUTE FUNCTION %s()`, trg, fn)); err != nil {
+		t.Fatalf("create alternative status failure trigger: %v", err)
+	}
+	var once sync.Once
+	drop := func() {
+		once.Do(func() {
+			if _, err := db.ExecContext(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON issue_items`, trg)); err != nil {
+				t.Errorf("drop alternative status failure trigger: %v", err)
+			}
+			if _, err := db.ExecContext(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, fn)); err != nil {
+				t.Errorf("drop alternative status failure function: %v", err)
+			}
+		})
+	}
+	t.Cleanup(drop)
+	return drop
+}
+
 func manualStory(t *testing.T, db *store.DB, pubID int64, label string) int64 {
 	t.Helper()
 	ctx := context.Background()
@@ -175,6 +247,31 @@ func manualStory(t *testing.T, db *store.DB, pubID int64, label string) int64 {
 		t.Fatalf("AddStoryItem: %v", err)
 	}
 	return storyID
+}
+
+func markIssueApproved(t *testing.T, db *store.DB, issueID int64) {
+	t.Helper()
+	ctx := context.Background()
+	iss, err := db.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatalf("GetIssue before approval fixture: %v", err)
+	}
+	if err := db.SetIssueStatus(ctx, issueID, store.IssueApproved); err != nil {
+		t.Fatalf("SetIssueStatus approved: %v", err)
+	}
+	if err := db.SaveApprovalReceipt(ctx, &store.ApprovalReceipt{
+		IssueID: issueID, Number: iss.Number, DocumentVersion: "rollback-test",
+		Approver: "owner@example.com", ChecksJSON: "[]",
+	}); err != nil {
+		t.Fatalf("SaveApprovalReceipt: %v", err)
+	}
+}
+
+func requireReceiptGone(t *testing.T, db *store.DB, issueID int64) {
+	t.Helper()
+	if _, err := db.ApprovalReceipt(context.Background(), issueID); err != sql.ErrNoRows {
+		t.Fatalf("approval receipt after revert: err=%v, want sql.ErrNoRows", err)
+	}
 }
 
 func issueCount(t *testing.T, db *store.DB, pubID int64) int {
@@ -592,4 +689,225 @@ func TestBlockRemoveTransactionalRollback(t *testing.T) {
 	if strings.Contains(issAfter.BodyMD, marker) {
 		t.Fatalf("successful remove left item marker in body: %q", issAfter.BodyMD)
 	}
+}
+
+func TestCommentaryRevertTransactionalRollback(t *testing.T) {
+	ctx := context.Background()
+	srv, db, pub, _ := demoServer(t)
+	issueID, err := db.CreateIssue(ctx, pub.ID, 1, "Commentary revert rollback", "# Commentary revert rollback\n\n", nil)
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	markIssueApproved(t, db, issueID)
+	issueURL := fmt.Sprintf("/api/v1/issues/%d", issueID)
+	doc := apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	drop := installApprovalRevertFailure(t, db, issueID)
+
+	rr := apiCall(t, srv, "PUT", issueURL+"/commentary", map[string]any{
+		"section": "O destaque", "text": "this edit must roll back", "version": doc["version"],
+	})
+	if rr.Code == 200 {
+		t.Fatalf("commentary unexpectedly succeeded despite forced revert failure: %s", shortBody(rr))
+	}
+	iss, err := db.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatalf("GetIssue after failed commentary: %v", err)
+	}
+	if iss.Commentary["O destaque"] == "this edit must roll back" {
+		t.Fatalf("failed revert left edited commentary persisted: %+v", iss.Commentary)
+	}
+	if iss.Status != store.IssueApproved {
+		t.Fatalf("failed revert changed issue status to %q, want approved after rollback", iss.Status)
+	}
+	if _, err := db.ApprovalReceipt(ctx, issueID); err != nil {
+		t.Fatalf("failed revert dropped approval receipt: %v", err)
+	}
+
+	drop()
+	doc = apiGet(t, srv, issueURL+"/document")["document"].(map[string]any)
+	rr = apiCall(t, srv, "PUT", issueURL+"/commentary", map[string]any{
+		"section": "O destaque", "text": "this edit must roll back", "version": doc["version"],
+	})
+	if rr.Code != 200 {
+		t.Fatalf("commentary success path = %d: %s", rr.Code, shortBody(rr))
+	}
+	iss, err = db.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatalf("GetIssue after successful commentary: %v", err)
+	}
+	if iss.Commentary["O destaque"] != "this edit must roll back" {
+		t.Fatalf("commentary after success = %+v", iss.Commentary)
+	}
+	if iss.Status != store.IssueDrafted {
+		t.Fatalf("issue status after successful post-approval edit = %q, want drafted", iss.Status)
+	}
+	requireReceiptGone(t, db, issueID)
+}
+
+func TestDecisionRevertTransactionalRollback(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		kind    string
+		initial string
+		want    string
+	}{
+		{name: "approve", kind: "approve", initial: store.ItemPending, want: store.ItemApproved},
+		{name: "undo", kind: "undo", initial: store.ItemRejected, want: store.ItemPending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			srv, db, pub, _ := demoServer(t)
+			storyID := manualStory(t, db, pub.ID, "decision-revert-rollback-"+tc.name)
+			issueID, err := db.CreateIssue(ctx, pub.ID, 1, "Decision revert rollback", "# Decision revert rollback\n\n", nil)
+			if err != nil {
+				t.Fatalf("CreateIssue: %v", err)
+			}
+			itemID, err := db.CreateIssueItem(ctx, store.IssueItem{
+				IssueID: issueID, StoryID: storyID, Section: pub.Sections[1].Title,
+				Status: tc.initial, Origin: "manual",
+			})
+			if err != nil {
+				t.Fatalf("CreateIssueItem: %v", err)
+			}
+			markIssueApproved(t, db, issueID)
+			drop := installApprovalRevertFailure(t, db, issueID)
+			url := fmt.Sprintf("/api/v1/issues/%d/items/%d/decisions", issueID, itemID)
+
+			rr := apiCall(t, srv, "POST", url, map[string]any{"kind": tc.kind})
+			if rr.Code == 200 {
+				t.Fatalf("decision unexpectedly succeeded despite forced revert failure: %s", shortBody(rr))
+			}
+			item, err := db.GetIssueItem(ctx, itemID)
+			if err != nil {
+				t.Fatalf("GetIssueItem after failed decision: %v", err)
+			}
+			if item.Status != tc.initial {
+				t.Fatalf("failed revert changed item status to %q, want %q after rollback", item.Status, tc.initial)
+			}
+			iss, err := db.GetIssue(ctx, issueID)
+			if err != nil {
+				t.Fatalf("GetIssue after failed decision: %v", err)
+			}
+			if iss.Status != store.IssueApproved {
+				t.Fatalf("failed revert changed issue status to %q, want approved after rollback", iss.Status)
+			}
+			if _, err := db.ApprovalReceipt(ctx, issueID); err != nil {
+				t.Fatalf("failed revert dropped approval receipt: %v", err)
+			}
+
+			drop()
+			rr = apiCall(t, srv, "POST", url, map[string]any{"kind": tc.kind})
+			if rr.Code != 200 {
+				t.Fatalf("decision success path = %d: %s", rr.Code, shortBody(rr))
+			}
+			item, err = db.GetIssueItem(ctx, itemID)
+			if err != nil {
+				t.Fatalf("GetIssueItem after successful decision: %v", err)
+			}
+			if item.Status != tc.want {
+				t.Fatalf("item status after successful decision = %q, want %q", item.Status, tc.want)
+			}
+			iss, err = db.GetIssue(ctx, issueID)
+			if err != nil {
+				t.Fatalf("GetIssue after successful decision: %v", err)
+			}
+			if iss.Status != store.IssueDrafted {
+				t.Fatalf("issue status after successful post-approval decision = %q, want drafted", iss.Status)
+			}
+			requireReceiptGone(t, db, issueID)
+		})
+	}
+}
+
+func TestAlternativeTransactionalRollback(t *testing.T) {
+	ctx := context.Background()
+	srv, db, pub, _ := demoServer(t)
+	oldStoryID := manualStory(t, db, pub.ID, "alternative-rollback-old")
+	altStoryID := manualStory(t, db, pub.ID, "alternative-rollback-new")
+	markStoryTriaged(t, db, oldStoryID, 9)
+	markStoryTriaged(t, db, altStoryID, 8)
+	issueID, err := db.CreateIssue(ctx, pub.ID, 1, "Alternative rollback", "# Alternative rollback\n\n", nil)
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	oldItemID, err := db.CreateIssueItem(ctx, store.IssueItem{
+		IssueID: issueID, StoryID: oldStoryID, Section: pub.Sections[1].Title,
+		Status: store.ItemPending, Origin: "manual",
+	})
+	if err != nil {
+		t.Fatalf("CreateIssueItem: %v", err)
+	}
+	markIssueApproved(t, db, issueID)
+	drop := installAlternativeStatusFailure(t, db, oldItemID)
+	url := fmt.Sprintf("/api/v1/issues/%d/items/%d/decisions", issueID, oldItemID)
+
+	rr := apiCall(t, srv, "POST", url, map[string]any{"kind": "alternative"})
+	if rr.Code == 200 {
+		t.Fatalf("alternative unexpectedly succeeded despite forced old-status failure: %s", shortBody(rr))
+	}
+	if got := countIssueItems(t, db, issueID); got != 1 {
+		t.Fatalf("failed alternative left %d issue items, want 1", got)
+	}
+	if got := countIssueDossiers(t, db, issueID); got != 0 {
+		t.Fatalf("failed alternative left %d dossiers, want 0", got)
+	}
+	oldItem, err := db.GetIssueItem(ctx, oldItemID)
+	if err != nil {
+		t.Fatalf("GetIssueItem after failed alternative: %v", err)
+	}
+	if oldItem.Status != store.ItemPending {
+		t.Fatalf("failed alternative changed old item status to %q, want pending after rollback", oldItem.Status)
+	}
+	iss, err := db.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatalf("GetIssue after failed alternative: %v", err)
+	}
+	if iss.Status != store.IssueApproved {
+		t.Fatalf("failed alternative changed issue status to %q, want approved after rollback", iss.Status)
+	}
+	if _, err := db.ApprovalReceipt(ctx, issueID); err != nil {
+		t.Fatalf("failed alternative dropped approval receipt: %v", err)
+	}
+
+	drop()
+	rr = apiCall(t, srv, "POST", url, map[string]any{"kind": "alternative"})
+	if rr.Code != 200 {
+		t.Fatalf("alternative retry = %d: %s", rr.Code, shortBody(rr))
+	}
+	if got := countIssueItems(t, db, issueID); got != 2 {
+		t.Fatalf("issue items after alternative retry = %d, want 2", got)
+	}
+	if got := countIssueDossiers(t, db, issueID); got != 1 {
+		t.Fatalf("dossiers after alternative retry = %d, want 1", got)
+	}
+	items, err := db.IssueItems(ctx, issueID)
+	if err != nil {
+		t.Fatalf("IssueItems after alternative retry: %v", err)
+	}
+	var oldStatus, newStatus string
+	var newStory bool
+	for _, item := range items {
+		if item.ID == oldItemID {
+			oldStatus = item.Status
+			continue
+		}
+		if item.StoryID == altStoryID {
+			newStory = true
+			newStatus = item.Status
+		}
+	}
+	if oldStatus != store.ItemAlternative {
+		t.Fatalf("old item status after alternative retry = %q, want %q", oldStatus, store.ItemAlternative)
+	}
+	if !newStory || newStatus != store.ItemPending {
+		t.Fatalf("alternative item after retry: present=%v status=%q, want present pending", newStory, newStatus)
+	}
+	iss, err = db.GetIssue(ctx, issueID)
+	if err != nil {
+		t.Fatalf("GetIssue after alternative retry: %v", err)
+	}
+	if iss.Status != store.IssueDrafted {
+		t.Fatalf("issue status after successful post-approval alternative = %q, want drafted", iss.Status)
+	}
+	requireReceiptGone(t, db, issueID)
 }
