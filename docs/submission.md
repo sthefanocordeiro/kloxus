@@ -41,7 +41,7 @@ A Kloxus automatiza a triagem diária de notícias para quem publica todo dia so
 1. Landing → **Create your Radar** → confirm the email magic link.
 2. Name the Radar and say what you cover — topics plus optional beats; Kloxus assigns the curated sources.
 3. **Match**: the calibration deck — real stories from the last 48 h, Yes/No on each one.
-4. **Today's stories**: the morning deck matched to the Radar; click the cards that go into the brief, 👍 / 👎 to keep training the match. (A claimed Radar gets the same deck by email at 7 a.m. on days with new stories.)
+4. **Today's stories**: the morning deck matched to the Radar; click the cards that go into the brief, 👍 / 👎 to keep training the match. (A claimed Radar gets the same deck by email at 7 a.m. on days with new stories — the morning send is off in production today and returns with the daily-mail relight in flight.)
 5. **Write**: the pauta — an optional opening plus one autosaved text box per story, the person's words only.
 6. **Export**: one text → LinkedIn post, X thread (auto split at 280), rich-text HTML, and a `.md` download.
 7. Optional: switch the interface EN ↔ pt-BR; show that source links on every card lead to the original outlet.
@@ -49,7 +49,7 @@ A Kloxus automatiza a triagem diária de notícias para quem publica todo dia so
 ## Video shot list (≤3 min, English)
 
 - 0:00–0:15 — Problem: the bottleneck is not writing, it is the manual work before it.
-- 0:15–1:00 — Automation: overnight collection, dedupe, ranking that learns from Yes/No; brief assembled ~06:30, in the inbox by 7 a.m.
+- 0:15–1:00 — Automation: overnight collection, dedupe, ranking that learns from Yes/No; brief assembled ~06:30, in the inbox by 7 a.m. *(7 a.m. send off in production today — daily-mail relight in flight)*
 - 1:00–2:00 — The loop: create the Radar, calibrate with Yes/No, pick today's stories, write in your own voice.
 - 2:00–2:30 — One text, four formats: LinkedIn, X thread, HTML, Markdown. Source links on every card.
 - 2:30–3:00 — Close: the AI never writes the opinion; sources' rules respected; expansion to market intelligence and team clipping comes later.
