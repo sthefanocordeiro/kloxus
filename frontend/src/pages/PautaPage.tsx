@@ -364,7 +364,7 @@ export function PautaPage() {
           {finish.isError ? (
             <p className="text-sm text-danger" role="alert">{errText(t, finish.error)}</p>
           ) : <span />}
-          <Button disabled={finish.isPending || entries.length === 0} onClick={() => finish.mutate()}>
+          <Button disabled={finish.isPending || entries.length === 0 || saveState === "saving"} onClick={() => finish.mutate()}>
             {s.toExport}
           </Button>
         </div>
