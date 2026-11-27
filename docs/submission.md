@@ -9,7 +9,7 @@ Track: **Logística & Automação** (Logistics and Automation).
 - Repository: https://github.com/sthefanocordeiro/kloxus
 - Hosted app: https://kloxus.fly.dev (real app: live sources, Postgres on Supabase, Resend email)
 - Deterministic demo: `go run ./cmd/kloxus demo` locally — fixture sources, no API keys
-- **Video:** [TBD — unlisted YouTube link goes here]
+- **Video:** https://youtu.be/ghl63OmgmKE (English narration, 2:57, product demo)
 
 ## Paste-ready copy
 

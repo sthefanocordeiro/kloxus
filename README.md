@@ -34,7 +34,7 @@ never writes the commentary.
 ## For the jury — 2 minutes
 
 - **App:** https://kloxus.fly.dev · **Repo:** this repository ·
-  **Video:** [TBD — unlisted YouTube link goes here]
+  **Video:** https://youtu.be/ghl63OmgmKE (English narration, 2:57, product demo)
 - **Try it:** e-mail → magic link → create a Radar → Match →
   **Today's stories** → click 3 cards → **Build brief** → write →
   **Export** → **Copy**.
