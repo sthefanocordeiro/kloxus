@@ -650,12 +650,15 @@ func TestDailyPautaMailLang(t *testing.T) {
 	for _, want := range []string{
 		"Good morning! Today's stories for your Radar",
 		"[Open my stories](",
-		"is valid for 72 hours",
+		"The link signs you into your account in this browser and is valid for 72 hours.",
 		"&lang=en",
 	} {
 		if !strings.Contains(en.Text, want) {
 			t.Fatalf("EN body lacks %q:\n%s", want, en.Text)
 		}
+	}
+	if strings.Contains(en.Text, "**") {
+		t.Fatalf("EN plain text keeps markdown emphasis markers:\n%s", en.Text)
 	}
 	pt := mailTo(ownerPT)
 	if pt == nil || pt.Subject != "Suas notícias de hoje estão prontas" {
@@ -664,12 +667,15 @@ func TestDailyPautaMailLang(t *testing.T) {
 	for _, want := range []string{
 		"Bom dia! As notícias do seu radar",
 		"[Abrir minhas notícias](",
-		"vale por 72 horas",
+		"O link entra na sua conta neste navegador e vale por 72 horas.",
 		"&lang=pt",
 	} {
 		if !strings.Contains(pt.Text, want) {
 			t.Fatalf("PT body lacks %q:\n%s", want, pt.Text)
 		}
+	}
+	if strings.Contains(pt.Text, "**") {
+		t.Fatalf("PT plain text keeps markdown emphasis markers:\n%s", pt.Text)
 	}
 	if !strings.Contains(en.HTML, "Create a post with this story →") ||
 		!strings.Contains(en.HTML, "Unsubscribe from this Radar") ||
