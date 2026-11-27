@@ -1,9 +1,12 @@
 package web_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
 // KLOX-168: tick stories → pauta with free text → finish → export keeps
@@ -162,6 +165,53 @@ func TestPautaCreateReusesOpenDraftWithStory(t *testing.T) {
 	}
 	if got := int64(apiJSON(t, rr)["issue_id"].(float64)); got == firstID {
 		t.Fatalf("different story reused issue %d", got)
+	}
+}
+
+// KLOX-287: a story rejected or replaced as an alternative is editorially
+// outside the edition. Clicking the mailed deep link again must start a new
+// pauta instead of reopening the one that no longer carries the story.
+func TestPautaCreateStartsNewDraftWhenStoryLeftLineup(t *testing.T) {
+	for _, status := range []string{store.ItemRejected, store.ItemAlternative} {
+		t.Run(status, func(t *testing.T) {
+			srv, db := emptyServer(t)
+			rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{"about": "futuro e tecnologia"})
+			if rr.Code != 201 {
+				t.Fatalf("radar = %d %s", rr.Code, rr.Body.String())
+			}
+			pubID := int64(apiJSON(t, rr)["publication"].(map[string]any)["id"].(float64))
+			id := fmt.Sprint(pubID)
+			cards := apiGet(t, srv, "/api/v1/publications/"+id+"/today")["cards"].([]any)
+			if len(cards) == 0 {
+				t.Fatal("no cards")
+			}
+			storyID := cards[0].(map[string]any)["story_id"]
+
+			rr = apiCall(t, srv, "POST", "/api/v1/publications/"+id+"/pauta", map[string]any{"story_ids": []any{storyID}})
+			if rr.Code != 201 {
+				t.Fatalf("first create = %d %s", rr.Code, rr.Body.String())
+			}
+			firstID := int64(apiJSON(t, rr)["issue_id"].(float64))
+			items, err := db.IssueItems(context.Background(), firstID)
+			if err != nil || len(items) != 1 {
+				t.Fatalf("items = %v, err %v", items, err)
+			}
+			if err := db.SetIssueItemStatus(context.Background(), items[0].ID, status); err != nil {
+				t.Fatalf("set %s: %v", status, err)
+			}
+			before := issueCount(t, db, pubID)
+
+			rr = apiCall(t, srv, "POST", "/api/v1/publications/"+id+"/pauta", map[string]any{"story_ids": []any{storyID}})
+			if rr.Code != 201 {
+				t.Fatalf("repeat create with %s item = %d %s", status, rr.Code, rr.Body.String())
+			}
+			if got := int64(apiJSON(t, rr)["issue_id"].(float64)); got == firstID {
+				t.Fatalf("repeat create reused issue %d with %s item", got, status)
+			}
+			if got := issueCount(t, db, pubID); got != before+1 {
+				t.Fatalf("issues after repeat = %d, want %d", got, before+1)
+			}
+		})
 	}
 }
 

@@ -199,10 +199,10 @@ func (db *DB) LatestIssue(ctx context.Context, pubID int64) (*Issue, error) {
 		db.ws, pubID))
 }
 
-// OpenDraftIssueIDWithStory returns the newest unfinished issue that still
-// holds storyID. "Open" matches the creator-facing draft bucket: approved,
-// sent and scheduled pieces are finished, every other status is editable.
-// The publication row lock makes the check part of the same serialization
+// OpenDraftIssueIDWithStory returns the newest unfinished issue whose lineup
+// still holds storyID. Only pending and approved items are in the edition:
+// rejected and alternative items are editorially out, and removed items are
+// gone. The publication row lock makes the check part of the same serialization
 // boundary as CreateNextIssue, so callers can use it for idempotent creation
 // inside a transaction without a check-then-insert race.
 func (db *DB) OpenDraftIssueIDWithStory(ctx context.Context, pubID, storyID int64) (int64, bool, error) {
@@ -215,7 +215,7 @@ func (db *DB) OpenDraftIssueIDWithStory(ctx context.Context, pubID, storyID int6
 		FROM issues i
 		JOIN issue_items ii ON ii.workspace_id = i.workspace_id AND ii.issue_id = i.id
 		WHERE i.workspace_id = $1 AND i.publication_id = $2
-		  AND ii.story_id = $3 AND ii.status <> 'removed'
+		  AND ii.story_id = $3 AND ii.status IN ('pending','approved')
 		  AND i.status NOT IN ('approved','sent','scheduled')
 		ORDER BY i.number DESC
 		LIMIT 1`, db.ws, pubID, storyID).Scan(&id)
