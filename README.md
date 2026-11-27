@@ -34,8 +34,7 @@ never writes the commentary.
 ## For the jury — 2 minutes
 
 - **App:** https://kloxus.fly.dev · **Repo:** this repository ·
-  **Video:** being recorded for the submission (see
-  [docs/submission.md](docs/submission.md))
+  **Video:** [TBD — unlisted YouTube link goes here]
 - **Try it:** e-mail → magic link → create a Radar → Match →
   **Today's stories** → click 3 cards → **Build brief** → write →
   **Export** → **Copy**.
@@ -217,9 +216,9 @@ Real mode — `go run ./cmd/kloxus serve` — reads `.env` (see
 
 ## Deploying
 
-`fly.toml` deploys the real app (`kloxus`); `fly.demo.toml` deploys the
-fixture fallback (`kloxus-demo`) — an unqualified `fly deploy` can never
-hit the wrong app. Step-by-step, release windows and the backup job in
+`fly.toml` deploys the real app (`kloxus`). The deterministic fixture demo
+is local-only: run `go run ./cmd/kloxus demo`; there is no hosted fallback
+URL for judges. Step-by-step, release windows and the backup job in
 [docs/deploy.md](docs/deploy.md).
 
 ## License
