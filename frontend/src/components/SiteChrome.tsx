@@ -6,7 +6,6 @@ import { api } from "../api";
 import { useT, type Lang } from "../i18n";
 import { cn } from "../lib/cn";
 import { isRateLimited } from "../lib/errors";
-import { hasSessionMarker } from "../lib/session";
 import { RateLimited } from "./RateLimited";
 import { Button } from "../ui";
 
@@ -19,17 +18,16 @@ import { Button } from "../ui";
 
 export function useSiteEntry() {
   const nav = useNavigate();
-  // KLOX-194: public pages never fire a session-touching call on a fresh
-  // visit — the publications probe (which resolves the workspace) only
-  // runs when this browser's marker says a session already exists, so
-  // landing/termos/privacidade stay open and mint nothing until the CTA
-  // click. Any probe failure (anonymous 401, 429, offline) reads as a
-  // new visitor: the CTA still resolves-or-creates on click.
-  const pubs = useQuery({
-    queryKey: ["publications"],
-    queryFn: api.publications,
+  // KLOX-288: every public visit asks the no-mint session endpoint. The
+  // old localStorage-marker gate missed browsers whose workspace cookie
+  // predated the marker (and anyone whose storage was cleared while the
+  // cookie survived); probing api.publications instead would resolve and
+  // possibly mint a workspace, so it is not a substitute. Probe failure
+  // reads as a new visitor: the CTA still resolves-or-creates on click.
+  const session = useQuery({
+    queryKey: ["session"],
+    queryFn: api.session,
     retry: false,
-    enabled: hasSessionMarker(),
   });
   const start = useMutation({ mutationFn: api.workspace });
   const [dest, setDest] = useState<"/start" | null>(null);
@@ -44,7 +42,7 @@ export function useSiteEntry() {
   // re-fires whichever entry the visitor last picked — the 429 card's
   // "Tentar de novo" goes through here
   const retry = () => dest && go(dest);
-  return { returning: (pubs.data?.length ?? 0) > 0, start, create, signIn, retry };
+  return { returning: session.data?.active === true, start, create, signIn, retry };
 }
 
 // The hero/closing CTA and the header button share one definition —

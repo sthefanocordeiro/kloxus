@@ -15,6 +15,20 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
+// apiSession is the public pages' no-mint probe: it validates the
+// workspace cookie (including its logout epoch) without Resolve, so a
+// landing pageview can recognize a returning browser but can never create
+// a workspace or spend the session-create allowance.
+func (s *Server) apiSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	_, active, err := s.d.WS.ExistingWorkspaceID(r.Context(), r)
+	if err != nil {
+		apiErr(w, 500, "internal", "could not validate the session")
+		return
+	}
+	apiJSON(w, 200, map[string]any{"active": active})
+}
+
 func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws := reqWS(r)
 	owner := s.workspaceOwner(r.Context(), db(r))

@@ -43,16 +43,18 @@ export function Landing() {
               <p className="mt-3 max-w-xl text-sm text-paper/70">{t.landing.emailNote}</p>
             )}
             <p className="mt-2 max-w-xl text-sm text-paper/70">{t.landing.waitlistSupport}</p>
-            <p className="mt-5 text-sm">
-              <button
-                type="button"
-                onClick={entry.signIn}
-                disabled={entry.start.isPending}
-                className="text-paper/80 underline underline-offset-4 hover:text-paper disabled:opacity-50"
-              >
-                {t.landing.alreadyCreator}
-              </button>
-            </p>
+            {!entry.returning && (
+              <p className="mt-5 text-sm">
+                <button
+                  type="button"
+                  onClick={entry.signIn}
+                  disabled={entry.start.isPending}
+                  className="text-paper/80 underline underline-offset-4 hover:text-paper disabled:opacity-50"
+                >
+                  {t.landing.alreadyCreator}
+                </button>
+              </p>
+            )}
             {/* KLOX-194: a 429 on "Criar meu Radar" gets the friendly
                 card with "Tentar de novo", not a bare error line — the
                 retry re-runs whichever entry the visitor last picked. */}

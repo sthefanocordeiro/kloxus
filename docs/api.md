@@ -74,6 +74,16 @@ conflict` and the response carries the fresh `document`.
 
 ## Workspace
 
+### `GET /api/v1/session`
+```json
+{"active": true}
+```
+Workspace-free probe for public pages: validates the browser's workspace
+cookie and its current logout epoch without resolving, touching, reseeding
+or creating a workspace. `active` is `false` for a missing, forged,
+deleted or logged-out credential, so the landing can run it on every
+pageview without spending the session-create allowance.
+
 ### `GET /api/v1/workspace`
 ```json
 {"id": "local", "label": "local", "mode": "demo", "hosted": false, "llm_mode": "auto",
