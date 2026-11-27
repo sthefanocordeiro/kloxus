@@ -7,7 +7,13 @@ import { claimOwner, preflight } from "./mail.ts";
 // /new → sections → collection-run path is gone; Hoje builds the deck
 // on demand).
 
-export async function onboard(page: Page, ownerEmail?: string) {
+type OnboardOptions = {
+  name?: string;
+  topics?: string;
+  nicheLabels?: string[];
+};
+
+export async function onboard(page: Page, ownerEmail?: string, options: OnboardOptions = {}) {
   // transport preflight first: onboarding claims and creates a Radar —
   // a live or unknown mail transport must fail before any of that runs
   // (KLOX-215; the mutating specs used to rely on claimOwner's check
@@ -28,8 +34,11 @@ export async function onboard(page: Page, ownerEmail?: string) {
   // form only renders once the workspace is claimed
   const name = page.getByLabel("Radar name");
   await expect(name).toBeVisible({ timeout: 20000 });
-  await name.fill("Futuro Próximo");
-  await page.getByLabel("Topics (comma separated)").fill("fintech, startups");
+  await name.fill(options.name ?? "Futuro Próximo");
+  await page.getByLabel("Topics (comma separated)").fill(options.topics ?? "fintech, startups");
+  for (const label of options.nicheLabels ?? []) {
+    await page.getByRole("button", { name: label, exact: true }).click();
+  }
   await page.getByRole("button", { name: "Continue", exact: true }).click();
 
   // Dar match: a real deck shows the Skip button inside the card; an

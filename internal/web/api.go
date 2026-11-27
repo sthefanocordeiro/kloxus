@@ -295,8 +295,8 @@ type apiPublication struct {
 	AIDisclosure  string       `json:"ai_disclosure"`
 	Sections      []apiSection `json:"sections"`
 	Paywall       apiPaywall   `json:"paywall"`
-	// Niches are the editorias the theme names — shown as chips on the
-	// Radar screen (KLOX-207).
+	// Niches are the creator's explicitly selected editorias — shown as
+	// chips on the Radar screen (KLOX-207/KLOX-274).
 	Niches []string `json:"niches"`
 }
 
@@ -321,7 +321,7 @@ func publicationView(p *store.Publication) apiPublication {
 		ID: p.ID, Slug: p.Slug, Name: p.Name, Custom: p.Custom, Language: p.Language,
 		// the stored topic folds the editorias' labels in for ranking —
 		// the theme field shows the creator's words alone (KLOX-232)
-		Topic: topicWithoutNiches(p.Topic), Audience: p.Audience,
+		Topic: topicWithoutNiches(p.Topic, p.Niches), Audience: p.Audience,
 		// the stored line stays canonical for fixture-stable prompts —
 		// the response localizes the one English sentence (KLOX-56)
 		EditorialLine: localizeEditorialLine(p.EditorialLine, p.Language),
@@ -345,7 +345,7 @@ func publicationView(p *store.Publication) apiPublication {
 	if v.Paywall.PaidSections == nil {
 		v.Paywall.PaidSections = []string{}
 	}
-	v.Niches = nichesFromTopic(p.Topic)
+	v.Niches = orderedNiches(p.Niches)
 	return v
 }
 

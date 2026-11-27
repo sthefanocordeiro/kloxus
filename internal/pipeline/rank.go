@@ -220,7 +220,7 @@ func scoreStoriesEnriched(stories []store.Story, lang string, pub *store.Publica
 	// de dados" stops reading as on-topic.
 	reject := parseTerms(pub.RejectTerms)
 	skip := skipTerms(pub.EditorialLine)
-	editorias, subjects := splitTopicRoles(pub.Topic)
+	editorias, subjects := topicRoles(pub)
 	positiveTopic := pub.Topic
 	if editorias != "" && subjects != "" {
 		// With both roles present, editoria vocabulary is not subject
@@ -461,7 +461,7 @@ func categoryOnTopic(pub *store.Publication, s *store.Story) bool {
 	if pub == nil {
 		return false
 	}
-	editorias, _ := splitTopicRoles(pub.Topic)
+	editorias, _ := topicRoles(pub)
 	return categoryMatchesEditoria(editorias, s)
 }
 
@@ -519,7 +519,7 @@ func editorialCategoryBoost(pub *store.Publication, s *store.Story, enrich map[i
 	if pub == nil {
 		return false
 	}
-	editorias, subjects := splitTopicRoles(pub.Topic)
+	editorias, subjects := topicRoles(pub)
 	if editorias == "" || !categoryMatchesEditoria(editorias, s) {
 		return false
 	}

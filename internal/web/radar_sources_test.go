@@ -27,26 +27,6 @@ func TestNicheSlugsPaywallAndSpread(t *testing.T) {
 	}
 }
 
-// KLOX-207: the editorias chips recover from the theme text — cadastro
-// folded each picked editoria's label into the topic at create time, so
-// radars that predate the field report theirs too, in cadastro order.
-func TestNichesFromTopic(t *testing.T) {
-	got := nichesFromTopic("fintech, Pix e regulação, mercado financeiro e investimentos")
-	if len(got) != 1 || got[0] != "mercado-financeiro" {
-		t.Fatalf("fintech topic: got %v, want [mercado-financeiro]", got)
-	}
-	got = nichesFromTopic("x, saúde, economia")
-	if len(got) != 2 || got[0] != "economia" || got[1] != "saude" {
-		t.Fatalf("multi topic: got %v, want cadastro order [economia saude]", got)
-	}
-	if got := nichesFromTopic(""); len(got) != 0 {
-		t.Fatalf("empty topic: got %v, want []", got)
-	}
-	if got := nichesFromTopic("jogos de celular"); len(got) != 0 {
-		t.Fatalf("unrelated topic: got %v, want []", got)
-	}
-}
-
 // KLOX-207: suggested sources rank by adherence — a source scores each
 // onboarding desk it belongs to by how many of that desk's feeds the
 // radar already added, so finance feeds beat tech toys on a fintech

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 )
@@ -30,6 +31,10 @@ type Publication struct {
 	AIDisclosure string
 	Custom       bool
 	Template     []TemplateBlock
+	// Niches is the explicit editoria chip state persisted in
+	// publication_niches. It is never derived from Topic, which remains
+	// creator prose plus ranking vocabulary (KLOX-274).
+	Niches []string
 	// TemplateRaw is the stored template_json — the compare-and-swap
 	// key template saves check so a concurrent write conflicts instead
 	// of clobbering (KLOX-72).
@@ -50,9 +55,9 @@ type TemplateBlock struct {
 
 func (db *DB) scanPublication(row *sql.Row) (*Publication, error) {
 	var p Publication
-	var sections, paywall, template string
+	var sections, paywall, template, nichesCSV string
 	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Language, &p.Topic, &p.Audience,
-		&p.EditorialLine, &p.RejectTerms, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template)
+		&p.EditorialLine, &p.RejectTerms, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template, &nichesCSV)
 	if err != nil {
 		return nil, err
 	}
@@ -66,10 +71,63 @@ func (db *DB) scanPublication(row *sql.Row) (*Publication, error) {
 		return nil, fmt.Errorf("decoding template for %q: %w", p.Slug, err)
 	}
 	p.TemplateRaw = template
+	p.Niches = splitNicheCSV(nichesCSV)
 	return &p, nil
 }
 
-const publicationCols = `id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure, custom, template_json`
+// splitNicheCSV decodes the aggregated explicit editoria keys. Keys are
+// constrained by the API to comma-less slugs; an empty aggregate still
+// returns a non-nil empty slice so callers can distinguish stored rows
+// (explicit state) from hand-built legacy publications in tests.
+func splitNicheCSV(csv string) []string {
+	out := []string{}
+	for _, n := range strings.Split(csv, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// replacePublicationNiches rewrites one publication's explicit editoria
+// state inside the caller's transaction. Delete-then-insert keeps empty
+// state representable: zero rows means the creator cleared every chip,
+// not "fall back to inferring from text".
+func replacePublicationNiches(ctx context.Context, q sqlQuerier, workspace string, pubID int64, niches []string) error {
+	if _, err := q.ExecContext(ctx,
+		`DELETE FROM publication_niches WHERE workspace_id = $1 AND publication_id = $2`, workspace, pubID); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, niche := range niches {
+		niche = strings.TrimSpace(niche)
+		if niche == "" || seen[niche] {
+			continue
+		}
+		seen[niche] = true
+		if _, err := q.ExecContext(ctx,
+			`INSERT INTO publication_niches (workspace_id, publication_id, niche) VALUES ($1,$2,$3)`,
+			workspace, pubID, niche); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncPublicationNiches rewrites explicit state when the caller supplies
+// it. A nil slice means "not part of this write" and preserves the stored
+// rows; a non-nil empty slice is the meaningful explicit clear. That
+// distinction keeps template refreshes and unrelated setting saves from
+// accidentally wiping chip state (KLOX-274).
+func syncPublicationNiches(ctx context.Context, q sqlQuerier, workspace string, pubID int64, niches []string) error {
+	if niches == nil {
+		return nil
+	}
+	return replacePublicationNiches(ctx, q, workspace, pubID, niches)
+}
+
+const publicationCols = `id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure, custom, template_json,
+	COALESCE((SELECT string_agg(pn.niche, ',' ORDER BY pn.niche) FROM publication_niches pn WHERE pn.publication_id = publications.id), '')`
 
 // GetPublication resolves a publication by numeric id or slug.
 func (db *DB) GetPublication(ctx context.Context, ref string) (*Publication, error) {
@@ -92,9 +150,9 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 	var out []*Publication
 	for rows.Next() {
 		var p Publication
-		var sections, paywall, template string
+		var sections, paywall, template, nichesCSV string
 		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Language, &p.Topic, &p.Audience,
-			&p.EditorialLine, &p.RejectTerms, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template); err != nil {
+			&p.EditorialLine, &p.RejectTerms, &p.Tone, &p.Frequency, &sections, &paywall, &p.AIDisclosure, &p.Custom, &template, &nichesCSV); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(sections), &p.Sections); err != nil {
@@ -107,6 +165,7 @@ func (db *DB) ListPublications(ctx context.Context) ([]*Publication, error) {
 			slog.Warn("publication row: malformed template json", "publication", p.ID, "err", err)
 		}
 		p.TemplateRaw = template
+		p.Niches = splitNicheCSV(nichesCSV)
 		out = append(out, &p)
 	}
 	return out, rows.Err()
@@ -140,14 +199,28 @@ func (db *DB) CreatePublication(ctx context.Context, p *config.Publication) (int
 		}
 		slug = fmt.Sprintf("%s-%d", p.Slug, i)
 	}
+	tx, err := db.beginTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 	var id int64
-	err := db.QueryRowContext(ctx, `INSERT INTO publications
+	err = tx.QueryRowContext(ctx, `INSERT INTO publications
 		(workspace_id, slug, name, language, topic, audience, editorial_line, reject_terms, tone, frequency, sections_json, paywall_json, ai_disclosure, custom)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,TRUE)
 		RETURNING id`,
 		db.ws, slug, p.Name, p.Language, p.Topic, p.Audience, p.EditorialLine, p.RejectTerms,
 		p.Tone, p.Frequency, string(sections), string(paywall), p.AIDisclosure).Scan(&id)
-	return id, err
+	if err != nil {
+		return 0, err
+	}
+	if err := replacePublicationNiches(ctx, tx, db.ws, id, p.Niches); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // SeedPublication inserts a publication definition and its sources.
@@ -177,6 +250,9 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 			p.Frequency, string(sections), string(paywall), p.AIDisclosure, db.ws, id); err != nil {
 			return 0, err
 		}
+		if err := syncPublicationNiches(ctx, tx, db.ws, id, p.Niches); err != nil {
+			return 0, err
+		}
 		for _, s := range p.Sources {
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO sources (workspace_id, publication_id, type, url) VALUES ($1,$2,$3,$4)
@@ -202,6 +278,9 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 	if err != nil {
 		return 0, err
 	}
+	if err := syncPublicationNiches(ctx, tx, db.ws, id, p.Niches); err != nil {
+		return 0, err
+	}
 	for _, s := range p.Sources {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO sources (workspace_id, publication_id, type, url) VALUES ($1,$2,$3,$4)
@@ -223,7 +302,12 @@ func (db *DB) SeedPublication(ctx context.Context, p *config.Publication) (int64
 func (db *DB) UpdatePublication(ctx context.Context, id int64, p *config.Publication) error {
 	sections, _ := json.Marshal(p.Sections)
 	paywall, _ := json.Marshal(p.Paywall)
-	res, err := db.ExecContext(ctx, `UPDATE publications SET
+	tx, err := db.beginTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE publications SET
 		name=$1, topic=$2, audience=$3, editorial_line=$4, reject_terms=$5, tone=$6, frequency=$7,
 		sections_json=$8, paywall_json=$9, ai_disclosure=$10
 		WHERE workspace_id = $11 AND id = $12`,
@@ -235,7 +319,10 @@ func (db *DB) UpdatePublication(ctx context.Context, id int64, p *config.Publica
 	if n, _ := res.RowsAffected(); n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if err := syncPublicationNiches(ctx, tx, db.ws, id, p.Niches); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetPublicationTemplate replaces the newsletter's default edition

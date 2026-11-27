@@ -224,11 +224,24 @@ by the canonical sample at run time so fixture replay stays stable.
     "editorial_line": "…", "tone": "…", "frequency": "weekly",
     "ai_disclosure": "short",
     "sections": [{"title": "O destaque", "items": 1, "commentary": "required"}],
-    "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "R$ 12/mês"}
+    "paywall": {"enabled": true, "paid_sections": ["O destaque"], "price": "R$ 12/mês"},
+    "niches": ["economia"]
   },
   "latest_issue": {"id": 1, "number": 1, "status": "reviewing", "…": "…"}
 }
 ```
+`topic` contains only the creator's themes. Editoria labels selected as
+chips are reported separately in `niches`; they remain folded into the
+stored ranking profile, but are not repeated in the editable theme field.
+`niches` is explicit persisted state: prose that merely contains an
+editoria label never selects a chip, and clearing the list never causes a
+label embedded in the theme text to resurrect one.
+
+### `PUT /api/v1/publications/{id}`
+Rewrites creator-editable settings. Omitted fields keep their stored
+values; explicit empty strings/arrays are real writes. Radar editorias
+can be changed with `"niches": ["agronegocio"]`; `"niches": []` clears
+them. Unknown editoria keys are ignored, matching radar creation.
 
 ## Sources
 

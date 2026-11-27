@@ -136,6 +136,8 @@ export interface Proposal {
   sections: NewsletterSection[];
   sources: { type: string; url: string }[];
   paywall: { enabled: boolean; paid_sections: string[]; price: string };
+  // editorias selected on the Radar screen; absent on proposal payloads
+  niches?: string[];
 }
 
 export interface SourceRow {

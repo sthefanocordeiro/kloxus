@@ -5,7 +5,7 @@ import { api, type PreviewItem } from "../api";
 import { useT } from "../i18n";
 import { errText } from "../lib/errors";
 import { usePublishing } from "../lib/publishing";
-import { NICHE_KEYS, NICHE_LABEL_PT, useStart } from "./startStrings";
+import { NICHE_KEYS, useStart } from "./startStrings";
 import { Badge, Button, Card, SkeletonLine } from "../ui";
 import { KDialog } from "../ui-overlays";
 
@@ -32,6 +32,7 @@ export function SourcesPage() {
     rejects: string;
     price: string;
     sections: Record<string, string>;
+    niches: string[];
   } | null>(null);
   const [adSaved, setAdSaved] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -53,6 +54,7 @@ export function SourcesPage() {
         rejects: p.reject_terms ?? "",
         price: p.paywall.price,
         sections: Object.fromEntries(p.sections.map((s) => [s.id, s.topic ?? ""])),
+        niches: p.niches ?? [],
       });
     }
   }, [pub.data, adForm]);
@@ -65,6 +67,7 @@ export function SourcesPage() {
         name: adForm!.name,
         topic: adForm!.topic,
         reject_terms: adForm!.rejects,
+        niches: adForm!.niches,
         paywall: { ...pub.data!.publication.paywall, price: adForm!.price },
         sections: pub.data!.publication.sections.map((s) => ({
           ...s,
@@ -128,29 +131,15 @@ export function SourcesPage() {
   };
 
   const p = pub.data?.publication;
-  // the editorias are derived from the theme text (KLOX-207): a chip is
-  // on while the theme names it, and ticking/unticking a chip edits the
-  // theme so the save keeps them in sync (KLOX-235)
-  const onNiches = new Set(
-    NICHE_KEYS.filter((k) =>
-      (adForm?.topic ?? "").toLowerCase().includes(NICHE_LABEL_PT[k].toLowerCase())),
-  );
+  // Editorias are explicit Radar state (KLOX-274): their labels stay
+  // folded into the stored ranking profile, while the editable topic
+  // field carries only the creator's own themes.
+  const onNiches = new Set(adForm?.niches ?? []);
   const toggleNiche = (k: string) => {
     if (!adForm) return;
-    const label = NICHE_LABEL_PT[k];
-    const idx = adForm.topic.toLowerCase().indexOf(label.toLowerCase());
-    let topic: string;
-    if (idx >= 0) {
-      topic = (adForm.topic.slice(0, idx) + adForm.topic.slice(idx + label.length))
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .join(", ");
-    } else {
-      const cur = adForm.topic.trim();
-      topic = cur ? `${cur}, ${label}` : label;
-    }
-    editAd({ topic });
+    editAd({
+      niches: onNiches.has(k) ? adForm.niches.filter((n) => n !== k) : [...adForm.niches, k],
+    });
   };
 
   return (
@@ -205,6 +194,7 @@ export function SourcesPage() {
                   );
                 })}
               </div>
+              <p className="mt-2 text-xs text-muted">{t.sourcesPage.editoriasHint}</p>
             </div>
             <label className="block">
               <span className="text-xs font-medium text-muted">{t.sourcesPage.rejectsLabel}</span>
