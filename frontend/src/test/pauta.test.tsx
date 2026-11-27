@@ -91,6 +91,27 @@ describe("Escrever (KLOX-168)", () => {
       .toEqual({ story_id: 1, text: "Minha nota" });
   });
 
+  it("blocks export until the autosave finishes", async () => {
+    let resolveSave: (value: { saved: boolean }) => void = () => {};
+    vi.mocked(api.pautaSave).mockImplementationOnce(() => new Promise((resolve) => { resolveSave = resolve; }));
+    renderPage();
+    await screen.findByRole("link", { name: "Primeira" });
+    fireEvent.change(screen.getByLabelText(/Opening/), { target: { value: "oi" } });
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+
+    const exportButton = screen.getByRole("button", { name: "Go to export" });
+    expect(await screen.findByText("Saving…")).toBeTruthy();
+    expect(exportButton).toBeDisabled();
+    fireEvent.click(exportButton);
+    expect(api.pautaFinish).not.toHaveBeenCalled();
+
+    resolveSave({ saved: true });
+    expect(await screen.findByText("Saved")).toBeTruthy();
+    expect(exportButton).not.toBeDisabled();
+    fireEvent.click(exportButton);
+    await waitFor(() => expect(api.pautaFinish).toHaveBeenCalledWith(5));
+  });
+
   it("warns before unloading while a save is pending", async () => {
     renderPage();
     await screen.findByRole("link", { name: "Primeira" });
@@ -198,12 +219,12 @@ describe("Exportar finish mutation (KLOX-213)", () => {
     vi.mocked(api.renditions).mockResolvedValue({ renditions: [], stories: 2 });
   });
 
-  function renderExport() {
+  function renderExport(entry = "/pauta/5/export") {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={qc}>
         <LangProvider>
-          <MemoryRouter initialEntries={["/pauta/5/export"]}>
+          <MemoryRouter initialEntries={[entry]}>
             <Routes>
               <Route path="/pauta/:id/export" element={<PautaExport />} />
             </Routes>
@@ -218,6 +239,12 @@ describe("Exportar finish mutation (KLOX-213)", () => {
     await waitFor(() => expect(api.pautaFinish).toHaveBeenCalledTimes(1));
     expect(api.pautaFinish).toHaveBeenCalledWith(5);
     expect(await screen.findByText("Where is it going?")).toBeTruthy();
+  });
+
+  it("keeps the missing-text warning when a story really has no text", async () => {
+    vi.mocked(api.pautaFinish).mockResolvedValue({ ready: true, missing_text: 1 });
+    renderExport("/pauta/5/export?sem_texto=1");
+    expect(await screen.findByText("1 story has no text. You can export anyway.")).toBeTruthy();
   });
 
   it("shows the finish error with a retry instead of a silent empty step", async () => {
