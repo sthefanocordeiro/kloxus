@@ -95,7 +95,7 @@ result is still 35 items → 32 stories → 8 selected → 1 planted flag,
 ## Deployed (2026-11-10)
 
 - App: `kloxus-demo` on Fly.io, region `gru`, volume `kloxus_data` (1GB),
-  machine `7817969a6d9658` — **https://kloxus-demo.fly.dev**
+  machine `7817969a6d9658` — fixture-demo host since retired
 - Verified hosted: `/healthz` 200, PhaseA → issue 1, draft → 8 items +
   blockers, reject item 8 → re-draft OK (7 items), guide updated,
   `/demo/reset` reseeds cleanly. Health check 1/1 passing.
