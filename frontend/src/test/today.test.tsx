@@ -81,6 +81,8 @@ describe("Hoje (KLOX-123)", () => {
     const link = within(first).getByRole("link", { name: "Read story" });
     expect(link).toHaveAttribute("href", "https://x.test/1");
     expect(link).toHaveAttribute("target", "_blank");
+    expect(link.className).toContain("min-h-11");
+    expect(link.className).toContain("md:min-h-10");
     fireEvent.click(link);
     expect(screen.queryByText(/selected/)).toBeNull();
     expect(screen.getByRole("checkbox", { name: /Story 1/ })).not.toBeChecked();

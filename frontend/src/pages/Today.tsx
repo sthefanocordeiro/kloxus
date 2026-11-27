@@ -158,7 +158,7 @@ export function Today() {
                         href={c.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="mt-2 inline-block text-sm font-medium text-teal underline underline-offset-2 hover:text-ink"
+                        className="mt-1 -ml-2 inline-flex min-h-11 items-center rounded px-2 text-sm font-medium text-teal underline underline-offset-2 hover:text-ink md:min-h-10"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {s.read}
