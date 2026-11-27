@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
+	"github.com/sthefanocordeiro/kloxus/internal/strutil"
 )
 
 // WatchResult is what a provider reports for a check.
@@ -63,7 +66,7 @@ func (m FirecrawlMonitor) client() *http.Client {
 	if m.HTTP != nil {
 		return m.HTTP
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return httpx.Client(30 * time.Second)
 }
 
 func (m FirecrawlMonitor) base() string {
@@ -101,7 +104,7 @@ func (m FirecrawlMonitor) do(ctx context.Context, method, path string, body any)
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("firecrawl %s %s: %d: %s", method, path, resp.StatusCode, truncateStr(string(raw), 300))
+		return nil, fmt.Errorf("firecrawl %s %s: %d: %s", method, path, resp.StatusCode, strutil.Truncate(string(raw), 300))
 	}
 	return raw, nil
 }
@@ -133,7 +136,7 @@ func (m FirecrawlMonitor) Watch(ctx context.Context, url string) (string, error)
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil || out.ID == "" {
-		return "", fmt.Errorf("firecrawl: unexpected monitor response: %s", truncateStr(string(raw), 200))
+		return "", fmt.Errorf("firecrawl: unexpected monitor response: %s", strutil.Truncate(string(raw), 200))
 	}
 	return out.ID, nil
 }
@@ -174,11 +177,4 @@ func (m FirecrawlMonitor) Check(ctx context.Context, monitorID string) ([]WatchR
 func (m FirecrawlMonitor) Unwatch(ctx context.Context, monitorID string) error {
 	_, err := m.do(ctx, http.MethodDelete, "/v2/monitor/"+monitorID, nil)
 	return err
-}
-
-func truncateStr(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "…"
-	}
-	return s
 }
