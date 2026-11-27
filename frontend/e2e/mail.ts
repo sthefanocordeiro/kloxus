@@ -1,7 +1,8 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, request as playwrightRequest, type Page } from "@playwright/test";
 import {
   assertLiveSafe,
   assertTransport,
+  APP_ORIGIN,
   FAKE_ORIGIN,
   liveSafe as harnessLiveSafe,
   resolveMode,
@@ -38,21 +39,39 @@ export async function workspaceInfo(page: Page): Promise<WorkspaceInfo> {
   return (await res.json()) as WorkspaceInfo;
 }
 
+async function workspaceInfoIsolated(): Promise<WorkspaceInfo> {
+  // /api/v1/workspace is resolve-or-create: querying it through
+  // page.request would seed the browser context's cookie jar and make
+  // the next landing visit look like a returning session (KLOX-288).
+  // The preflight only needs posture evidence, so keep that throwaway
+  // workspace cookie in an isolated request context and dispose it.
+  const isolated = await playwrightRequest.newContext({
+    baseURL: process.env.E2E_BASE_URL ?? APP_ORIGIN,
+  });
+  try {
+    const res = await isolated.get("/api/v1/workspace");
+    expect(res.ok()).toBeTruthy();
+    return (await res.json()) as WorkspaceInfo;
+  } finally {
+    await isolated.dispose();
+  }
+}
+
 // preflight gates a whole test on positive server-side evidence of a
 // safe transport: hosted/local suites need an outbox transport, the
-// fake-live suite needs the loopback synthetic one. Call it from
-// test.beforeEach so a wrong or live target fails before the test body
-// performs a single mail- or model-capable action.
-export async function preflight(page: Page) {
-  assertTransport(await workspaceInfo(page), e2eMode);
+// fake-live suite needs the loopback synthetic one. Call it before any
+// mail- or model-capable action; it never touches the browser context's
+// cookies, so onboarding still starts as a first-time visitor.
+export async function preflight() {
+  assertTransport(await workspaceInfoIsolated(), e2eMode);
 }
 
 // preflightLiveSafe gates only the live-safe.spec.ts read-only subset:
 // the target must prove the real-app live-mail posture (assertLiveSafe
-// in the harness). Call it from test.beforeEach — a target that reports
-// anything else fails closed before a single request the subset makes.
-export async function preflightLiveSafe(page: Page) {
-  assertLiveSafe(await workspaceInfo(page));
+// in the harness). The same cookie isolation keeps the landing check a
+// first-visit check.
+export async function preflightLiveSafe() {
+  assertLiveSafe(await workspaceInfoIsolated());
 }
 
 // neverRealMail is the in-body guard for helpers that must never touch

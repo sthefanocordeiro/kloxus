@@ -18,7 +18,7 @@ export async function onboard(page: Page, ownerEmail?: string, options: OnboardO
   // a live or unknown mail transport must fail before any of that runs
   // (KLOX-215; the mutating specs used to rely on claimOwner's check
   // alone, which never verified the demo pipeline or outbox transport)
-  await preflight(page);
+  await preflight();
   await page.goto("/");
   // the landing renders the hero headline before any workspace exists
   await expect(page.getByRole("heading", { name: /The research is ready/ })).toBeVisible({ timeout: 15000 });
