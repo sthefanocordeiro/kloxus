@@ -153,6 +153,17 @@ export function Today() {
                       {c.age_hours !== null && ` · ${Math.round(c.age_hours) < 1 ? s.justNow : s.hoursAgo.replace("{n}", String(Math.round(c.age_hours)))}`}
                     </p>
                     {c.summary && <p className="mt-2 text-sm">{c.summary}</p>}
+                    {c.url && (
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-block text-sm font-medium text-teal underline underline-offset-2 hover:text-ink"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {s.read}
+                      </a>
+                    )}
                   </div>
                 </div>
                 {/* KLOX-200: Sim/Não became small thumbs — they only

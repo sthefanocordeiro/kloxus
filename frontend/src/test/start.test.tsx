@@ -167,7 +167,7 @@ describe("onboarding from zero (KLOX-123)", () => {
     fireEvent.change(screen.getByLabelText("Topics (comma separated)"), { target: { value: "startups" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByText("Story 1");
-    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skip matching" }));
     expect(await screen.findByRole("heading", { name: "Done!" })).toBeVisible();
     expect(api.calibrationAnswer).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("link", { name: "See today's stories" }));
