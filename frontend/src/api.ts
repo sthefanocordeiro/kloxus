@@ -323,7 +323,7 @@ export interface PautaSave {
 
 export const api = {
   pautaCreate: (pubID: number | string, storyIDs: number[]) =>
-    request<{ issue_id: number }>("POST", `/api/v1/publications/${pubID}/pauta`, { story_ids: storyIDs }),
+    request<{ issue_id: number; reused?: boolean }>("POST", `/api/v1/publications/${pubID}/pauta`, { story_ids: storyIDs }),
   pauta: (issueID: number | string) => request<PautaState>("GET", `/api/v1/issues/${issueID}/pauta`),
   pautaSave: (issueID: number | string, body: PautaSave, keepalive = false) =>
     request<{ saved: boolean }>("PUT", `/api/v1/issues/${issueID}/pauta`, body, keepalive),
