@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { api, ApiRequestError, type Publication } from "../api";
+import { api, ApiRequestError } from "../api";
 import { LangProvider } from "../i18n";
 import { Landing } from "../pages/Landing";
 import { PrivacyPage, TermsPage } from "../pages/Legal";
@@ -15,24 +15,10 @@ vi.mock("../api", async (importOriginal) => {
       ...mod.api,
       workspace: vi.fn(),
       publications: vi.fn(),
+      session: vi.fn(),
     },
   };
 });
-
-const pub: Publication = {
-  id: 1,
-  slug: "futuro-proximo",
-  name: "Futuro Próximo",
-  language: "pt",
-  topic: "t",
-  audience: "a",
-  editorial_line: "e",
-  tone: "t",
-  frequency: "weekly",
-  ai_disclosure: "",
-  sections: [],
-  paywall: { enabled: false, paid_sections: [], price: "" },
-};
 
 function renderApp() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -60,6 +46,7 @@ describe("Landing", () => {
     vi.clearAllMocks();
     vi.mocked(api.workspace).mockResolvedValue({ id: "w1", label: "visitor w1…", mode: "demo", hosted: true, llm_mode: "auto" });
     vi.mocked(api.publications).mockResolvedValue([]);
+    vi.mocked(api.session).mockResolvedValue({ active: false });
   });
 
   it("creates the anonymous workspace and lands on onboarding", async () => {
@@ -87,16 +74,17 @@ describe("Landing", () => {
   });
 
   it("offers the dashboard to a returning visitor and sign-in to a new one", async () => {
-    renderApp();
+    const first = renderApp();
     expect((await screen.findAllByRole("button", { name: /sign in/i })).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: /dashboard/i })).not.toBeInTheDocument();
+    first.unmount();
 
-    // KLOX-194: the "Ir para o painel" detection only probes browsers
-    // that already hold a session (the marker survives reloads)
-    localStorage.setItem("kloxus.session", "1");
-    vi.mocked(api.publications).mockResolvedValue([pub]);
+    // KLOX-288: the server-side session probe detects the workspace
+    // cookie even when this browser's localStorage marker is absent.
+    vi.mocked(api.session).mockResolvedValue({ active: true });
     renderApp();
     expect(await screen.findByRole("link", { name: /dashboard/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create your Radar/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: /dashboard/i }));
     expect(await screen.findByText("publications screen")).toBeInTheDocument();
   });
@@ -111,17 +99,14 @@ describe("Landing", () => {
     expect(api.workspace).not.toHaveBeenCalled();
   });
 
-  // KLOX-194: a fresh visit fires no session-touching call — the
-  // landing stays open without minting a workspace. The publications
-  // probe resumes once the browser holds a session.
-  it("fires no API call on a fresh visit and probes only with a session", async () => {
+  // KLOX-288: the landing asks the no-mint session endpoint on every
+  // visit. Unlike the publications probe, that endpoint only validates
+  // the cookie — it can never create a workspace on a pageview.
+  it("probes the no-mint session endpoint without touching publications", async () => {
     renderApp();
     await screen.findAllByRole("button", { name: /create your Radar/i });
-    await waitFor(() => expect(api.publications).not.toHaveBeenCalled());
-
-    localStorage.setItem("kloxus.session", "1");
-    renderApp();
-    await waitFor(() => expect(api.publications).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.session).toHaveBeenCalledTimes(1));
+    expect(api.publications).not.toHaveBeenCalled();
   });
 
   // KLOX-194: a 429 on "Criar meu Radar" shows the friendly card with

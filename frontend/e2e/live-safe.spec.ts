@@ -24,8 +24,8 @@ test.skip(
   "E2E_BASE_URL + E2E_LIVE_SAFE=1 to run",
 );
 
-test.beforeEach(async ({ page }) => {
-  await preflightLiveSafe(page);
+test.beforeEach(async () => {
+  await preflightLiveSafe();
 });
 
 test("posture evidence: real app, live resend mail, unclaimed", async ({

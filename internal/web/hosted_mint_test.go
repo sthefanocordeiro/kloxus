@@ -156,6 +156,61 @@ func TestNoMintOnPageviews(t *testing.T) {
 	}
 }
 
+// TestSessionProbeDoesNotMint (KLOX-288): the landing's session probe
+// validates the workspace cookie without Resolve — no cookie, no create
+// allowance spent, no reseed/touch side effect — so it can run on every
+// public pageview and still recognize a returning browser.
+func TestSessionProbeDoesNotMint(t *testing.T) {
+	srv, mgr := hostedServer(t)
+	mgr.SetCreateLimit(1)
+
+	serve := func(path, cookie string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("User-Agent", "klox288-test")
+		if cookie != "" {
+			req.Header.Set("Cookie", cookie)
+		}
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, req)
+		return rr
+	}
+	active := func(rr *httptest.ResponseRecorder) bool {
+		t.Helper()
+		var body struct {
+			Active bool `json:"active"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatalf("session probe body: %v", err)
+		}
+		return body.Active
+	}
+
+	rr := serve("/api/v1/session", "")
+	if rr.Code != 200 || active(rr) {
+		t.Fatalf("anonymous session probe = %d active=%v", rr.Code, active(rr))
+	}
+	if sc := rr.Header().Get("Set-Cookie"); strings.Contains(sc, workspace.CookieName) {
+		t.Fatal("anonymous session probe minted a workspace cookie")
+	}
+	if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("session probe Cache-Control = %q, want no-store", cc)
+	}
+
+	mint := serve("/api/v1/workspace", "")
+	if mint.Code != 200 {
+		t.Fatalf("real workspace mint after probe = %d (probe consumed the allowance?)", mint.Code)
+	}
+	cookie := strings.SplitN(mint.Header().Get("Set-Cookie"), ";", 2)[0]
+
+	rr = serve("/api/v1/session", cookie)
+	if rr.Code != 200 || !active(rr) {
+		t.Fatalf("returning session probe = %d active=%v", rr.Code, active(rr))
+	}
+	if sc := rr.Header().Get("Set-Cookie"); strings.Contains(sc, workspace.CookieName) {
+		t.Fatal("returning session probe rewrote the workspace cookie")
+	}
+}
+
 // TestRateLimitedSurfaces (KLOX-193): once the (IP, fingerprint) bucket
 // is full, /api/ gets the typed JSON envelope + Retry-After, pages get
 // the friendly HTML page + Retry-After, and a different browser

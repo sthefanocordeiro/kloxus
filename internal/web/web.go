@@ -154,6 +154,7 @@ func (s *Server) registerPublicRoutes() {
 // cookie, rate limits and isolation as the public routes.
 func (s *Server) registerAPIRoutes() {
 	m := s.mux
+	m.HandleFunc("GET /api/v1/session", s.apiSession)
 	m.HandleFunc("GET /api/v1/workspace", s.apiWorkspace)
 	m.HandleFunc("POST /api/v1/workspace/lang", s.apiWorkspaceLang)
 	m.HandleFunc("POST /api/v1/workspace/daily-mail", s.apiWorkspaceDailyMail)
@@ -430,6 +431,7 @@ func (s *Server) noWorkspaceRoute(r *http.Request) bool {
 	_, pattern := s.mux.Handler(r)
 	switch pattern {
 	case "GET /", "GET /app", "GET /app/",
+		"GET /api/v1/session",
 		"GET /api/v1/p/{slug}", "GET /api/v1/p/{slug}/{num}",
 		"GET /api/v1/p/{slug}/pay/{ref}", "GET /api/v1/unsub",
 		"POST /api/v1/auth/login",

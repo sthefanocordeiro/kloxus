@@ -12,6 +12,18 @@ test("logout/login with the same email recovers the previous Radar", async ({ pa
   const pubID = pubs.publications[0].id as number;
   const radarName = pubs.publications[0].name as string;
 
+  // KLOX-288: while that workspace cookie is active, the landing itself
+  // recognizes the returning browser even if the localStorage hint is
+  // absent. The no-mint session probe is what keeps this true for cookies
+  // created before the hint existed.
+  await page.evaluate(() => localStorage.removeItem("kloxus.session"));
+  await page.goto("/");
+  const dashboard = page.getByRole("link", { name: "Dashboard" }).first();
+  await expect(dashboard).toBeVisible();
+  await expect(page.getByRole("button", { name: /Create your Radar/ })).toHaveCount(0);
+  await dashboard.click();
+  await page.waitForURL(/\/publications/);
+
   // Sign out through the account menu, as the user does.
   await page.getByRole("button", { name: "Account" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();

@@ -304,6 +304,32 @@ func (m *Manager) cookieID(r *http.Request) string {
 	return id
 }
 
+// ExistingWorkspaceID validates the request's workspace cookie without
+// minting, touching or reseeding anything. Public pages use it to tell a
+// returning browser apart from a first visit; a missing, forged, deleted
+// or logged-out credential is simply inactive.
+func (m *Manager) ExistingWorkspaceID(ctx context.Context, r *http.Request) (string, bool, error) {
+	if m.local != nil {
+		// Local mode has one implicit workspace, not a per-browser session.
+		return "", false, nil
+	}
+	id, epoch, valid := m.cookieCredential(r)
+	if !valid {
+		return "", false, nil
+	}
+	if m.pool == nil {
+		return "", false, fmt.Errorf("workspace credential store unavailable")
+	}
+	current, exists, err := m.pool.WorkspaceAuthEpoch(ctx, id)
+	if err != nil {
+		return "", false, err
+	}
+	if !exists || current != epoch {
+		return "", false, nil
+	}
+	return id, true, nil
+}
+
 // SetCookie writes the signed workspace cookie at the workspace's current
 // persisted auth epoch. Reading the epoch at mint time keeps claim/login
 // recovery aligned with the newest logout rotation.

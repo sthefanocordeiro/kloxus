@@ -341,6 +341,15 @@ export const api = {
   // the daily-morning-email toggle in the account menu (KLOX-257)
   setDailyMail: (enabled: boolean) =>
     request<{ daily_mail: boolean }>("POST", "/api/v1/workspace/daily-mail", { enabled }),
+  // no-mint session probe for the public site: validates the workspace
+  // cookie server-side and keeps the localStorage hint aligned, but never
+  // resolves or creates a visitor workspace (KLOX-288)
+  session: () =>
+    request<{ active: boolean }>("GET", "/api/v1/session").then((r) => {
+      if (r.active) markSession();
+      else clearSession();
+      return r;
+    }),
   // resolve-or-create: a successful answer means this browser holds a
   // session, so the marker goes down for the public pages to read
   workspace: () =>

@@ -18,8 +18,8 @@ test.skip(publishingOff, PUBLISHING_SKIP_REASON);
 //
 // API-driven so the assertion stays focused; fake-live mode only.
 
-test.beforeEach(async ({ page }) => {
-  await preflight(page);
+test.beforeEach(async () => {
+  await preflight();
 });
 
 const apiGet = async (page: Page, path: string) => {
