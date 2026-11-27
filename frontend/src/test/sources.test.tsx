@@ -87,6 +87,63 @@ describe("SourcesPage delete dialog (KLOX-213)", () => {
   });
 });
 
+// KLOX-276: first-load copy must not contradict the data that is still
+// arriving, and the Radar must say why broad portals appear for a niche.
+describe("SourcesPage first-load UX (KLOX-276)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.setItem("kloxus.lang", "en");
+    vi.mocked(api.workspace).mockResolvedValue({
+      id: "w1",
+      label: "w",
+      mode: "demo",
+      hosted: false,
+      llm_mode: "off",
+      publishing: true,
+    });
+    vi.mocked(api.publication).mockResolvedValue({
+      publication: pub,
+      latest_issue: { id: 1 } as IssueSummary,
+    });
+  });
+
+  function renderPage() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <LangProvider>
+          <MemoryRouter initialEntries={["/publications/42/sources"]}>
+            <Routes>
+              <Route path="/publications/:id/sources" element={<SourcesPage />} />
+            </Routes>
+          </MemoryRouter>
+        </LangProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("never flashes 'Add 0 suggested sources' while the catalog is loading", async () => {
+    vi.mocked(api.sources).mockImplementation(() => new Promise<never>(() => {}));
+    vi.mocked(api.sourceCatalog).mockImplementation(() => new Promise<never>(() => {}));
+    renderPage();
+
+    expect(await screen.findByText("Loading sources…")).toBeVisible();
+    // wait for the publication form too — otherwise this only proves the
+    // pre-publication frame has not reached the post-issue button yet
+    expect(await screen.findByLabelText("Name")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add 0 suggested sources" })).toBeNull();
+  });
+
+  it("explains why broad portals are active for beats without a dedicated feed", async () => {
+    vi.mocked(api.sources).mockResolvedValue([]);
+    vi.mocked(api.sourceCatalog).mockResolvedValue({ offered: [] });
+    renderPage();
+
+    expect(await screen.findByText(/broad news portals/i)).toBeVisible();
+    expect(screen.getByText(/filters stories by your topics/i)).toBeVisible();
+  });
+});
+
 // KLOX-235: the post-issue button counts and adds only the ticked
 // suggestions — "Add N suggested sources" never re-counts the sources
 // already added.

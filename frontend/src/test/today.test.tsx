@@ -72,6 +72,22 @@ describe("Hoje (KLOX-123)", () => {
     expect(liked).toHaveAttribute("aria-pressed", "true");
   });
 
+  // KLOX-276: before choosing, the card carries an evident way to read
+  // the source story; opening it must not accidentally tick the card.
+  it("shows the source link without ticking the card", async () => {
+    renderToday();
+    await screen.findByText("Story 1");
+    const first = screen.getAllByTestId("today-card")[0];
+    const link = within(first).getByRole("link", { name: "Read story" });
+    expect(link).toHaveAttribute("href", "https://x.test/1");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link.className).toContain("min-h-11");
+    expect(link.className).toContain("md:min-h-10");
+    fireEvent.click(link);
+    expect(screen.queryByText(/selected/)).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /Story 1/ })).not.toBeChecked();
+  });
+
   it("ticks stories in order, shows the numbering and builds the pauta", async () => {
     vi.mocked(api.pautaCreate).mockResolvedValue({ issue_id: 55 });
     renderToday();

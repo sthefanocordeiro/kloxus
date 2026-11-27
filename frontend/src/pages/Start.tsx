@@ -299,7 +299,7 @@ function Calibrate({ pubID, s, onDone }: { pubID: number; s: StartStrings; onDon
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-muted">
             <span className="hidden sm:inline">{s.keys}</span>
-            <button type="button" className="underline hover:text-ink" onClick={onDone}>
+            <button type="button" className="ml-auto inline-flex min-h-11 items-center rounded px-3 font-medium underline hover:text-ink md:min-h-10" onClick={onDone}>
               {s.skip}
             </button>
           </div>

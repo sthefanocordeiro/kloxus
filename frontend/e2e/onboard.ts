@@ -41,10 +41,10 @@ export async function onboard(page: Page, ownerEmail?: string, options: OnboardO
   }
   await page.getByRole("button", { name: "Continue", exact: true }).click();
 
-  // Dar match: a real deck shows the Skip button inside the card; an
+  // Dar match: a real deck shows the skip control inside the card; an
   // empty deck shows a plain Continue instead — take whichever lands
   await expect(page.getByRole("heading", { name: "Match", exact: true })).toBeVisible();
-  const skip = page.getByRole("button", { name: "Skip", exact: true })
+  const skip = page.getByRole("button", { name: "Skip matching", exact: true })
     .or(page.getByRole("button", { name: "Continue", exact: true }));
   await skip.first().click({ timeout: 60_000 });
 

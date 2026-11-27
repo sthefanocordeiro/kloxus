@@ -146,6 +146,7 @@ export function SourcesPage() {
     <div className="mx-auto w-full max-w-2xl px-4 py-8">
       <h1 className="mt-4 font-display text-2xl font-bold">{t.sourcesPage.title}</h1>
       <p className="mt-1 text-sm text-muted">{t.sourcesPage.subtitle}</p>
+      <p className="mt-1 text-xs text-muted">{t.sourcesPage.generalistHint}</p>
 
       {/* the Radar block: identity + aderência (KLOX-94) — what the
           suggestion engine ranks by, in the creator's own words. Custom-
@@ -322,31 +323,33 @@ export function SourcesPage() {
           Voltar returns to the publication's sections step. Once a
           first issue exists this is the sources screen again and keeps
           its original confirm. */}
-      <div className="mt-6 flex items-center gap-3">
-        {!pub.data?.latest_issue ? (
-          <>
-            <span className="text-xs text-muted">
-              {count === 0 && !loading ? t.sourcesPage.empty : selCount > 0 ? t.sourcesPage.selected(selCount) : null}
-            </span>
+      {!loading && (
+        <div className="mt-6 flex items-center gap-3">
+          {!pub.data?.latest_issue ? (
+            <>
+              <span className="text-xs text-muted">
+                {count === 0 ? t.sourcesPage.empty : selCount > 0 ? t.sourcesPage.selected(selCount) : null}
+              </span>
+              <div className="ml-auto flex items-center gap-3">
+                <Button disabled={count === 0 || confirm.isPending} onClick={() => confirm.mutate()}>
+                  {confirm.isPending ? t.sourcesPage.confirming : t.create.next}
+                </Button>
+              </div>
+            </>
+          ) : (
             <div className="ml-auto flex items-center gap-3">
-              <Button disabled={count === 0 || confirm.isPending} onClick={() => confirm.mutate()}>
-                {confirm.isPending ? t.sourcesPage.confirming : t.create.next}
+              <Button
+                disabled={selCount === 0 || confirm.isPending}
+                onClick={() => confirm.mutate()}
+                size="lg"
+              >
+                {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(selCount)}
               </Button>
+              {count === 0 && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
             </div>
-          </>
-        ) : (
-          <div className="ml-auto flex items-center gap-3">
-            <Button
-              disabled={selCount === 0 || confirm.isPending}
-              onClick={() => confirm.mutate()}
-              size="lg"
-            >
-              {confirm.isPending ? t.sourcesPage.confirming : t.sourcesPage.confirm(selCount)}
-            </Button>
-            {count === 0 && !loading && <span className="text-xs text-muted">{t.sourcesPage.empty}</span>}
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
       {confirm.error && <p className="mt-2 text-xs text-danger">{errText(t, confirm.error)}</p>}
 
       {/* Apagar Radar sits at the end of the merged screen, behind an
