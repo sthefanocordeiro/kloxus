@@ -26,6 +26,7 @@ func TestRenderPautaMailHTMLPT(t *testing.T) {
 		"Valor Econômico",
 		"há 3 h",
 		"next=%2Fcompor%3Fpub%3D1%26noticia%3D11",
+		"Kloxus · as notícias do seu setor, prontas toda manhã. A escrita é sua.",
 	} {
 		if !strings.Contains(h, want) {
 			t.Errorf("HTML lacks %q", want)
@@ -34,7 +35,7 @@ func TestRenderPautaMailHTMLPT(t *testing.T) {
 	if n := strings.Count(h, "Criar post com essa notícia →"); n != 2 {
 		t.Errorf("story CTAs = %d, want 2", n)
 	}
-	for _, banned := range []string{"Seu comentário", "commentary", "<script", "<link", "javascript:alert"} {
+	for _, banned := range []string{"Seu comentário", "commentary", "<script", "<link", "javascript:alert", "redação assistida por IA"} {
 		if strings.Contains(h, banned) {
 			t.Errorf("HTML contains banned %q", banned)
 		}
@@ -57,10 +58,14 @@ func TestRenderPautaMailHTMLEn(t *testing.T) {
 	for _, want := range []string{
 		`lang="en"`, "Your Radar today", "Tuesday, November 24, 2026", "1 story",
 		"Create a post with this story →", "Unsubscribe from this Radar", "Open in Kloxus",
+		"Kloxus · the news from your sector, ready every morning. The writing is yours.",
 	} {
 		if !strings.Contains(h, want) {
 			t.Errorf("EN HTML lacks %q", want)
 		}
+	}
+	if strings.Contains(h, "AI-assisted newsroom") {
+		t.Error("EN HTML keeps the old AI-newsroom footer")
 	}
 }
 
