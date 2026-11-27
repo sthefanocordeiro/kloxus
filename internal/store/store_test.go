@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
-	"path/filepath"
+	"encoding/hex"
+	"os"
+	"strconv"
 	"testing"
 
 	"github.com/sthefanocordeiro/kloxus/internal/config"
@@ -11,12 +14,40 @@ import (
 
 func open(t *testing.T) *DB {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	return openOn(t, openPool(t))
+}
+
+func openPool(t *testing.T) *Pool {
+	t.Helper()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL not set — Postgres tests skipped")
+	}
+	pool, err := Open(url)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	t.Cleanup(func() { pool.Close() })
+	return pool
+}
+
+func openOn(t *testing.T, pool *Pool) *DB {
+	t.Helper()
+	ctx := context.Background()
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	id := hex.EncodeToString(b)
+	if err := pool.CreateWorkspace(ctx, id); err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := pool.DeleteWorkspace(context.Background(), id); err != nil {
+			t.Errorf("DeleteWorkspace: %v", err)
+		}
+	})
+	return pool.For(id)
 }
 
 func testPub() *config.Publication {
@@ -37,7 +68,7 @@ func TestMigrateAndSeed(t *testing.T) {
 	ctx := context.Background()
 
 	var applied int
-	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&applied); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&applied); err != nil {
 		t.Fatalf("schema_migrations: %v", err)
 	}
 	if applied < 1 {
@@ -63,7 +94,7 @@ func TestMigrateAndSeed(t *testing.T) {
 	if pub.Name != "Test Pub" || len(pub.Sections) != 1 {
 		t.Fatalf("unexpected publication: %+v", pub)
 	}
-	byID, err := db.GetPublication(ctx, "1")
+	byID, err := db.GetPublication(ctx, strconv.FormatInt(id1, 10))
 	if err != nil || byID.Slug != "test-pub" {
 		t.Fatalf("GetPublication by id: %v %+v", err, byID)
 	}
@@ -73,14 +104,19 @@ func TestMigrateAndSeed(t *testing.T) {
 		t.Fatalf("Sources: %v len=%d", err, len(srcs))
 	}
 
-	if n, _ := db.NextIssueNumber(ctx, pub.ID); n != 1 {
-		t.Fatalf("NextIssueNumber = %d", n)
+	issueID, n, err := db.CreateNextIssue(ctx, pub.ID,
+		func(n int) string { return "s" + strconv.Itoa(n) }, "body", nil)
+	if err != nil {
+		t.Fatalf("CreateNextIssue: %v", err)
 	}
-	if _, err := db.CreateIssue(ctx, pub.ID, 1, "s", "body"); err != nil {
-		t.Fatalf("CreateIssue: %v", err)
+	if n != 1 {
+		t.Fatalf("first number = %d", n)
 	}
-	if n, _ := db.NextIssueNumber(ctx, pub.ID); n != 2 {
-		t.Fatalf("NextIssueNumber after create = %d", n)
+	if _, n, err := db.CreateNextIssue(ctx, pub.ID, nil, "", nil); err != nil || n != 2 {
+		t.Fatalf("second CreateNextIssue = n%d, %v", n, err)
+	}
+	if issueID == 0 {
+		t.Fatal("CreateNextIssue returned zero id")
 	}
 	body, err := db.IssueBody(ctx, pub.ID, 1)
 	if err != nil || body != "body" {
@@ -105,19 +141,20 @@ func TestSeedRefreshesConfig(t *testing.T) {
 	ctx := context.Background()
 
 	p := testPub()
-	p.Paywall = config.Paywall{Enabled: true, Price: "R$ 12/month", PaidSections: []string{"Lead"}}
+	p.Paywall = config.Paywall{Enabled: true, Price: "R$ 12/mês", PaidSections: []string{"Lead"}}
 	id, err := db.SeedPublication(ctx, p)
 	if err != nil {
 		t.Fatalf("SeedPublication: %v", err)
 	}
 	// visitor-added source survives the refresh
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO sources (publication_id, type, url) VALUES (?,?,?)`, id, "rss", "https://visitor.example/feed"); err != nil {
+		`INSERT INTO sources (workspace_id, publication_id, type, url) VALUES ($1,$2,$3,$4)`,
+		db.ws, id, "rss", "https://visitor.example/feed"); err != nil {
 		t.Fatalf("add source: %v", err)
 	}
 
 	p2 := testPub()
-	p2.Paywall = config.Paywall{Enabled: true, Price: "V$ 12/month", PaidSections: []string{"Lead"}}
+	p2.Paywall = config.Paywall{Enabled: true, Price: "R$ 12/mês", PaidSections: []string{"Lead"}}
 	if _, err := db.SeedPublication(ctx, p2); err != nil {
 		t.Fatalf("re-seed: %v", err)
 	}
@@ -125,7 +162,7 @@ func TestSeedRefreshesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPublication: %v", err)
 	}
-	if pub.Paywall.Price != "V$ 12/month" {
+	if pub.Paywall.Price != "R$ 12/mês" {
 		t.Fatalf("price not refreshed: %q", pub.Paywall.Price)
 	}
 	srcs, err := db.Sources(ctx, pub.ID)

@@ -4,17 +4,22 @@
 package sources
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mmcdole/gofeed"
 	"golang.org/x/net/html"
+
+	"github.com/sthefanocordeiro/kloxus/internal/decode"
+	"github.com/sthefanocordeiro/kloxus/internal/httpx"
 )
 
 // RawItem is one collected item before deduplication.
@@ -25,7 +30,8 @@ type RawItem struct {
 	Author      string
 	PublishedAt string
 	ContentText string
-	Outlet      string // feed channel title / page name, when known
+	Outlet      string   // feed channel title / page name, when known
+	Categories  []string // publisher RSS/Atom category labels, verbatim
 }
 
 // Fetcher collects raw items from one source definition.
@@ -33,17 +39,53 @@ type Fetcher interface {
 	Fetch(ctx context.Context, typ, url string) ([]RawItem, error)
 }
 
+// SkipError is returned by a Fetcher that deliberately declines a
+// source — FixtureFetcher refuses URLs outside the fixture set because
+// fetching visitor-typed URLs on the hosted demo is an SSRF surface.
+// Callers record the skip instead of reporting a fetch failure.
+type SkipError struct {
+	URL    string
+	Reason string
+}
+
+func (e *SkipError) Error() string { return e.Reason }
+
 // FixtureFetcher reads demo fixtures from an fs.FS. Source URLs are paths
 // inside that FS (e.g. "fixtures/feeds/radar-tech.xml").
 type FixtureFetcher struct{ FS fs.FS }
 
 // Fetch implements Fetcher for fixture files.
 func (f FixtureFetcher) Fetch(_ context.Context, typ, url string) ([]RawItem, error) {
+	if !strings.HasPrefix(url, "fixtures/") {
+		return nil, &SkipError{URL: url, Reason: "simulated in demo mode: sources are not fetched"}
+	}
 	switch typ {
 	case "rss":
 		return f.fetchRSS(url)
 	case "page":
 		return f.fetchPage(url)
+	default:
+		return nil, fmt.Errorf("unknown source type %q", typ)
+	}
+}
+
+// CapturedFetcher answers a real source URL with its recorded capture
+// inside FS at feeds/<FeedFixtureName(type,url)>. Unlike rewriting a
+// definition's URLs to fixture paths, the real URL still reaches the
+// pipeline — outlets keep their real names in prompts, so replay keys
+// and model input match the original recorded run.
+type CapturedFetcher struct{ FS fs.FS }
+
+// Fetch implements Fetcher against the recorded captures. Captures live
+// outside fixtures/, so this bypasses FixtureFetcher's demo-mode guard.
+func (f CapturedFetcher) Fetch(_ context.Context, typ, url string) ([]RawItem, error) {
+	ff := FixtureFetcher{FS: f.FS}
+	name := "feeds/" + FeedFixtureName(typ, url)
+	switch typ {
+	case "rss":
+		return ff.fetchRSS(name)
+	case "page":
+		return ff.fetchPage(name)
 	default:
 		return nil, fmt.Errorf("unknown source type %q", typ)
 	}
@@ -88,9 +130,33 @@ func parseFeed(r io.Reader, name string) ([]RawItem, error) {
 			PublishedAt: published,
 			ContentText: strings.TrimSpace(content),
 			Outlet:      strings.TrimSpace(feed.Title),
+			Categories:  NormalizeCategories(it.Categories),
 		})
 	}
 	return out, nil
+}
+
+// NormalizeCategories keeps the publisher's category text verbatim while
+// trimming outer whitespace, dropping empties and removing duplicate labels
+// in first-seen order. The duplicate key folds case only; accent-insensitive
+// comparison belongs to matching, not storage, so the stored evidence never
+// loses the publisher's spelling.
+func NormalizeCategories(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, c := range in {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		key := strings.ToLower(c)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, c)
+	}
+	return out
 }
 
 func authorName(it *gofeed.Item) string {
@@ -167,13 +233,29 @@ func pageTitle(doc *html.Node) string {
 // monitor and its webhook instead of this fetcher.
 type LiveFetcher struct {
 	HTTP *http.Client // defaults to a client with a 30s timeout
+	// DumpDir, when set, saves each fetched body under
+	// FeedFixtureName(typ, url) — `kloxus record --live` uses it to build
+	// replayable feed fixtures alongside the recorded LLM responses.
+	DumpDir string
+}
+
+// FeedFixtureName is the canonical fixture filename for a captured feed
+// or page: stable on the source URL so a publication definition keeps
+// pointing at the same capture across recordings.
+func FeedFixtureName(typ, url string) string {
+	ext := "html"
+	if typ == "rss" {
+		ext = "xml"
+	}
+	sum := sha1.Sum([]byte(url))
+	return fmt.Sprintf("%s-%x.%s", typ, sum[:5], ext)
 }
 
 func (f LiveFetcher) client() *http.Client {
 	if f.HTTP != nil {
 		return f.HTTP
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return httpx.Client(30 * time.Second)
 }
 
 // Fetch implements Fetcher over HTTP.
@@ -198,10 +280,26 @@ func (f LiveFetcher) Fetch(ctx context.Context, typ, url string) ([]RawItem, err
 	if err != nil {
 		return nil, fmt.Errorf("reading %q: %w", url, err)
 	}
+	f.dump(typ, url, body)
+	// Bodies decode to UTF-8 before parsing: html.Parse assumes UTF-8
+	// and gofeed only honors the XML prolog — a Latin-1 page or an
+	// HTTP-charset-only feed used to reach the UI as mojibake (KLOX-79).
 	if typ == "rss" {
-		return parseFeed(bytes.NewReader(body), url)
+		return parseFeed(decode.FeedReader(body, resp.Header.Get("Content-Type")), url)
 	}
-	return parseIndexPage(bytes.NewReader(body), url)
+	return parseIndexPage(decode.Reader(body, resp.Header.Get("Content-Type")), url)
+}
+
+// dump saves a fetched body as a fixture file under DumpDir. Failures
+// are non-fatal — capturing fixtures is auxiliary to fetching.
+func (f LiveFetcher) dump(typ, url string, body []byte) {
+	if f.DumpDir == "" {
+		return
+	}
+	if err := os.MkdirAll(f.DumpDir, 0o755); err != nil {
+		return
+	}
+	os.WriteFile(filepath.Join(f.DumpDir, FeedFixtureName(typ, url)), body, 0o644)
 }
 
 func parseEntry(n *html.Node) (RawItem, bool) {

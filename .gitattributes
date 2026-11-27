@@ -1,1 +1,10 @@
+# Fixture inputs feed replay-key hashing (llm.Key); CRLF checkouts
+# change collected text and break demo mode on Windows.
+examples/** text eol=lf
 internal/realsample/** text eol=lf
+# Migration files are sha256-verified against the checksum recorded in
+# schema_migrations at apply time — a CRLF checkout (Windows autocrlf)
+# hashed differently and crashed the deployed app on boot (KLOX-257
+# deploy window, v277). Force LF so flyctl deploy packages the exact
+# committed bytes from any platform.
+migrations/** text eol=lf
