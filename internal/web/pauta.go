@@ -337,7 +337,24 @@ func (s *Server) apiPautaCreate(w http.ResponseWriter, r *http.Request) {
 		in.Entries = append(in.Entries, pautaEntryIn{StoryID: sid})
 	}
 	var id int64
+	reused := false
 	err = db(r).WithTx(ctx, func(txdb *store.DB) error {
+		// The mailed deep link carries exactly one story. If that story is
+		// already in an unfinished pauta, opening it again must be idempotent:
+		// a second click (or a double-click) lands on the draft the first one
+		// made instead of stacking a duplicate.
+		if len(req.StoryIDs) == 1 {
+			existing, found, err := txdb.OpenDraftIssueIDWithStory(ctx, pub.ID, req.StoryIDs[0])
+			if err != nil {
+				return err
+			}
+			if found {
+				id = existing
+				reused = true
+				return txdb.DeletePautaDay(ctx, pub.ID, pautaDayOf(time.Now()))
+			}
+		}
+
 		var err error
 		id, _, err = txdb.CreateNextIssue(ctx, pub.ID,
 			func(n int) string { return fmt.Sprintf("%s — pauta %d", pub.Name, n) }, "", config.PostSections())
@@ -361,6 +378,10 @@ func (s *Server) apiPautaCreate(w http.ResponseWriter, r *http.Request) {
 		if apiDBErr(w, r, err, "pauta") {
 			return
 		}
+	}
+	if reused {
+		apiJSON(w, 200, map[string]any{"issue_id": id, "reused": true})
+		return
 	}
 	apiJSON(w, 201, map[string]any{"issue_id": id})
 }

@@ -11,6 +11,16 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/config"
 )
 
+// lockPublication serializes issue creation and open-draft lookups for one
+// publication. It only mutual-excludes callers inside the same transaction;
+// outside one the row lock ends with the statement.
+func (db *DB) lockPublication(ctx context.Context, pubID int64) error {
+	var locked int64
+	return db.QueryRowContext(ctx,
+		`SELECT id FROM publications WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+		db.ws, pubID).Scan(&locked)
+}
+
 // CreateNextIssue inserts an issue at the publication's next sequential
 // number and returns both ids. The publication row lock serializes number
 // allocation across concurrent callers (including other app processes), and
@@ -22,10 +32,7 @@ func (db *DB) CreateNextIssue(ctx context.Context, pubID int64, subjectForNumber
 	var id int64
 	var number int
 	err := db.WithTx(ctx, func(txdb *DB) error {
-		var locked int64
-		if err := txdb.QueryRowContext(ctx,
-			`SELECT id FROM publications WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
-			db.ws, pubID).Scan(&locked); err != nil {
+		if err := txdb.lockPublication(ctx, pubID); err != nil {
 			return err
 		}
 		if err := txdb.QueryRowContext(ctx,
@@ -190,6 +197,35 @@ func (db *DB) LatestIssue(ctx context.Context, pubID int64) (*Issue, error) {
 	return db.scanIssue(db.QueryRowContext(ctx,
 		`SELECT `+issueCols+` FROM issues WHERE workspace_id = $1 AND publication_id = $2 ORDER BY number DESC LIMIT 1`,
 		db.ws, pubID))
+}
+
+// OpenDraftIssueIDWithStory returns the newest unfinished issue that still
+// holds storyID. "Open" matches the creator-facing draft bucket: approved,
+// sent and scheduled pieces are finished, every other status is editable.
+// The publication row lock makes the check part of the same serialization
+// boundary as CreateNextIssue, so callers can use it for idempotent creation
+// inside a transaction without a check-then-insert race.
+func (db *DB) OpenDraftIssueIDWithStory(ctx context.Context, pubID, storyID int64) (int64, bool, error) {
+	if err := db.lockPublication(ctx, pubID); err != nil {
+		return 0, false, err
+	}
+	var id int64
+	err := db.QueryRowContext(ctx, `
+		SELECT i.id
+		FROM issues i
+		JOIN issue_items ii ON ii.workspace_id = i.workspace_id AND ii.issue_id = i.id
+		WHERE i.workspace_id = $1 AND i.publication_id = $2
+		  AND ii.story_id = $3 AND ii.status <> 'removed'
+		  AND i.status NOT IN ('approved','sent','scheduled')
+		ORDER BY i.number DESC
+		LIMIT 1`, db.ws, pubID, storyID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
 }
 
 // SetIssueItemStatus updates an issue item's review status.

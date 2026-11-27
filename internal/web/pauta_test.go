@@ -120,6 +120,51 @@ func TestPautaFlow(t *testing.T) {
 	}
 }
 
+// KLOX-287: the mailed "write about this story" deep link is idempotent
+// while the post is still a draft — a second click opens the same pauta
+// instead of stacking an identical one.
+func TestPautaCreateReusesOpenDraftWithStory(t *testing.T) {
+	srv, db := emptyServer(t)
+	rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{"about": "futuro e tecnologia"})
+	if rr.Code != 201 {
+		t.Fatalf("radar = %d %s", rr.Code, rr.Body.String())
+	}
+	pubID := int64(apiJSON(t, rr)["publication"].(map[string]any)["id"].(float64))
+	id := fmt.Sprint(pubID)
+	cards := apiGet(t, srv, "/api/v1/publications/"+id+"/today")["cards"].([]any)
+	if len(cards) < 2 {
+		t.Fatalf("cards = %d", len(cards))
+	}
+	s1 := cards[0].(map[string]any)["story_id"]
+	s2 := cards[1].(map[string]any)["story_id"]
+
+	rr = apiCall(t, srv, "POST", "/api/v1/publications/"+id+"/pauta", map[string]any{"story_ids": []any{s1}})
+	if rr.Code != 201 {
+		t.Fatalf("first create = %d %s", rr.Code, rr.Body.String())
+	}
+	firstID := int64(apiJSON(t, rr)["issue_id"].(float64))
+	before := issueCount(t, db, pubID)
+
+	rr = apiCall(t, srv, "POST", "/api/v1/publications/"+id+"/pauta", map[string]any{"story_ids": []any{s1}})
+	if rr.Code != 200 {
+		t.Fatalf("repeat create = %d %s", rr.Code, rr.Body.String())
+	}
+	if got := int64(apiJSON(t, rr)["issue_id"].(float64)); got != firstID {
+		t.Fatalf("repeat create issue = %d, want existing %d", got, firstID)
+	}
+	if got := issueCount(t, db, pubID); got != before {
+		t.Fatalf("issues after repeat = %d, want %d", got, before)
+	}
+
+	rr = apiCall(t, srv, "POST", "/api/v1/publications/"+id+"/pauta", map[string]any{"story_ids": []any{s2}})
+	if rr.Code != 201 {
+		t.Fatalf("different-story create = %d %s", rr.Code, rr.Body.String())
+	}
+	if got := int64(apiJSON(t, rr)["issue_id"].(float64)); got == firstID {
+		t.Fatalf("different story reused issue %d", got)
+	}
+}
+
 // KLOX-199: the pauta is named by its first story everywhere — editor
 // and lists. Clicking the name in the editor saves an author name on
 // the issue subject that wins over the derived title; "" restores the
