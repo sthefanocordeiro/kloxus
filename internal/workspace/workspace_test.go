@@ -28,12 +28,12 @@ func TestCookieRoundtrip(t *testing.T) {
 	m.SetCookie(rr, req, id)
 	cookie := rr.Header().Get("Set-Cookie")
 	if !strings.HasPrefix(cookie, CookieName+"="+id+".") {
-		t.Fatalf("cookie shape: %q", cookie)
+		t.Fatal("cookie shape does not carry the workspace id prefix")
 	}
 	req2 := httptest.NewRequest("GET", "/", nil)
 	req2.Header.Set("Cookie", strings.Split(cookie, ";")[0])
 	if got := m.cookieID(req2); got != id {
-		t.Fatalf("cookieID = %q, want %q", got, id)
+		t.Fatal("cookieID did not round-trip the workspace id")
 	}
 }
 
@@ -52,7 +52,7 @@ func TestCookieRejectsForgery(t *testing.T) {
 			req.Header.Set("Cookie", CookieName+"="+bad)
 		}
 		if got := m.cookieID(req); got != "" {
-			t.Fatalf("cookieID(%q) = %q, want reject", bad, got)
+			t.Fatal("cookieID accepted a forged or malformed cookie")
 		}
 	}
 }

@@ -1152,7 +1152,7 @@ func TestHostedClaimSignsInBrowser(t *testing.T) {
 	}
 	set := rr.Header().Get("Set-Cookie")
 	if !strings.Contains(set, workspace.CookieName+"="+wsA.ID) {
-		t.Fatalf("claim did not set the workspace cookie: %q", set)
+		t.Fatal("claim did not set the workspace cookie")
 	}
 	// and the workspace is now owned
 	if email, _, err := mgr.Pool().WorkspaceOwner(ctx, wsA.ID); err != nil || email != ownerEmail {

@@ -499,7 +499,7 @@ func TestRobotsAndSecurityHeaders(t *testing.T) {
 		}
 	}
 	if c := rr.Header().Get("Set-Cookie"); c != "" {
-		t.Fatalf("robots minted a workspace cookie: %q", c)
+		t.Fatal("robots minted a workspace cookie")
 	}
 	for k, want := range map[string]string{
 		"X-Content-Type-Options": "nosniff",

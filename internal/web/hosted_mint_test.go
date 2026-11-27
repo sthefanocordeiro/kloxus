@@ -18,6 +18,10 @@ import (
 	"github.com/sthefanocordeiro/kloxus/internal/workspace"
 )
 
+// hostedTestSecret is the throwaway signing key shared by hosted-mode
+// test managers. It never leaves the test process.
+var hostedTestSecret = []byte("test-secret-key-32-bytes-padded-ok!")
+
 // hostedServer builds a hosted-mode server (Postgres pool, per-visitor
 // workspaces) like main.go runs on Fly — the surface KLOX-193 fixes.
 func hostedServer(t *testing.T) (*web.Server, *workspace.Manager) {
@@ -33,7 +37,7 @@ func hostedServer(t *testing.T) (*web.Server, *workspace.Manager) {
 		return err
 	}
 	mgr, err := workspace.OpenHosted(ctx, testdb.Pool(t),
-		[]byte("test-secret-key-32-bytes-padded-ok!"), seed)
+		hostedTestSecret, seed)
 	if err != nil {
 		t.Fatalf("OpenHosted: %v", err)
 	}
@@ -46,7 +50,7 @@ func hostedServer(t *testing.T) (*web.Server, *workspace.Manager) {
 		Fetcher: sources.FixtureFetcher{FS: examples.FS},
 		LLM:     llm.Replay{FS: examples.FS, Dir: "fixtures/llm", DumpDir: llmDumpDir("")},
 		Monitor: sources.FakeMonitor{},
-		Seed:    seed,
+		Seed:    seed, Pool: mgr.Pool(),
 	})
 	return srv, mgr
 }

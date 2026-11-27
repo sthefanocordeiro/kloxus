@@ -140,6 +140,6 @@ func TestLogout(t *testing.T) {
 		t.Fatalf("claimed logout = %d %s", rr.Code, rr.Body.String())
 	}
 	if c := rr.Header().Get("Set-Cookie"); !strings.Contains(c, "kloxus_ws=") || !strings.Contains(c, "Max-Age=0") {
-		t.Fatalf("logout cookie = %q, want an expired kloxus_ws", c)
+		t.Fatal("logout did not expire kloxus_ws")
 	}
 }

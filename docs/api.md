@@ -132,6 +132,16 @@ leave more than one workspace with a Radar on one email; in that case the
 confirm page first renders an explicit workspace choice and spends the
 token only after the choice posts back.
 
+### `POST /api/v1/logout`
+`{}` — signs out a claimed workspace. The server first increments that
+workspace's persisted credential epoch atomically, then expires this
+browser's cookie, so every copy of the pre-logout workspace cookie loses
+access globally. A retired credential can only start a fresh empty
+workspace; confirming a later claim/sign-in link mints a new cookie at
+the current epoch and recovers the original workspace. Unclaimed
+workspaces are refused (`403 email_required`) because they have no way
+back. `200 {"ok": true}` on success.
+
 ### `GET /claim?t={token}` → `POST /claim?t={token}` — not JSON
 The emailed link is two-step so mail-scanner prefetches can't spend it:
 `GET` only validates the token and renders a confirm page (`400` page

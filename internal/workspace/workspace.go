@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -246,36 +247,86 @@ func (m *Manager) ResolvePublicToken(tok string) string {
 	return string(plain)
 }
 
-func (m *Manager) sign(id string) string {
+// signLegacy is the pre-epoch cookie signature. Cookies already in
+// browsers keep this shape valid as epoch 0 until the workspace's first
+// logout rotation (KLOX-279).
+func (m *Manager) signLegacy(id string) string {
 	h := hmac.New(sha256.New, m.secret)
 	h.Write([]byte(id))
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
-// cookieID extracts and verifies a workspace id from the request cookie.
-func (m *Manager) cookieID(r *http.Request) string {
+// signEpoch signs the versioned workspace credential. Binding the epoch
+// into the MAC means changing the version in a copied cookie is a forgery,
+// not a downgrade or upgrade.
+func (m *Manager) signEpoch(id string, epoch int64) string {
+	h := hmac.New(sha256.New, m.secret)
+	h.Write([]byte("workspace-cookie:" + id + ":" + strconv.FormatInt(epoch, 10)))
+	return hex.EncodeToString(h.Sum(nil))[:32]
+}
+
+// cookieCredential extracts and verifies the workspace id and credential
+// epoch from the request cookie. The legacy two-field shape (id.signature)
+// is epoch 0; the current shape is id.epoch.signature.
+func (m *Manager) cookieCredential(r *http.Request) (id string, epoch int64, ok bool) {
 	c, err := r.Cookie(CookieName)
 	if err != nil {
-		return ""
+		return "", 0, false
 	}
-	id, sig, ok := strings.Cut(c.Value, ".")
-	if !ok || !idRE.MatchString(id) {
-		return ""
+	parts := strings.Split(c.Value, ".")
+	if len(parts) == 2 {
+		id, sig := parts[0], parts[1]
+		if !idRE.MatchString(id) || subtle.ConstantTimeCompare([]byte(sig), []byte(m.signLegacy(id))) != 1 {
+			return "", 0, false
+		}
+		return id, 0, true
 	}
-	if subtle.ConstantTimeCompare([]byte(sig), []byte(m.sign(id))) != 1 {
+	if len(parts) != 3 {
+		return "", 0, false
+	}
+	id, epochText, sig := parts[0], parts[1], parts[2]
+	epoch, err = strconv.ParseInt(epochText, 10, 64)
+	if !idRE.MatchString(id) || err != nil || epoch < 0 || strconv.FormatInt(epoch, 10) != epochText {
+		return "", 0, false
+	}
+	if subtle.ConstantTimeCompare([]byte(sig), []byte(m.signEpoch(id, epoch))) != 1 {
+		return "", 0, false
+	}
+	return id, epoch, true
+}
+
+// cookieID extracts and verifies a workspace id from the request cookie.
+func (m *Manager) cookieID(r *http.Request) string {
+	id, _, ok := m.cookieCredential(r)
+	if !ok {
 		return ""
 	}
 	return id
 }
 
-// SetCookie writes the signed workspace cookie.
-func (m *Manager) SetCookie(w http.ResponseWriter, r *http.Request, id string) {
+// SetCookie writes the signed workspace cookie at the workspace's current
+// persisted auth epoch. Reading the epoch at mint time keeps claim/login
+// recovery aligned with the newest logout rotation.
+func (m *Manager) SetCookie(w http.ResponseWriter, r *http.Request, id string) error {
+	epoch := int64(0)
+	if m.pool != nil {
+		current, ok, err := m.pool.WorkspaceAuthEpoch(r.Context(), id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("workspace not found")
+		}
+		epoch = current
+	}
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	epochText := strconv.FormatInt(epoch, 10)
 	http.SetCookie(w, &http.Cookie{
-		Name: CookieName, Value: id + "." + m.sign(id),
+		Name: CookieName, Value: id + "." + epochText + "." + m.signEpoch(id, epoch),
 		Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
 		MaxAge: cookieMaxAgeDays * 24 * 3600,
 	})
+	return nil
 }
 
 // ClearCookie expires the workspace cookie: the browser is anonymous
@@ -367,11 +418,21 @@ func (m *Manager) Resolve(w http.ResponseWriter, r *http.Request) (*Workspace, e
 	if m.local != nil {
 		return m.local, nil
 	}
-	if id := m.cookieID(r); id != "" {
-		if ws, err := m.Get(r.Context(), id); err == nil {
-			return ws, nil
+	if id, epoch, valid := m.cookieCredential(r); valid {
+		if m.pool == nil {
+			return nil, fmt.Errorf("workspace credential store unavailable")
 		}
-		// Unknown/deleted workspace: fall through and create a fresh one.
+		current, exists, err := m.pool.WorkspaceAuthEpoch(r.Context(), id)
+		if err != nil {
+			return nil, err
+		}
+		if exists && current == epoch {
+			if ws, err := m.Get(r.Context(), id); err == nil {
+				return ws, nil
+			}
+		}
+		// Unknown/deleted workspace or a credential retired by logout:
+		// fall through and create a fresh empty session, as before.
 	}
 	if ok, retry := m.allowCreate(createKey(r)); !ok {
 		return nil, &RateLimitedError{RetryAfter: retry}
@@ -380,7 +441,9 @@ func (m *Manager) Resolve(w http.ResponseWriter, r *http.Request) (*Workspace, e
 	if err != nil {
 		return nil, err
 	}
-	m.SetCookie(w, r, ws.ID)
+	if err := m.SetCookie(w, r, ws.ID); err != nil {
+		return nil, err
+	}
 	return ws, nil
 }
 
@@ -396,7 +459,9 @@ func (m *Manager) New(w http.ResponseWriter, r *http.Request) (*Workspace, error
 	if err != nil {
 		return nil, err
 	}
-	m.SetCookie(w, r, ws.ID)
+	if err := m.SetCookie(w, r, ws.ID); err != nil {
+		return nil, err
+	}
 	return ws, nil
 }
 

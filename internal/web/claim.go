@@ -562,7 +562,11 @@ func (s *Server) loginConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.d.WS.Hosted() {
-		s.d.WS.SetCookie(w, r, wsID)
+		if err := s.d.WS.SetCookie(w, r, wsID); err != nil {
+			slog.Error("workspace cookie mint failed", "err", err, "rid", reqIDFromCtx(r.Context()))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 	}
 	target := "/publications"
 	if lang == "en" || lang == "pt" {
@@ -653,7 +657,11 @@ func (s *Server) claimConfirm(w http.ResponseWriter, r *http.Request) {
 	if s.d.WS.Hosted() {
 		// Opening the link in any browser signs that browser into the
 		// claimed workspace.
-		s.d.WS.SetCookie(w, r, wsID)
+		if err := s.d.WS.SetCookie(w, r, wsID); err != nil {
+			slog.Error("workspace cookie mint failed", "err", err, "rid", reqIDFromCtx(r.Context()))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 	}
 	target := claimNextTarget(r.URL.Query().Get("next"))
 	// A recovered account with a Radar lands on its dashboard; a genuinely
@@ -868,11 +876,21 @@ func (s *Server) apiWorkspaceLang(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, 200, map[string]any{"ok": true})
 }
 
-// apiLogout signs the browser out: it only expires the cookie. A claimed
-// workspace comes back with a new magic link; an unclaimed one has no
-// way back, so it is refused rather than orphaned.
+// apiLogout signs the browser out and retires the workspace credential:
+// every copy of the cookie, not just this browser's, loses access. A
+// claimed workspace comes back with a new magic link at the new epoch; an
+// unclaimed one has no way back, so it is refused rather than orphaned.
 func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	if !s.requireClaimed(w, r) {
+		return
+	}
+	if s.d.Pool == nil {
+		apiErr(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if _, err := s.d.Pool.RotateWorkspaceAuthEpoch(r.Context(), db(r).Workspace()); err != nil {
+		slog.Error("workspace logout rotation failed", "err", err, "rid", reqIDFromCtx(r.Context()))
+		apiErr(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 	s.d.WS.ClearCookie(w, r)
