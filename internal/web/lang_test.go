@@ -203,3 +203,65 @@ func TestRadarAgronegocioSmokeRoundTrip(t *testing.T) {
 		t.Fatalf("niches reread after clear = %v, want none", n)
 	}
 }
+
+// TestRadarEmbeddedNicheLabelClearRoundTrip reproduces QA's KLOX-274
+// boundary case: the creator picked Agronegócio while the label also
+// appears inside a larger free-text theme. Explicitly clearing the chips
+// must persist as empty state; the embedded prose must never resurrect it.
+func TestRadarEmbeddedNicheLabelClearRoundTrip(t *testing.T) {
+	srv, _ := emptyServer(t)
+
+	rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{
+		"name": "Agro familiar", "about": "agronegócio familiar, pecuária", "niches": []string{"agronegocio"},
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create radar = %d %s", rr.Code, shortBody(rr))
+	}
+	pub := apiJSON(t, rr)["publication"].(map[string]any)
+	id := fmt.Sprint(int64(pub["id"].(float64)))
+	if n, _ := pub["niches"].([]any); len(n) != 1 || n[0] != "agronegocio" {
+		t.Fatalf("created niches = %v, want agronegocio", n)
+	}
+
+	rr = apiCall(t, srv, "PUT", "/api/v1/publications/"+id, map[string]any{"niches": []string{}})
+	if rr.Code != 200 {
+		t.Fatalf("clear niches = %d %s", rr.Code, shortBody(rr))
+	}
+	pub = apiJSON(t, rr)["publication"].(map[string]any)
+	if n, _ := pub["niches"].([]any); len(n) != 0 {
+		t.Fatalf("niches after explicit clear = %v, want none", n)
+	}
+	pub = apiGet(t, srv, "/api/v1/publications/"+id)["publication"].(map[string]any)
+	if n, _ := pub["niches"].([]any); len(n) != 0 {
+		t.Fatalf("niches reread after explicit clear = %v, want none", n)
+	}
+	if got, _ := pub["topic"].(string); got != "agronegócio familiar, pecuária" {
+		t.Fatalf("creator prose after clear = %q", got)
+	}
+}
+
+// TestRadarEmbeddedNicheLabelDoesNotSelectWithoutChip reproduces the
+// inverse boundary case: with no editoria picked, prose that merely
+// contains the label is topic text — never an active chip.
+func TestRadarEmbeddedNicheLabelDoesNotSelectWithoutChip(t *testing.T) {
+	srv, _ := emptyServer(t)
+
+	rr := apiCall(t, srv, "POST", "/api/v1/radar", map[string]any{
+		"name": "Agro familiar", "about": "agronegócio familiar, pecuária",
+	})
+	if rr.Code != 201 {
+		t.Fatalf("create radar = %d %s", rr.Code, shortBody(rr))
+	}
+	pub := apiJSON(t, rr)["publication"].(map[string]any)
+	if n, _ := pub["niches"].([]any); len(n) != 0 {
+		t.Fatalf("niches without picked editoria = %v, want none", n)
+	}
+	id := fmt.Sprint(int64(pub["id"].(float64)))
+	pub = apiGet(t, srv, "/api/v1/publications/"+id)["publication"].(map[string]any)
+	if n, _ := pub["niches"].([]any); len(n) != 0 {
+		t.Fatalf("niches reread without picked editoria = %v, want none", n)
+	}
+	if got, _ := pub["topic"].(string); got != "agronegócio familiar, pecuária" {
+		t.Fatalf("topic without picked editoria = %q", got)
+	}
+}

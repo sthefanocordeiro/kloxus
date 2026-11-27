@@ -10,6 +10,8 @@ package pipeline
 import (
 	"sort"
 	"strings"
+
+	"github.com/sthefanocordeiro/kloxus/internal/store"
 )
 
 // NicheLabels is the canonical editoria key -> display label map shared
@@ -22,6 +24,59 @@ var NicheLabels = map[string]string{
 	"internacional": "internacional", "brasil-cidades": "Brasil e cidades", "justica-direito": "justiça e direito",
 	"saude": "saúde", "educacao": "educação", "ciencia": "ciência", "meio-ambiente": "meio ambiente e sustentabilidade",
 	"cultura": "cultura e entretenimento", "estilo-vida": "estilo de vida e consumo",
+}
+
+// topicRoles recovers the two ranking roles for a publication. Rows loaded
+// from Postgres carry explicit editoria state in Niches: that state is
+// authoritative, even when empty, so creator prose can never select or
+// resurrect a chip by mentioning its label (KLOX-274). A nil Niches slice
+// means a hand-built pre-KLOX-274 publication in a unit test; only that
+// legacy shape falls back to recovering roles from the flat topic.
+func topicRoles(pub *store.Publication) (editorias, subjects string) {
+	if pub == nil {
+		return "", ""
+	}
+	if pub.Niches == nil {
+		return splitTopicRoles(pub.Topic)
+	}
+	selected := map[string]bool{}
+	for _, key := range pub.Niches {
+		if _, ok := NicheLabels[key]; ok {
+			selected[key] = true
+		}
+	}
+	keys := make([]string, 0, len(selected))
+	for key := range selected {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var ed, subj []string
+	for _, key := range keys {
+		ed = append(ed, NicheLabels[key])
+	}
+	for _, raw := range strings.FieldsFunc(pub.Topic, func(r rune) bool {
+		return r == ',' || r == ';' || r == '|'
+	}) {
+		part := strings.TrimSpace(raw)
+		if part == "" {
+			continue
+		}
+		if key := nicheKeyForExactLabel(part); key != "" && selected[key] {
+			continue
+		}
+		subj = append(subj, part)
+	}
+	return strings.Join(ed, ", "), strings.Join(subj, ", ")
+}
+
+func nicheKeyForExactLabel(part string) string {
+	folded := foldText(part)
+	for key, label := range NicheLabels {
+		if folded == foldText(label) {
+			return key
+		}
+	}
+	return ""
 }
 
 // splitTopicRoles recovers editoria labels and typed subjects from the
@@ -64,11 +119,5 @@ func splitTopicRoles(topic string) (editorias, subjects string) {
 }
 
 func isNicheLabelPart(part string) bool {
-	folded := foldText(part)
-	for _, label := range NicheLabels {
-		if folded == foldText(label) {
-			return true
-		}
-	}
-	return false
+	return nicheKeyForExactLabel(part) != ""
 }

@@ -56,7 +56,7 @@ func (s *Server) apiWorkspace(w http.ResponseWriter, r *http.Request) {
 		"claimed":  owner != "", "owner_email": owner, "mail": mail,
 		// the account's saved interface language — "" when the owner
 		// never picked one (KLOX-232)
-		"lang": db(r).UILang(r.Context()),
+		"lang":           db(r).UILang(r.Context()),
 		"mail_transport": transport, "mail_webhook": mailWebhook,
 		"mail_stale_sent": staleSent,
 		"daily_mail":      dailyMail,
@@ -583,7 +583,7 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	def := &config.Publication{
-		Name: in.Name, Topic: pub.Topic, Audience: in.Audience,
+		Name: in.Name, Topic: pub.Topic, Niches: pub.Niches, Audience: in.Audience,
 		EditorialLine: in.EditorialLine, RejectTerms: pub.RejectTerms, Tone: in.Tone,
 		Language: pub.Language, Slug: pub.Slug,
 		Frequency:    in.Frequency,
@@ -598,19 +598,19 @@ func (s *Server) apiPublicationUpdate(w http.ResponseWriter, r *http.Request) {
 		def.Name = pub.Name
 	}
 	if in.Topic != nil || in.Niches != nil {
-		// The visible theme holds the creator's words alone; exact
-		// comma-separated editoria labels are chip state, not themes.
-		// Re-fold the selected editorias so the ranking keeps seeing
-		// them without duplicating them in the field (KLOX-232/KLOX-274).
-		base := topicWithoutNiches(pub.Topic)
-		if in.Topic != nil {
-			base = topicWithoutNiches(strings.TrimSpace(*in.Topic))
-		}
-		niches := nichesFromTopic(pub.Topic)
+		// publication_niches carries the chip state. Topic remains only
+		// creator prose plus the selected labels folded as ranking
+		// vocabulary; it is never mined again to infer chips (KLOX-274).
+		niches := orderedNiches(pub.Niches)
 		if in.Niches != nil {
 			niches = cleanNiches(*in.Niches)
 		}
+		base := topicWithoutNiches(pub.Topic, pub.Niches)
+		if in.Topic != nil {
+			base = topicWithoutNiches(strings.TrimSpace(*in.Topic), niches)
+		}
 		def.Topic = topicWithNiches(base, niches)
+		def.Niches = niches
 	}
 	if def.Audience == "" {
 		def.Audience = pub.Audience

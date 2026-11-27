@@ -223,6 +223,17 @@ describe("SourcesPage editoria chips (KLOX-274)", () => {
     expect(screen.getByText(/stay here as chips/i)).toBeVisible();
   });
 
+  it("does not infer Agribusiness from an embedded label when niches is empty", async () => {
+    vi.mocked(api.publication).mockResolvedValue({
+      publication: { ...pub, topic: "agronegócio familiar, pecuária", niches: [] },
+      latest_issue: { id: 1 } as IssueSummary,
+    });
+    renderPage();
+
+    expect(await screen.findByLabelText("Topics")).toHaveValue("agronegócio familiar, pecuária");
+    expect(screen.getByRole("button", { name: "Agribusiness" })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("saves explicit chip changes without rewriting the visible topics", async () => {
     vi.mocked(api.publication).mockResolvedValue({
       publication: { ...pub, topic: "fintech", niches: ["economia"] },

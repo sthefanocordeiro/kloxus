@@ -233,6 +233,9 @@ by the canonical sample at run time so fixture replay stays stable.
 `topic` contains only the creator's themes. Editoria labels selected as
 chips are reported separately in `niches`; they remain folded into the
 stored ranking profile, but are not repeated in the editable theme field.
+`niches` is explicit persisted state: prose that merely contains an
+editoria label never selects a chip, and clearing the list never causes a
+label embedded in the theme text to resurrect one.
 
 ### `PUT /api/v1/publications/{id}`
 Rewrites creator-editable settings. Omitted fields keep their stored

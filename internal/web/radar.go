@@ -57,21 +57,43 @@ var nicheOrder = []string{
 	"ciencia", "meio-ambiente", "cultura", "estilo-vida",
 }
 
-// nichesFromTopic recovers the editorias a radar's theme still names.
-// Cadastro folds each picked editoria's label into the stored topic
-// (apiRadarCreate), so the chips need no stored column — and radars
-// created before the field existed report theirs too (KLOX-207). The
-// labels stay a storage/ranking detail only: the API strips them out of
-// the theme field so the editorias show as chips alone (KLOX-232).
-func nichesFromTopic(topic string) []string {
-	low := strings.ToLower(topic)
+// orderedNiches presents explicit editoria keys in the cadastro's chip
+// order. Persistence sorts keys alphabetically, so every API view runs
+// through this canonical ordering instead of exposing a storage artifact.
+func orderedNiches(in []string) []string {
+	have := map[string]bool{}
+	for _, n := range in {
+		have[strings.TrimSpace(n)] = true
+	}
 	out := []string{}
 	for _, k := range nicheOrder {
-		if strings.Contains(low, strings.ToLower(nicheLabels[k])) {
+		if have[k] {
 			out = append(out, k)
 		}
 	}
 	return out
+}
+
+// nicheKeyForLabelPart recognizes an editoria only when one whole comma
+// part is its label. Embedded prose stays prose: "agronegocio familiar"
+// is not the Agronegocio chip (KLOX-274).
+func nicheKeyForLabelPart(part string) string {
+	part = strings.TrimSpace(part)
+	for _, k := range nicheOrder {
+		if strings.EqualFold(part, nicheLabels[k]) {
+			return k
+		}
+	}
+	return ""
+}
+
+func topicHasNicheLabel(topic, label string) bool {
+	for _, part := range strings.Split(topic, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), label) {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanNiches keeps valid editoria keys once, in the order the caller
@@ -97,7 +119,7 @@ func cleanNiches(in []string) []string {
 func topicWithNiches(about string, niches []string) string {
 	topic := about
 	for _, n := range niches {
-		if !strings.Contains(strings.ToLower(topic), strings.ToLower(nicheLabels[n])) {
+		if !topicHasNicheLabel(topic, nicheLabels[n]) {
 			if topic != "" {
 				topic += ", "
 			}
@@ -107,11 +129,15 @@ func topicWithNiches(about string, niches []string) string {
 	return topic
 }
 
-// topicWithoutNiches is the inverse view of topicWithNiches: it drops
-// the comma parts that are exactly a niche label, keeping the creator's
-// own words. A label embedded mid-part stays — that is their text, not
-// a folded beat.
-func topicWithoutNiches(topic string) string {
+// topicWithoutNiches is the display inverse of the ranking fold. It
+// drops exact comma parts only for editorias the creator actually picked;
+// an unselected exact label - and every embedded use of a label - remains
+// the creator's own topic text (KLOX-274).
+func topicWithoutNiches(topic string, niches []string) string {
+	selected := map[string]bool{}
+	for _, n := range niches {
+		selected[n] = true
+	}
 	parts := strings.Split(topic, ",")
 	out := parts[:0]
 	for _, p := range parts {
@@ -119,16 +145,10 @@ func topicWithoutNiches(topic string) string {
 		if p == "" {
 			continue
 		}
-		beat := false
-		for _, l := range nicheLabels {
-			if strings.EqualFold(p, l) {
-				beat = true
-				break
-			}
+		if key := nicheKeyForLabelPart(p); key != "" && selected[key] {
+			continue
 		}
-		if !beat {
-			out = append(out, p)
-		}
+		out = append(out, p)
 	}
 	return strings.Join(out, ", ")
 }
@@ -212,7 +232,7 @@ func (s *Server) apiRadarCreate(w http.ResponseWriter, r *http.Request) {
 		name = radarLabel
 	}
 	def := &config.Publication{
-		Name: name, Topic: topic, Language: "pt", Frequency: "weekly",
+		Name: name, Topic: topic, Niches: niches, Language: "pt", Frequency: "weekly",
 		Tone: "neutral", AIDisclosure: "none",
 		Sections: config.NormalizeSections([]config.Section{
 			{Title: "Pauta", Format: config.SectionNews, Items: 8, Commentary: "optional", Access: config.AccessAll},
@@ -441,7 +461,7 @@ func (s *Server) apiSkipTopic(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	def := &config.Publication{
-		Name: pub.Name, Topic: pub.Topic, Audience: pub.Audience, EditorialLine: pub.EditorialLine,
+		Name: pub.Name, Topic: pub.Topic, Niches: pub.Niches, Audience: pub.Audience, EditorialLine: pub.EditorialLine,
 		RejectTerms: strings.Join(append(terms, topic), ", "), Tone: pub.Tone, Language: pub.Language,
 		Slug: pub.Slug, Frequency: pub.Frequency, AIDisclosure: pub.AIDisclosure,
 		Sections: config.NormalizeSections(pub.Sections, pub.Paywall.PaidSections), Paywall: pub.Paywall,

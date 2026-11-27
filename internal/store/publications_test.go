@@ -42,3 +42,48 @@ func TestDeletePublicationWithPautaAndRenditions(t *testing.T) {
 		}
 	}
 }
+
+// TestPublicationNichesPersistAndClear pins the store-level contract
+// behind KLOX-274: editoria state is explicit rows, including the
+// meaningful empty state after a clear.
+func TestPublicationNichesPersistAndClear(t *testing.T) {
+	db := open(t)
+	ctx := context.Background()
+	def := testPub()
+	def.Niches = []string{"agronegocio", "economia", "agronegocio"}
+	pubID, err := db.CreatePublication(ctx, def)
+	if err != nil {
+		t.Fatalf("CreatePublication: %v", err)
+	}
+	pub, err := db.GetPublication(ctx, "test-pub")
+	if err != nil {
+		t.Fatalf("GetPublication: %v", err)
+	}
+	if len(pub.Niches) != 2 {
+		t.Fatalf("stored niches = %v, want two deduped keys", pub.Niches)
+	}
+
+	preserve := testPub()
+	if err := db.UpdatePublication(ctx, pubID, preserve); err != nil {
+		t.Fatalf("UpdatePublication nil niches: %v", err)
+	}
+	pub, err = db.GetPublication(ctx, "test-pub")
+	if err != nil {
+		t.Fatalf("GetPublication after nil update: %v", err)
+	}
+	if len(pub.Niches) != 2 {
+		t.Fatalf("nil niches update changed state to %v, want preserved", pub.Niches)
+	}
+
+	def.Niches = []string{}
+	if err := db.UpdatePublication(ctx, pubID, def); err != nil {
+		t.Fatalf("UpdatePublication clear: %v", err)
+	}
+	pub, err = db.GetPublication(ctx, "test-pub")
+	if err != nil {
+		t.Fatalf("GetPublication after clear: %v", err)
+	}
+	if pub.Niches == nil || len(pub.Niches) != 0 {
+		t.Fatalf("niches after clear = %#v, want explicit empty slice", pub.Niches)
+	}
+}

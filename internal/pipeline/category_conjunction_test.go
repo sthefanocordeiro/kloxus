@@ -114,7 +114,7 @@ func TestStage1CategoryConjunctionDoesNotClearOffTopicWithoutSubjectEvidence(t *
 	emb := categoryTestEmbedder{}
 
 	pubID, err := db.SeedPublication(ctx, &config.Publication{
-		Slug: "cat-conjunction-pub", Name: "Agro Radar", Language: "pt-BR", Topic: "pecuária, agronegócio",
+		Slug: "cat-conjunction-pub", Name: "Agro Radar", Language: "pt-BR", Topic: "pecuária, agronegócio", Niches: []string{"agronegocio"},
 		Sections: []config.Section{{Title: "Lead", Items: 1}},
 		Sources:  []config.SourceDef{{Type: "rss", URL: "fixture.xml"}},
 	})

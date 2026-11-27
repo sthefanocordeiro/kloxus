@@ -522,6 +522,10 @@ type Publication struct {
 	// comma-separated terms the aderência ranking demotes and the
 	// auto-lineup never slots (KLOX-94).
 	RejectTerms string `yaml:"reject_terms" json:"reject_terms"`
+	// Niches are the creator's explicit editoria chip selections. They
+	// live outside Topic because topic text is creator prose plus ranking
+	// vocabulary, never chip state (KLOX-274).
+	Niches []string `yaml:"niches" json:"niches"`
 }
 
 // ParsePublication decodes and validates a publication YAML document.

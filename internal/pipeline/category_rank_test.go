@@ -170,7 +170,7 @@ func TestStage1CategoryClearsOffTopicFloor(t *testing.T) {
 	emb := categoryTestEmbedder{}
 
 	pubID, err := db.SeedPublication(ctx, &config.Publication{
-		Slug: "cat-pub", Name: "Agro Radar", Language: "pt-BR", Topic: "agronegócio",
+		Slug: "cat-pub", Name: "Agro Radar", Language: "pt-BR", Topic: "agronegócio", Niches: []string{"agronegocio"},
 		Sections: []config.Section{{Title: "Lead", Items: 1}},
 		Sources:  []config.SourceDef{{Type: "rss", URL: "fixture.xml"}},
 	})
