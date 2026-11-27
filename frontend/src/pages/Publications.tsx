@@ -1,15 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { api } from "../api";
 import { useT } from "../i18n";
-import { errText } from "../lib/errors";
-import { Button, Card } from "../ui";
+import { errText, isRateLimited } from "../lib/errors";
+import { RateLimited } from "../components/RateLimited";
+import { Button, Card, SkeletonLine } from "../ui";
 
 export function Publications() {
   const { t } = useT();
   const qc = useQueryClient();
   const pubs = useQuery({ queryKey: ["publications"], queryFn: api.publications });
   const ws = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
+  // Sources navigates here after "Apagar Radar" with the deleted name
+  // in location state — the banner confirms what just went away
+  // (KLOX-235)
+  const deleted = (useLocation().state as { deleted?: string } | null)?.deleted;
 
   // demo reset + new workspace mutate server-side state wholesale —
   // drop every cached query so nothing stale survives
@@ -24,30 +29,35 @@ export function Publications() {
   const demoErr = reset.error ?? newWs.error;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
-      <p className="mb-1 text-xs uppercase tracking-wide text-muted">
-        {ws.data ? `${t.workspace}: ${ws.data.label}` : ""}
-      </p>
-      <h1 className="mb-6 font-doc text-2xl font-semibold">{t.publications}</h1>
-      {pubs.isLoading && <p className="text-muted">…</p>}
+    <div className="mx-auto w-full max-w-3xl px-4 py-6">
+      {/* one newsletter per account (KLOX-66) — the create action
+          exists only as the empty-state card CTA; the duplicate "New
+          Radar" in the top bar and sidebar went away (KLOX-235) */}
+      {deleted && (
+        <p className="mb-4 rounded border border-teal/40 bg-teal-soft p-3 text-sm text-teal" role="status">
+          {t.sourcesPage.deleted(deleted)}
+        </p>
+      )}
+      {pubs.isLoading && <SkeletonLine />}
+      {pubs.isError &&
+        (isRateLimited(pubs.error) ? (
+          <RateLimited error={pubs.error} busy={pubs.isFetching} onRetry={() => pubs.refetch()} />
+        ) : (
+          <p className="text-sm text-danger" role="alert">{errText(t, pubs.error)}</p>
+        ))}
       {pubs.data?.length === 0 && (
         <Card className="p-6 text-center">
-          <p className="text-sm text-muted">{t.landing.lede}</p>
-          <Link to="/new" className="mt-3 inline-block">
-            <Button>{t.landing.start}</Button>
+          <p className="text-sm text-muted">{t.landing.subhead}</p>
+          <Link to="/start" className="mt-3 inline-block">
+            <Button>{t.landing.cta}</Button>
           </Link>
         </Card>
       )}
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         {pubs.data?.map((p) => (
           <Link key={p.id} to={`/publications/${p.id}`}>
-            <Card className="hover:border-ink/40 transition-colors">
-              <div className="flex items-baseline justify-between">
-                <h2 className="font-doc text-lg font-semibold">{p.name}</h2>
-                <span className="text-xs text-muted">
-                  {(t.frequency as Record<string, string>)[p.frequency] ?? p.frequency}
-                </span>
-              </div>
+            <Card className="transition-colors hover:border-ink/40">
+              <h2 className="font-display text-lg font-bold">{p.name}</h2>
               <p className="mt-1 line-clamp-2 text-sm text-muted">{p.editorial_line}</p>
             </Card>
           </Link>
@@ -60,7 +70,7 @@ export function Publications() {
             {t.demo.title}
           </h2>
           <div className="flex flex-wrap items-start gap-3">
-            <div className="flex-1 min-w-48">
+            <div className="min-w-48 flex-1">
               <Button
                 variant="outline"
                 size="sm"
@@ -73,7 +83,7 @@ export function Publications() {
                 {reset.isSuccess ? t.demo.resetDone : t.demo.resetHint}
               </p>
             </div>
-            <div className="flex-1 min-w-48">
+            <div className="min-w-48 flex-1">
               <Button
                 variant="outline"
                 size="sm"
