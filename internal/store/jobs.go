@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -22,6 +23,30 @@ func (p *Pool) WorkspaceExists(ctx context.Context, id string) (bool, error) {
 	err := p.db.QueryRowContext(ctx,
 		`SELECT count(*) FROM workspaces WHERE id = $1`, id).Scan(&n)
 	return n > 0, err
+}
+
+// WorkspaceAuthEpoch reads the workspace credential epoch. ok is false
+// when the workspace row does not exist. Resolution reads this on every
+// hosted request, so revocation never depends on a process-local cache.
+func (p *Pool) WorkspaceAuthEpoch(ctx context.Context, id string) (epoch int64, ok bool, err error) {
+	err = p.db.QueryRowContext(ctx,
+		`SELECT auth_epoch FROM workspaces WHERE id = $1`, id).Scan(&epoch)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	return epoch, err == nil, err
+}
+
+// RotateWorkspaceAuthEpoch atomically increments the workspace credential
+// epoch and returns the new value. The single UPDATE ... RETURNING holds
+// the row lock through the increment, so concurrent rotations cannot
+// lose a version and accidentally keep an old credential valid.
+func (p *Pool) RotateWorkspaceAuthEpoch(ctx context.Context, id string) (int64, error) {
+	var epoch int64
+	err := p.db.QueryRowContext(ctx,
+		`UPDATE workspaces SET auth_epoch = auth_epoch + 1 WHERE id = $1 RETURNING auth_epoch`,
+		id).Scan(&epoch)
+	return epoch, err
 }
 
 // CreateWorkspace inserts a new workspace row.

@@ -114,6 +114,21 @@ Match calibration, the 06:30 build) ranks stage-1 plus MMR.
   ledger (D59, D60). `KLOXUS_LLM_MODE=off` runs the whole loop
   deterministically at $0 (D35).
 
+## Hosted workspace auth
+
+Hosted access is a bearer workspace credential, not a per-device session
+model: the `kloxus_ws` cookie carries the workspace id, a credential epoch
+and an HMAC over both. Resolution compares that epoch with the persisted
+`workspaces.auth_epoch` on every hosted request, including when the
+workspace object is already hot in memory. Logout therefore rotates one
+server-side epoch and retires every copy of the cookie globally; a retired
+credential can only start a fresh empty workspace, never reopen the old
+one. Cookies minted before the epoch existed keep the legacy two-field
+shape and are read as epoch 0 until the first rotation. Claim and login
+confirmation mint a fresh cookie at the epoch current at that moment, so
+the owner recovers the original workspace after logout without making an
+old copied credential valid again.
+
 ## Decisions that shape the current product
 
 The calls a reader of this repository actually needs — full text and

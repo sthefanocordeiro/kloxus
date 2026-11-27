@@ -2,6 +2,9 @@ package web_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -47,6 +50,15 @@ func cookieWSID(cookie string) string {
 	return id
 }
 
+// legacyWorkspaceCookie builds the pre-epoch cookie shape under the
+// throwaway test signing key. The value itself is never logged: tests
+// assert only whether it resolves to the intended workspace.
+func legacyWorkspaceCookie(id string) string {
+	h := hmac.New(sha256.New, hostedTestSecret)
+	h.Write([]byte(id))
+	return workspace.CookieName + "=" + id + "." + hex.EncodeToString(h.Sum(nil))[:32]
+}
+
 func seedAccountRadar(t *testing.T, db *store.DB, name string) {
 	t.Helper()
 	data, _ := examples.FS.ReadFile("publications/futuro-proximo.yaml")
@@ -65,7 +77,7 @@ func claimPath(t *testing.T, rr *httptest.ResponseRecorder) string {
 	res := apiJSON(t, rr)
 	raw, _ := res["claim_url"].(string)
 	if raw == "" {
-		t.Fatalf("claim response without outbox link: %v", res)
+		t.Fatal("claim response without outbox link")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -79,7 +91,7 @@ func loginPath(t *testing.T, rr *httptest.ResponseRecorder) string {
 	res := apiJSON(t, rr)
 	raw, _ := res["login_url"].(string)
 	if raw == "" {
-		t.Fatalf("login response without outbox link: %v", res)
+		t.Fatal("login response without outbox link")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -101,7 +113,7 @@ func TestAccountLoginRecoversOwnedWorkspace(t *testing.T) {
 
 	rr := accountServe(srv, "POST", "/api/v1/workspace/claim", cookieA, map[string]string{"email": email, "lang": "en"})
 	if rr.Code != 200 {
-		t.Fatalf("claim start = %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("claim start = %d", rr.Code)
 	}
 	claim := claimPath(t, rr)
 	if rr = accountServe(srv, "GET", claim, "", nil); rr.Code != 200 {
@@ -116,10 +128,10 @@ func TestAccountLoginRecoversOwnedWorkspace(t *testing.T) {
 	}
 	rr = accountServe(srv, "POST", "/api/v1/auth/login", "", map[string]string{"email": email, "lang": "en"})
 	if rr.Code != 200 {
-		t.Fatalf("login start = %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("login start = %d", rr.Code)
 	}
 	if sc := rr.Header().Get("Set-Cookie"); strings.Contains(sc, workspace.CookieName) {
-		t.Fatalf("login start minted a replacement workspace cookie: %q", sc)
+		t.Fatal("login start minted a replacement workspace cookie")
 	}
 	login := loginPath(t, rr)
 	rr = accountServe(srv, "GET", login, "", nil)
@@ -134,8 +146,8 @@ func TestAccountLoginRecoversOwnedWorkspace(t *testing.T) {
 		t.Fatalf("login redirect = %q, want /publications?lang=en", loc)
 	}
 	recovered := accountCookie(rr)
-	if !strings.Contains(recovered, workspace.CookieName+"="+wsA) {
-		t.Fatalf("login signed into %q, want original workspace %s", recovered, wsA)
+	if cookieWSID(recovered) != wsA {
+		t.Fatal("login did not sign back into the original workspace")
 	}
 	rr = accountServe(srv, "GET", "/api/v1/publications", recovered, nil)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "Agro no campo") {
@@ -165,7 +177,7 @@ func TestClaimWithExistingEmailRecoversOwnedWorkspace(t *testing.T) {
 	}
 	rr = accountServe(srv, "POST", "/api/v1/workspace/claim", cookieB, map[string]string{"email": email})
 	if rr.Code != 200 {
-		t.Fatalf("second claim start = %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("second claim start = %d", rr.Code)
 	}
 	claim = claimPath(t, rr)
 	rr = accountServe(srv, "GET", claim, "", nil)
@@ -176,8 +188,8 @@ func TestClaimWithExistingEmailRecoversOwnedWorkspace(t *testing.T) {
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("second claim confirm = %d, want 303", rr.Code)
 	}
-	if got := accountCookie(rr); !strings.Contains(got, workspace.CookieName+"="+wsA) {
-		t.Fatalf("workaround signed into %q, want original workspace %s", got, wsA)
+	if got := accountCookie(rr); cookieWSID(got) != wsA {
+		t.Fatal("workaround login did not sign back into the original workspace")
 	}
 	if owner, _, err := mgr.Pool().WorkspaceOwner(context.Background(), wsB); err != nil || owner != "" {
 		t.Fatalf("fresh workaround workspace owner = %q, want unclaimed (err %v)", owner, err)
@@ -212,7 +224,7 @@ func TestAccountLoginOffersExplicitChoiceForMultipleRadars(t *testing.T) {
 		t.Fatalf("choice page = %d %q", rr.Code, rr.Body.String()[:400])
 	}
 	if sc := rr.Header().Get("Set-Cookie"); strings.Contains(sc, workspace.CookieName) {
-		t.Fatalf("choice page already signed in: %q", sc)
+		t.Fatal("choice page already signed in")
 	}
 	sep := "&"
 	if !strings.Contains(login, "?") {
@@ -222,7 +234,7 @@ func TestAccountLoginOffersExplicitChoiceForMultipleRadars(t *testing.T) {
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("selected login = %d, want 303", rr.Code)
 	}
-	if got := accountCookie(rr); !strings.Contains(got, workspace.CookieName+"="+wsB) {
-		t.Fatalf("selection signed into %q, want %s", got, wsB)
+	if got := accountCookie(rr); cookieWSID(got) != wsB {
+		t.Fatal("workspace selection did not sign into the chosen workspace")
 	}
 }

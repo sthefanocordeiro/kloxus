@@ -584,7 +584,7 @@ func TestMagicLinkCarriesWorkspace(t *testing.T) {
 		t.Fatalf("magic link with own session: got %d", rr.Code)
 	}
 	if sc := rr.Header().Get("Set-Cookie"); strings.Contains(sc, wsA.ID) {
-		t.Fatalf("reader link set the editor workspace cookie: %q", sc)
+		t.Fatal("reader link set the editor workspace cookie")
 	}
 	// editor API calls still resolve to visitor B's own (empty) workspace
 	if rr := serve("GET", "/api/v1/issues/"+strconv.FormatInt(iid, 10), cookieB, nil); rr.Code != 404 {
