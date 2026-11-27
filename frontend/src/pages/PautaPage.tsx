@@ -71,6 +71,8 @@ export function PautaPage() {
   const dirty = useRef(false);
   const flight = useRef<Promise<void> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const titleVersion = useRef(0);
+  const titleRevalidated = useRef(0);
 
   // seed from the cache on mount; a refetch that lands later re-seeds
   // only while nothing local is unsaved, so it can never eat keystrokes
@@ -102,6 +104,7 @@ export function PautaPage() {
     dirty.current = false;
     setSaveState("saving");
     const cur = latest.current;
+    const titleAtSave = titleVersion.current;
     let ok = false;
     const req = api.pautaSave(issueID, pautaBody(cur));
     flight.current = req.then(() => undefined, () => undefined);
@@ -127,7 +130,8 @@ export function PautaPage() {
       // a saved rename refreshes the shell title (issue query) and the
       // resolved name (pauta query — a cleared name picks the first
       // story's title back up)
-      if (ok && cur.title !== undefined) {
+      if (ok && (cur.title !== undefined || titleAtSave > titleRevalidated.current)) {
+        titleRevalidated.current = Math.max(titleRevalidated.current, titleAtSave);
         void qc.invalidateQueries({ queryKey: ["issue", issueID] });
         void qc.invalidateQueries({ queryKey: ["pauta", issueID] });
       }
@@ -191,14 +195,16 @@ export function PautaPage() {
     setName(next || entries[0]?.title || name);
     touch();
   };
-  const move = (i: number, d: number) =>
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j >= 0 && j < entries.length && (i === 0 || j === 0)) titleVersion.current += 1;
     edit((p) => {
-      const j = i + d;
       if (j < 0 || j >= p.length) return p;
       const n = [...p];
       [n[i], n[j]] = [n[j], n[i]];
       return n;
     });
+  };
 
   const finish = useMutation({
     mutationFn: async () => {
@@ -260,7 +266,11 @@ export function PautaPage() {
         rows={2}
         placeholder={s.openingHint}
         value={opening}
-        onChange={(e) => { setOpening(e.target.value); touch(); }}
+        onChange={(e) => {
+          setOpening(e.target.value);
+          if (entries.length === 0) titleVersion.current += 1;
+          touch();
+        }}
         onBlur={() => void persist()}
       />
 
@@ -290,7 +300,10 @@ export function PautaPage() {
                     <div className="flex shrink-0 gap-1">
                       <Button size="icon" variant="ghost" aria-label={s.up} disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={16} /></Button>
                       <Button size="icon" variant="ghost" aria-label={s.down} disabled={i === entries.length - 1} onClick={() => move(i, 1)}><ArrowDown size={16} /></Button>
-                      <Button size="icon" variant="ghost" aria-label={`${s.remove}: ${e.title}`} onClick={() => edit((p) => p.filter((x) => x.story_id !== e.story_id))}><X size={16} /></Button>
+                      <Button size="icon" variant="ghost" aria-label={`${s.remove}: ${e.title}`} onClick={() => {
+                        if (i === 0) titleVersion.current += 1;
+                        edit((p) => p.filter((x) => x.story_id !== e.story_id));
+                      }}><X size={16} /></Button>
                     </div>
                   </div>
                 </div>

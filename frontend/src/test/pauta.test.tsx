@@ -141,6 +141,34 @@ describe("Escrever (KLOX-168)", () => {
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
   });
 
+  it("revalidates the automatic name after removing the first story", async () => {
+    const server = state();
+    vi.mocked(api.pauta).mockImplementation(async () => ({
+      ...server,
+      entries: [...server.entries],
+      title: server.entries[0]?.title ?? server.title,
+    }));
+    vi.mocked(api.pautaSave).mockImplementation(async (_id, body) => {
+      server.entries = body.entries.flatMap((be) => {
+        const cur = server.entries.find((e) => e.story_id === be.story_id);
+        return cur ? [{ ...cur, text: be.text }] : [];
+      });
+      return { saved: true };
+    });
+    vi.mocked(api.issue).mockImplementation(async () => ({
+      id: 5, publication_id: 7, title: server.entries[0]?.title ?? server.title,
+    } as never));
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderPage(qc);
+    await screen.findByRole("button", { name: "Primeira" });
+    fireEvent.click(screen.getByRole("button", { name: "Remove story: Primeira" }));
+
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+    expect(await screen.findByRole("button", { name: "Segunda" })).toBeTruthy();
+    await waitFor(() => expect(qc.getQueryData<{ title?: string }>(["issue", 5])?.title).toBe("Segunda"));
+  });
+
   // KLOX-199: the pauta is named by its first story everywhere —
   // clicking the name in the editor renames it; "" restores the
   // automatic name
