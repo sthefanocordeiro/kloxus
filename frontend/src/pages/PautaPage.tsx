@@ -66,6 +66,8 @@ export function PautaPage() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [adding, setAdding] = useState(false);
   const [openComments, setOpenComments] = useState<Set<number>>(new Set());
+  const [removed, setRemoved] = useState<{ entry: PautaEntry; index: number } | null>(null);
+  const removedTimer = useRef(0);
   const latest = useRef({ opening, entries, title: nameSent.current });
   latest.current = { opening, entries, title: nameSent.current };
   const dirty = useRef(false);
@@ -179,6 +181,30 @@ export function PautaPage() {
     touch();
   };
 
+  useEffect(() => () => window.clearTimeout(removedTimer.current), []);
+
+  const removeEntry = (entry: PautaEntry, index: number) => {
+    window.clearTimeout(removedTimer.current);
+    setRemoved({ entry, index });
+    removedTimer.current = window.setTimeout(() => setRemoved(null), 8000);
+    edit((p) => p.filter((x) => x.story_id !== entry.story_id));
+  };
+
+  const undoRemove = () => {
+    const r = removed;
+    if (!r) return;
+    window.clearTimeout(removedTimer.current);
+    setRemoved(null);
+    edit((p) => {
+      if (p.some((x) => x.story_id === r.entry.story_id)) {
+        return p.map((x) => (x.story_id === r.entry.story_id ? { ...x, text: x.text || r.entry.text } : x));
+      }
+      const n = [...p];
+      n.splice(Math.min(r.index, n.length), 0, r.entry);
+      return n;
+    });
+  };
+
   // KLOX-199: committing a name goes out with the regular save — a
   // cleared name sends "" and the pauta goes back to being named by
   // its first story (the refetch fills the resolved name in)
@@ -290,13 +316,14 @@ export function PautaPage() {
                     <div className="flex shrink-0 gap-1">
                       <Button size="icon" variant="ghost" aria-label={s.up} disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={16} /></Button>
                       <Button size="icon" variant="ghost" aria-label={s.down} disabled={i === entries.length - 1} onClick={() => move(i, 1)}><ArrowDown size={16} /></Button>
-                      <Button size="icon" variant="ghost" aria-label={`${s.remove}: ${e.title}`} onClick={() => edit((p) => p.filter((x) => x.story_id !== e.story_id))}><X size={16} /></Button>
+                      <Button size="icon" variant="ghost" aria-label={`${s.remove}: ${e.title}`} onClick={() => removeEntry(e, i)}><X size={16} /></Button>
                     </div>
                   </div>
                 </div>
               </div>
               {openComments.has(e.story_id) || e.text !== "" ? (
                 <textarea
+                  autoFocus={openComments.has(e.story_id)}
                   className="mt-3 w-full rounded border border-line bg-paper p-3 text-sm"
                   rows={4}
                   aria-label={`${s.text}: ${e.title}`}
@@ -352,6 +379,22 @@ export function PautaPage() {
           </Card>
         )}
       </div>
+
+      {removed && (
+        <div
+          role="status"
+          className="fixed inset-x-4 bottom-[calc(8rem+env(safe-area-inset-bottom))] z-50 mx-auto flex w-[min(24rem,100%)] items-center justify-between gap-3 rounded-[var(--radius-btn)] bg-ink px-4 py-3 text-sm text-paper shadow-lg md:bottom-20"
+        >
+          <span>{s.removed}</span>
+          <button
+            type="button"
+            className="shrink-0 cursor-pointer font-semibold text-accent hover:underline"
+            onClick={undoRemove}
+          >
+            {s.undo}
+          </button>
+        </div>
+      )}
 
       {/* fixed just above the global bottom nav on phone — at bottom-0
           the z-40 nav covered it and taps hit Configurações (KLOX-180) */}
