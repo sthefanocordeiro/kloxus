@@ -45,6 +45,32 @@ function renderPage(qc = new QueryClient({ defaultOptions: { queries: { retry: f
   );
 }
 
+function mockTitleServer(initial = state(), catalogEntries = initial.entries) {
+  const server = initial;
+  const catalog = catalogEntries.map((e) => ({ ...e }));
+  const title = () =>
+    server.entries[0]?.title ||
+    server.opening.replace(/\r/g, "").split("\n", 2)[0].trim() ||
+    server.title;
+  vi.mocked(api.pauta).mockImplementation(async () => ({
+    ...server,
+    entries: server.entries.map((e) => ({ ...e })),
+    title: title(),
+  }));
+  vi.mocked(api.pautaSave).mockImplementation(async (_id, body) => {
+    server.opening = body.opening;
+    server.entries = body.entries.flatMap((be) => {
+      const cur = catalog.find((e) => e.story_id === be.story_id);
+      return cur ? [{ ...cur, text: be.text }] : [];
+    });
+    return { saved: true };
+  });
+  vi.mocked(api.issue).mockImplementation(async () => ({
+    id: 5, publication_id: 7, title: title(),
+  } as never));
+  return server;
+}
+
 describe("Escrever (KLOX-168)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -147,6 +173,42 @@ describe("Escrever (KLOX-168)", () => {
     expect(screen.queryByRole("link", { name: "Primeira" })).toBeNull();
     expect(screen.getByText("Story removed.")).toBeTruthy();
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+  });
+
+  it("revalidates the automatic name after removing and undoing the first story", async () => {
+    mockTitleServer();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderPage(qc);
+    await screen.findByRole("button", { name: "Primeira" });
+    fireEvent.click(screen.getByRole("button", { name: "Remove story: Primeira" }));
+
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+    expect(await screen.findByRole("button", { name: "Segunda" })).toBeTruthy();
+    await waitFor(() => expect(qc.getQueryData<{ title?: string }>(["issue", 5])?.title).toBe("Segunda"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("button", { name: "Primeira" })).toBeTruthy();
+    await waitFor(() => expect(qc.getQueryData<{ title?: string }>(["issue", 5])?.title).toBe("Primeira"));
+  });
+
+  it("revalidates the automatic name when the first story joins an empty pauta", async () => {
+    const empty = { ...state(), opening: "Linha de abertura", title: "Linha de abertura", entries: [] };
+    const added = { story_id: 3, title: "Terceira", url: "https://c.test/3", outlet: "C", date: "", text: "" };
+    mockTitleServer(empty, [added]);
+    vi.mocked(api.today).mockResolvedValue({
+      cards: [{ story_id: 3, title: "Terceira", outlet: "C", outlets: 1, summary: "", topics: [], url: "https://c.test/3", age_hours: null }],
+      pieces: [], open_piece: 5, window_hours: 48,
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderPage(qc);
+    await screen.findByRole("button", { name: "Linha de abertura" });
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Add story" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add: Terceira" }));
+
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+    expect(await screen.findByRole("button", { name: "Terceira" })).toBeTruthy();
+    await waitFor(() => expect(qc.getQueryData<{ title?: string }>(["issue", 5])?.title).toBe("Terceira"));
   });
 
   it("restores a removed story with its text from the undo toast", async () => {

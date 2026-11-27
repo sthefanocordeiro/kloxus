@@ -38,6 +38,13 @@ const pautaBody = (cur: { opening: string; entries: PautaEntry[]; title: string 
   ...(cur.title !== undefined ? { title: cur.title } : {}),
 });
 
+const automaticTitleKey = (cur: { opening: string; entries: PautaEntry[] }): string => {
+  const first = cur.entries[0];
+  if (first) return `story:${first.story_id}`;
+  const line = cur.opening.replace(/\r/g, "").split("\n", 2)[0].trim();
+  return `opening:${line}`;
+};
+
 export function PautaPage() {
   const { id } = useParams();
   const issueID = Number(id);
@@ -73,6 +80,7 @@ export function PautaPage() {
   const dirty = useRef(false);
   const flight = useRef<Promise<void> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedTitleKey = useRef<string | null>(null);
 
   // seed from the cache on mount; a refetch that lands later re-seeds
   // only while nothing local is unsaved, so it can never eat keystrokes
@@ -82,6 +90,7 @@ export function PautaPage() {
     if (!ready || (!dirty.current && !flight.current)) {
       setOpening(q.data.opening);
       setEntries(q.data.entries);
+      savedTitleKey.current = automaticTitleKey(q.data);
       setReady(true);
     }
   }, [q.data, ready]);
@@ -104,6 +113,8 @@ export function PautaPage() {
     dirty.current = false;
     setSaveState("saving");
     const cur = latest.current;
+    const titleKeyAtSave = automaticTitleKey(cur);
+    const savedTitleKeyAtSave = savedTitleKey.current;
     let ok = false;
     const req = api.pautaSave(issueID, pautaBody(cur));
     flight.current = req.then(() => undefined, () => undefined);
@@ -117,6 +128,7 @@ export function PautaPage() {
     } finally {
       flight.current = null;
       if (ok) {
+        savedTitleKey.current = titleKeyAtSave;
         // the cache must mirror what the server now holds — a remount
         // seeds the editor from it, and a stale snapshot showed a
         // written story as empty so the next whole-pauta save wiped it
@@ -129,7 +141,7 @@ export function PautaPage() {
       // a saved rename refreshes the shell title (issue query) and the
       // resolved name (pauta query — a cleared name picks the first
       // story's title back up)
-      if (ok && cur.title !== undefined) {
+      if (ok && (cur.title !== undefined || titleKeyAtSave !== savedTitleKeyAtSave)) {
         void qc.invalidateQueries({ queryKey: ["issue", issueID] });
         void qc.invalidateQueries({ queryKey: ["pauta", issueID] });
       }
