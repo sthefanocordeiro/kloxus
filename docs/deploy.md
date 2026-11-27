@@ -1,15 +1,15 @@
 # Deploying to Fly.io
 
-Two apps exist, and the difference matters:
+One Fly app matters for the submission:
 
 | App | URL | Config | Role |
 | --- | --- | --- | --- |
 | `kloxus` | https://kloxus.fly.dev | `fly.toml` | **The real app.** Every PR deploys and is verified here (D35). |
-| `kloxus-demo` | https://kloxus-demo.fly.dev | `fly.demo.toml` | The fixture demo — the fallback URL for judges. **Untouched** by this routine: no deploys, no secret changes. |
 
 `fly.toml` points at `kloxus`, so a bare `fly deploy` can only ever hit the
-real app. Deploying the demo deliberately means saying so:
-`fly deploy -c fly.demo.toml`.
+real app. `fly.demo.toml`/`kloxus-demo` is a legacy fixture fallback that is
+not currently hosted for judges — never deploy to it or change its secrets.
+The deterministic fixture demo runs locally with `go run ./cmd/kloxus demo`.
 
 ## The real app
 
@@ -248,13 +248,3 @@ nightly dump if an old build cannot read the migrated schema).
   cookies — visitors get fresh workspaces.
 - Free allowances: two small `shared-cpu-1x` 256 MB machines and two 1 GB
   volumes across both apps stay inside Fly's free usage for a personal org.
-
-## Troubleshooting
-
-- **The demo URL bounces or shows a blank page after an earlier visit:**
-  the app moved from `/app/` to the site root during development, and
-  browsers cache the old permanent redirects (`/` → `/app/` and back),
-  which can loop forever. Nothing the server sends can clear a cached
-  301 — **clear site data** for `kloxus-demo.fly.dev` (or open a private
-  window) and reload once. Current builds never issue a 301 on app
-  paths, so a fresh visit cannot get stuck again.

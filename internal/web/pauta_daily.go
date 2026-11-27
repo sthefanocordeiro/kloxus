@@ -333,14 +333,14 @@ func (s *Server) mailPautaDay(ctx context.Context, pool *store.Pool, wdb *store.
 	// the default; an EN account gets the subject, greeting, button
 	// and link notice in English.
 	subject := "Suas notícias de hoje estão prontas"
-	greeting := "Bom dia! As notícias do seu radar **%s** de hoje estão prontas:"
+	greeting := "Bom dia! As notícias do seu radar %s de hoje estão prontas:"
 	button := "Abrir minhas notícias"
-	notice := "O link assina este navegador na sua conta salva e vale por 72 horas."
+	notice := "O link entra na sua conta neste navegador e vale por 72 horas."
 	if lang == "en" {
 		subject = "Your stories for today are ready"
-		greeting = "Good morning! Today's stories for your Radar **%s**:"
+		greeting = "Good morning! Today's stories for your Radar %s:"
 		button = "Open my stories"
-		notice = "The link signs this browser into your saved account and is valid for 72 hours."
+		notice = "The link signs you into your account in this browser and is valid for 72 hours."
 	}
 
 	// The one-click unsubscribe link (KLOX-257): its own token, stored

@@ -98,7 +98,7 @@ func renderPautaMailHTML(lang, day, pubName string, stories []pautaMailStory, op
 	footerBecause := "You receive this email because you follow the <strong>%s</strong> Radar in Kloxus."
 	openLabel := "Open in Kloxus"
 	unsubLabel := "Unsubscribe from this Radar"
-	tagline := "Kloxus · your AI-assisted newsroom, with sources and human decisions."
+	tagline := "Kloxus · the news from your sector, ready every morning. The writing is yours."
 	preheader := fmt.Sprintf("%s from your Radar today. Pick one and turn it into a post in Kloxus.", count)
 	htmlLang := "en"
 	if pt {
@@ -109,7 +109,7 @@ func renderPautaMailHTML(lang, day, pubName string, stories []pautaMailStory, op
 		footerBecause = "Você recebe este e-mail porque segue o Radar <strong>%s</strong> no Kloxus."
 		openLabel = "Abrir no Kloxus"
 		unsubLabel = "Descadastrar deste Radar"
-		tagline = "Kloxus · sua redação assistida por IA, com fontes e decisão humana."
+		tagline = "Kloxus · as notícias do seu setor, prontas toda manhã. A escrita é sua."
 		preheader = fmt.Sprintf("%s do seu Radar hoje. Escolha uma e vire post no Kloxus.", count)
 	}
 

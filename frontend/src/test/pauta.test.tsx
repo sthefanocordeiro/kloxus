@@ -45,6 +45,32 @@ function renderPage(qc = new QueryClient({ defaultOptions: { queries: { retry: f
   );
 }
 
+function mockTitleServer(initial = state(), catalogEntries = initial.entries) {
+  const server = initial;
+  const catalog = catalogEntries.map((e) => ({ ...e }));
+  const title = () =>
+    server.entries[0]?.title ||
+    server.opening.replace(/\r/g, "").split("\n", 2)[0].trim() ||
+    server.title;
+  vi.mocked(api.pauta).mockImplementation(async () => ({
+    ...server,
+    entries: server.entries.map((e) => ({ ...e })),
+    title: title(),
+  }));
+  vi.mocked(api.pautaSave).mockImplementation(async (_id, body) => {
+    server.opening = body.opening;
+    server.entries = body.entries.flatMap((be) => {
+      const cur = catalog.find((e) => e.story_id === be.story_id);
+      return cur ? [{ ...cur, text: be.text }] : [];
+    });
+    return { saved: true };
+  });
+  vi.mocked(api.issue).mockImplementation(async () => ({
+    id: 5, publication_id: 7, title: title(),
+  } as never));
+  return server;
+}
+
 describe("Escrever (KLOX-168)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -76,6 +102,13 @@ describe("Escrever (KLOX-168)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Go to export" }));
     expect(await screen.findByText("export screen")).toBeVisible();
     expect(api.pautaFinish).toHaveBeenCalledWith(5);
+  });
+
+  it("focuses the comment box when Write opens it", async () => {
+    renderPage();
+    await screen.findByRole("link", { name: "Primeira" });
+    fireEvent.click(screen.getByRole("button", { name: "Write: Primeira" }));
+    expect(screen.getByLabelText("Your text: Primeira")).toHaveFocus();
   });
 
   // KLOX-196: leaving mid-save used to drop the last keystrokes
@@ -138,27 +171,12 @@ describe("Escrever (KLOX-168)", () => {
     await screen.findByRole("link", { name: "Primeira" });
     fireEvent.click(screen.getByRole("button", { name: "Remove story: Primeira" }));
     expect(screen.queryByRole("link", { name: "Primeira" })).toBeNull();
+    expect(screen.getByText("Story removed.")).toBeTruthy();
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
   });
 
-  it("revalidates the automatic name after removing the first story", async () => {
-    const server = state();
-    vi.mocked(api.pauta).mockImplementation(async () => ({
-      ...server,
-      entries: [...server.entries],
-      title: server.entries[0]?.title ?? server.title,
-    }));
-    vi.mocked(api.pautaSave).mockImplementation(async (_id, body) => {
-      server.entries = body.entries.flatMap((be) => {
-        const cur = server.entries.find((e) => e.story_id === be.story_id);
-        return cur ? [{ ...cur, text: be.text }] : [];
-      });
-      return { saved: true };
-    });
-    vi.mocked(api.issue).mockImplementation(async () => ({
-      id: 5, publication_id: 7, title: server.entries[0]?.title ?? server.title,
-    } as never));
-
+  it("revalidates the automatic name after removing and undoing the first story", async () => {
+    mockTitleServer();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     renderPage(qc);
     await screen.findByRole("button", { name: "Primeira" });
@@ -167,6 +185,57 @@ describe("Escrever (KLOX-168)", () => {
     await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
     expect(await screen.findByRole("button", { name: "Segunda" })).toBeTruthy();
     await waitFor(() => expect(qc.getQueryData<{ title?: string }>(["issue", 5])?.title).toBe("Segunda"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("button", { name: "Primeira" })).toBeTruthy();
+    await waitFor(() => expect(qc.getQueryData<{ title?: string }>(["issue", 5])?.title).toBe("Primeira"));
+  });
+
+  it("revalidates the automatic name when the first story joins an empty pauta", async () => {
+    const empty = { ...state(), opening: "Linha de abertura", title: "Linha de abertura", entries: [] };
+    const added = { story_id: 3, title: "Terceira", url: "https://c.test/3", outlet: "C", date: "", text: "" };
+    mockTitleServer(empty, [added]);
+    vi.mocked(api.today).mockResolvedValue({
+      cards: [{ story_id: 3, title: "Terceira", outlet: "C", outlets: 1, summary: "", topics: [], url: "https://c.test/3", age_hours: null }],
+      pieces: [], open_piece: 5, window_hours: 48,
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderPage(qc);
+    await screen.findByRole("button", { name: "Linha de abertura" });
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Add story" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add: Terceira" }));
+
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 3000 });
+    expect(await screen.findByRole("button", { name: "Terceira" })).toBeTruthy();
+    await waitFor(() => expect(qc.getQueryData<{ title?: string }>(["issue", 5])?.title).toBe("Terceira"));
+  });
+
+  it("restores a removed story with its text from the undo toast", async () => {
+    renderPage();
+    await screen.findByRole("link", { name: "Primeira" });
+    fireEvent.click(screen.getByRole("button", { name: "Write: Primeira" }));
+    const ta = screen.getByLabelText("Your text: Primeira");
+    fireEvent.change(ta, { target: { value: "Minha nota" } });
+    fireEvent.blur(ta);
+    await waitFor(() => expect(api.pautaSave).toHaveBeenCalled(), { timeout: 1000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove story: Primeira" }));
+    expect(screen.queryByRole("link", { name: "Primeira" })).toBeNull();
+    expect(screen.getByText("Story removed.")).toBeTruthy();
+    await waitFor(() => {
+      expect(vi.mocked(api.pautaSave).mock.calls.at(-1)![1].entries).toEqual([{ story_id: 2, text: "" }]);
+    }, { timeout: 3000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("link", { name: "Primeira" })).toBeTruthy();
+    expect(screen.getByLabelText("Your text: Primeira")).toHaveValue("Minha nota");
+    await waitFor(() => {
+      expect(vi.mocked(api.pautaSave).mock.calls.at(-1)![1].entries).toEqual([
+        { story_id: 1, text: "Minha nota" },
+        { story_id: 2, text: "" },
+      ]);
+    }, { timeout: 3000 });
   });
 
   // KLOX-199: the pauta is named by its first story everywhere —
