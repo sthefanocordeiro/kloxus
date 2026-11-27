@@ -11,25 +11,25 @@ export const legalDict = {
     terms: {
       title: "Terms of Use",
       intro:
-        "These Terms of Use govern access to and use of Kloxus, a tool that helps you research, organize and write newsletters. By creating a session or using the service, you agree to these terms.",
+        "These Terms of Use govern access to and use of Kloxus, a tool that reads public sources from the catalog, orders the day's news for your Radar and helps you turn your text into versions for LinkedIn, X, HTML and Markdown. By creating a session or using the service, you agree to these terms.",
       sections: [
         {
           h: "The service",
           body: [
-            "Kloxus reads the public sources you choose, organizes story suggestions and keeps track of where each fact came from. Research may be assisted by AI, but the newsletter text is always written and approved by you. No issue is ever sent without your explicit approval.",
+            "Kloxus reads public sources from the catalog, organizes the day's news for your Radar and helps you turn your text into versions for LinkedIn, X, HTML and Markdown. AI does not write your text. Nothing leaves Kloxus without an export made by you.",
           ],
         },
         {
           h: "Your session and account",
           body: [
-            "You can try Kloxus without signing up: we create a temporary session tied to your browser. To send real email, we ask you to confirm your address through a magic link. You are responsible for keeping access to your email and for activity that happens under your session.",
+            "You can try Kloxus without signing up: we create a temporary session tied to your browser. To create your account and receive the optional morning email, we ask you to confirm your address through a magic link. Kloxus does not send email to third parties; if enabled, the only email is a daily message to yourself with your Radar news, and you can turn it off at any time. You are responsible for keeping access to your email and for activity that happens under your session.",
           ],
         },
         {
           h: "Your content",
           body: [
-            "The text you write is yours. You are the editorially responsible party for what you publish and send, including the use of excerpts and references to the sources you cite.",
-            "You grant Kloxus only the license needed to store and transmit that content in order to operate the service.",
+            "The text you write is yours. You are the editorially responsible party for what you export and publish, including the use of excerpts and references to the sources you cite.",
+            "You grant Kloxus only the license needed to store and process that content in order to operate the service and create your exports.",
           ],
         },
         {
@@ -45,12 +45,6 @@ export const legalDict = {
           ],
         },
         {
-          h: "Readers who pay",
-          body: [
-            "You may reserve sections of your newsletter for paying subscribers. Pricing, billing and payouts follow the conditions presented when the feature is configured.",
-          ],
-        },
-        {
           h: "Availability and warranties",
           body: [
             "The service is provided “as is”. We may change, suspend or discontinue features; trial sessions may expire and may contain sample data.",
@@ -59,7 +53,7 @@ export const legalDict = {
         {
           h: "Limitation of liability",
           body: [
-            "To the extent permitted by law, Kloxus is not liable for indirect damages, for the content of third-party sources, or for the messages you approve and send.",
+            "To the extent permitted by law, Kloxus is not liable for indirect damages, for the content of third-party sources, or for what you export and publish.",
           ],
         },
         {
@@ -78,13 +72,13 @@ export const legalDict = {
         {
           h: "What we collect",
           body: [
-            "Your email address (when you confirm it to send messages), the content you create, the sources you choose, and basic technical session data such as the cookie that keeps you signed in.",
+            "Your email address (to create your account and receive the morning email), the content you create, the catalog sources in your Radar, and basic technical session data such as the cookie that keeps you signed in.",
           ],
         },
         {
           h: "How we use it",
           body: [
-            "To operate the service: read your chosen sources, prepare story lineups, store your content and send the messages you approve. We do not use your data for advertising.",
+            "To operate the service: read catalog sources, prepare story lineups, store your content, create your exports and send access links and the morning email. We do not use your data for advertising.",
           ],
         },
         {
@@ -96,13 +90,13 @@ export const legalDict = {
         {
           h: "Sending email",
           body: [
-            "Messages are sent through a transactional email provider. Every message carries an unsubscribe link, and unsubscribe requests are honored immediately.",
+            "Access links and the optional morning email are sent through a transactional email provider. The morning email goes only to your own address, can be turned off at any time and carries an unsubscribe link; unsubscribe requests are honored immediately.",
           ],
         },
         {
           h: "Reading sources",
           body: [
-            "We read public pages and feeds from the catalog sources, respecting each site's rules. We do not bypass paywalls or access restrictions.",
+            "We read public pages and feeds from the catalog sources, respecting each site's rules. We do not bypass access restrictions.",
           ],
         },
         {
@@ -136,25 +130,25 @@ export const legalDict = {
     terms: {
       title: "Termos de Uso",
       intro:
-        "Estes Termos de Uso regem o acesso e o uso do Kloxus, uma ferramenta que ajuda você a pesquisar, organizar e escrever newsletters. Ao criar uma sessão ou usar o serviço, você concorda com estes termos.",
+        "Estes Termos de Uso regem o acesso e o uso do Kloxus, uma ferramenta que lê fontes públicas do catálogo, ordena as notícias do dia para o seu Radar e ajuda você a transformar o seu texto em versões para LinkedIn, X, HTML e Markdown. Ao criar uma sessão ou usar o serviço, você concorda com estes termos.",
       sections: [
         {
           h: "O serviço",
           body: [
-            "O Kloxus lê as fontes públicas que você escolhe, organiza as notícias do dia e registra de onde veio cada fato. A pesquisa pode contar com apoio de IA, mas o texto da newsletter é sempre escrito e aprovado por você. Nenhuma edição é enviada sem a sua aprovação explícita.",
+            "O Kloxus lê fontes públicas do catálogo, ordena as notícias do dia para o seu Radar e ajuda você a transformar o seu texto em versões para LinkedIn, X, HTML e Markdown. A IA não escreve o seu texto. Nada sai do Kloxus sem uma exportação feita por você.",
           ],
         },
         {
           h: "Sua sessão e conta",
           body: [
-            "Você pode experimentar o Kloxus sem cadastro: criamos uma sessão temporária ligada ao seu navegador. Para enviar e-mails de verdade, pedimos que você confirme seu endereço por um link mágico. Você é responsável por manter o acesso ao seu e-mail e pela atividade feita a partir da sua sessão.",
+            "Você pode experimentar o Kloxus sem cadastro: criamos uma sessão temporária ligada ao seu navegador. Para criar sua conta e receber o e-mail opcional da manhã, pedimos que você confirme seu endereço por um link mágico. O Kloxus não envia e-mails a terceiros; se você ativar, o único e-mail é o diário para você mesmo com as notícias do seu Radar, que pode ser desligado a qualquer momento. Você é responsável por manter o acesso ao seu e-mail e pela atividade feita a partir da sua sessão.",
           ],
         },
         {
           h: "Seu conteúdo",
           body: [
-            "O texto que você escreve é seu. Você responde editorialmente pelo que publica e envia, inclusive pelo uso de trechos e referências das fontes citadas.",
-            "Você concede ao Kloxus apenas a licença necessária para armazenar e transmitir esse conteúdo a fim de operar o serviço.",
+            "O texto que você escreve é seu. Você responde editorialmente pelo que exporta e publica, inclusive pelo uso de trechos e referências das fontes citadas.",
+            "Você concede ao Kloxus apenas a licença necessária para armazenar e processar esse conteúdo a fim de operar o serviço e criar suas exportações.",
           ],
         },
         {
@@ -170,12 +164,6 @@ export const legalDict = {
           ],
         },
         {
-          h: "Leitores que pagam",
-          body: [
-            "Você pode reservar seções da sua newsletter para assinantes pagos. Valores, cobrança e repasses seguem as condições apresentadas no momento da configuração do recurso.",
-          ],
-        },
-        {
           h: "Disponibilidade e garantias",
           body: [
             "O serviço é oferecido “como está”. Podemos alterar, suspender ou descontinuar funcionalidades; sessões de teste podem expirar e conter dados de exemplo.",
@@ -184,7 +172,7 @@ export const legalDict = {
         {
           h: "Limitação de responsabilidade",
           body: [
-            "Na medida permitida por lei, o Kloxus não responde por danos indiretos, pelo conteúdo das fontes de terceiros nem pelas mensagens que você aprova e envia.",
+            "Na medida permitida por lei, o Kloxus não responde por danos indiretos, pelo conteúdo das fontes de terceiros nem pelo que você exporta e publica.",
           ],
         },
         {
@@ -203,13 +191,13 @@ export const legalDict = {
         {
           h: "O que coletamos",
           body: [
-            "Seu endereço de e-mail (quando você o confirma para enviar mensagens), o conteúdo que você cria, as fontes que escolhe e dados técnicos básicos da sessão, como o cookie que mantém seu acesso.",
+            "Seu endereço de e-mail (para criar sua conta e receber o e-mail da manhã), o conteúdo que você cria, as fontes do catálogo do seu Radar e dados técnicos básicos da sessão, como o cookie que mantém seu acesso.",
           ],
         },
         {
           h: "Como usamos",
           body: [
-            "Para operar o serviço: ler as fontes escolhidas, preparar pautas, guardar seu conteúdo e enviar as mensagens que você aprova. Não usamos seus dados para publicidade.",
+            "Para operar o serviço: ler as fontes do catálogo, preparar pautas, guardar seu conteúdo, criar suas exportações e enviar os links de acesso e o e-mail da manhã. Não usamos seus dados para publicidade.",
           ],
         },
         {
@@ -221,13 +209,13 @@ export const legalDict = {
         {
           h: "Envio de e-mails",
           body: [
-            "As mensagens são enviadas por um provedor transacional de e-mail. Toda mensagem inclui link de cancelamento, e cancelamentos são respeitados imediatamente.",
+            "Os links de acesso e o e-mail opcional da manhã são enviados por um provedor transacional de e-mail. O e-mail da manhã vai apenas para o seu próprio endereço, pode ser desligado a qualquer momento e inclui link de cancelamento; cancelamentos são respeitados imediatamente.",
           ],
         },
         {
           h: "Leitura de fontes",
           body: [
-            "Lemos páginas e feeds públicos das fontes do catálogo, respeitando as regras de cada site. Não contornamos paywalls nem restrições de acesso.",
+            "Lemos páginas e feeds públicos das fontes do catálogo, respeitando as regras de cada site. Não contornamos restrições de acesso.",
           ],
         },
         {
